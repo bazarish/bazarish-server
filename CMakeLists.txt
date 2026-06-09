@@ -1,0 +1,40 @@
+# Bazarish project (c) 2026
+cmake_minimum_required(VERSION 3.20)
+project(bazarish-service-node CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# The common library lives in a sibling repository inside the workspace.
+set(BAZARISH_COMMON_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../common" CACHE PATH
+    "Path to the bazarish common library repository")
+if(NOT TARGET bazarish_common)
+    add_subdirectory(${BAZARISH_COMMON_DIR} bazarish-common)
+endif()
+
+find_package(Threads REQUIRED)
+
+add_library(bazarish_service_lib STATIC
+    src/SubscriptionStore.cpp
+    src/AccountApi.cpp
+)
+target_include_directories(bazarish_service_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(bazarish_service_lib PUBLIC Bazarish::Common Threads::Threads)
+target_compile_options(bazarish_service_lib PRIVATE -Wall -Wextra -Werror)
+
+add_executable(bazarish-service-node src/Main.cpp)
+target_link_libraries(bazarish-service-node PRIVATE bazarish_service_lib)
+target_compile_options(bazarish-service-node PRIVATE -Wall -Wextra -Werror)
+
+enable_testing()
+
+function(bazarish_service_add_test name)
+    add_executable(${name} tests/${name}.cpp)
+    target_link_libraries(${name} PRIVATE bazarish_service_lib)
+    target_compile_options(${name} PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME ${name} COMMAND ${name})
+endfunction()
+
+bazarish_service_add_test(TestSubscriptionStore)
+bazarish_service_add_test(TestAccountApi)

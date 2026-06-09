@@ -7,7 +7,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # The common library lives in a sibling repository inside the workspace.
-set(BAZARISH_COMMON_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../common" CACHE PATH
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/common/CMakeLists.txt")
+    set(_bazarish_common_default "${CMAKE_CURRENT_SOURCE_DIR}/common")
+else()
+    set(_bazarish_common_default "${CMAKE_CURRENT_SOURCE_DIR}/../common")
+endif()
+set(BAZARISH_COMMON_DIR "${_bazarish_common_default}" CACHE PATH
     "Path to the bazarish common library repository")
 if(NOT TARGET bazarish_common)
     add_subdirectory(${BAZARISH_COMMON_DIR} bazarish-common)

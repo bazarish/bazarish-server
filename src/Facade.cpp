@@ -29,7 +29,7 @@ std::string pathOf(const std::string& target)
 
 Backend routeOf(const std::string& path)
 {
-    if (startsWith(path, "/v1/messaging/")) {
+    if (startsWith(path, "/v1/messaging/") || startsWith(path, "/v1/content")) {
         return Backend::kMessaging;
     }
     if (startsWith(path, "/v1/account/")) {

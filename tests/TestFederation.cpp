@@ -36,8 +36,8 @@ constexpr std::int64_t kNow = 1780000000;
 Bytes makeSealed(const Key& sealingPublic, const std::string& kind,
     const std::string& mailbox, const std::string& messageId, const Bytes& token)
 {
-    nlohmann::json inner = {{"kind", kind}, {"mailbox", mailbox}, {"messageId", messageId}};
-    if (kind == "message") {
+    nlohmann::json inner = {{"class", kind}, {"mailbox", mailbox}, {"messageId", messageId}};
+    if (kind == "content") {
         inner["token"] = toBase64(token);
     }
     const std::string text = inner.dump();
@@ -85,7 +85,7 @@ int main()
 
     // Successful federated message delivery consumes the token.
     {
-        const Bytes sealed = makeSealed(sealingPublic, "message", alice, "fmsg-1", token);
+        const Bytes sealed = makeSealed(sealingPublic, "content", alice, "fmsg-1", token);
         const FederationDeliverResult result = roundTrip(engine, sealed, payload);
         CHECK(result.delivered);
         CHECK(storage.tokenHashCount(alice) == 0);
@@ -94,7 +94,7 @@ int main()
 
     // Retry is deduplicated and does not need a (now spent) token.
     {
-        const Bytes sealed = makeSealed(sealingPublic, "message", alice, "fmsg-1", token);
+        const Bytes sealed = makeSealed(sealingPublic, "content", alice, "fmsg-1", token);
         const FederationDeliverResult result = roundTrip(engine, sealed, payload);
         CHECK(result.delivered);
     }
@@ -102,7 +102,7 @@ int main()
     // A bad token collapses into DELIVERY_REJECTED.
     {
         const Bytes sealed
-            = makeSealed(sealingPublic, "message", alice, "fmsg-2", generateDeliveryToken());
+            = makeSealed(sealingPublic, "content", alice, "fmsg-2", generateDeliveryToken());
         const FederationDeliverResult result = roundTrip(engine, sealed, payload);
         CHECK(!result.delivered);
         CHECK(result.errorCode == "DELIVERY_REJECTED");
@@ -110,7 +110,7 @@ int main()
 
     // Tokenless contact request is admitted.
     {
-        const Bytes sealed = makeSealed(sealingPublic, "contact-request", alice, "freq-1", {});
+        const Bytes sealed = makeSealed(sealingPublic, "contact", alice, "freq-1", {});
         const FederationDeliverResult result = roundTrip(engine, sealed, Bytes(100, 0x33));
         CHECK(result.delivered);
         CHECK(storage.getBlob(alice, "freq-1").size() == 100);
@@ -119,7 +119,7 @@ int main()
     // An envelope sealed to the wrong key is rejected.
     {
         const Key wrong = Key::generateSealing();
-        const Bytes sealed = makeSealed(Key::fromPublicDer(wrong.publicDer()), "message", alice,
+        const Bytes sealed = makeSealed(Key::fromPublicDer(wrong.publicDer()), "content", alice,
             "fmsg-3", token);
         const FederationDeliverResult result = roundTrip(engine, sealed, payload);
         CHECK(!result.delivered);

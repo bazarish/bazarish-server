@@ -50,19 +50,22 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
     // collapses into DELIVERY_REJECTED; only token holders see the
     // detailed quota errors.
     std::string mailbox;
-    std::string kind;
+    // Delivery class: the server-visible admission selector. A closed set of
+    // exactly two values; the content type lives end-to-end and is never seen
+    // here (see docs Messages.md).
+    std::string deliveryClass;
     std::string messageId;
     Bytes token;
     try {
         const Bytes plain = cms::unseal(sealed, sealingKey_);
         const nlohmann::json inner = nlohmann::json::parse(plain.begin(), plain.end());
-        kind = inner.at("kind").get<std::string>();
+        deliveryClass = inner.at("class").get<std::string>();
         mailbox = inner.at("mailbox").get<std::string>();
         messageId = inner.at("messageId").get<std::string>();
-        if (kind == "message") {
+        if (deliveryClass == "content") {
             token = fromBase64(inner.at("token").get<std::string>());
-        } else if (kind != "contact-request") {
-            return fail(ErrorCode::kDeliveryRejected, "unknown delivery kind");
+        } else if (deliveryClass != "contact") {
+            return fail(ErrorCode::kDeliveryRejected, "unknown delivery class");
         }
         if (!isFingerprint(mailbox)) {
             return fail(ErrorCode::kDeliveryRejected, "mailbox is not a fingerprint");
@@ -77,7 +80,7 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
         return delivered();
     }
 
-    if (kind == "contact-request") {
+    if (deliveryClass == "contact") {
         if (payload.size() > options_.contactRequestLimitBytes) {
             return fail(ErrorCode::kContactRequestTooLarge,
                 "contact request exceeds " + std::to_string(options_.contactRequestLimitBytes)
@@ -91,9 +94,9 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
     }
 
     const Storage::PutResult result = storage_.putBlob(
-        mailbox, messageId, payload, kind, now, options_.defaultQuotaBytes);
+        mailbox, messageId, payload, deliveryClass, now, options_.defaultQuotaBytes);
     if (result == Storage::PutResult::kQuotaExceeded) {
-        if (kind == "message") {
+        if (deliveryClass == "content") {
             // The store did not happen: restore the token so the sender
             // can retry after the recipient frees space.
             storage_.registerTokenHashes(mailbox, {deliveryTokenHash(token)});

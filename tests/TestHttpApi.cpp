@@ -155,7 +155,7 @@ int main()
     // Bob delivers a message to Alice through the full local pipeline.
     const Bytes payload = {'e', '2', 'e', '-', 'b', 'l', 'o', 'b'};
     const std::string envelope = makeEnvelope(serverFp, sealingPublic,
-        {{"kind", "message"}, {"mailbox", alice.fingerprint()}, {"token", toBase64(token1)},
+        {{"class", "content"}, {"mailbox", alice.fingerprint()}, {"token", toBase64(token1)},
             {"messageId", "msg-1"}},
         payload);
     CHECK(sendAndPoll(client, bob, "bobdev", envelope).at("status") == "delivered");
@@ -173,7 +173,7 @@ int main()
         const nlohmann::json list = nlohmann::json::parse(pending->body).at("pending");
         CHECK(list.size() == 1);
         CHECK(list[0].at("id") == "msg-1");
-        CHECK(list[0].at("kind") == "message");
+        CHECK(list[0].at("class") == "content");
 
         const httplib::Result blob = client.Get("/v1/messaging/pending/msg-1",
             makeHeaders(alice, "GET", "/v1/messaging/pending/msg-1", "", "alicedev"));
@@ -192,7 +192,7 @@ int main()
     // A bogus token is rejected without detail.
     {
         const std::string bad = makeEnvelope(serverFp, sealingPublic,
-            {{"kind", "message"}, {"mailbox", alice.fingerprint()},
+            {{"class", "content"}, {"mailbox", alice.fingerprint()},
                 {"token", toBase64(generateDeliveryToken())}, {"messageId", "msg-2"}},
             payload);
         const nlohmann::json result = sendAndPoll(client, bob, "bobdev", bad);
@@ -203,13 +203,13 @@ int main()
     // Tokenless contact requests pass within the size cap and fail above it.
     {
         const std::string request = makeEnvelope(serverFp, sealingPublic,
-            {{"kind", "contact-request"}, {"mailbox", alice.fingerprint()},
+            {{"class", "contact"}, {"mailbox", alice.fingerprint()},
                 {"messageId", "req-1"}},
             Bytes(200, 0x55));
         CHECK(sendAndPoll(client, bob, "bobdev", request).at("status") == "delivered");
 
         const std::string oversized = makeEnvelope(serverFp, sealingPublic,
-            {{"kind", "contact-request"}, {"mailbox", alice.fingerprint()},
+            {{"class", "contact"}, {"mailbox", alice.fingerprint()},
                 {"messageId", "req-2"}},
             Bytes(300, 0x55));
         const nlohmann::json result = sendAndPoll(client, bob, "bobdev", oversized);
@@ -221,7 +221,7 @@ int main()
     // visible past a valid token).
     {
         const std::string big = makeEnvelope(serverFp, sealingPublic,
-            {{"kind", "message"}, {"mailbox", alice.fingerprint()},
+            {{"class", "content"}, {"mailbox", alice.fingerprint()},
                 {"token", toBase64(token2)}, {"messageId", "msg-3"}},
             Bytes(2000, 0x77));
         const nlohmann::json result = sendAndPoll(client, bob, "bobdev", big);
@@ -233,7 +233,7 @@ int main()
     // Unknown destination server: unreachable until federation lands.
     {
         const std::string remote = makeEnvelope(toBase32(Bytes(32, 0x42)), sealingPublic,
-            {{"kind", "message"}, {"mailbox", alice.fingerprint()},
+            {{"class", "content"}, {"mailbox", alice.fingerprint()},
                 {"token", toBase64(token2)}, {"messageId", "msg-4"}},
             payload);
         const nlohmann::json result = sendAndPoll(client, bob, "bobdev", remote);

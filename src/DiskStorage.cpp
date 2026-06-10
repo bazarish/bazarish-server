@@ -173,7 +173,7 @@ std::size_t DiskStorage::tokenHashCount(const std::string& user)
 }
 
 Storage::PutResult DiskStorage::putBlob(const std::string& user, const std::string& blobId,
-    const Bytes& data, const std::string& kind, const std::int64_t receivedAt,
+    const Bytes& data, const std::string& deliveryClass, const std::int64_t receivedAt,
     const std::uint64_t quotaBytes)
 {
     requireUser(user);
@@ -194,7 +194,7 @@ Storage::PutResult DiskStorage::putBlob(const std::string& user, const std::stri
 
     const nlohmann::json metaBody = {
         {"receivedAt", receivedAt},
-        {"kind", kind},
+        {"class", deliveryClass},
         {"acked", nlohmann::json::array()},
     };
     const std::string metaText = metaBody.dump();
@@ -230,7 +230,7 @@ std::vector<Storage::PendingEntry> DiskStorage::listPending(const std::string& u
             }
         }
         if (!acked) {
-            pending.push_back(PendingEntry{blobId, meta.at("kind").get<std::string>()});
+            pending.push_back(PendingEntry{blobId, meta.at("class").get<std::string>()});
         }
     }
     return pending;
@@ -359,6 +359,39 @@ void DiskStorage::deleteIfFullyAcked(const std::string& user, const std::string&
     std::error_code ignored;
     fs::remove(userDir(user) / "blobs" / blobId, ignored);
     fs::remove(metaPath, ignored);
+}
+
+Storage::PutResult DiskStorage::putContent(const std::string& contentId, const Bytes& data)
+{
+    requireSafeId(contentId);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const fs::path dir = root_ / "content";
+    const fs::path path = dir / contentId;
+    // Content-addressed: identical ciphertext dedups to the same id.
+    if (fs::exists(path)) {
+        return PutResult::kDuplicate;
+    }
+    fs::create_directories(dir);
+    writeFileAtomic(path, data.data(), data.size());
+    return PutResult::kStored;
+}
+
+bool DiskStorage::hasContent(const std::string& contentId)
+{
+    requireSafeId(contentId);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    return fs::exists(root_ / "content" / contentId);
+}
+
+Bytes DiskStorage::getContent(const std::string& contentId)
+{
+    requireSafeId(contentId);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    std::ifstream in(root_ / "content" / contentId, std::ios::binary);
+    if (!in) {
+        throw std::runtime_error("no such content");
+    }
+    return Bytes(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
 }
 
 }  // namespace bazarish::server

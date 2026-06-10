@@ -52,17 +52,18 @@ public:
         kQuotaExceeded,
     };
 
-    // Delivery kind, surfaced back to fetching clients ("message" or
-    // "contact-request").
+    // Delivery class, surfaced back to fetching clients ("content" or
+    // "contact"). This is the admission selector, not the content type, which
+    // is end-to-end encrypted and never seen here.
     struct PendingEntry {
         std::string blobId;
-        std::string kind;
+        std::string deliveryClass;
 
         bool operator==(const PendingEntry&) const = default;
     };
 
     virtual PutResult putBlob(const std::string& user, const std::string& blobId,
-        const Bytes& data, const std::string& kind, std::int64_t receivedAt,
+        const Bytes& data, const std::string& deliveryClass, std::int64_t receivedAt,
         std::uint64_t quotaBytes)
         = 0;
     virtual bool hasBlob(const std::string& user, const std::string& blobId) = 0;
@@ -82,6 +83,18 @@ public:
     virtual void purgeExpired(std::int64_t receivedBefore) = 0;
     // Current pending-content usage in bytes.
     virtual std::uint64_t usage(const std::string& user) = 0;
+
+    // --- Content store (content-addressed bulk media) ---
+    //
+    // A global, content-addressed store for large encrypted media referenced
+    // from messages (see docs Messages.md). contentId is the lowercase hex
+    // SHA-256 of the ciphertext, so identical content dedups. The store holds
+    // opaque ciphertext and never sees the decryption key or the content type
+    // — adding a new media type needs no change here.
+
+    virtual PutResult putContent(const std::string& contentId, const Bytes& data) = 0;
+    virtual bool hasContent(const std::string& contentId) = 0;
+    virtual Bytes getContent(const std::string& contentId) = 0;
 };
 
 }  // namespace bazarish::server

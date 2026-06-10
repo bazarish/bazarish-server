@@ -64,7 +64,7 @@ int main()
     // Build a sealed delivery envelope addressed to the receiving server.
     const std::string messageId = "fedmsg0001";
     const nlohmann::json inner = {
-        {"kind", "message"},
+        {"class", "content"},
         {"mailbox", mailbox},
         {"messageId", messageId},
         {"token", toBase64(token)},

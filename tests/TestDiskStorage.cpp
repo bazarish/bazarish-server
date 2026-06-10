@@ -61,8 +61,8 @@ int main()
     // --- Identifier validation ---
     CHECK_THROWS(storage.registerClient("not-a-user", "client1"));
     CHECK_THROWS(storage.registerClient(alice, "../escape"));
-    CHECK_THROWS(storage.putBlob(alice, "bad/blob", Bytes{1}, "message", kNow, kQuota));
-    CHECK_THROWS(storage.putBlob(alice, "", Bytes{1}, "message", kNow, kQuota));
+    CHECK_THROWS(storage.putBlob(alice, "bad/blob", Bytes{1}, "content", kNow, kQuota));
+    CHECK_THROWS(storage.putBlob(alice, "", Bytes{1}, "content", kNow, kQuota));
 
     // --- Client registry ---
     CHECK(!storage.isClientRegistered(alice, "client1"));
@@ -87,8 +87,8 @@ int main()
 
     // --- Pending content: put, dedup, quota ---
     const Bytes blob(100, 0xab);
-    CHECK(storage.putBlob(alice, "msg1", blob, "message", kNow, kQuota) == Storage::PutResult::kStored);
-    CHECK(storage.putBlob(alice, "msg1", blob, "message", kNow, kQuota) == Storage::PutResult::kDuplicate);
+    CHECK(storage.putBlob(alice, "msg1", blob, "content", kNow, kQuota) == Storage::PutResult::kStored);
+    CHECK(storage.putBlob(alice, "msg1", blob, "content", kNow, kQuota) == Storage::PutResult::kDuplicate);
     CHECK(storage.usage(alice) == 100);
     CHECK(storage.hasBlob(alice, "msg1"));
     CHECK(!storage.hasBlob(alice, "nosuchblob"));
@@ -96,18 +96,18 @@ int main()
     CHECK_THROWS(storage.getBlob(alice, "nosuchblob"));
 
     const Bytes bigBlob(static_cast<std::size_t>(kQuota), 0xcd);
-    CHECK(storage.putBlob(alice, "msg2", bigBlob, "message", kNow, kQuota)
+    CHECK(storage.putBlob(alice, "msg2", bigBlob, "content", kNow, kQuota)
         == Storage::PutResult::kQuotaExceeded);
     CHECK(storage.usage(alice) == 100);
 
     // --- Pending list and the delete-when-all-acked rule ---
     CHECK((storage.listPending(alice, "client1")
-        == std::vector<Storage::PendingEntry>{{"msg1", "message"}}));
+        == std::vector<Storage::PendingEntry>{{"msg1", "content"}}));
     storage.ackBlob(alice, "msg1", "client1");
     CHECK(storage.listPending(alice, "client1").empty());
     // client2 has not acked: the blob must survive.
     CHECK((storage.listPending(alice, "client2")
-        == std::vector<Storage::PendingEntry>{{"msg1", "message"}}));
+        == std::vector<Storage::PendingEntry>{{"msg1", "content"}}));
     CHECK(storage.usage(alice) == 100);
     storage.ackBlob(alice, "msg1", "client2");
     // All registered clients acked: deleted immediately.
@@ -117,7 +117,7 @@ int main()
     storage.ackBlob(alice, "msg1", "client2");
 
     // --- Retiring a client re-evaluates completeness ---
-    CHECK(storage.putBlob(alice, "msg3", blob, "message", kNow, kQuota) == Storage::PutResult::kStored);
+    CHECK(storage.putBlob(alice, "msg3", blob, "content", kNow, kQuota) == Storage::PutResult::kStored);
     storage.ackBlob(alice, "msg3", "client1");
     CHECK(storage.usage(alice) == 100);
     storage.unregisterClient(alice, "client2");
@@ -125,17 +125,17 @@ int main()
 
     // --- A user with no registered clients keeps content until the sweep ---
     storage.unregisterClient(alice, "client1");
-    CHECK(storage.putBlob(alice, "msg4", blob, "message", kNow, kQuota) == Storage::PutResult::kStored);
+    CHECK(storage.putBlob(alice, "msg4", blob, "content", kNow, kQuota) == Storage::PutResult::kStored);
     CHECK(storage.usage(alice) == 100);
 
     // --- TTL sweep ---
     const std::string bob = makeUser(0x02);
     storage.registerClient(bob, "bclient");
-    CHECK(storage.putBlob(bob, "old", blob, "message", kNow - 100, kQuota) == Storage::PutResult::kStored);
-    CHECK(storage.putBlob(bob, "fresh", blob, "contact-request", kNow + 100, kQuota) == Storage::PutResult::kStored);
+    CHECK(storage.putBlob(bob, "old", blob, "content", kNow - 100, kQuota) == Storage::PutResult::kStored);
+    CHECK(storage.putBlob(bob, "fresh", blob, "contact", kNow + 100, kQuota) == Storage::PutResult::kStored);
     storage.purgeExpired(kNow);
     CHECK((storage.listPending(bob, "bclient")
-        == std::vector<Storage::PendingEntry>{{"fresh", "contact-request"}}));
+        == std::vector<Storage::PendingEntry>{{"fresh", "contact"}}));
     // Alice's msg4 (receivedAt == kNow) survives a sweep with threshold kNow.
     CHECK(storage.usage(alice) == 100);
 
@@ -145,10 +145,21 @@ int main()
     CHECK(storage.listPending(bob, "bclient").empty());
     CHECK(storage.isClientRegistered(bob, "bclient"));
 
+    // --- Content store: content-addressed, dedups, type-blind ---
+    const Bytes media = {0xde, 0xad, 0xbe, 0xef, 0x01, 0x02};
+    const std::string cid = "00ff00ff00ff00ff";  // any safe hex id
+    CHECK(!storage.hasContent(cid));
+    CHECK(storage.putContent(cid, media) == Storage::PutResult::kStored);
+    CHECK(storage.hasContent(cid));
+    CHECK(storage.getContent(cid) == media);
+    // Same id again is an idempotent duplicate, not a re-store.
+    CHECK(storage.putContent(cid, media) == Storage::PutResult::kDuplicate);
+
     // --- Persistence across instances ---
     DiskStorage reopened(root);
     CHECK(reopened.usage(alice) == 100);
     CHECK(reopened.getBlob(alice, "msg4") == blob);
+    CHECK(reopened.getContent(cid) == media);
 
     std::filesystem::remove_all(root);
     return 0;

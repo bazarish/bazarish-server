@@ -14,7 +14,7 @@ namespace bazarish::server {
 //   users/<fingerprint>/clients/<clientId>   registered client marker
 //   users/<fingerprint>/tokens/<hash-hex>    registered token hash marker
 //   users/<fingerprint>/blobs/<blobId>       pending content
-//   users/<fingerprint>/meta/<blobId>.json   {"receivedAt": ..., "kind": ..., "acked": [...]}
+//   users/<fingerprint>/meta/<blobId>.json   {"receivedAt": ..., "class": ..., "acked": [...]}
 //
 // Token consumption maps to unlink(), which the filesystem makes atomic.
 // A single coarse mutex serializes mutations; revisit when profiling says so.
@@ -33,7 +33,7 @@ public:
     std::size_t tokenHashCount(const std::string& user) override;
 
     PutResult putBlob(const std::string& user, const std::string& blobId, const Bytes& data,
-        const std::string& kind, std::int64_t receivedAt, std::uint64_t quotaBytes) override;
+        const std::string& deliveryClass, std::int64_t receivedAt, std::uint64_t quotaBytes) override;
     bool hasBlob(const std::string& user, const std::string& blobId) override;
     std::vector<PendingEntry> listPending(const std::string& user,
         const std::string& clientId) override;
@@ -43,6 +43,10 @@ public:
     void purgeUser(const std::string& user) override;
     void purgeExpired(std::int64_t receivedBefore) override;
     std::uint64_t usage(const std::string& user) override;
+
+    PutResult putContent(const std::string& contentId, const Bytes& data) override;
+    bool hasContent(const std::string& contentId) override;
+    Bytes getContent(const std::string& contentId) override;
 
 private:
     std::filesystem::path userDir(const std::string& user) const;

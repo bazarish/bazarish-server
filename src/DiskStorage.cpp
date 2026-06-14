@@ -213,6 +213,27 @@ bool DiskStorage::hasBlob(const std::string& user, const std::string& blobId)
     return fs::exists(userDir(user) / "blobs" / blobId);
 }
 
+bool DiskStorage::hasSeen(const std::string& user, const std::string& messageId)
+{
+    requireUser(user);
+    requireSafeId(messageId);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    return fs::exists(userDir(user) / "seen" / messageId);
+}
+
+void DiskStorage::markSeen(const std::string& user, const std::string& messageId,
+    const std::int64_t receivedAt)
+{
+    requireUser(user);
+    requireSafeId(messageId);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const fs::path dir = userDir(user) / "seen";
+    fs::create_directories(dir);
+    // The marker payload is the receive time, so the TTL sweep can age it out.
+    const std::string text = std::to_string(receivedAt);
+    writeFileAtomic(dir / messageId, text.data(), text.size());
+}
+
 std::vector<Storage::PendingEntry> DiskStorage::listPending(const std::string& user,
     const std::string& clientId)
 {
@@ -286,6 +307,7 @@ void DiskStorage::purgeUser(const std::string& user)
     std::error_code ignored;
     fs::remove_all(userDir(user) / "blobs", ignored);
     fs::remove_all(userDir(user) / "meta", ignored);
+    fs::remove_all(userDir(user) / "seen", ignored);
 }
 
 void DiskStorage::purgeExpired(const std::int64_t receivedBefore)
@@ -303,6 +325,16 @@ void DiskStorage::purgeExpired(const std::int64_t receivedBefore)
                 std::error_code ignored;
                 fs::remove(userEntry.path() / "blobs" / blobId, ignored);
                 fs::remove(userEntry.path() / "meta" / (blobId + ".json"), ignored);
+            }
+        }
+        // Age out replay markers on the same horizon as the blobs they guard.
+        for (const std::string& messageId : listDirectoryNames(userEntry.path() / "seen")) {
+            const fs::path marker = userEntry.path() / "seen" / messageId;
+            std::ifstream in(marker, std::ios::binary);
+            std::int64_t receivedAt = 0;
+            if (in >> receivedAt && receivedAt < receivedBefore) {
+                std::error_code ignored;
+                fs::remove(marker, ignored);
             }
         }
         (void)user;

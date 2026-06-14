@@ -139,10 +139,21 @@ int main()
     // Alice's msg4 (receivedAt == kNow) survives a sweep with threshold kNow.
     CHECK(storage.usage(alice) == 100);
 
-    // --- purgeUser drops content but keeps the registry ---
+    // --- Replay markers (seen-messageId cache): set, query, TTL sweep ---
+    CHECK(!storage.hasSeen(bob, "nonce-fresh"));
+    storage.markSeen(bob, "nonce-fresh", kNow + 100);
+    storage.markSeen(bob, "nonce-stale", kNow - 100);
+    CHECK(storage.hasSeen(bob, "nonce-fresh"));
+    CHECK(storage.hasSeen(bob, "nonce-stale"));
+    storage.purgeExpired(kNow);
+    CHECK(storage.hasSeen(bob, "nonce-fresh"));   // kept
+    CHECK(!storage.hasSeen(bob, "nonce-stale"));  // aged out on the blob horizon
+
+    // --- purgeUser drops content (and replay markers) but keeps the registry ---
     storage.purgeUser(bob);
     CHECK(storage.usage(bob) == 0);
     CHECK(storage.listPending(bob, "bclient").empty());
+    CHECK(!storage.hasSeen(bob, "nonce-fresh"));
     CHECK(storage.isClientRegistered(bob, "bclient"));
 
     // --- Content store: content-addressed, dedups, type-blind ---

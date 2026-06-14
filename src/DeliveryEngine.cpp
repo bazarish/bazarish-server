@@ -80,6 +80,15 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
         return delivered();
     }
 
+    // Replay protection: a messageId admitted earlier — even one since fetched,
+    // acked and swept from the mailbox — must not be re-admitted. The one-time
+    // token already guards content replays, but a tokenless contact request has
+    // no token to spend, so the seen-cache is what closes that gap. Idempotent
+    // success: no token spend, no second store.
+    if (storage_.hasSeen(mailbox, messageId)) {
+        return delivered();
+    }
+
     if (deliveryClass == "contact") {
         if (payload.size() > options_.contactRequestLimitBytes) {
             return fail(ErrorCode::kContactRequestTooLarge,
@@ -104,6 +113,10 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
         }
         return fail(ErrorCode::kDeliveryRejected, "delivery rejected");
     }
+
+    // Record the admitted messageId so a later replay (after this blob is acked
+    // and swept) is recognised by the hasSeen check above and refused.
+    storage_.markSeen(mailbox, messageId, now);
     return delivered();
 }
 

@@ -67,6 +67,21 @@ public:
         std::uint64_t quotaBytes)
         = 0;
     virtual bool hasBlob(const std::string& user, const std::string& blobId) = 0;
+
+    // --- Replay protection (seen-messageId cache) ---
+    //
+    // Records every messageId admitted into a mailbox, independent of the
+    // blob's lifecycle, so a replay of an already-delivered envelope — even one
+    // since fetched, acked and swept from the mailbox — is recognised and
+    // refused re-admission. One-time tokens already guard content-class
+    // replays; tokenless contact requests have no token to spend, so this cache
+    // is what closes them. Markers are retained until the TTL sweep
+    // (purgeExpired), like pending blobs.
+    virtual bool hasSeen(const std::string& user, const std::string& messageId) = 0;
+    virtual void markSeen(const std::string& user, const std::string& messageId,
+        std::int64_t receivedAt)
+        = 0;
+
     // Blobs not yet acked by this client.
     virtual std::vector<PendingEntry> listPending(const std::string& user,
         const std::string& clientId)

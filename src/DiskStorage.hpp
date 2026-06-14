@@ -15,6 +15,7 @@ namespace bazarish::server {
 //   users/<fingerprint>/tokens/<hash-hex>    registered token hash marker
 //   users/<fingerprint>/blobs/<blobId>       pending content
 //   users/<fingerprint>/meta/<blobId>.json   {"receivedAt": ..., "class": ..., "acked": [...]}
+//   users/<fingerprint>/seen/<messageId>     admitted-messageId marker (receivedAt text)
 //
 // Token consumption maps to unlink(), which the filesystem makes atomic.
 // A single coarse mutex serializes mutations; revisit when profiling says so.
@@ -35,6 +36,9 @@ public:
     PutResult putBlob(const std::string& user, const std::string& blobId, const Bytes& data,
         const std::string& deliveryClass, std::int64_t receivedAt, std::uint64_t quotaBytes) override;
     bool hasBlob(const std::string& user, const std::string& blobId) override;
+    bool hasSeen(const std::string& user, const std::string& messageId) override;
+    void markSeen(const std::string& user, const std::string& messageId,
+        std::int64_t receivedAt) override;
     std::vector<PendingEntry> listPending(const std::string& user,
         const std::string& clientId) override;
     Bytes getBlob(const std::string& user, const std::string& blobId) override;

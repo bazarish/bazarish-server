@@ -116,6 +116,26 @@ int main()
         CHECK(storage.getBlob(alice, "freq-1").size() == 100);
     }
 
+    // Replay protection: a tokenless contact request that was delivered, then
+    // fetched and acked away, must not be re-injected when its envelope is
+    // replayed. Without the seen-cache nothing would stop the second store.
+    {
+        storage.registerClient(alice, "client01");
+        const Bytes sealed = makeSealed(sealingPublic, "contact", alice, "freq-replay", {});
+
+        CHECK(roundTrip(engine, sealed, Bytes(100, 0x44)).delivered);
+        CHECK(storage.hasBlob(alice, "freq-replay"));
+
+        // The recipient consumes it: ack drops the blob from the mailbox.
+        storage.ackBlob(alice, "freq-replay", "client01");
+        CHECK(!storage.hasBlob(alice, "freq-replay"));
+
+        // Replaying the exact same envelope reports success (idempotent) but
+        // does not put the message back into the mailbox.
+        CHECK(roundTrip(engine, sealed, Bytes(100, 0x44)).delivered);
+        CHECK(!storage.hasBlob(alice, "freq-replay"));
+    }
+
     // An envelope sealed to the wrong key is rejected.
     {
         const Key wrong = Key::generateSealing();

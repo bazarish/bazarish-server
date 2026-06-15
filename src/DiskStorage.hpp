@@ -47,6 +47,8 @@ public:
     void purgeUser(const std::string& user) override;
     void purgeExpired(std::int64_t receivedBefore) override;
     std::uint64_t usage(const std::string& user) override;
+    void setUserQuota(const std::string& user, std::uint64_t quotaBytes) override;
+    std::uint64_t userQuota(const std::string& user, std::uint64_t fallback) override;
 
     PutResult putContent(const std::string& contentId, const Bytes& data) override;
     bool hasContent(const std::string& contentId) override;

@@ -26,6 +26,9 @@ struct HttpApiOptions {
     std::uint64_t contentLimitBytes = 64 * 1024 * 1024;
     // How long a completed send attempt stays pollable.
     std::int64_t attemptRetentionSeconds = 600;
+    // Shared secret authorising the operator-internal quota endpoint (checked
+    // against the X-Operator-Secret header). Empty disables that endpoint.
+    std::string operatorSecret;
 };
 
 // Result of relaying a sealed envelope to another server (federation).

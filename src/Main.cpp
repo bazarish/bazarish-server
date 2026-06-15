@@ -35,7 +35,7 @@ void printUsage()
         "bazarish-server %s\n"
         "Usage: bazarish-server --state <directory> [--listen <host> <port>]\n"
         "          [--i2p] [--federation-listen <host> <port>]\n"
-        "          [--contact-request-limit <bytes>]\n"
+        "          [--contact-request-limit <bytes>] [--operator-secret <secret>]\n"
         "       bazarish-server --version\n"
         "\n"
         "The state directory holds the server keys and the content storage;\n"
@@ -144,11 +144,15 @@ int main(const int argc, const char** argv)
     std::string fedHost = kDefaultHost;
     int fedPort = 0;
     bazarish::server::DeliveryEngineOptions engineOptions;
+    std::string operatorSecret;
     for (int i = 3; i < argc;) {
         if (std::strcmp(argv[i], "--listen") == 0 && i + 2 < argc) {
             host = argv[i + 1];
             port = std::atoi(argv[i + 2]);
             i += 3;
+        } else if (std::strcmp(argv[i], "--operator-secret") == 0 && i + 1 < argc) {
+            operatorSecret = argv[i + 1];
+            i += 2;
         } else if (std::strcmp(argv[i], "--i2p") == 0) {
             enableI2p = true;
             i += 1;
@@ -252,8 +256,9 @@ int main(const int argc, const char** argv)
             static_cast<std::streamsize>(card.size()));
     }
 
-    bazarish::server::HttpApi api(
-        storage, engine, bazarish::server::HttpApiOptions{}, std::move(remoteDeliver));
+    bazarish::server::HttpApiOptions httpOptions;
+    httpOptions.operatorSecret = operatorSecret;
+    bazarish::server::HttpApi api(storage, engine, httpOptions, std::move(remoteDeliver));
 
     std::printf("listening on %s:%d (private channel for facades)\n", host.c_str(), port);
     std::fflush(stdout);

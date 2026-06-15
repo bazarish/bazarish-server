@@ -99,6 +99,16 @@ public:
     // Current pending-content usage in bytes.
     virtual std::uint64_t usage(const std::string& user) = 0;
 
+    // --- Per-user storage quota override ---
+    //
+    // The server enforces a quota when storing content. By default every user
+    // gets the node's configured default; the operator's service node raises or
+    // lowers a specific user's quota (a paid storage plan, or a lapse) by
+    // setting an override here over the private channel.
+    virtual void setUserQuota(const std::string& user, std::uint64_t quotaBytes) = 0;
+    // The user's quota override, or fallback (the server default) when none.
+    virtual std::uint64_t userQuota(const std::string& user, std::uint64_t fallback) = 0;
+
     // --- Content store (content-addressed bulk media) ---
     //
     // A global, content-addressed store for large encrypted media referenced

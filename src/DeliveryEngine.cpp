@@ -102,8 +102,8 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
         }
     }
 
-    const Storage::PutResult result = storage_.putBlob(
-        mailbox, messageId, payload, deliveryClass, now, options_.defaultQuotaBytes);
+    const Storage::PutResult result = storage_.putBlob(mailbox, messageId, payload, deliveryClass,
+        now, storage_.userQuota(mailbox, options_.defaultQuotaBytes));
     if (result == Storage::PutResult::kQuotaExceeded) {
         if (deliveryClass == "content") {
             // The store did not happen: restore the token so the sender

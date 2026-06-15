@@ -166,11 +166,25 @@ int main()
     // Same id again is an idempotent duplicate, not a re-store.
     CHECK(storage.putContent(cid, media) == Storage::PutResult::kDuplicate);
 
+    // --- Per-user storage quota override ---
+    const std::string dave = makeUser(0x42);
+    CHECK(storage.userQuota(dave, kQuota) == kQuota);  // no override → fallback
+    storage.setUserQuota(dave, 8);
+    CHECK(storage.userQuota(dave, kQuota) == 8);        // override returned
+    CHECK(storage.userQuota(alice, kQuota) == kQuota);  // unrelated user unaffected
+    CHECK(storage.putBlob(dave, "tiny", Bytes{1, 2, 3}, "content", kNow, 8)
+        == Storage::PutResult::kStored);
+    // Over the per-user quota — refused even though kQuota would allow it.
+    CHECK(storage.putBlob(dave, "over", Bytes(20, 'x'), "content", kNow,
+              storage.userQuota(dave, kQuota))
+        == Storage::PutResult::kQuotaExceeded);
+
     // --- Persistence across instances ---
     DiskStorage reopened(root);
     CHECK(reopened.usage(alice) == 100);
     CHECK(reopened.getBlob(alice, "msg4") == blob);
     CHECK(reopened.getContent(cid) == media);
+    CHECK(reopened.userQuota(dave, kQuota) == 8);  // override persisted
 
     std::filesystem::remove_all(root);
     return 0;

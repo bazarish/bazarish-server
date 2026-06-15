@@ -147,6 +147,29 @@ void HttpApi::setupRoutes()
             respondJson(response, {{"ok", true}});
         }));
 
+    // --- Operator-internal: per-user storage quota ---
+    //
+    // Set by the operator's service node over the private channel when a user's
+    // storage plan changes. Authorised by a shared secret, not by user auth (the
+    // user must not set their own quota).
+    http_->Put("/v1/messaging/quota",
+        [this, &store](const httplib::Request& request, httplib::Response& response) {
+            if (options_.operatorSecret.empty()
+                || request.get_header_value("X-Operator-Secret") != options_.operatorSecret) {
+                respondError(response, 403, ErrorCode::kDeliveryRejected,
+                    "operator authentication required");
+                return;
+            }
+            try {
+                const nlohmann::json body = nlohmann::json::parse(request.body);
+                store.setUserQuota(body.at("user").get<std::string>(),
+                    body.at("quotaBytes").get<std::uint64_t>());
+                respondJson(response, {{"ok", true}});
+            } catch (const std::exception& error) {
+                respondError(response, 400, ErrorCode::kDeliveryRejected, error.what());
+            }
+        });
+
     // --- Token hashes ---
 
     http_->Post("/v1/messaging/tokens",

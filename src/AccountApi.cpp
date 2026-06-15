@@ -229,6 +229,16 @@ void AccountApi::setupRoutes()
                     "certificate does not name the authenticated user");
                 return;
             }
+            // A username is a paid service: the user must hold an active username
+            // entitlement bought (and renewed) on the portal. There is no open
+            // registration.
+            const std::optional<GrantStore::ServiceGrant> entitlement
+                = grants_.peekService(user, "username");
+            if (!entitlement.has_value() || entitlement->paidThrough <= nowSeconds()) {
+                respondError(response, 403, ErrorCode::kDeliveryRejected,
+                    "no active username entitlement — buy one on the service portal first");
+                return;
+            }
             SubscriptionStore::Alias record{cert.alias, cert.user, der};
             if (!store_.putAlias(record)) {
                 respondError(response, 409, ErrorCode::kAliasTaken,

@@ -97,10 +97,11 @@ int main(const int argc, const char** argv)
     bazarish::service::GrantStore grants(stateDir / "store");
     bazarish::service::LedgerStore ledger(stateDir / "store", "XMR");
     bazarish::service::InvoiceStore invoices(stateDir / "store" / "invoices.json");
-    // Payment backend (config-driven). Defaults to the in-process mock; a
-    // deployment selecting paid services configures monerod.
+    // Payment backend (config-driven). Defaults to the in-process mock with
+    // auto-confirm, so a portal top-up settles immediately for local runs; a
+    // deployment selecting paid services configures monerod instead.
     const std::unique_ptr<bazarish::service::PaymentGateway> gateway
-        = bazarish::service::makePaymentGateway({"mock", {}});
+        = bazarish::service::makePaymentGateway({"mock", {{"autoconfirm", "true"}}});
 
     bazarish::service::AccountApiOptions options;
     options.serverFingerprint = card.server;
@@ -122,6 +123,10 @@ int main(const int argc, const char** argv)
         portalOptions.sessionSecret = bazarish::toHex(bazarish::randomBytes(16));
         portalOptions.defaultQuotaBytes = options.defaultQuotaBytes;
         portalOptions.freeSubscriptionTermSeconds = options.maxTermSeconds;
+        // Dev-default paid-service prices (a real deployment configures these).
+        portalOptions.paidServices["username"] = {100, 365 * 24 * 3600};
+        portalOptions.paidServices["i2pDest"] = {100, 30 * 24 * 3600};
+        portalOptions.paidServices["storage"] = {100, 30 * 24 * 3600};
         portal = std::make_unique<bazarish::service::PortalApi>(
             portalOptions, *captcha, grants, ledger, invoices, *gateway);
         portalThread = std::thread(

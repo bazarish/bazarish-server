@@ -137,8 +137,19 @@ int main()
         CHECK(nlohmann::json::parse(result->body).at("notAfter") == now + 3 * 24 * 3600);
     }
 
-    // Register an alias and resolve it to the full trust chain.
+    // Registering a username requires an active username entitlement bought on
+    // the portal; without one the request is refused.
     {
+        const Bytes cert = AliasCertificate::issue(alice, "alice", now, std::nullopt);
+        const std::string body = nlohmann::json{{"cert", toBase64(cert)}}.dump();
+        const httplib::Result ungranted = client.Post("/v1/account/alias",
+            makeHeaders(alice, "POST", "/v1/account/alias", body), body, "application/json");
+        CHECK(ungranted && ungranted->status == 403);
+    }
+
+    // Register an alias (with an entitlement) and resolve it to the full chain.
+    {
+        grants.grantService(alice.fingerprint(), "username", now + 365 * 24 * 3600, now);
         const Bytes cert = AliasCertificate::issue(alice, "alice", now, std::nullopt);
         const std::string body = nlohmann::json{{"cert", toBase64(cert)}}.dump();
         const httplib::Result result = client.Post("/v1/account/alias",
@@ -159,8 +170,9 @@ int main()
         CHECK(subCert.server == serverFp);
     }
 
-    // Mallory cannot take alice's alias.
+    // Mallory cannot take alice's alias (even with her own username entitlement).
     {
+        grants.grantService(mallory.fingerprint(), "username", now + 365 * 24 * 3600, now);
         const Bytes cert = AliasCertificate::issue(mallory, "alice", now, std::nullopt);
         const std::string body = nlohmann::json{{"cert", toBase64(cert)}}.dump();
         const httplib::Result result = client.Post("/v1/account/alias",

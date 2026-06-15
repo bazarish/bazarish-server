@@ -11,10 +11,14 @@
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Certificates.hpp>
 
+#include <nlohmann/json.hpp>
+
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -32,8 +36,9 @@ void printUsage()
 {
     std::printf(
         "bazarish-service-node %s\n"
-        "Usage: bazarish-service-node --state <dir> --server-card <path> "
-        "[--listen <host> <port>] [--portal-listen <host> <port>]\n"
+        "Usage: bazarish-service-node --state <dir> --server-card <path>\n"
+        "         [--listen <host> <port>] [--portal-listen <host> <port>]\n"
+        "         [--payments-config <path>]\n"
         "       bazarish-service-node --version\n"
         "\n"
         "The server card (produced by bazarish-server --i2p) binds this\n"
@@ -50,6 +55,72 @@ bazarish::Bytes readFileBytes(const fs::path& path)
     }
     return bazarish::Bytes(
         std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
+// One paid service, parsed from the payments config.
+struct ServiceConfig {
+    bool enabled = false;
+    std::string priceAtomic;  // atomic units of the settlement currency
+    std::int64_t periodDays = 0;
+    std::uint64_t quotaBytes = 0;  // storage only
+};
+
+// The whole payments config. Its defaults are a local dev setup — an
+// auto-confirm mock gateway and a few cheap services — so the demos and a
+// no-config run work out of the box; a real deployment passes --payments-config.
+struct PaymentsConfig {
+    bazarish::service::PaymentGatewayConfig gateway{"mock", {{"autoconfirm", "true"}}};
+    std::string settlementCurrency = "XMR";
+    std::uint64_t freeStorageBytes = 10 * 1024 * 1024;
+    ServiceConfig username{true, "100", 365, 0};
+    ServiceConfig i2pDest{true, "100", 30, 0};
+    ServiceConfig storage{true, "100", 30, 5ULL * 1024 * 1024 * 1024};
+};
+
+ServiceConfig parseService(const nlohmann::json& service)
+{
+    ServiceConfig config;
+    config.enabled = service.value("enabled", false);
+    config.priceAtomic = service.value("priceAtomic", std::string());
+    config.periodDays = service.value("periodDays", std::int64_t{0});
+    config.quotaBytes = service.value("quotaBytes", std::uint64_t{0});
+    return config;
+}
+
+PaymentsConfig loadPaymentsConfig(const fs::path& path)
+{
+    std::ifstream in(path);
+    if (!in) {
+        throw std::runtime_error("failed to open payments config " + path.string());
+    }
+    const nlohmann::json doc = nlohmann::json::parse(in);
+
+    PaymentsConfig config;
+    if (doc.contains("gateway")) {
+        const nlohmann::json& gateway = doc.at("gateway");
+        config.gateway.type = gateway.at("type").get<std::string>();
+        config.gateway.params.clear();
+        if (gateway.contains("params")) {
+            for (const auto& [key, value] : gateway.at("params").items()) {
+                config.gateway.params[key] = value.get<std::string>();
+            }
+        }
+    }
+    config.settlementCurrency = doc.value("settlementCurrency", config.settlementCurrency);
+    config.freeStorageBytes = doc.value("freeStorageBytes", config.freeStorageBytes);
+    if (doc.contains("services")) {
+        const nlohmann::json& services = doc.at("services");
+        if (services.contains("username")) {
+            config.username = parseService(services.at("username"));
+        }
+        if (services.contains("i2pDest")) {
+            config.i2pDest = parseService(services.at("i2pDest"));
+        }
+        if (services.contains("storage")) {
+            config.storage = parseService(services.at("storage"));
+        }
+    }
+    return config;
 }
 
 }  // namespace
@@ -72,17 +143,20 @@ int main(const int argc, const char** argv)
     int port = kDefaultPort;
     std::string portalHost;
     int portalPort = 0;
-    if ((argc - 5) % 3 != 0) {
-        printUsage();
-        return 2;
-    }
-    for (int i = 5; i + 2 < argc; i += 3) {
-        if (std::strcmp(argv[i], "--listen") == 0) {
+    fs::path paymentsConfigPath;
+    for (int i = 5; i < argc;) {
+        const std::string flag = argv[i];
+        if (flag == "--listen" && i + 2 < argc) {
             host = argv[i + 1];
             port = std::atoi(argv[i + 2]);
-        } else if (std::strcmp(argv[i], "--portal-listen") == 0) {
+            i += 3;
+        } else if (flag == "--portal-listen" && i + 2 < argc) {
             portalHost = argv[i + 1];
             portalPort = std::atoi(argv[i + 2]);
+            i += 3;
+        } else if (flag == "--payments-config" && i + 1 < argc) {
+            paymentsConfigPath = argv[i + 1];
+            i += 2;
         } else {
             printUsage();
             return 2;
@@ -92,20 +166,30 @@ int main(const int argc, const char** argv)
     const bazarish::Bytes cardDer = readFileBytes(cardPath);
     const bazarish::ServerCard card = bazarish::ServerCard::verify(cardDer);
 
+    // Payments/paid-services config (a single source feeding both the discovery
+    // advertisement and the buy endpoints); dev defaults when no file is given.
+    const PaymentsConfig payments
+        = paymentsConfigPath.empty() ? PaymentsConfig{} : loadPaymentsConfig(paymentsConfigPath);
+
     fs::create_directories(stateDir);
     bazarish::service::SubscriptionStore store(stateDir / "store");
     bazarish::service::GrantStore grants(stateDir / "store");
-    bazarish::service::LedgerStore ledger(stateDir / "store", "XMR");
+    bazarish::service::LedgerStore ledger(stateDir / "store", payments.settlementCurrency);
     bazarish::service::InvoiceStore invoices(stateDir / "store" / "invoices.json");
-    // Payment backend (config-driven). Defaults to the in-process mock with
-    // auto-confirm, so a portal top-up settles immediately for local runs; a
-    // deployment selecting paid services configures monerod instead.
     const std::unique_ptr<bazarish::service::PaymentGateway> gateway
-        = bazarish::service::makePaymentGateway({"mock", {{"autoconfirm", "true"}}});
+        = bazarish::service::makePaymentGateway(payments.gateway);
 
     bazarish::service::AccountApiOptions options;
     options.serverFingerprint = card.server;
     options.serverCardDer = cardDer;
+    options.settlementCurrency = payments.settlementCurrency;
+    options.defaultQuotaBytes = payments.freeStorageBytes;
+    options.usernameService
+        = {payments.username.enabled, payments.username.priceAtomic, payments.username.periodDays};
+    options.i2pDestService
+        = {payments.i2pDest.enabled, payments.i2pDest.priceAtomic, payments.i2pDest.periodDays};
+    options.storagePlan = {payments.storage.enabled, payments.storage.quotaBytes,
+        payments.storage.priceAtomic, payments.storage.periodDays};
     bazarish::service::AccountApi api(store, grants, options);
 
     // The browser-facing portal (sign-in-with-key, captcha registration, …),
@@ -123,10 +207,17 @@ int main(const int argc, const char** argv)
         portalOptions.sessionSecret = bazarish::toHex(bazarish::randomBytes(16));
         portalOptions.defaultQuotaBytes = options.defaultQuotaBytes;
         portalOptions.freeSubscriptionTermSeconds = options.maxTermSeconds;
-        // Dev-default paid-service prices (a real deployment configures these).
-        portalOptions.paidServices["username"] = {100, 365 * 24 * 3600};
-        portalOptions.paidServices["i2pDest"] = {100, 30 * 24 * 3600};
-        portalOptions.paidServices["storage"] = {100, 30 * 24 * 3600};
+        portalOptions.settlementCurrency = payments.settlementCurrency;
+        const auto addPaid = [&portalOptions](const std::string& name, const ServiceConfig& svc) {
+            if (svc.enabled && !svc.priceAtomic.empty()) {
+                portalOptions.paidServices[name]
+                    = {static_cast<std::uint64_t>(std::stoull(svc.priceAtomic)),
+                        svc.periodDays * 24 * 3600};
+            }
+        };
+        addPaid("username", payments.username);
+        addPaid("i2pDest", payments.i2pDest);
+        addPaid("storage", payments.storage);
         portal = std::make_unique<bazarish::service::PortalApi>(
             portalOptions, *captcha, grants, ledger, invoices, *gateway);
         portalThread = std::thread(

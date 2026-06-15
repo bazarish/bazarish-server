@@ -1,0 +1,24 @@
+{
+  "_comment": "Payments / paid-services config for bazarish-service-node (--payments-config). Prices are atomic units of the settlement currency (piconero for monerod). Omitted fields fall back to dev defaults.",
+
+  "gateway": {
+    "type": "monerod",
+    "params": {
+      "url": "http://127.0.0.1:18082",
+      "user": "rpcuser",
+      "password": "rpcpass",
+      "account": "0",
+      "minconf": "10",
+      "callback_secret": "change-me-to-a-long-random-string"
+    }
+  },
+
+  "settlementCurrency": "XMR",
+  "freeStorageBytes": 10485760,
+
+  "services": {
+    "username": { "enabled": true, "priceAtomic": "100000000000", "periodDays": 365 },
+    "i2pDest":  { "enabled": true, "priceAtomic": "200000000000", "periodDays": 30 },
+    "storage":  { "enabled": true, "priceAtomic": "300000000000", "periodDays": 30, "quotaBytes": 5368709120 }
+  }
+}

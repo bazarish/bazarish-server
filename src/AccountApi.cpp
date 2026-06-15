@@ -169,18 +169,33 @@ void AccountApi::setupRoutes()
               }
               grants_.takeSubscription(cert.user);  // consume the one-shot grant
 
+              // Effective quota: the paid storage plan while its entitlement is
+              // active, otherwise the grant's (free) quota.
+              std::uint64_t effectiveQuota = grant->quotaBytes;
+              const std::optional<GrantStore::ServiceGrant> storageGrant
+                  = grants_.peekService(cert.user, "storage");
+              if (storageGrant.has_value() && storageGrant->paidThrough > now
+                  && options_.storagePlan.quotaBytes > effectiveQuota) {
+                  effectiveQuota = options_.storagePlan.quotaBytes;
+              }
+
               SubscriptionStore::Subscription record;
               record.user = cert.user;
               record.issuedAt = cert.issuedAt;
               record.notAfter = cert.notAfter;
-              record.quotaBytes = grant->quotaBytes;
+              record.quotaBytes = effectiveQuota;
               record.certificate = der;
               store_.putSubscription(record);
+
+              // Tell the messaging server the user's effective storage quota.
+              if (options_.publishQuota) {
+                  options_.publishQuota(cert.user, effectiveQuota);
+              }
 
               respondJson(response,
                   {
                       {"notAfter", cert.notAfter},
-                      {"quotaBytes", grant->quotaBytes},
+                      {"quotaBytes", effectiveQuota},
                       {"maxTermSeconds", options_.maxTermSeconds},
                       {"serverCard", toBase64(options_.serverCardDer)},
                   });

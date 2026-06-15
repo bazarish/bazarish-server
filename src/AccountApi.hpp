@@ -7,6 +7,7 @@
 #include <bazarish/Bytes.hpp>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -60,6 +61,10 @@ struct AccountApiOptions {
     // Storage: every account gets defaultQuotaBytes free; storagePlan is the
     // optional paid upgrade (a bigger quota, billed monthly).
     StoragePlan storagePlan;
+
+    // Pushes a user's effective storage quota to the messaging server when their
+    // plan is (re)evaluated on subscribe/renew. Empty = no push (e.g. tests).
+    std::function<void(const std::string& user, std::uint64_t quotaBytes)> publishQuota;
 };
 
 // The /v1/account/* HTTP API: subscriptions, aliases and alias resolution.

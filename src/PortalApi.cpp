@@ -319,6 +319,10 @@ void PortalApi::setupRoutes()
                 = existing.has_value() ? std::max(now, existing->paidThrough) : now;
             const std::int64_t paidThrough = base + offered->second.termSeconds;
             grants_.grantService(userId, service, paidThrough, now);
+            // A storage purchase takes effect immediately: push the plan quota.
+            if (service == "storage" && options_.publishQuota) {
+                options_.publishQuota(userId, options_.storageQuotaBytes);
+            }
             respondJson(response,
                 {
                     {"ok", true},

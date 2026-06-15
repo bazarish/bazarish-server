@@ -5,6 +5,7 @@
 #include "LedgerStore.hpp"
 #include "PaymentGateway.hpp"
 #include "PortalApi.hpp"
+#include "QuotaPublisher.hpp"
 #include "SelfHostedCaptcha.hpp"
 #include "SubscriptionStore.hpp"
 
@@ -39,6 +40,7 @@ void printUsage()
         "Usage: bazarish-service-node --state <dir> --server-card <path>\n"
         "         [--listen <host> <port>] [--portal-listen <host> <port>]\n"
         "         [--payments-config <path>]\n"
+        "         [--messaging <host> <port>] [--operator-secret <secret>]\n"
         "       bazarish-service-node --version\n"
         "\n"
         "The server card (produced by bazarish-server --i2p) binds this\n"
@@ -144,6 +146,9 @@ int main(const int argc, const char** argv)
     std::string portalHost;
     int portalPort = 0;
     fs::path paymentsConfigPath;
+    std::string messagingHost;
+    int messagingPort = 0;
+    std::string operatorSecret;
     for (int i = 5; i < argc;) {
         const std::string flag = argv[i];
         if (flag == "--listen" && i + 2 < argc) {
@@ -156,6 +161,13 @@ int main(const int argc, const char** argv)
             i += 3;
         } else if (flag == "--payments-config" && i + 1 < argc) {
             paymentsConfigPath = argv[i + 1];
+            i += 2;
+        } else if (flag == "--messaging" && i + 2 < argc) {
+            messagingHost = argv[i + 1];
+            messagingPort = std::atoi(argv[i + 2]);
+            i += 3;
+        } else if (flag == "--operator-secret" && i + 1 < argc) {
+            operatorSecret = argv[i + 1];
             i += 2;
         } else {
             printUsage();
@@ -179,6 +191,17 @@ int main(const int argc, const char** argv)
     const std::unique_ptr<bazarish::service::PaymentGateway> gateway
         = bazarish::service::makePaymentGateway(payments.gateway);
 
+    // Pushes a user's effective storage quota to the messaging server (private
+    // channel + operator secret); a no-op until --messaging is given.
+    const std::string messagingUrl = messagingPort > 0
+        ? "http://" + messagingHost + ":" + std::to_string(messagingPort)
+        : std::string();
+    const bazarish::service::QuotaPublisher quotaPublisher(messagingUrl, operatorSecret);
+    const auto publishQuota
+        = [&quotaPublisher](const std::string& user, const std::uint64_t quotaBytes) {
+              quotaPublisher.publish(user, quotaBytes);
+          };
+
     bazarish::service::AccountApiOptions options;
     options.serverFingerprint = card.server;
     options.serverCardDer = cardDer;
@@ -190,6 +213,7 @@ int main(const int argc, const char** argv)
         = {payments.i2pDest.enabled, payments.i2pDest.priceAtomic, payments.i2pDest.periodDays};
     options.storagePlan = {payments.storage.enabled, payments.storage.quotaBytes,
         payments.storage.priceAtomic, payments.storage.periodDays};
+    options.publishQuota = publishQuota;
     bazarish::service::AccountApi api(store, grants, options);
 
     // The browser-facing portal (sign-in-with-key, captcha registration, …),
@@ -218,6 +242,8 @@ int main(const int argc, const char** argv)
         addPaid("username", payments.username);
         addPaid("i2pDest", payments.i2pDest);
         addPaid("storage", payments.storage);
+        portalOptions.storageQuotaBytes = payments.storage.quotaBytes;
+        portalOptions.publishQuota = publishQuota;
         portal = std::make_unique<bazarish::service::PortalApi>(
             portalOptions, *captcha, grants, ledger, invoices, *gateway);
         portalThread = std::thread(

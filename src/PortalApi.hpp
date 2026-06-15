@@ -10,6 +10,7 @@
 #include "PortalSession.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -41,6 +42,12 @@ struct PortalApiOptions {
     };
     // Keyed by service name ("username", "i2pDest", "storage").
     std::map<std::string, PaidService> paidServices;
+    // The quota the storage plan grants, pushed to the messaging server on a
+    // storage purchase.
+    std::uint64_t storageQuotaBytes = 0;
+    // Pushes a user's effective storage quota to the messaging server. Empty =
+    // no push (e.g. tests).
+    std::function<void(const std::string& user, std::uint64_t quotaBytes)> publishQuota;
 };
 
 // The service node's web portal (browser-facing). This first slice serves the

@@ -26,6 +26,7 @@ add_library(bazarish_service_lib STATIC
     src/PaymentGateway.cpp
     src/MockPaymentGateway.cpp
     src/MoneroPaymentGateway.cpp
+    src/Portal.cpp
 )
 target_include_directories(bazarish_service_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(bazarish_service_lib PUBLIC Bazarish::Common Threads::Threads)
@@ -54,3 +55,4 @@ endfunction()
 bazarish_service_add_test(TestSubscriptionStore)
 bazarish_service_add_test(TestAccountApi)
 bazarish_service_add_test(TestPayments)
+bazarish_service_add_test(TestPortal)

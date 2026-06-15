@@ -283,6 +283,49 @@ void AccountApi::setupRoutes()
                     {"serverCard", toBase64(options_.serverCardDer)},
                 });
         });
+
+    // Onboarding discovery: where to register and what this server offers.
+    // Unauthenticated — the client shows the message and link(s); registration
+    // and paid services happen on the portal (captcha / payment), not here.
+    http_->Get("/v1/account/portal",
+        [this](const httplib::Request&, httplib::Response& response) {
+            nlohmann::json links = nlohmann::json::array();
+            for (const std::string& link : options_.portalLinks) {
+                links.push_back(link);
+            }
+            const auto serviceJson = [this](const PortalService& service) {
+                return nlohmann::json{
+                    {"enabled", service.enabled},
+                    {"priceAtomic", service.priceAtomic},
+                    {"periodDays", service.periodDays},
+                    {"currency", options_.settlementCurrency},
+                };
+            };
+            respondJson(response,
+                {
+                    {"message", options_.portalMessage},
+                    {"links", links},
+                    {"services",
+                        {
+                            {"freeRegistration",
+                                {{"enabled", true}, {"captcha", options_.freeRegistrationCaptcha}}},
+                            {"username", serviceJson(options_.usernameService)},
+                            {"i2pDest", serviceJson(options_.i2pDestService)},
+                            {"storage",
+                                {
+                                    {"freeQuotaBytes", options_.defaultQuotaBytes},
+                                    {"paid",
+                                        {
+                                            {"enabled", options_.storagePlan.enabled},
+                                            {"quotaBytes", options_.storagePlan.quotaBytes},
+                                            {"priceAtomic", options_.storagePlan.priceAtomic},
+                                            {"periodDays", options_.storagePlan.periodDays},
+                                            {"currency", options_.settlementCurrency},
+                                        }},
+                                }},
+                        }},
+                });
+        });
 }
 
 }  // namespace bazarish::service

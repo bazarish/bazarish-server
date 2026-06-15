@@ -1,8 +1,11 @@
 // Bazarish project (c) 2026
+#include "GrantStore.hpp"
 #include "Portal.hpp"
 #include "PortalApi.hpp"
 #include "PortalSession.hpp"
+#include "SelfHostedCaptcha.hpp"
 
+#include <bazarish/Bytes.hpp>
 #include <bazarish/Crypto.hpp>
 
 #include <httplib/httplib.h>
@@ -12,6 +15,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
+#include <optional>
+#include <regex>
 #include <string>
 #include <thread>
 
@@ -50,6 +56,17 @@ std::int64_t now()
         .count();
 }
 
+std::string extractCaptchaCode(const std::string& svg)
+{
+    std::string code;
+    const std::regex re(">([A-Z2-9])</text>");
+    for (auto it = std::sregex_iterator(svg.begin(), svg.end(), re); it != std::sregex_iterator();
+         ++it) {
+        code += (*it)[1].str();
+    }
+    return code;
+}
+
 std::string cookieToken(const std::string& setCookie)
 {
     const std::string key = "session=";
@@ -74,13 +91,19 @@ void testSessionToken()
 
 void testLoginFlow()
 {
+    namespace fs = std::filesystem;
     const Identity identity = Identity::generate();
+    const fs::path grantRoot = fs::temp_directory_path() / ("bazarish-grants-" + toHex(randomBytes(8)));
+
+    SelfHostedCaptcha captcha("captcha-secret", 5, 300);
+    GrantStore grants(grantRoot);
 
     PortalApiOptions options;
     options.audience = "test-server-fp";
     options.challengeSecret = "challenge-secret";
     options.sessionSecret = "session-secret";
-    PortalApi api(options);
+    options.defaultQuotaBytes = 10 * 1024 * 1024;
+    PortalApi api(options, captcha, grants);
 
     const int port = api.bindToAnyPort("127.0.0.1");
     std::thread serverThread([&api]() { (void)api.listenAfterBind(); });
@@ -131,8 +154,42 @@ void testLoginFlow()
     CHECK(badLogin);
     CHECK(badLogin->status == 401);
 
+    // Registration requires a session.
+    const httplib::Result anonRegister = client.Post(
+        "/portal/register", nlohmann::json({{"captchaId", "x"}, {"captchaAnswer", "y"}}).dump(),
+        "application/json");
+    CHECK(anonRegister && anonRegister->status == 401);
+
+    // Free registration: solve a captcha while logged in -> a pending grant.
+    const httplib::Result captchaResponse = client.Get("/portal/captcha");
+    CHECK(captchaResponse && captchaResponse->status == 200);
+    const nlohmann::json captchaJson = nlohmann::json::parse(captchaResponse->body);
+    const std::string captchaId = captchaJson.at("captchaId").get<std::string>();
+    const std::string code = extractCaptchaCode(captchaJson.at("body").get<std::string>());
+
+    const nlohmann::json registerBody = {{"captchaId", captchaId}, {"captchaAnswer", code}};
+    const httplib::Result registered
+        = client.Post("/portal/register", cookie, registerBody.dump(), "application/json");
+    CHECK(registered && registered->status == 200);
+
+    const std::optional<GrantStore::SubscriptionGrant> grant
+        = grants.peekSubscription(identity.fingerprint());
+    CHECK(grant.has_value());
+    CHECK(grant->quotaBytes == 10 * 1024 * 1024);
+
+    // A wrong captcha answer is rejected.
+    const httplib::Result captcha2 = client.Get("/portal/captcha");
+    const nlohmann::json captcha2Json = nlohmann::json::parse(captcha2->body);
+    const nlohmann::json badCaptcha
+        = {{"captchaId", captcha2Json.at("captchaId").get<std::string>()},
+            {"captchaAnswer", "ZZZZZ"}};
+    const httplib::Result rejected
+        = client.Post("/portal/register", cookie, badCaptcha.dump(), "application/json");
+    CHECK(rejected && rejected->status == 403);
+
     api.stop();
     serverThread.join();
+    fs::remove_all(grantRoot);
 }
 
 }  // namespace

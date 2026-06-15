@@ -34,6 +34,7 @@ add_library(bazarish_service_lib STATIC
     src/SelfHostedCaptcha.cpp
     src/PortalSession.cpp
     src/PortalApi.cpp
+    src/GrantStore.cpp
 )
 target_include_directories(bazarish_service_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(bazarish_service_lib PUBLIC Bazarish::Common Threads::Threads)
@@ -67,3 +68,4 @@ bazarish_service_add_test(TestLedger)
 bazarish_service_add_test(TestLoginChallenge)
 bazarish_service_add_test(TestCaptcha)
 bazarish_service_add_test(TestPortalApi)
+bazarish_service_add_test(TestGrantStore)

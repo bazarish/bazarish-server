@@ -38,8 +38,10 @@ std::string cookieValue(const httplib::Request& request, const std::string& name
 
 namespace bazarish::service {
 
-PortalApi::PortalApi(PortalApiOptions options)
+PortalApi::PortalApi(PortalApiOptions options, Captcha& captcha, GrantStore& grants)
     : options_(std::move(options))
+    , captcha_(captcha)
+    , grants_(grants)
     , login_(options_.challengeSecret, options_.audience)
     , session_(options_.sessionSecret, options_.sessionTtlSeconds)
     , http_(std::make_unique<httplib::Server>())
@@ -108,6 +110,52 @@ void PortalApi::setupRoutes()
             respondJson(response, {{"error", "not authenticated"}});
         }
     });
+
+    // A captcha to present before free registration.
+    http_->Get("/portal/captcha", [this](const httplib::Request&, httplib::Response& response) {
+        const CaptchaChallenge challenge = captcha_.issue(nowSeconds());
+        respondJson(response,
+            {
+                {"captchaId", challenge.id},
+                {"contentType", challenge.contentType},
+                {"body", challenge.body},
+            });
+    });
+
+    // Free registration: a logged-in user passes the captcha; the node records a
+    // pending subscription grant the Client then redeems with its signed cert.
+    http_->Post(
+        "/portal/register", [this](const httplib::Request& request, httplib::Response& response) {
+            std::string userId;
+            try {
+                userId = session_.verify(cookieValue(request, "session"), nowSeconds());
+            } catch (const std::exception&) {
+                response.status = 401;
+                respondJson(response, {{"error", "not authenticated"}});
+                return;
+            }
+            const nlohmann::json body = nlohmann::json::parse(request.body, nullptr, false);
+            if (body.is_discarded() || !body.contains("captchaId")
+                || !body.contains("captchaAnswer")) {
+                response.status = 400;
+                respondJson(response, {{"error", "bad request"}});
+                return;
+            }
+            if (!captcha_.verify(body.at("captchaId").get<std::string>(),
+                    body.at("captchaAnswer").get<std::string>(), nowSeconds())) {
+                response.status = 403;
+                respondJson(response, {{"error", "captcha failed"}});
+                return;
+            }
+            grants_.grantSubscription(userId, options_.defaultQuotaBytes,
+                options_.freeSubscriptionTermSeconds, nowSeconds());
+            respondJson(response,
+                {
+                    {"ok", true},
+                    {"quotaBytes", options_.defaultQuotaBytes},
+                    {"termSeconds", options_.freeSubscriptionTermSeconds},
+                });
+        });
 }
 
 }  // namespace bazarish::service

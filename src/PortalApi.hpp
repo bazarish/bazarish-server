@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #pragma once
 
+#include "Captcha.hpp"
+#include "GrantStore.hpp"
 #include "LoginChallenge.hpp"
 #include "PortalSession.hpp"
 
@@ -22,6 +24,9 @@ struct PortalApiOptions {
     std::string challengeSecret;
     std::string sessionSecret;
     std::int64_t sessionTtlSeconds = 3600;
+    // Free-tier subscription granted on captcha registration.
+    std::uint64_t defaultQuotaBytes = 10 * 1024 * 1024;
+    std::int64_t freeSubscriptionTermSeconds = 14 * 24 * 3600;
 };
 
 // The service node's web portal (browser-facing). This first slice serves the
@@ -31,7 +36,7 @@ struct PortalApiOptions {
 // and purchases are added on top.
 class PortalApi {
 public:
-    explicit PortalApi(PortalApiOptions options);
+    PortalApi(PortalApiOptions options, Captcha& captcha, GrantStore& grants);
     ~PortalApi();
 
     bool listen(const std::string& host, int port);
@@ -43,6 +48,8 @@ private:
     void setupRoutes();
 
     PortalApiOptions options_;
+    Captcha& captcha_;
+    GrantStore& grants_;
     LoginChallenge login_;
     PortalSession session_;
     std::unique_ptr<httplib::Server> http_;

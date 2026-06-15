@@ -99,6 +99,40 @@ std::optional<GrantStore::SubscriptionGrant> GrantStore::peekSubscription(const 
     return result;
 }
 
+void GrantStore::grantService(const std::string& user, const std::string& service,
+    const std::int64_t paidThrough, const std::int64_t now)
+{
+    requireUser(user);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const fs::path path = grantPath(user);
+    nlohmann::json body = fs::exists(path) ? readJsonFile(path) : nlohmann::json::object();
+    body["services"][service] = {
+        {"paidThrough", paidThrough},
+        {"grantedAt", now},
+    };
+    writeFileAtomic(path, body.dump());
+}
+
+std::optional<GrantStore::ServiceGrant> GrantStore::peekService(
+    const std::string& user, const std::string& service)
+{
+    requireUser(user);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const fs::path path = grantPath(user);
+    if (!fs::exists(path)) {
+        return std::nullopt;
+    }
+    const nlohmann::json body = readJsonFile(path);
+    if (!body.contains("services") || !body.at("services").contains(service)) {
+        return std::nullopt;
+    }
+    const nlohmann::json& grant = body.at("services").at(service);
+    ServiceGrant result;
+    result.paidThrough = grant.at("paidThrough").get<std::int64_t>();
+    result.grantedAt = grant.at("grantedAt").get<std::int64_t>();
+    return result;
+}
+
 std::optional<GrantStore::SubscriptionGrant> GrantStore::takeSubscription(const std::string& user)
 {
     const std::optional<SubscriptionGrant> grant = peekSubscription(user);

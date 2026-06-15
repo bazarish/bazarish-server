@@ -3,10 +3,14 @@
 
 #include "Captcha.hpp"
 #include "GrantStore.hpp"
+#include "InvoiceStore.hpp"
+#include "LedgerStore.hpp"
 #include "LoginChallenge.hpp"
+#include "PaymentGateway.hpp"
 #include "PortalSession.hpp"
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <string>
 
@@ -27,6 +31,16 @@ struct PortalApiOptions {
     // Free-tier subscription granted on captcha registration.
     std::uint64_t defaultQuotaBytes = 10 * 1024 * 1024;
     std::int64_t freeSubscriptionTermSeconds = 14 * 24 * 3600;
+
+    // Balance/pricing are in atomic units of this settlement currency.
+    std::string settlementCurrency = "XMR";
+    // A buyable service: its per-term price and term length.
+    struct PaidService {
+        std::uint64_t priceAtomic = 0;
+        std::int64_t termSeconds = 0;
+    };
+    // Keyed by service name ("username", "i2pDest", "storage").
+    std::map<std::string, PaidService> paidServices;
 };
 
 // The service node's web portal (browser-facing). This first slice serves the
@@ -36,7 +50,8 @@ struct PortalApiOptions {
 // and purchases are added on top.
 class PortalApi {
 public:
-    PortalApi(PortalApiOptions options, Captcha& captcha, GrantStore& grants);
+    PortalApi(PortalApiOptions options, Captcha& captcha, GrantStore& grants, LedgerStore& ledger,
+        InvoiceStore& invoices, PaymentGateway& gateway);
     ~PortalApi();
 
     bool listen(const std::string& host, int port);
@@ -46,10 +61,17 @@ public:
 
 private:
     void setupRoutes();
+    // Credits a confirmed invoice to its owner exactly once. Returns whether a
+    // credit was applied.
+    bool settleInvoice(
+        const std::string& invoiceId, const PaymentStatus& status, std::int64_t now);
 
     PortalApiOptions options_;
     Captcha& captcha_;
     GrantStore& grants_;
+    LedgerStore& ledger_;
+    InvoiceStore& invoices_;
+    PaymentGateway& gateway_;
     LoginChallenge login_;
     PortalSession session_;
     std::unique_ptr<httplib::Server> http_;

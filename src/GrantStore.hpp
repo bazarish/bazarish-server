@@ -24,6 +24,13 @@ public:
         std::int64_t grantedAt = 0;
     };
 
+    // A paid service entitlement (username / i2pDest / storage), valid until
+    // paidThrough (unix seconds).
+    struct ServiceGrant {
+        std::int64_t paidThrough = 0;
+        std::int64_t grantedAt = 0;
+    };
+
     explicit GrantStore(std::filesystem::path root);
 
     // Grants (or refreshes) a pending subscription for the user — the quota and
@@ -36,6 +43,15 @@ public:
 
     // Consumes the pending subscription grant (one-shot); nullopt if none.
     std::optional<SubscriptionGrant> takeSubscription(const std::string& user);
+
+    // Records a paid service entitlement valid until paidThrough (a purchase or
+    // renewal). Unlike a subscription grant this is not one-shot — it is the
+    // standing paid-through marker the downstream feature reads.
+    void grantService(const std::string& user, const std::string& service,
+        std::int64_t paidThrough, std::int64_t now);
+
+    // The current entitlement for a service; nullopt if never bought.
+    std::optional<ServiceGrant> peekService(const std::string& user, const std::string& service);
 
 private:
     std::filesystem::path grantPath(const std::string& user) const;

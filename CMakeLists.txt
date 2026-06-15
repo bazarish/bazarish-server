@@ -35,6 +35,7 @@ add_library(bazarish_service_lib STATIC
     src/PortalSession.cpp
     src/PortalApi.cpp
     src/GrantStore.cpp
+    src/InvoiceStore.cpp
 )
 target_include_directories(bazarish_service_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(bazarish_service_lib PUBLIC Bazarish::Common Threads::Threads)

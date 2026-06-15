@@ -1,5 +1,8 @@
 // Bazarish project (c) 2026
 #include "GrantStore.hpp"
+#include "InvoiceStore.hpp"
+#include "LedgerStore.hpp"
+#include "MockPaymentGateway.hpp"
 #include "Portal.hpp"
 #include "PortalApi.hpp"
 #include "PortalSession.hpp"
@@ -97,13 +100,18 @@ void testLoginFlow()
 
     SelfHostedCaptcha captcha("captcha-secret", 5, 300);
     GrantStore grants(grantRoot);
+    LedgerStore ledger(grantRoot, "XMR");
+    InvoiceStore invoices(grantRoot / "invoices.json");
+    MockPaymentGateway gateway(false);
 
     PortalApiOptions options;
     options.audience = "test-server-fp";
     options.challengeSecret = "challenge-secret";
     options.sessionSecret = "session-secret";
     options.defaultQuotaBytes = 10 * 1024 * 1024;
-    PortalApi api(options, captcha, grants);
+    options.settlementCurrency = "XMR";
+    options.paidServices["username"] = {600, 365 * 24 * 3600};
+    PortalApi api(options, captcha, grants, ledger, invoices, gateway);
 
     const int port = api.bindToAnyPort("127.0.0.1");
     std::thread serverThread([&api]() { (void)api.listenAfterBind(); });
@@ -186,6 +194,46 @@ void testLoginFlow()
     const httplib::Result rejected
         = client.Post("/portal/register", cookie, badCaptcha.dump(), "application/json");
     CHECK(rejected && rejected->status == 403);
+
+    // Balance starts at zero.
+    const httplib::Result balance0 = client.Get("/portal/balance", cookie);
+    CHECK(balance0 && balance0->status == 200);
+    CHECK(nlohmann::json::parse(balance0->body).at("balanceAtomic").get<std::string>() == "0");
+
+    // Top up: create an invoice (mock gateway → pending until marked paid).
+    const httplib::Result topup = client.Post(
+        "/portal/topup", cookie, nlohmann::json({{"amount", "1000"}}).dump(), "application/json");
+    CHECK(topup && topup->status == 200);
+    const std::string invoiceId = nlohmann::json::parse(topup->body).at("invoiceId").get<std::string>();
+
+    // Pending: polling does not credit yet.
+    const httplib::Result pending = client.Get("/portal/pay/" + invoiceId, cookie);
+    CHECK(pending && nlohmann::json::parse(pending->body).at("state").get<std::string>() == "pending");
+    CHECK(nlohmann::json::parse(pending->body).at("balanceAtomic").get<std::string>() == "0");
+
+    // Confirm the payment out of band, then poll: the balance is credited once.
+    gateway.markPaid(invoiceId, "1000", 1);
+    const httplib::Result confirmed = client.Get("/portal/pay/" + invoiceId, cookie);
+    CHECK(confirmed && nlohmann::json::parse(confirmed->body).at("state").get<std::string>() == "confirmed");
+    CHECK(nlohmann::json::parse(confirmed->body).at("balanceAtomic").get<std::string>() == "1000");
+    // Idempotent: a second poll does not double-credit.
+    const httplib::Result again = client.Get("/portal/pay/" + invoiceId, cookie);
+    CHECK(nlohmann::json::parse(again->body).at("balanceAtomic").get<std::string>() == "1000");
+
+    // Buy the username (600): balance drops to 400, entitlement is recorded.
+    const httplib::Result bought = client.Post(
+        "/portal/buy", cookie, nlohmann::json({{"service", "username"}}).dump(), "application/json");
+    CHECK(bought && bought->status == 200);
+    CHECK(nlohmann::json::parse(bought->body).at("balanceAtomic").get<std::string>() == "400");
+    CHECK(grants.peekService(identity.fingerprint(), "username").has_value());
+
+    // A second purchase (600) exceeds the remaining balance (400) → refused,
+    // balance unchanged.
+    const httplib::Result broke = client.Post(
+        "/portal/buy", cookie, nlohmann::json({{"service", "username"}}).dump(), "application/json");
+    CHECK(broke && broke->status == 402);
+    const httplib::Result balanceAfter = client.Get("/portal/balance", cookie);
+    CHECK(nlohmann::json::parse(balanceAfter->body).at("balanceAtomic").get<std::string>() == "400");
 
     api.stop();
     serverThread.join();

@@ -130,6 +130,29 @@ std::uint64_t LedgerStore::credit(
     return account.balanceAtomic;
 }
 
+bool LedgerStore::creditOnce(
+    const std::string& user, const std::uint64_t amount, const std::string& ref, std::int64_t now)
+{
+    requireUser(user);
+    if (amount == 0) {
+        throw std::invalid_argument("credit amount must be positive");
+    }
+    const std::lock_guard<std::mutex> lock(mutex_);
+    Account account = load(user);
+    for (const Entry& entry : account.entries) {
+        if (entry.type == "credit" && entry.ref == ref) {
+            return false;  // already applied — duplicate notification
+        }
+    }
+    if (amount > std::numeric_limits<std::uint64_t>::max() - account.balanceAtomic) {
+        throw std::overflow_error("ledger balance overflow");
+    }
+    account.balanceAtomic += amount;
+    account.entries.push_back({now, "credit", amount, ref, account.balanceAtomic});
+    save(user, account);
+    return true;
+}
+
 bool LedgerStore::debit(
     const std::string& user, const std::uint64_t amount, const std::string& ref, std::int64_t now)
 {

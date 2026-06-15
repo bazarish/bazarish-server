@@ -43,6 +43,12 @@ public:
     std::uint64_t credit(
         const std::string& user, std::uint64_t amount, const std::string& ref, std::int64_t now);
 
+    // Idempotent credit by ref: if a credit with this ref was already applied,
+    // makes no change and returns false; otherwise credits and returns true.
+    // Lets poll, webhook and txid notifications for one invoice race safely.
+    bool creditOnce(
+        const std::string& user, std::uint64_t amount, const std::string& ref, std::int64_t now);
+
     // Debits the balance for a purchase and appends an entry. Returns false and
     // changes nothing when the amount is zero or exceeds the balance.
     bool debit(

@@ -1,6 +1,9 @@
 // Bazarish project (c) 2026
 #include "AccountApi.hpp"
 #include "GrantStore.hpp"
+#include "InvoiceStore.hpp"
+#include "LedgerStore.hpp"
+#include "PaymentGateway.hpp"
 #include "PortalApi.hpp"
 #include "SelfHostedCaptcha.hpp"
 #include "SubscriptionStore.hpp"
@@ -92,6 +95,12 @@ int main(const int argc, const char** argv)
     fs::create_directories(stateDir);
     bazarish::service::SubscriptionStore store(stateDir / "store");
     bazarish::service::GrantStore grants(stateDir / "store");
+    bazarish::service::LedgerStore ledger(stateDir / "store", "XMR");
+    bazarish::service::InvoiceStore invoices(stateDir / "store" / "invoices.json");
+    // Payment backend (config-driven). Defaults to the in-process mock; a
+    // deployment selecting paid services configures monerod.
+    const std::unique_ptr<bazarish::service::PaymentGateway> gateway
+        = bazarish::service::makePaymentGateway({"mock", {}});
 
     bazarish::service::AccountApiOptions options;
     options.serverFingerprint = card.server;
@@ -113,7 +122,8 @@ int main(const int argc, const char** argv)
         portalOptions.sessionSecret = bazarish::toHex(bazarish::randomBytes(16));
         portalOptions.defaultQuotaBytes = options.defaultQuotaBytes;
         portalOptions.freeSubscriptionTermSeconds = options.maxTermSeconds;
-        portal = std::make_unique<bazarish::service::PortalApi>(portalOptions, *captcha, grants);
+        portal = std::make_unique<bazarish::service::PortalApi>(
+            portalOptions, *captcha, grants, ledger, invoices, *gateway);
         portalThread = std::thread(
             [portalHost, portalPort]() { portal->listen(portalHost, portalPort); });
         portalThread.detach();

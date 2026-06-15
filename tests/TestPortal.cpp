@@ -72,6 +72,7 @@ void testPortalDiscovery()
     namespace fs = std::filesystem;
     const fs::path root = fs::temp_directory_path() / ("bazarish-portal-" + toHex(randomBytes(8)));
     SubscriptionStore store(root);
+    GrantStore grants(root);
 
     AccountApiOptions options;
     options.serverFingerprint = "server-fp";
@@ -84,7 +85,7 @@ void testPortalDiscovery()
     options.defaultQuotaBytes = 10 * 1024 * 1024;            // free minimum
     options.storagePlan = {true, 5ULL * 1024 * 1024 * 1024, "300000000", 30};  // 5 GiB / month
 
-    AccountApi api(store, options);
+    AccountApi api(store, grants, options);
     const int port = api.bindToAnyPort("127.0.0.1");
     std::thread serverThread([&api]() { (void)api.listenAfterBind(); });
 

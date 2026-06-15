@@ -1,5 +1,6 @@
 // Bazarish project (c) 2026
 #include "AccountApi.hpp"
+#include "GrantStore.hpp"
 #include "SubscriptionStore.hpp"
 
 #include <bazarish/Certificates.hpp>
@@ -74,11 +75,12 @@ int main(const int argc, const char** argv)
 
     fs::create_directories(stateDir);
     bazarish::service::SubscriptionStore store(stateDir / "store");
+    bazarish::service::GrantStore grants(stateDir / "store");
 
     bazarish::service::AccountApiOptions options;
     options.serverFingerprint = card.server;
     options.serverCardDer = cardDer;
-    bazarish::service::AccountApi api(store, options);
+    bazarish::service::AccountApi api(store, grants, options);
 
     std::printf("bazarish-service-node %s\n", kVersion);
     std::printf("bound to server: %s\n", card.server.c_str());

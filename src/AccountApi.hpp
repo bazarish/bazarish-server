@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #pragma once
 
+#include "GrantStore.hpp"
 #include "SubscriptionStore.hpp"
 
 #include <bazarish/Bytes.hpp>
@@ -66,7 +67,7 @@ struct AccountApiOptions {
 // Auth); a caller may only act on certificates naming its own UID.
 class AccountApi {
 public:
-    AccountApi(SubscriptionStore& store, AccountApiOptions options);
+    AccountApi(SubscriptionStore& store, GrantStore& grants, AccountApiOptions options);
     ~AccountApi();
 
     bool listen(const std::string& host, int port);
@@ -78,6 +79,7 @@ private:
     void setupRoutes();
 
     SubscriptionStore& store_;
+    GrantStore& grants_;
     const AccountApiOptions options_;
     std::unique_ptr<httplib::Server> http_;
 };

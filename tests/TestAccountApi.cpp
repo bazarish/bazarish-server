@@ -48,6 +48,7 @@ int main()
         = std::filesystem::temp_directory_path() / "bazarish-account-test";
     std::filesystem::remove_all(root);
     SubscriptionStore store(root);
+    GrantStore grants(root);
 
     const Identity serverIdentity = Identity::generate();
     const Key serverSealing = Key::generateSealing();
@@ -61,7 +62,7 @@ int main()
     options.serverCardDer = cardDer;
     options.defaultQuotaBytes = 10 * 1024 * 1024;
     options.maxTermSeconds = 14 * 24 * 3600;
-    AccountApi api(store, options);
+    AccountApi api(store, grants, options);
 
     const int port = api.bindToAnyPort("127.0.0.1");
     CHECK(port > 0);
@@ -72,8 +73,11 @@ int main()
     const Identity alice = Identity::generate();
     const Identity mallory = Identity::generate();
 
-    // Subscribe with a valid certificate.
+    // Subscribe with a valid certificate. Registration is portal-authorised:
+    // a pending grant must exist before the Client submits its signed cert.
     {
+        grants.grantSubscription(alice.fingerprint(), options.defaultQuotaBytes,
+            options.maxTermSeconds, now);
         const Bytes cert
             = SubscriptionCertificate::issue(alice, serverFp, now, now + 3 * 24 * 3600);
         const std::string body = nlohmann::json{{"cert", toBase64(cert)}}.dump();
@@ -176,6 +180,10 @@ int main()
     // Contact lookup by fingerprint returns the subscription certificate
     // with the user's sealing prekey; unknown users are an explicit 404.
     {
+        // Renewal is portal-authorised too (a fresh grant), so it re-runs the
+        // captcha / payment rather than letting a free term self-renew forever.
+        grants.grantSubscription(alice.fingerprint(), options.defaultQuotaBytes,
+            options.maxTermSeconds, now);
         const Key aliceSealing = Key::generateSealing();
         const Bytes cert = SubscriptionCertificate::issue(
             alice, serverFp, now, now + 3 * 24 * 3600, aliceSealing.publicDer());

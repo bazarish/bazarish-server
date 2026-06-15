@@ -9,6 +9,7 @@
 #include <nlohmann/json.hpp>
 
 #include <ctime>
+#include <optional>
 #include <stdexcept>
 
 namespace {
@@ -56,8 +57,10 @@ bazarish::auth::Headers collectAuthHeaders(const httplib::Request& request)
 
 namespace bazarish::service {
 
-AccountApi::AccountApi(SubscriptionStore& store, const AccountApiOptions options)
+AccountApi::AccountApi(
+    SubscriptionStore& store, GrantStore& grants, const AccountApiOptions options)
     : store_(store)
+    , grants_(grants)
     , options_(options)
     , http_(std::make_unique<httplib::Server>())
 {
@@ -147,18 +150,37 @@ void AccountApi::setupRoutes()
                   return;
               }
 
+              // Registration is authorised on the service portal (captcha for
+              // free, payment for paid), which records a pending grant. The
+              // Client redeems it here with its user-signed certificate; the
+              // grant supplies the quota and bounds the term. No grant → the
+              // user must register on the portal first.
+              const std::optional<GrantStore::SubscriptionGrant> grant
+                  = grants_.peekSubscription(cert.user);
+              if (!grant.has_value()) {
+                  respondError(response, 403, ErrorCode::kDeliveryRejected,
+                      "no pending subscription grant — register on the service portal first");
+                  return;
+              }
+              if (cert.notAfter - cert.issuedAt > grant->termSeconds) {
+                  respondError(response, 400, ErrorCode::kSubscriptionTermTooLong,
+                      "requested term exceeds the granted term");
+                  return;
+              }
+              grants_.takeSubscription(cert.user);  // consume the one-shot grant
+
               SubscriptionStore::Subscription record;
               record.user = cert.user;
               record.issuedAt = cert.issuedAt;
               record.notAfter = cert.notAfter;
-              record.quotaBytes = options_.defaultQuotaBytes;
+              record.quotaBytes = grant->quotaBytes;
               record.certificate = der;
               store_.putSubscription(record);
 
               respondJson(response,
                   {
                       {"notAfter", cert.notAfter},
-                      {"quotaBytes", options_.defaultQuotaBytes},
+                      {"quotaBytes", grant->quotaBytes},
                       {"maxTermSeconds", options_.maxTermSeconds},
                       {"serverCard", toBase64(options_.serverCardDer)},
                   });

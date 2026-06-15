@@ -40,26 +40,28 @@ HostPort parseUrl(const std::string& url)
 
 }  // namespace
 
-QuotaPublisher::QuotaPublisher(std::string messagingUrl, std::string operatorSecret)
-    : messagingUrl_(std::move(messagingUrl))
+QuotaPublisher::QuotaPublisher(
+    std::string baseUrl, std::string operatorSecret, std::string endpointPath)
+    : baseUrl_(std::move(baseUrl))
     , operatorSecret_(std::move(operatorSecret))
+    , endpointPath_(std::move(endpointPath))
 {
 }
 
 bool QuotaPublisher::publish(const std::string& user, const std::uint64_t quotaBytes) const
 {
-    if (messagingUrl_.empty()) {
+    if (baseUrl_.empty()) {
         return false;  // not configured
     }
     try {
-        const HostPort hostPort = parseUrl(messagingUrl_);
+        const HostPort hostPort = parseUrl(baseUrl_);
         httplib::Client client(hostPort.host, hostPort.port);
         client.set_connection_timeout(5, 0);
         client.set_read_timeout(10, 0);
         const nlohmann::json body = {{"user", user}, {"quotaBytes", quotaBytes}};
         const httplib::Headers headers = {{"X-Operator-Secret", operatorSecret_}};
         const httplib::Result response
-            = client.Put("/v1/messaging/quota", headers, body.dump(), "application/json");
+            = client.Put(endpointPath_, headers, body.dump(), "application/json");
         return response && response->status == 200;
     } catch (const std::exception&) {
         return false;  // best effort

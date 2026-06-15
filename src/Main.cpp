@@ -40,7 +40,8 @@ void printUsage()
         "Usage: bazarish-service-node --state <dir> --server-card <path>\n"
         "         [--listen <host> <port>] [--portal-listen <host> <port>]\n"
         "         [--payments-config <path>]\n"
-        "         [--messaging <host> <port>] [--operator-secret <secret>]\n"
+        "         [--messaging <host> <port>] [--blob-storage <host> <port>]\n"
+        "         [--operator-secret <secret>]\n"
         "       bazarish-service-node --version\n"
         "\n"
         "The server card (produced by bazarish-server --i2p) binds this\n"
@@ -148,6 +149,8 @@ int main(const int argc, const char** argv)
     fs::path paymentsConfigPath;
     std::string messagingHost;
     int messagingPort = 0;
+    std::string blobStorageHost;
+    int blobStoragePort = 0;
     std::string operatorSecret;
     for (int i = 5; i < argc;) {
         const std::string flag = argv[i];
@@ -165,6 +168,10 @@ int main(const int argc, const char** argv)
         } else if (flag == "--messaging" && i + 2 < argc) {
             messagingHost = argv[i + 1];
             messagingPort = std::atoi(argv[i + 2]);
+            i += 3;
+        } else if (flag == "--blob-storage" && i + 2 < argc) {
+            blobStorageHost = argv[i + 1];
+            blobStoragePort = std::atoi(argv[i + 2]);
             i += 3;
         } else if (flag == "--operator-secret" && i + 1 < argc) {
             operatorSecret = argv[i + 1];
@@ -191,15 +198,24 @@ int main(const int argc, const char** argv)
     const std::unique_ptr<bazarish::service::PaymentGateway> gateway
         = bazarish::service::makePaymentGateway(payments.gateway);
 
-    // Pushes a user's effective storage quota to the messaging server (private
-    // channel + operator secret); a no-op until --messaging is given.
+    // Pushes a user's effective storage quota to both backends over the private
+    // channel (operator secret): the messaging server (mailbox quota,
+    // /v1/messaging/quota) and the blob store (blob-hosting quota,
+    // /v1/storage/quota). Each is a no-op until its --messaging / --blob-storage
+    // endpoint is given.
     const std::string messagingUrl = messagingPort > 0
         ? "http://" + messagingHost + ":" + std::to_string(messagingPort)
         : std::string();
-    const bazarish::service::QuotaPublisher quotaPublisher(messagingUrl, operatorSecret);
+    const std::string blobStorageUrl = blobStoragePort > 0
+        ? "http://" + blobStorageHost + ":" + std::to_string(blobStoragePort)
+        : std::string();
+    const bazarish::service::QuotaPublisher messagingQuota(messagingUrl, operatorSecret);
+    const bazarish::service::QuotaPublisher blobQuota(
+        blobStorageUrl, operatorSecret, "/v1/storage/quota");
     const auto publishQuota
-        = [&quotaPublisher](const std::string& user, const std::uint64_t quotaBytes) {
-              quotaPublisher.publish(user, quotaBytes);
+        = [&messagingQuota, &blobQuota](const std::string& user, const std::uint64_t quotaBytes) {
+              messagingQuota.publish(user, quotaBytes);
+              blobQuota.publish(user, quotaBytes);
           };
 
     bazarish::service::AccountApiOptions options;

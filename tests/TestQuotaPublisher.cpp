@@ -28,6 +28,7 @@ using namespace bazarish::service;
 int main()
 {
     std::string receivedBody;
+    std::string storagePath;  // set when the blob-store endpoint is hit
     httplib::Server stub;
     stub.Put("/v1/messaging/quota", [&](const httplib::Request& request, httplib::Response& response) {
         if (request.get_header_value("X-Operator-Secret") != "op-secret") {
@@ -35,6 +36,14 @@ int main()
             return;
         }
         receivedBody = request.body;
+        response.set_content("{\"ok\":true}", "application/json");
+    });
+    stub.Put("/v1/storage/quota", [&](const httplib::Request& request, httplib::Response& response) {
+        if (request.get_header_value("X-Operator-Secret") != "op-secret") {
+            response.status = 403;
+            return;
+        }
+        storagePath = request.body;
         response.set_content("{\"ok\":true}", "application/json");
     });
 
@@ -58,7 +67,14 @@ int main()
     const QuotaPublisher wrongSecret(url, "nope");
     CHECK(!wrongSecret.publish(user, 1));
 
-    // Not configured (no messaging URL) → no-op false, no request made.
+    // A custom endpoint path targets the blob store's quota endpoint.
+    const QuotaPublisher blobPublisher(url, "op-secret", "/v1/storage/quota");
+    CHECK(blobPublisher.publish(user, 42ULL));
+    const nlohmann::json storageBody = nlohmann::json::parse(storagePath);
+    CHECK(storageBody.at("user").get<std::string>() == user);
+    CHECK(storageBody.at("quotaBytes").get<std::uint64_t>() == 42ULL);
+
+    // Not configured (no base URL) → no-op false, no request made.
     const QuotaPublisher disabled("", "op-secret");
     CHECK(!disabled.publish(user, 1));
 

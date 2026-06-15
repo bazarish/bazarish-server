@@ -1,11 +1,10 @@
 // Bazarish project (c) 2026
 #include "MoneroPaymentGateway.hpp"
 
+#include "Hmac.hpp"
+
 #include <httplib/httplib.h>
 #include <nlohmann/json.hpp>
-#include <openssl/crypto.h>
-#include <openssl/evp.h>
-#include <openssl/params.h>
 
 #include <cstdint>
 #include <stdexcept>
@@ -43,52 +42,6 @@ HostPort parseRpcUrl(const std::string& url)
         throw std::runtime_error("monero: malformed url: " + url);
     }
     return hostPort;
-}
-
-// HMAC-SHA256(key, data) as lowercase hex, via OpenSSL's EVP_MAC.
-std::string hmacSha256Hex(const std::string& key, const std::string& data)
-{
-    EVP_MAC* const mac = EVP_MAC_fetch(nullptr, "HMAC", nullptr);
-    if (mac == nullptr) {
-        throw std::runtime_error("monero: EVP_MAC_fetch(HMAC) failed");
-    }
-    EVP_MAC_CTX* const ctx = EVP_MAC_CTX_new(mac);
-    EVP_MAC_free(mac);
-    if (ctx == nullptr) {
-        throw std::runtime_error("monero: EVP_MAC_CTX_new failed");
-    }
-    char digest[] = "SHA256";
-    OSSL_PARAM params[] = {
-        OSSL_PARAM_construct_utf8_string("digest", digest, 0),
-        OSSL_PARAM_construct_end(),
-    };
-    unsigned char out[EVP_MAX_MD_SIZE];
-    std::size_t outLen = 0;
-    const bool ok
-        = EVP_MAC_init(ctx, reinterpret_cast<const unsigned char*>(key.data()), key.size(), params)
-            == 1
-        && EVP_MAC_update(ctx, reinterpret_cast<const unsigned char*>(data.data()), data.size()) == 1
-        && EVP_MAC_final(ctx, out, &outLen, sizeof out) == 1;
-    EVP_MAC_CTX_free(ctx);
-    if (!ok) {
-        throw std::runtime_error("monero: HMAC computation failed");
-    }
-    static const char* const kHex = "0123456789abcdef";
-    std::string hex;
-    hex.reserve(outLen * 2);
-    for (std::size_t i = 0; i < outLen; ++i) {
-        hex.push_back(kHex[out[i] >> 4]);
-        hex.push_back(kHex[out[i] & 0x0f]);
-    }
-    return hex;
-}
-
-bool constantTimeEquals(const std::string& a, const std::string& b)
-{
-    if (a.size() != b.size()) {
-        return false;
-    }
-    return CRYPTO_memcmp(a.data(), b.data(), a.size()) == 0;
 }
 
 // One JSON-RPC 2.0 call to monero-wallet-rpc; returns the "result" node. Throws
@@ -226,7 +179,7 @@ std::optional<PaymentStatus> MoneroPaymentGateway::parseWebhook(
     if (config_.callbackSecret.empty()) {
         return std::nullopt;  // callbacks disabled when no secret is configured
     }
-    if (!constantTimeEquals(hmacSha256Hex(config_.callbackSecret, body), signature)) {
+    if (!constantTimeEqual(hmacSha256Hex(config_.callbackSecret, body), signature)) {
         return std::nullopt;  // not authentic — ignore
     }
     const nlohmann::json payload = nlohmann::json::parse(body, nullptr, false);

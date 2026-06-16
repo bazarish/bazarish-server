@@ -133,6 +133,20 @@ int main()
         CHECK(reply.at("body") == "ciphertext-bytes");
     }
 
+    // A large blob upload streams through (spooled, then content-provided over
+    // several chunks) without the facade buffering it whole — the backend
+    // receives the exact bytes.
+    {
+        const std::string big(200000, 'Z');
+        const httplib::Result result
+            = client.Put("/s/secret123/v1/storage/blob", big, "application/octet-stream");
+        CHECK(result && result->status == 200);
+        const nlohmann::json reply = nlohmann::json::parse(result->body);
+        CHECK(reply.at("backend") == "blob");
+        CHECK(reply.at("method") == "PUT");
+        CHECK(reply.at("body").get<std::string>() == big);
+    }
+
     // The operator quota endpoint is never exposed through the facade.
     {
         const httplib::Result result = client.Put(

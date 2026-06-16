@@ -94,14 +94,27 @@ void FederationPool::start()
         if (!std::filesystem::exists(keyPath)) {
             writePrivate(keyPath, dest->session->privateDestination());
         }
+        // The pool entry's own serving sealing key (persisted so the address a
+        // contact seals to is stable across restarts). Contacts on this pool
+        // destination all seal to it — same k-anonymity set as the destination.
+        const std::filesystem::path sealingPath
+            = poolDir / ("dest-" + std::to_string(i) + ".sealing.pem");
+        if (std::filesystem::exists(sealingPath)) {
+            dest->sealingKey = std::make_unique<Key>(Key::fromPrivatePem(readFile(sealingPath)));
+        } else {
+            dest->sealingKey = std::make_unique<Key>(Key::generateSealing());
+            writePrivate(sealingPath, dest->sealingKey->privatePem());
+        }
         destinations_.push_back(dest->session->publicDestination());
+        servingKeysPublicDer_.push_back(dest->sealingKey->publicDer());
         Dest* const raw = dest.get();
         raw->acceptThread = std::thread([this, raw]() {
             while (raw->running.load()) {
                 try {
                     std::string peer;
                     SamStream stream = raw->session->accept(peer);
-                    federationServeOnce(stream, engine_, nowSeconds(), peer, limiter_);
+                    federationServeOnce(
+                        stream, engine_, nowSeconds(), peer, limiter_, raw->sealingKey.get());
                 } catch (const std::exception&) {
                     // A failed accept/serve must not kill the loop.
                 }
@@ -124,6 +137,14 @@ std::string FederationPool::destinationFor(const std::string& userFp) const
         return std::string();
     }
     return destinations_[poolIndexFor(userFp, destinations_.size())];
+}
+
+Bytes FederationPool::servingKeyFor(const std::string& userFp) const
+{
+    if (servingKeysPublicDer_.empty()) {
+        return {};
+    }
+    return servingKeysPublicDer_[poolIndexFor(userFp, servingKeysPublicDer_.size())];
 }
 
 const std::vector<std::string>& FederationPool::destinations() const

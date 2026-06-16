@@ -60,11 +60,12 @@ std::filesystem::path PerUserDestinations::pathFor(const std::string& userFp) co
 }
 
 void PerUserDestinations::bringUp(const std::string& userFp, const std::string& transientB64,
-    const std::int64_t expiresUnix)
+    const std::int64_t expiresUnix, const std::string& sealingKeyPem)
 {
     auto dest = std::make_unique<Destination>();
     dest->transientB64 = transientB64;
     dest->expiresUnix = expiresUnix;
+    dest->sealingKey = std::make_unique<Key>(Key::fromPrivatePem(sealingKeyPem));
     Destination* const raw = dest.get();
     // SAM session ids must be unique on the bridge; the fingerprint disambiguates.
     const std::string sessionId = "bazarish-user-" + userFp.substr(0, 12);
@@ -80,7 +81,8 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
                 try {
                     std::string peer;
                     SamStream stream = session.accept(peer);
-                    federationServeOnce(stream, engine_, nowSeconds(), peer, limiter_);
+                    federationServeOnce(
+                        stream, engine_, nowSeconds(), peer, limiter_, raw->sealingKey.get());
                 } catch (const std::exception&) {
                     // A failed accept/serve must not kill the loop; on shutdown
                     // the running flag breaks out on the next iteration.
@@ -115,17 +117,42 @@ void PerUserDestinations::provision(const std::string& userFp, const std::string
     if (existing != dests_.end() && existing->second->transientB64 == transientB64) {
         return;  // already serving this exact transient
     }
+    // Reuse a previously-issued serving sealing key (from the running
+    // destination, else the persisted record) so the user's contact card stays
+    // valid across renewals; mint a fresh one only for a brand-new destination.
+    std::string sealingKeyPem;
+    if (existing != dests_.end() && existing->second->sealingKey) {
+        sealingKeyPem = existing->second->sealingKey->privatePem();
+    } else {
+        std::ifstream in(pathFor(userFp), std::ios::binary);
+        const std::string text(
+            (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        if (!text.empty()) {
+            try {
+                const nlohmann::json record = nlohmann::json::parse(text);
+                if (record.contains("sealingKey")) {
+                    sealingKeyPem = record.at("sealingKey").get<std::string>();
+                }
+            } catch (const std::exception&) {
+                // Malformed record: fall through to minting a fresh key.
+            }
+        }
+    }
+    if (sealingKeyPem.empty()) {
+        sealingKeyPem = Key::generateSealing().privatePem();
+    }
     // Persist first so a restart re-provisions even if the bring-up below races.
     std::error_code ec;
     std::filesystem::create_directories(destsDir(), ec);
-    const nlohmann::json record = {{"transient", transientB64}, {"expiresUnix", expiresUnix}};
+    const nlohmann::json record = {{"transient", transientB64}, {"expiresUnix", expiresUnix},
+        {"sealingKey", sealingKeyPem}};
     const std::string text = record.dump();
     {
         std::ofstream out(pathFor(userFp), std::ios::binary | std::ios::trunc);
         out.write(text.data(), static_cast<std::streamsize>(text.size()));
     }
     teardownLocked(userFp);
-    bringUp(userFp, transientB64, expiresUnix);
+    bringUp(userFp, transientB64, expiresUnix, sealingKeyPem);
 }
 
 void PerUserDestinations::revoke(const std::string& userFp)
@@ -157,7 +184,11 @@ void PerUserDestinations::reloadPersisted(const std::int64_t now)
                 continue;  // the offline transient has already expired
             }
             const std::string transientB64 = record.at("transient").get<std::string>();
-            bringUp(entry.path().filename().string(), transientB64, expiresUnix);
+            // Reuse the persisted serving key (older records may predate it).
+            const std::string sealingKeyPem = record.contains("sealingKey")
+                ? record.at("sealingKey").get<std::string>()
+                : Key::generateSealing().privatePem();
+            bringUp(entry.path().filename().string(), transientB64, expiresUnix, sealingKeyPem);
         } catch (const std::exception&) {
             // Skip a malformed record rather than fail startup.
         }
@@ -168,6 +199,16 @@ std::size_t PerUserDestinations::size() const
 {
     const std::lock_guard<std::mutex> lock(mutex_);
     return dests_.size();
+}
+
+Bytes PerUserDestinations::servingKeyFor(const std::string& userFp) const
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = dests_.find(userFp);
+    if (it == dests_.end() || !it->second->sealingKey) {
+        return {};
+    }
+    return it->second->sealingKey->publicDer();
 }
 
 }  // namespace bazarish::server

@@ -425,7 +425,8 @@ void HttpApi::setupRoutes()
             const std::int64_t now = nowSeconds();
             Attempt attempt;
             if (toServer == engine_.serverFingerprint()) {
-                const DeliveryEngine::Outcome outcome = engine_.deliver(sealed, payload, now);
+                const DeliveryEngine::Outcome outcome
+                    = engine_.deliver(sealed, payload, now, engine_.sealingKey());
                 attempt.status = outcome.delivered ? "delivered" : "failed";
                 attempt.errorCode = outcome.errorCode;
                 attempt.errorMessage = outcome.errorMessage;

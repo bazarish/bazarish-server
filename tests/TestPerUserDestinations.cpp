@@ -60,32 +60,46 @@ int main()
         CHECK(readFile(aliceFile).find("transient-blob-A") != std::string::npos);
         CHECK(dests.size() == 1);
 
+        // The destination has a serving sealing key, persisted and surfaced for
+        // the user's contact card.
+        const Bytes servingA = dests.servingKeyFor(alice);
+        CHECK(!servingA.empty());
+        CHECK(readFile(aliceFile).find("sealingKey") != std::string::npos);
+
         // Same transient: a no-op (still one destination).
         dests.provision(alice, "transient-blob-A", kNow + 1000);
         CHECK(dests.size() == 1);
 
-        // A different transient replaces it (file updated, still one destination).
+        // A different transient replaces it (file updated, still one destination),
+        // but the serving key is reused so the user's card stays valid.
         dests.provision(alice, "transient-blob-B", kNow + 1000);
         CHECK(dests.size() == 1);
         CHECK(readFile(aliceFile).find("transient-blob-B") != std::string::npos);
+        CHECK(dests.servingKeyFor(alice) == servingA);
 
         // Revoke forgets the destination and deletes the persisted transient.
         dests.revoke(alice);
         CHECK(!std::filesystem::exists(aliceFile));
         CHECK(dests.size() == 0);
+        CHECK(dests.servingKeyFor(alice).empty());
     }
 
     // reloadPersisted re-provisions non-expired transients and skips expired ones.
     const std::string bob = toBase32(Bytes(32, 0x02));
+    Bytes aliceServing;
     {
         PerUserDestinations writer("127.0.0.1", 1, engine, root, I2pPrivacy::kMinimal);
         writer.provision(alice, "transient-reload", kNow + 1000);
         writer.provision(bob, "transient-expired", kNow - 10);
+        aliceServing = writer.servingKeyFor(alice);
+        CHECK(!aliceServing.empty());
     }
     {
         PerUserDestinations reloaded("127.0.0.1", 1, engine, root, I2pPrivacy::kMinimal);
         reloaded.reloadPersisted(kNow);
         CHECK(reloaded.size() == 1);  // alice restored; bob's expired transient skipped
+        // The serving key survives the restart (the user's card stays valid).
+        CHECK(reloaded.servingKeyFor(alice) == aliceServing);
     }
 
     std::printf("TestPerUserDestinations OK\n");

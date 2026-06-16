@@ -47,16 +47,17 @@ Bytes makeSealed(const Key& sealingPublic, const std::string& kind,
 // Runs one client deliver against an in-thread server using a socketpair —
 // the same SamStream wraps both ends, so the federation protocol is
 // exercised without I2P.
-FederationDeliverResult roundTrip(
-    DeliveryEngine& engine, const Bytes& sealed, const Bytes& payload)
+FederationDeliverResult roundTrip(DeliveryEngine& engine, const Bytes& sealed, const Bytes& payload,
+    const Key* const servingKey = nullptr)
 {
     int fds[2];
     CHECK(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0);
     SamStream serverStream(fds[0]);
     SamStream clientStream(fds[1]);
 
-    std::thread serverThread(
-        [&engine, &serverStream]() { federationServeOnce(serverStream, engine, kNow); });
+    std::thread serverThread([&engine, &serverStream, servingKey]() {
+        federationServeOnce(serverStream, engine, kNow, std::string(), nullptr, servingKey);
+    });
     const FederationDeliverResult result
         = federationSendDeliver(clientStream, sealed, payload);
     serverThread.join();
@@ -144,6 +145,22 @@ int main()
         const FederationDeliverResult result = roundTrip(engine, sealed, payload);
         CHECK(!result.delivered);
         CHECK(result.errorCode == "DELIVERY_REJECTED");
+    }
+
+    // A per-destination serving key (not the home key): an envelope sealed to a
+    // destination's own key is delivered when served with that key, and rejected
+    // when served with the home key. This is the per-destination unsealing that
+    // pool and per-user destinations rely on (see api/InviteAnonymity.md).
+    {
+        const Key destKey = Key::generateSealing();
+        const Bytes sealed
+            = makeSealed(Key::fromPublicDer(destKey.publicDer()), "contact", alice, "fdest-1", {});
+        CHECK(roundTrip(engine, sealed, Bytes(50, 0x55), &destKey).delivered);
+        CHECK(storage.getBlob(alice, "fdest-1").size() == 50);
+
+        const Bytes sealedHome
+            = makeSealed(Key::fromPublicDer(destKey.publicDer()), "contact", alice, "fdest-2", {});
+        CHECK(!roundTrip(engine, sealedHome, Bytes(50, 0x55)).delivered);
     }
 
     std::filesystem::remove_all(root);

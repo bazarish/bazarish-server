@@ -31,11 +31,17 @@ public:
         std::string errorMessage;
     };
 
-    // sealed is the CMS envelope addressed to this server's sealing key;
-    // payload is the opaque E2E blob. now is unix seconds.
-    Outcome deliver(const Bytes& sealed, const Bytes& payload, std::int64_t now);
+    // sealed is the CMS envelope addressed to the serving sealing key of the
+    // destination it arrived on; payload is the opaque E2E blob. The caller
+    // (each accept loop / the local send path) supplies the sealing key for
+    // that destination — a home/pool/per-user destination each has its own (see
+    // docs-main api/InviteAnonymity.md). now is unix seconds.
+    Outcome deliver(
+        const Bytes& sealed, const Bytes& payload, std::int64_t now, const Key& sealingKey);
 
     const std::string& serverFingerprint() const;
+    // The home destination's serving sealing key (also the default for callers
+    // that operate only the home destination).
     const Key& sealingKey() const;
 
 private:

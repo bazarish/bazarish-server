@@ -32,7 +32,7 @@ const Key& DeliveryEngine::sealingKey() const
 }
 
 DeliveryEngine::Outcome DeliveryEngine::deliver(
-    const Bytes& sealed, const Bytes& payload, const std::int64_t now)
+    const Bytes& sealed, const Bytes& payload, const std::int64_t now, const Key& sealingKey)
 {
     Outcome outcome;
     const auto fail = [&outcome](const ErrorCode code, const std::string& message) {
@@ -57,7 +57,7 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
     std::string messageId;
     Bytes token;
     try {
-        const Bytes plain = cms::unseal(sealed, sealingKey_);
+        const Bytes plain = cms::unseal(sealed, sealingKey);
         const nlohmann::json inner = nlohmann::json::parse(plain.begin(), plain.end());
         deliveryClass = inner.at("class").get<std::string>();
         mailbox = inner.at("mailbox").get<std::string>();

@@ -31,8 +31,11 @@ FederationDeliverResult federationSendDeliver(
 // Server side: read one deliver request, run the engine and write the result.
 // now is unix seconds. peerDest is the connecting peer's I2P destination; when
 // limiter is set and the peer is over its rate limit, the request is dropped
-// without serving. Both default to no rate-limiting.
+// without serving. sealingKey is the serving sealing key of the destination
+// that accepted this connection (the envelope is sealed to it); when null the
+// engine's home key is used. peerDest/limiter default to no rate-limiting.
 void federationServeOnce(SamStream& stream, DeliveryEngine& engine, std::int64_t now,
-    const std::string& peerDest = std::string(), FederationRateLimiter* limiter = nullptr);
+    const std::string& peerDest = std::string(), FederationRateLimiter* limiter = nullptr,
+    const Key* sealingKey = nullptr);
 
 }  // namespace bazarish::server

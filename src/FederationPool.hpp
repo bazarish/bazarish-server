@@ -3,6 +3,7 @@
 
 #include "DeliveryEngine.hpp"
 
+#include <bazarish/Bytes.hpp>
 #include <bazarish/Sam.hpp>
 
 #include <atomic>
@@ -48,12 +49,20 @@ public:
     // Deterministic by fingerprint, so a user keeps the same pool destination
     // across restarts. Empty when the pool is empty.
     std::string destinationFor(const std::string& userFp) const;
+    // SubjectPublicKeyInfo DER of the serving sealing key of the pool entry
+    // assigned to a user — the public key a contact seals the delivery envelope
+    // to. Shared by the free users on that pool destination (same k-anonymity
+    // set as the destination). Empty when the pool is empty.
+    Bytes servingKeyFor(const std::string& userFp) const;
     // Every pool destination (for the server card / diagnostics).
     const std::vector<std::string>& destinations() const;
 
 private:
     struct Dest {
         std::unique_ptr<SamSession> session;
+        // The pool destination's own serving sealing key: the accept loop
+        // unseals delivery envelopes addressed to it with this key.
+        std::unique_ptr<Key> sealingKey;
         std::atomic<bool> running{true};
         std::thread acceptThread;
     };
@@ -68,6 +77,9 @@ private:
     FederationRateLimiter* const limiter_;
     std::vector<std::unique_ptr<Dest>> dests_;
     std::vector<std::string> destinations_;
+    // Parallel to destinations_: the public serving sealing key of each pool
+    // entry, for surfacing to the user assigned to it.
+    std::vector<Bytes> servingKeysPublicDer_;
 };
 
 }  // namespace bazarish::server

@@ -65,7 +65,7 @@ FederationDeliverResult federationSendDeliver(
 }
 
 void federationServeOnce(SamStream& stream, DeliveryEngine& engine, const std::int64_t now,
-    const std::string& peerDest, FederationRateLimiter* const limiter)
+    const std::string& peerDest, FederationRateLimiter* const limiter, const Key* const sealingKey)
 {
     if (limiter != nullptr && !limiter->allow(peerDest, now)) {
         // Over the per-peer rate limit: drop the connection without serving.
@@ -83,7 +83,8 @@ void federationServeOnce(SamStream& stream, DeliveryEngine& engine, const std::i
         stream.readExact(payload.data(), length);
     }
 
-    const DeliveryEngine::Outcome outcome = engine.deliver(sealed, payload, now);
+    const DeliveryEngine::Outcome outcome
+        = engine.deliver(sealed, payload, now, sealingKey != nullptr ? *sealingKey : engine.sealingKey());
     nlohmann::json reply = {{"delivered", outcome.delivered}};
     if (!outcome.delivered) {
         reply["errorCode"] = outcome.errorCode;

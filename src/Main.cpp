@@ -269,6 +269,13 @@ int main(const int argc, const char** argv)
 
     bazarish::server::HttpApiOptions httpOptions;
     httpOptions.operatorSecret = operatorSecret;
+    // Proxy-fetch blobs over I2P for clients without a local SAM bridge, via a
+    // fresh transient session on the local bridge (independent of federation).
+    httpOptions.blobProxyFetch
+        = [](const std::string& blobHost, const std::string& blobPath) {
+              return bazarish::server::fetchBlobOverI2p(bazarish::SamClient::kDefaultHost,
+                  bazarish::SamClient::kDefaultPort, blobHost, blobPath);
+          };
     bazarish::server::HttpApi api(storage, engine, httpOptions, std::move(remoteDeliver));
 
     std::printf("listening on %s:%d (private channel for facades)\n", host.c_str(), port);

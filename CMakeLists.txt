@@ -25,6 +25,7 @@ add_library(bazarish_server_lib STATIC
     src/DiskStorage.cpp
     src/DeliveryEngine.cpp
     src/Federation.cpp
+    src/I2pBlobFetch.cpp
     src/I2pFederation.cpp
     src/TcpFederation.cpp
     src/HttpApi.cpp

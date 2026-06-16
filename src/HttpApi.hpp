@@ -2,6 +2,7 @@
 #pragma once
 
 #include "DeliveryEngine.hpp"
+#include "I2pBlobFetch.hpp"
 #include "Storage.hpp"
 
 #include <bazarish/Bytes.hpp>
@@ -29,6 +30,9 @@ struct HttpApiOptions {
     // Shared secret authorising the operator-internal quota endpoint (checked
     // against the X-Operator-Secret header). Empty disables that endpoint.
     std::string operatorSecret;
+    // Fetches a blob over I2P for a client that has no SAM bridge of its own
+    // (the proxy-fetch fallback). Empty disables the blob-proxy endpoint.
+    std::function<BlobProxyResult(const std::string& host, const std::string& path)> blobProxyFetch;
 };
 
 // Result of relaying a sealed envelope to another server (federation).

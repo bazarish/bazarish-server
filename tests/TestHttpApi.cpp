@@ -97,7 +97,19 @@ int main()
     engineOptions.contactRequestLimitBytes = 256;
     DeliveryEngine engine(storage, serverFp, Key::fromPrivatePem(serverSealing.privatePem()),
         engineOptions);
-    HttpApi api(storage, engine, HttpApiOptions{});
+    HttpApiOptions httpOptions;
+    // Stub blob proxy: echoes the requested host+path back so the test can assert
+    // the endpoint validated and forwarded without a live router.
+    std::string proxiedHost;
+    std::string proxiedPath;
+    httpOptions.blobProxyFetch
+        = [&proxiedHost, &proxiedPath](const std::string& host, const std::string& path) {
+              proxiedHost = host;
+              proxiedPath = path;
+              const std::string body = "ciphertext-for-" + path;
+              return BlobProxyResult{200, Bytes(body.begin(), body.end())};
+          };
+    HttpApi api(storage, engine, httpOptions);
 
     const int port = api.bindToAnyPort("127.0.0.1");
     CHECK(port > 0);
@@ -247,6 +259,27 @@ int main()
             makeHeaders(bob, "GET", "/v1/messaging/send/deadbeef", "", "bobdev"));
         CHECK(result && result->status == 404);
         CHECK(nlohmann::json::parse(result->body).at("error").at("code") == "ATTEMPT_UNKNOWN");
+    }
+
+    // Blob proxy: an authed client request for a .b32.i2p host is forwarded and
+    // the fetched ciphertext relayed back.
+    {
+        const std::string b33
+            = "yhfjbu7hkuqyqwp3pvpuf6vk63bdlwtryjcueunavz52ai5y3yuvwdkh.b32.i2p";
+        const httplib::Result result = client.Get("/v1/messaging/blob-proxy?host=" + b33 + "&path=/b/cap1",
+            makeHeaders(alice, "GET", "/v1/messaging/blob-proxy", "", "alicedev"));
+        CHECK(result && result->status == 200);
+        CHECK(result->body == "ciphertext-for-/b/cap1");
+        CHECK(proxiedHost == b33);
+        CHECK(proxiedPath == "/b/cap1");
+    }
+
+    // A non-.b32.i2p host is refused (never an open proxy).
+    {
+        const httplib::Result result
+            = client.Get("/v1/messaging/blob-proxy?host=evil.example.com&path=/x",
+                makeHeaders(alice, "GET", "/v1/messaging/blob-proxy", "", "alicedev"));
+        CHECK(result && result->status == 400);
     }
 
     api.stop();

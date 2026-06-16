@@ -6,6 +6,7 @@
 #include "PaymentGateway.hpp"
 #include "PortalApi.hpp"
 #include "QuotaPublisher.hpp"
+#include "TransientPublisher.hpp"
 #include "SelfHostedCaptcha.hpp"
 #include "SubscriptionStore.hpp"
 
@@ -212,6 +213,7 @@ int main(const int argc, const char** argv)
     const bazarish::service::QuotaPublisher messagingQuota(messagingUrl, operatorSecret);
     const bazarish::service::QuotaPublisher blobQuota(
         blobStorageUrl, operatorSecret, "/v1/storage/quota");
+    const bazarish::service::TransientPublisher transientPub(messagingUrl, operatorSecret);
     const auto publishQuota
         = [&messagingQuota, &blobQuota](const std::string& user, const std::uint64_t quotaBytes) {
               messagingQuota.publish(user, quotaBytes);
@@ -230,6 +232,11 @@ int main(const int argc, const char** argv)
     options.storagePlan = {payments.storage.enabled, payments.storage.quotaBytes,
         payments.storage.priceAtomic, payments.storage.periodDays};
     options.publishQuota = publishQuota;
+    options.publishI2pTransient = [&transientPub](const std::string& user,
+                                      const std::string& transientB64,
+                                      const std::int64_t expiresUnix) {
+        transientPub.publish(user, transientB64, expiresUnix);
+    };
     bazarish::service::AccountApi api(store, grants, options);
 
     // The browser-facing portal (sign-in-with-key, captcha registration, …),

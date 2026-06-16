@@ -62,6 +62,18 @@ int main()
     options.serverCardDer = cardDer;
     options.defaultQuotaBytes = 10 * 1024 * 1024;
     options.maxTermSeconds = 14 * 24 * 3600;
+    // Capture per-user-dest publishes so the i2p-dest endpoint can be asserted.
+    std::string pubUser;
+    std::string pubTransient;
+    std::int64_t pubExpires = -1;
+    int pubCalls = 0;
+    options.publishI2pTransient = [&](const std::string& user, const std::string& transientB64,
+                                      const std::int64_t expiresUnix) {
+        pubUser = user;
+        pubTransient = transientB64;
+        pubExpires = expiresUnix;
+        ++pubCalls;
+    };
     AccountApi api(store, grants, options);
 
     const int port = api.bindToAnyPort("127.0.0.1");
@@ -225,6 +237,39 @@ int main()
         const httplib::Result status = client.Get("/v1/account/subscription",
             makeHeaders(alice, "GET", "/v1/account/subscription", ""));
         CHECK(status && status->status == 404);
+    }
+
+    // Per-user I2P destination delegation: gated by an active i2pDest entitlement.
+    {
+        const std::string body
+            = nlohmann::json{{"transient", "user-transient-b64"},
+                  {"expiresUnix", now + 7 * 24 * 3600}}
+                  .dump();
+        // No entitlement → 403, nothing published.
+        const httplib::Result ungranted = client.Post("/v1/account/i2p-dest",
+            makeHeaders(alice, "POST", "/v1/account/i2p-dest", body), body, "application/json");
+        CHECK(ungranted && ungranted->status == 403);
+        CHECK(pubCalls == 0);
+
+        // With an active entitlement → 200, publishes the transient.
+        grants.grantService(alice.fingerprint(), "i2pDest", now + 30 * 24 * 3600, now);
+        const httplib::Result ok = client.Post("/v1/account/i2p-dest",
+            makeHeaders(alice, "POST", "/v1/account/i2p-dest", body), body, "application/json");
+        CHECK(ok && ok->status == 200);
+        CHECK(pubCalls == 1);
+        CHECK(pubUser == alice.fingerprint());
+        CHECK(pubTransient == "user-transient-b64");
+        CHECK(pubExpires == now + 7 * 24 * 3600);
+
+        // An empty transient revokes (published with empty transient, expiry 0).
+        const std::string revokeBody = nlohmann::json::object().dump();
+        const httplib::Result revoked = client.Post("/v1/account/i2p-dest",
+            makeHeaders(alice, "POST", "/v1/account/i2p-dest", revokeBody), revokeBody,
+            "application/json");
+        CHECK(revoked && revoked->status == 200);
+        CHECK(pubCalls == 2);
+        CHECK(pubTransient.empty());
+        CHECK(pubExpires == 0);
     }
 
     api.stop();

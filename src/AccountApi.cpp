@@ -263,6 +263,33 @@ void AccountApi::setupRoutes()
             respondJson(response, {{"ok", true}, {"alias", cert.alias}});
         }));
 
+    // Receives a paid user's client-owned offline I2P transient and hands it to
+    // the messaging server, which operates the user's personal destination.
+    // i2pDest is a paid service: an active entitlement is required. An empty
+    // transient revokes the destination.
+    http_->Post("/v1/account/i2p-dest",
+        authenticated([this](const httplib::Request& request, httplib::Response& response,
+                          const std::string& user) {
+            if (!options_.publishI2pTransient) {
+                respondError(response, 503, ErrorCode::kDeliveryRejected,
+                    "per-user destinations not available");
+                return;
+            }
+            const std::optional<GrantStore::ServiceGrant> entitlement
+                = grants_.peekService(user, "i2pDest");
+            if (!entitlement.has_value() || entitlement->paidThrough <= nowSeconds()) {
+                respondError(response, 403, ErrorCode::kDeliveryRejected,
+                    "no active i2pDest entitlement — buy one on the service portal first");
+                return;
+            }
+            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const std::string transient = body.value("transient", std::string());
+            const std::int64_t expiresUnix
+                = transient.empty() ? 0 : body.at("expiresUnix").get<std::int64_t>();
+            options_.publishI2pTransient(user, transient, expiresUnix);
+            respondJson(response, {{"ok", true}});
+        }));
+
     http_->Delete("/v1/account/alias",
         authenticated([this](const httplib::Request& request, httplib::Response& response,
                           const std::string& user) {

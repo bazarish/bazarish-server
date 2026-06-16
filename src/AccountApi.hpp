@@ -65,6 +65,12 @@ struct AccountApiOptions {
     // Pushes a user's effective storage quota to the messaging server when their
     // plan is (re)evaluated on subscribe/renew. Empty = no push (e.g. tests).
     std::function<void(const std::string& user, std::uint64_t quotaBytes)> publishQuota;
+    // Pushes a paid user's offline I2P transient (or, with an empty transient,
+    // a revoke) to the messaging server's per-user-destination endpoint. Empty =
+    // no push (e.g. tests, or a deployment without per-user destinations).
+    std::function<void(const std::string& user, const std::string& transientB64,
+        std::int64_t expiresUnix)>
+        publishI2pTransient;
 };
 
 // The /v1/account/* HTTP API: subscriptions, aliases and alias resolution.

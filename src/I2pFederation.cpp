@@ -5,7 +5,6 @@
 
 #include <ctime>
 #include <stdexcept>
-#include <utility>
 
 namespace bazarish::server {
 
@@ -18,11 +17,10 @@ std::int64_t nowSeconds()
 
 }  // namespace
 
-I2pFederation::I2pFederation(SamSession& session, DeliveryEngine& engine, Resolver resolve,
-    FederationRateLimiter* const limiter)
+I2pFederation::I2pFederation(
+    SamSession& session, DeliveryEngine& engine, FederationRateLimiter* const limiter)
     : session_(session)
     , engine_(engine)
-    , resolve_(std::move(resolve))
     , limiter_(limiter)
     , running_(false)
 {
@@ -63,18 +61,15 @@ void I2pFederation::acceptLoop()
 }
 
 RemoteDeliveryResult I2pFederation::deliver(
-    const std::string& toServer, const Bytes& sealed, const Bytes& payload)
+    const std::string& toDest, const Bytes& sealed, const Bytes& payload)
 {
     RemoteDeliveryResult result;
-    const std::optional<std::string> destination = resolve_(toServer);
-    if (!destination.has_value()) {
-        // No known route to this server: the caller keeps the message
-        // locally, exactly like an unreachable server.
-        result.reachable = false;
-        return result;
-    }
+    // Routing is by destination: toDest is the recipient's I2P destination, so
+    // dial it directly — no server-fingerprint resolution. An unreachable
+    // destination (e.g. its leaseset has not published yet) leaves the message
+    // on the caller for retry.
     try {
-        SamStream stream = session_.connect(destination.value());
+        SamStream stream = session_.connect(toDest);
         const FederationDeliverResult delivered
             = federationSendDeliver(stream, sealed, payload);
         result.reachable = true;
@@ -89,8 +84,8 @@ RemoteDeliveryResult I2pFederation::deliver(
 
 RemoteDeliverFn I2pFederation::asRemoteDeliverFn()
 {
-    return [this](const std::string& toServer, const Bytes& sealed, const Bytes& payload) {
-        return deliver(toServer, sealed, payload);
+    return [this](const std::string& toDest, const Bytes& sealed, const Bytes& payload) {
+        return deliver(toDest, sealed, payload);
     };
 }
 

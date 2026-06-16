@@ -85,14 +85,14 @@ httplib::Headers makeHeaders(const Identity& identity, const std::string& method
     return headers;
 }
 
-std::string makeEnvelope(const std::string& toServer, const Key& serverSealingPublic,
+std::string makeEnvelope(const std::string& toDest, const Key& serverSealingPublic,
     const nlohmann::json& inner, const Bytes& payload)
 {
     const std::string innerText = inner.dump();
     const Bytes sealed
         = cms::seal(Bytes(innerText.begin(), innerText.end()), serverSealingPublic);
     const nlohmann::json envelope = {
-        {"toServer", toServer},
+        {"toDest", toDest},
         {"sealed", toBase64(sealed)},
         {"payload", toBase64(payload)},
     };
@@ -137,6 +137,11 @@ int main()
     DeliveryEngine engine(storage, serverFp, Key::fromPrivatePem(serverSealing.privatePem()),
         engineOptions);
     HttpApiOptions httpOptions;
+    // Routing is by destination: a send whose toDest is this server's home
+    // destination is delivered locally. The tests use serverFp as that local
+    // destination string (opaque to the routing check) and a different value
+    // for the unreachable-remote case.
+    httpOptions.localDest = serverFp;
     // Stub blob proxy: records the unsend (DELETE) op so the test can assert the
     // endpoint validated and forwarded it without a live router.
     std::string proxiedMethod;

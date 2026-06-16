@@ -418,13 +418,15 @@ void HttpApi::setupRoutes()
                 return;
             }
             const nlohmann::json body = nlohmann::json::parse(request.body);
-            const std::string toServer = body.at("toServer").get<std::string>();
+            const std::string toDest = body.at("toDest").get<std::string>();
             const Bytes sealed = fromBase64(body.at("sealed").get<std::string>());
             const Bytes payload = fromBase64(body.at("payload").get<std::string>());
 
             const std::int64_t now = nowSeconds();
             Attempt attempt;
-            if (toServer == engine_.serverFingerprint()) {
+            // Routed by destination: a delivery to this server's own destination
+            // is local (unsealed with the home key); anything else is federated.
+            if (!options_.localDest.empty() && toDest == options_.localDest) {
                 const DeliveryEngine::Outcome outcome
                     = engine_.deliver(sealed, payload, now, engine_.sealingKey());
                 attempt.status = outcome.delivered ? "delivered" : "failed";
@@ -433,7 +435,7 @@ void HttpApi::setupRoutes()
             } else {
                 RemoteDeliveryResult remote;
                 if (remoteDeliver_) {
-                    remote = remoteDeliver_(toServer, sealed, payload);
+                    remote = remoteDeliver_(toDest, sealed, payload);
                 }
                 if (!remote.reachable) {
                     attempt.status = "failed";

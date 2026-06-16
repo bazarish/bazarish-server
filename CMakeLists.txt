@@ -30,7 +30,6 @@ add_library(bazarish_server_lib STATIC
     src/FederationPool.cpp
     src/I2pFederation.cpp
     src/PerUserDestinations.cpp
-    src/TcpFederation.cpp
     src/HttpApi.cpp
 )
 target_include_directories(bazarish_server_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -61,4 +60,3 @@ bazarish_server_add_test(TestFederation)
 bazarish_server_add_test(TestFederationRateLimiter)
 bazarish_server_add_test(TestFederationPool)
 bazarish_server_add_test(TestPerUserDestinations)
-bazarish_server_add_test(TestTcpFederation)

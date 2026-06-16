@@ -49,9 +49,14 @@ struct HttpApiOptions {
         provisionI2pDest;
     // Tears down a user's personal destination (grant lapsed/revoked).
     std::function<void(const std::string& user)> revokeI2pDest;
+    // This server's own home delivery destination (its I2P destination). A send
+    // whose toDest equals it is delivered locally with the engine's home key;
+    // any other toDest is federated (dialled directly over I2P). Empty disables
+    // local delivery (every send federates).
+    std::string localDest;
 };
 
-// Result of relaying a sealed envelope to another server (federation).
+// Result of relaying a sealed envelope to another destination (federation).
 struct RemoteDeliveryResult {
     bool reachable = false;
     bool delivered = false;
@@ -59,15 +64,17 @@ struct RemoteDeliveryResult {
     std::string errorMessage;
 };
 
-// Relays a sealed envelope to the named server over a federation transport.
-// The default (no transport wired) reports unreachable.
+// Relays a sealed envelope to a destination over I2P federation (dialled
+// directly — routing is by destination, not by server fingerprint; see
+// docs-main api/InviteAnonymity.md). The default (no transport wired) reports
+// unreachable.
 using RemoteDeliverFn = std::function<RemoteDeliveryResult(
-    const std::string& toServer, const Bytes& sealed, const Bytes& payload)>;
+    const std::string& toDest, const Bytes& sealed, const Bytes& payload)>;
 
 // The /v1/messaging/* HTTP API: client registry, token hashes, pending
-// fetch/ack and submit+poll sending. Local deliveries (toServer == this
-// server) run the shared DeliveryEngine; remote ones go through the
-// injected federation transport.
+// fetch/ack and submit+poll sending. A send is routed by its toDest: a delivery
+// to this server's own destination runs the shared DeliveryEngine locally; any
+// other destination is dialled directly over I2P federation.
 class HttpApi {
 public:
     HttpApi(Storage& storage, DeliveryEngine& engine, HttpApiOptions options,

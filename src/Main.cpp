@@ -6,7 +6,6 @@
 #include "HttpApi.hpp"
 #include "I2pFederation.hpp"
 #include "PerUserDestinations.hpp"
-#include "TcpFederation.hpp"
 
 #include <bazarish/Certificates.hpp>
 #include <bazarish/Crypto.hpp>
@@ -36,8 +35,7 @@ void printUsage()
 {
     std::printf(
         "bazarish-server %s\n"
-        "Usage: bazarish-server --state <directory> [--listen <host> <port>]\n"
-        "          [--i2p] [--federation-listen <host> <port>]\n"
+        "Usage: bazarish-server --state <directory> --i2p [--listen <host> <port>]\n"
         "          [--contact-request-limit <bytes>] [--operator-secret <secret>]\n"
         "          [--privacy <minimal|middle|max>] [--pool-size <n>]\n"
         "          [--federation-rate-limit <n>]\n"
@@ -45,43 +43,21 @@ void printUsage()
         "\n"
         "The state directory holds the server keys and the content storage;\n"
         "keys are generated on first start. The server card is always written\n"
-        "to <state>/server-card.der. --i2p enables the I2P federation transport\n"
-        "(requires a local SAM bridge) and adds the i2p endpoint to the card;\n"
-        "without it the card carries no endpoints (local delivery only).\n"
+        "to <state>/server-card.der. --i2p is required: delivery is routed by\n"
+        "I2P destination (there is no non-I2P transport); it builds the home\n"
+        "destination over a local SAM bridge and adds the i2p endpoint to the\n"
+        "card. A send is delivered locally when its toDest is one of this\n"
+        "server's destinations, otherwise it is dialled directly over I2P.\n"
         "--contact-request-limit <bytes> caps the tokenless contact-request\n"
-        "payload. --federation-listen enables a plain-TCP federation transport\n"
-        "(operator private channel / local testing). Outbound federation\n"
-        "resolves peers from <state>/peers.json ({\"<server-fingerprint>\":\n"
-        "\"<i2p-destination-or-host:port>\"}). --federation-rate-limit caps\n"
-        "inbound I2P deliveries per connecting destination per 60s (default 240,\n"
-        "0 disables).\n",
+        "payload. --pool-size <n> brings up a free-tier address pool.\n"
+        "--federation-rate-limit caps inbound I2P deliveries per connecting\n"
+        "destination per 60s (default 240, 0 disables).\n",
         kVersion);
 }
 
 std::int64_t nowSeconds()
 {
     return static_cast<std::int64_t>(std::time(nullptr));
-}
-
-// Resolves a peer server fingerprint to its transport endpoint by reading
-// peers.json on each call, so peers can be added without a restart. A
-// missing or malformed file just yields no route.
-std::optional<std::string> resolvePeer(const fs::path& peersPath, const std::string& serverFp)
-{
-    if (!fs::exists(peersPath)) {
-        return std::nullopt;
-    }
-    try {
-        std::ifstream in(peersPath, std::ios::binary);
-        const nlohmann::json peers = nlohmann::json::parse(in);
-        const auto found = peers.find(serverFp);
-        if (found == peers.end()) {
-            return std::nullopt;
-        }
-        return found->get<std::string>();
-    } catch (const std::exception&) {
-        return std::nullopt;
-    }
 }
 
 std::string readFileText(const fs::path& path)
@@ -147,9 +123,6 @@ int main(const int argc, const char** argv)
     std::string host = kDefaultHost;
     int port = kDefaultPort;
     bool enableI2p = false;
-    bool enableTcpFed = false;
-    std::string fedHost = kDefaultHost;
-    int fedPort = 0;
     bazarish::server::DeliveryEngineOptions engineOptions;
     std::string operatorSecret;
     bazarish::I2pPrivacy privacy = bazarish::I2pPrivacy::kMax;
@@ -166,11 +139,6 @@ int main(const int argc, const char** argv)
         } else if (std::strcmp(argv[i], "--i2p") == 0) {
             enableI2p = true;
             i += 1;
-        } else if (std::strcmp(argv[i], "--federation-listen") == 0 && i + 2 < argc) {
-            enableTcpFed = true;
-            fedHost = argv[i + 1];
-            fedPort = std::atoi(argv[i + 2]);
-            i += 3;
         } else if (std::strcmp(argv[i], "--contact-request-limit") == 0 && i + 1 < argc) {
             engineOptions.contactRequestLimitBytes
                 = std::strtoull(argv[i + 1], nullptr, 10);
@@ -196,6 +164,15 @@ int main(const int argc, const char** argv)
         }
     }
 
+    // Delivery is routed purely by I2P destination, so the server must operate
+    // one: --i2p is required (there is no non-I2P transport).
+    if (!enableI2p) {
+        std::fprintf(stderr,
+            "I2P federation is required: rerun with --i2p (delivery is routed by I2P "
+            "destination; there is no non-I2P transport).\n");
+        return 2;
+    }
+
     fs::create_directories(stateDir);
     const bazarish::Identity identity = loadOrCreateIdentity(stateDir);
     bazarish::Key sealing = loadOrCreateSealingKey(stateDir);
@@ -215,7 +192,6 @@ int main(const int argc, const char** argv)
     std::unique_ptr<bazarish::server::I2pFederation> federation;
     std::unique_ptr<bazarish::server::PerUserDestinations> perUserDests;
     std::unique_ptr<bazarish::server::FederationPool> federationPool;
-    std::unique_ptr<bazarish::server::TcpFederation> tcpFederation;
     bazarish::server::RemoteDeliverFn remoteDeliver;
     std::vector<std::string> endpoints;
     if (enableI2p) {
@@ -237,13 +213,6 @@ int main(const int argc, const char** argv)
         endpoints.push_back("i2p:" + samSession->publicDestination());
         std::printf("i2p destination: %s\n", samSession->publicDestination().c_str());
 
-        // Resolver: server fingerprint -> i2p destination, from peers.json
-        // (re-read per call, so peers can be added without a restart).
-        const fs::path peersPath = stateDir / "peers.json";
-        const auto resolve = [peersPath](const std::string& serverFp) {
-            return resolvePeer(peersPath, serverFp);
-        };
-
         // Inbound federation accountability is per-connecting-destination: one
         // limiter, shared across every accept loop (home destination, address
         // pool, per-user destinations), so a single peer cannot flood us.
@@ -254,7 +223,7 @@ int main(const int argc, const char** argv)
         }
 
         federation = std::make_unique<bazarish::server::I2pFederation>(
-            *samSession, engine, resolve, federationLimiter.get());
+            *samSession, engine, federationLimiter.get());
         federation->start();
         remoteDeliver = federation->asRemoteDeliverFn();
 
@@ -282,32 +251,9 @@ int main(const int argc, const char** argv)
         }
     }
 
-    // Optional TCP federation: an operator private-channel / local-testing
-    // transport (not a hidden network). Inbound accept loop plus outbound
-    // relay; peers resolve from peers.json ({"<server-fp>": "<host:port>"}).
-    if (enableTcpFed) {
-        const fs::path peersPath = stateDir / "peers.json";
-        const auto resolve = [peersPath](const std::string& serverFp) {
-            return resolvePeer(peersPath, serverFp);
-        };
-
-        tcpFederation
-            = std::make_unique<bazarish::server::TcpFederation>(engine, resolve);
-        const int boundFedPort = tcpFederation->bindAndListen(fedHost, fedPort);
-        if (boundFedPort < 0) {
-            std::fprintf(stderr, "failed to bind TCP federation on %s:%d\n",
-                fedHost.c_str(), fedPort);
-            return 1;
-        }
-        endpoints.push_back("tcp:" + fedHost + ":" + std::to_string(boundFedPort));
-        tcpFederation->start();
-        remoteDeliver = tcpFederation->asRemoteDeliverFn();
-        std::printf("tcp federation listening on %s:%d\n", fedHost.c_str(), boundFedPort);
-    }
-
     // The server card is always published: clients need the sealing key to
-    // seal delivery envelopes and the service node is bound to it. Without
-    // --i2p the endpoint list is empty (local delivery only, no federation).
+    // seal delivery envelopes and the service node is bound to it. The endpoint
+    // list carries the home I2P destination (delivery is routed by destination).
     const bazarish::Bytes card = bazarish::ServerCard::issue(
         identity, endpoints, bazarish::Key::fromPublicDer(sealing.publicDer()), nowSeconds());
     {
@@ -318,6 +264,10 @@ int main(const int argc, const char** argv)
 
     bazarish::server::HttpApiOptions httpOptions;
     httpOptions.operatorSecret = operatorSecret;
+    // The home destination: a send addressed to it is delivered locally; any
+    // other destination is federated. (samSession is always set — --i2p is
+    // required.)
+    httpOptions.localDest = samSession->publicDestination();
     // Proxy blob ops over I2P for clients without a local SAM bridge, via a fresh
     // transient session on the local bridge (independent of federation). Unsend
     // (DELETE) is a small whole-body op; downloads (GET) stream so a large blob is

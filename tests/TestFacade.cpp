@@ -39,6 +39,7 @@ void installBackend(httplib::Server& server, const std::string& name)
     server.Get(".*", echo);
     server.Post(".*", echo);
     server.Delete(".*", echo);
+    server.Put(".*", echo);
 }
 
 }  // namespace
@@ -47,19 +48,25 @@ int main()
 {
     httplib::Server messaging;
     httplib::Server account;
+    httplib::Server blob;
     installBackend(messaging, "messaging");
     installBackend(account, "account");
+    installBackend(blob, "blob");
     const int messagingPort = messaging.bind_to_any_port("127.0.0.1");
     const int accountPort = account.bind_to_any_port("127.0.0.1");
-    CHECK(messagingPort > 0 && accountPort > 0);
+    const int blobPort = blob.bind_to_any_port("127.0.0.1");
+    CHECK(messagingPort > 0 && accountPort > 0 && blobPort > 0);
     std::thread messagingThread([&messaging]() { (void)messaging.listen_after_bind(); });
     std::thread accountThread([&account]() { (void)account.listen_after_bind(); });
+    std::thread blobThread([&blob]() { (void)blob.listen_after_bind(); });
 
     bazarish::facade::FacadeOptions options;
     options.messagingHost = "127.0.0.1";
     options.messagingPort = messagingPort;
     options.accountHost = "127.0.0.1";
     options.accountPort = accountPort;
+    options.blobStorageHost = "127.0.0.1";
+    options.blobStoragePort = blobPort;
     options.basePath = "/s/secret123";
     bazarish::facade::Facade facade(options);
     const int facadePort = facade.bindToAnyPort("127.0.0.1");
@@ -114,11 +121,39 @@ int main()
         CHECK(result && result->status == 404);
     }
 
+    // Blob upload (PUT) is forwarded to the blob backend.
+    {
+        const httplib::Result result = client.Put(
+            "/s/secret123/v1/storage/blob", "ciphertext-bytes", "application/octet-stream");
+        CHECK(result && result->status == 200);
+        const nlohmann::json reply = nlohmann::json::parse(result->body);
+        CHECK(reply.at("backend") == "blob");
+        CHECK(reply.at("method") == "PUT");
+        CHECK(reply.at("path") == "/v1/storage/blob");
+        CHECK(reply.at("body") == "ciphertext-bytes");
+    }
+
+    // The operator quota endpoint is never exposed through the facade.
+    {
+        const httplib::Result result = client.Put(
+            "/s/secret123/v1/storage/quota", "{}", "application/json");
+        CHECK(result && result->status == 404);
+    }
+
+    // The I2P-only download path (/b/*) is never exposed through the facade
+    // (a clearnet download would leak the fetcher's IP).
+    {
+        const httplib::Result result = client.Get("/s/secret123/b/somecapability");
+        CHECK(result && result->status == 404);
+    }
+
     facade.stop();
     messaging.stop();
     account.stop();
+    blob.stop();
     facadeThread.join();
     messagingThread.join();
     accountThread.join();
+    blobThread.join();
     return 0;
 }

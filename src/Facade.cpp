@@ -14,6 +14,7 @@ enum class Backend {
     kNone,
     kMessaging,
     kAccount,
+    kBlobStorage,
 };
 
 bool startsWith(const std::string& text, const std::string& prefix)
@@ -34,6 +35,12 @@ Backend routeOf(const std::string& path)
     }
     if (startsWith(path, "/v1/account/")) {
         return Backend::kAccount;
+    }
+    // Only the blob upload endpoint is public. The operator quota endpoint
+    // (/v1/storage/quota) and the I2P-only download paths (/b/*) are never
+    // forwarded to the clearnet facade.
+    if (startsWith(path, "/v1/storage/blob")) {
+        return Backend::kBlobStorage;
     }
     return Backend::kNone;
 }
@@ -110,9 +117,25 @@ void Facade::setupRoutes()
             return;
         }
 
-        const bool messaging = backend == Backend::kMessaging;
-        httplib::Client client(messaging ? options_.messagingHost : options_.accountHost,
-            messaging ? options_.messagingPort : options_.accountPort);
+        std::string upstreamHost;
+        int upstreamPort = 0;
+        switch (backend) {
+        case Backend::kMessaging:
+            upstreamHost = options_.messagingHost;
+            upstreamPort = options_.messagingPort;
+            break;
+        case Backend::kAccount:
+            upstreamHost = options_.accountHost;
+            upstreamPort = options_.accountPort;
+            break;
+        case Backend::kBlobStorage:
+            upstreamHost = options_.blobStorageHost;
+            upstreamPort = options_.blobStoragePort;
+            break;
+        case Backend::kNone:
+            return;  // already handled above
+        }
+        httplib::Client client(upstreamHost, upstreamPort);
         client.set_keep_alive(false);
 
         httplib::Request forwarded;

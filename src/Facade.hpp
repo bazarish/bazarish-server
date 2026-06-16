@@ -16,6 +16,10 @@ struct FacadeOptions {
     int messagingPort = 8420;
     std::string accountHost = "127.0.0.1";
     int accountPort = 8421;
+    // The blob store's local web backend; only the upload endpoint is forwarded
+    // (downloads/confirms are I2P-only and never clearnet-reachable).
+    std::string blobStorageHost = "127.0.0.1";
+    int blobStoragePort = 8456;
     // Secret URI prefix the facade requires and strips before forwarding
     // (e.g. "/s/9f3c..."). Empty means the reverse proxy owns the secret.
     std::string basePath;
@@ -23,8 +27,9 @@ struct FacadeOptions {
 
 // The HTTP facade: the "last mile" between client and infrastructure. A
 // transparent reverse proxy that routes by path prefix to the messaging
-// server (/v1/messaging/*) or the service node (/v1/account/*). Holds no
-// keys, parses no content, stores nothing, logs nothing identifying.
+// server (/v1/messaging/*), the service node (/v1/account/*) or the blob store
+// upload endpoint (/v1/storage/blob). Holds no keys, parses no content, stores
+// nothing, logs nothing identifying.
 class Facade {
 public:
     explicit Facade(FacadeOptions options);

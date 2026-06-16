@@ -301,6 +301,90 @@ void testOpenRegistration()
     fs::remove_all(grantRoot);
 }
 
+// The browser-facing, JS-free HTML site: login form -> cabinet -> register ->
+// buy, plus the logged-out redirect guard. Shares the server with the JSON API.
+void testWebUi()
+{
+    namespace fs = std::filesystem;
+    const Identity identity = Identity::generate();
+    const fs::path grantRoot
+        = fs::temp_directory_path() / ("bazarish-grants-" + toHex(randomBytes(8)));
+
+    SelfHostedCaptcha captcha("captcha-secret", 5, 300);
+    GrantStore grants(grantRoot);
+    LedgerStore ledger(grantRoot, "XMR");
+    InvoiceStore invoices(grantRoot / "invoices.json");
+    MockPaymentGateway gateway(false);
+
+    PortalApiOptions options;
+    options.audience = "test-server-fp";
+    options.challengeSecret = "challenge-secret";
+    options.sessionSecret = "session-secret";
+    options.defaultQuotaBytes = 10 * 1024 * 1024;
+    options.settlementCurrency = "XMR";
+    options.requireCaptcha = false;
+    options.paidServices["username"] = {600, 365 * 24 * 3600};
+    PortalApi api(options, captcha, grants, ledger, invoices, gateway);
+
+    const int port = api.bindToAnyPort("127.0.0.1");
+    std::thread serverThread([&api]() { (void)api.listenAfterBind(); });
+    httplib::Client client("127.0.0.1", port);
+
+    httplib::Result home;
+    for (int attempt = 0; attempt < 200; ++attempt) {
+        home = client.Get("/");
+        if (home) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    // Logged out, the home page is the sign-in-with-key login form.
+    CHECK(home && home->status == 200);
+    CHECK(home->get_header_value("Content-Type").find("text/html") != std::string::npos);
+    CHECK(home->body.find("sign-login") != std::string::npos);
+
+    // Sign in through the HTML form (challenge from the API, signed by the key).
+    const std::string challenge = nlohmann::json::parse(client.Get("/portal/login")->body)
+                                      .at("challenge")
+                                      .get<std::string>();
+    const std::string blob = signLoginBlob(identity, now(), challenge);
+    const httplib::Result login
+        = client.Post("/login", httplib::Params{{"challenge", challenge}, {"blob", blob}});
+    CHECK(login && login->status == 303);
+    CHECK(login->get_header_value("Location") == "/");
+    const std::string token = cookieToken(login->get_header_value("Set-Cookie"));
+    CHECK(!token.empty());
+    const httplib::Headers cookie = {{"Cookie", "session=" + token}};
+
+    // The cabinet shows the signed-in user, balance and the offered service.
+    const httplib::Result cabinet = client.Get("/", cookie);
+    CHECK(cabinet && cabinet->status == 200);
+    CHECK(cabinet->body.find(identity.fingerprint()) != std::string::npos);
+    CHECK(cabinet->body.find("Balance") != std::string::npos);
+    CHECK(cabinet->body.find("username") != std::string::npos);
+
+    // Free registration through the form (captcha off) records a grant.
+    const httplib::Result registered = client.Post("/register", cookie, httplib::Params{});
+    CHECK(registered && registered->status == 303);
+    CHECK(registered->get_header_value("Location") == "/?msg=registered");
+    CHECK(grants.peekSubscription(identity.fingerprint()).has_value());
+
+    // Buying with a zero balance redirects back with the insufficient flash.
+    const httplib::Result buy
+        = client.Post("/buy", cookie, httplib::Params{{"service", "username"}});
+    CHECK(buy && buy->status == 303);
+    CHECK(buy->get_header_value("Location") == "/?msg=insufficient");
+
+    // A logged-out action redirects to the login page rather than 401-ing.
+    const httplib::Result guard = client.Get("/topup");
+    CHECK(guard && guard->status == 303);
+    CHECK(guard->get_header_value("Location") == "/login");
+
+    api.stop();
+    serverThread.join();
+    fs::remove_all(grantRoot);
+}
+
 }  // namespace
 
 int main()
@@ -308,6 +392,7 @@ int main()
     testSessionToken();
     testLoginFlow();
     testOpenRegistration();
+    testWebUi();
     std::printf("TestPortalApi: all checks passed\n");
     return 0;
 }

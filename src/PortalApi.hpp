@@ -54,11 +54,14 @@ struct PortalApiOptions {
     std::function<void(const std::string& user, std::uint64_t quotaBytes)> publishQuota;
 };
 
-// The service node's web portal (browser-facing). This first slice serves the
-// sign-in-with-key flow: GET /portal/login issues a challenge, POST
-// /portal/login verifies the user's signed blob and sets a session cookie, and
-// GET /portal/me reports the logged-in user. Registration, top-ups, payments
-// and purchases are added on top.
+// The service node's web portal (browser-facing). It exposes two faces on one
+// HTTP server, sharing all state:
+//   * a JSON API under /portal/* and /v1/* for programmatic clients
+//     (sign-in-with-key login, captcha, register, balance, topup, pay, buy);
+//   * a server-rendered, JS-free HTML site at / (login, cabinet, register,
+//     topup, pay, buy) so a user can onboard from a plain browser. The private
+//     key never enters the browser: the login page shows a challenge the user
+//     signs in their client and pastes back.
 class PortalApi {
 public:
     PortalApi(PortalApiOptions options, Captcha& captcha, GrantStore& grants, LedgerStore& ledger,
@@ -72,10 +75,22 @@ public:
 
 private:
     void setupRoutes();
+    // Registers the browser-facing HTML routes on the same server.
+    void setupWebRoutes();
     // Credits a confirmed invoice to its owner exactly once. Returns whether a
     // credit was applied.
     bool settleInvoice(
         const std::string& invoiceId, const PaymentStatus& status, std::int64_t now);
+
+    // Buying (or renewing) a paid service: debit the balance and extend the
+    // entitlement. Shared by the JSON and the HTML buy paths so the money
+    // handling lives in one place.
+    enum class BuyOutcome { kOk, kNotOffered, kInsufficient };
+    struct BuyResult {
+        BuyOutcome outcome = BuyOutcome::kOk;
+        std::int64_t paidThrough = 0;
+    };
+    BuyResult buyService(const std::string& user, const std::string& service, std::int64_t now);
 
     PortalApiOptions options_;
     Captcha& captcha_;

@@ -163,18 +163,20 @@ void PortalApi::setupRoutes()
                 respondJson(response, {{"error", "not authenticated"}});
                 return;
             }
-            const nlohmann::json body = nlohmann::json::parse(request.body, nullptr, false);
-            if (body.is_discarded() || !body.contains("captchaId")
-                || !body.contains("captchaAnswer")) {
-                response.status = 400;
-                respondJson(response, {{"error", "bad request"}});
-                return;
-            }
-            if (!captcha_.verify(body.at("captchaId").get<std::string>(),
-                    body.at("captchaAnswer").get<std::string>(), nowSeconds())) {
-                response.status = 403;
-                respondJson(response, {{"error", "captcha failed"}});
-                return;
+            if (options_.requireCaptcha) {
+                const nlohmann::json body = nlohmann::json::parse(request.body, nullptr, false);
+                if (body.is_discarded() || !body.contains("captchaId")
+                    || !body.contains("captchaAnswer")) {
+                    response.status = 400;
+                    respondJson(response, {{"error", "bad request"}});
+                    return;
+                }
+                if (!captcha_.verify(body.at("captchaId").get<std::string>(),
+                        body.at("captchaAnswer").get<std::string>(), nowSeconds())) {
+                    response.status = 403;
+                    respondJson(response, {{"error", "captcha failed"}});
+                    return;
+                }
             }
             grants_.grantSubscription(userId, options_.defaultQuotaBytes,
                 options_.freeSubscriptionTermSeconds, nowSeconds());

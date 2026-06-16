@@ -32,6 +32,10 @@ struct PortalApiOptions {
     // Free-tier subscription granted on captcha registration.
     std::uint64_t defaultQuotaBytes = 10 * 1024 * 1024;
     std::int64_t freeSubscriptionTermSeconds = 14 * 24 * 3600;
+    // When false, free registration is open to any logged-in (sign-in-with-key)
+    // user without solving a captcha. Advertised to clients via the discovery
+    // endpoint's freeRegistration.captcha flag, so the two cannot disagree.
+    bool requireCaptcha = true;
 
     // Balance/pricing are in atomic units of this settlement currency.
     std::string settlementCurrency = "XMR";

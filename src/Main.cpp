@@ -69,6 +69,17 @@ struct ServiceConfig {
     std::uint64_t quotaBytes = 0;  // storage only
 };
 
+// Portal onboarding presentation, parsed from the config. The message and
+// links are advertised by the discovery endpoint so a client knows where to
+// register; the captcha block governs free registration.
+struct PortalConfig {
+    std::string message;
+    std::vector<std::string> links;
+    bool captchaEnabled = true;
+    int captchaLength = 5;
+    std::int64_t captchaTtlSeconds = 300;
+};
+
 // The whole payments config. Its defaults are a local dev setup — an
 // auto-confirm mock gateway and a few cheap services — so the demos and a
 // no-config run work out of the box; a real deployment passes --payments-config.
@@ -79,6 +90,7 @@ struct PaymentsConfig {
     ServiceConfig username{true, "100", 365, 0};
     ServiceConfig i2pDest{true, "100", 30, 0};
     ServiceConfig storage{true, "100", 30, 5ULL * 1024 * 1024 * 1024};
+    PortalConfig portal;
 };
 
 ServiceConfig parseService(const nlohmann::json& service)
@@ -122,6 +134,19 @@ PaymentsConfig loadPaymentsConfig(const fs::path& path)
         }
         if (services.contains("storage")) {
             config.storage = parseService(services.at("storage"));
+        }
+    }
+    if (doc.contains("portal")) {
+        const nlohmann::json& portal = doc.at("portal");
+        config.portal.message = portal.value("message", std::string());
+        if (portal.contains("links")) {
+            config.portal.links = portal.at("links").get<std::vector<std::string>>();
+        }
+        if (portal.contains("captcha")) {
+            const nlohmann::json& captcha = portal.at("captcha");
+            config.portal.captchaEnabled = captcha.value("enabled", true);
+            config.portal.captchaLength = captcha.value("length", 5);
+            config.portal.captchaTtlSeconds = captcha.value("ttlSeconds", std::int64_t{300});
         }
     }
     return config;
@@ -225,6 +250,9 @@ int main(const int argc, const char** argv)
     options.serverCardDer = cardDer;
     options.settlementCurrency = payments.settlementCurrency;
     options.defaultQuotaBytes = payments.freeStorageBytes;
+    options.portalMessage = payments.portal.message;
+    options.portalLinks = payments.portal.links;
+    options.freeRegistrationCaptcha = payments.portal.captchaEnabled;
     options.usernameService
         = {payments.username.enabled, payments.username.priceAtomic, payments.username.periodDays};
     options.i2pDestService
@@ -247,9 +275,11 @@ int main(const int argc, const char** argv)
     static std::thread portalThread;
     if (portalPort > 0) {
         captcha = std::make_unique<bazarish::service::SelfHostedCaptcha>(
-            bazarish::toHex(bazarish::randomBytes(16)), 5, 300);
+            bazarish::toHex(bazarish::randomBytes(16)), payments.portal.captchaLength,
+            payments.portal.captchaTtlSeconds);
         bazarish::service::PortalApiOptions portalOptions;
         portalOptions.audience = card.server;
+        portalOptions.requireCaptcha = payments.portal.captchaEnabled;
         portalOptions.challengeSecret = bazarish::toHex(bazarish::randomBytes(16));
         portalOptions.sessionSecret = bazarish::toHex(bazarish::randomBytes(16));
         portalOptions.defaultQuotaBytes = options.defaultQuotaBytes;

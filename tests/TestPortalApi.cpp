@@ -240,12 +240,74 @@ void testLoginFlow()
     fs::remove_all(grantRoot);
 }
 
+// With requireCaptcha=false the portal grants free registration to any
+// signed-in user without a captcha, but still requires the sign-in-with-key
+// session.
+void testOpenRegistration()
+{
+    namespace fs = std::filesystem;
+    const Identity identity = Identity::generate();
+    const fs::path grantRoot
+        = fs::temp_directory_path() / ("bazarish-grants-" + toHex(randomBytes(8)));
+
+    SelfHostedCaptcha captcha("captcha-secret", 5, 300);
+    GrantStore grants(grantRoot);
+    LedgerStore ledger(grantRoot, "XMR");
+    InvoiceStore invoices(grantRoot / "invoices.json");
+    MockPaymentGateway gateway(false);
+
+    PortalApiOptions options;
+    options.audience = "test-server-fp";
+    options.challengeSecret = "challenge-secret";
+    options.sessionSecret = "session-secret";
+    options.defaultQuotaBytes = 10 * 1024 * 1024;
+    options.settlementCurrency = "XMR";
+    options.requireCaptcha = false;
+    PortalApi api(options, captcha, grants, ledger, invoices, gateway);
+
+    const int port = api.bindToAnyPort("127.0.0.1");
+    std::thread serverThread([&api]() { (void)api.listenAfterBind(); });
+
+    httplib::Client client("127.0.0.1", port);
+    httplib::Result challengeResponse;
+    for (int attempt = 0; attempt < 200; ++attempt) {
+        challengeResponse = client.Get("/portal/login");
+        if (challengeResponse) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    CHECK(challengeResponse && challengeResponse->status == 200);
+    const std::string challenge
+        = nlohmann::json::parse(challengeResponse->body).at("challenge").get<std::string>();
+    const std::string blob = signLoginBlob(identity, now(), challenge);
+    const httplib::Result login = client.Post("/portal/login",
+        nlohmann::json({{"challenge", challenge}, {"blob", blob}}).dump(), "application/json");
+    CHECK(login && login->status == 200);
+    const httplib::Headers cookie
+        = {{"Cookie", "session=" + cookieToken(login->get_header_value("Set-Cookie"))}};
+
+    // Captcha disabled: a logged-in user registers with no captcha (empty body).
+    const httplib::Result registered = client.Post("/portal/register", cookie, "{}", "application/json");
+    CHECK(registered && registered->status == 200);
+    CHECK(grants.peekSubscription(identity.fingerprint()).has_value());
+
+    // The session is still required even with the captcha off.
+    const httplib::Result anon = client.Post("/portal/register", "{}", "application/json");
+    CHECK(anon && anon->status == 401);
+
+    api.stop();
+    serverThread.join();
+    fs::remove_all(grantRoot);
+}
+
 }  // namespace
 
 int main()
 {
     testSessionToken();
     testLoginFlow();
+    testOpenRegistration();
     std::printf("TestPortalApi: all checks passed\n");
     return 0;
 }

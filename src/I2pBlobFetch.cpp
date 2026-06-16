@@ -25,16 +25,20 @@ int parseStatus(const std::string& head)
 }  // namespace
 
 BlobProxyResult fetchBlobOverI2p(const std::string& samHost, const std::uint16_t samPort,
-    const std::string& host, const std::string& path)
+    const std::string& host, const std::string& path, const std::string& method,
+    const std::string& deleteToken)
 {
-    // Mirrors the client's BlobTransport::i2pRequest GET path; dedupe into common
-    // when the SAM HTTP helper is shared. No half-close — SAM treats SHUT_WR as a
-    // full stream teardown — so Connection: close drives the response to EOF.
+    // Mirrors the client's BlobTransport::i2pRequest; dedupe into common when the
+    // SAM HTTP helper is shared. No half-close — SAM treats SHUT_WR as a full
+    // stream teardown — so Connection: close drives the response to EOF.
     SamSession session(samHost, samPort, "blobproxy-" + toHex(randomBytes(6)));
     SamStream stream = session.connect(host);
 
-    const std::string request
-        = "GET " + path + " HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n\r\n";
+    std::string request = method + " " + path + " HTTP/1.1\r\nHost: " + host + "\r\n";
+    if (!deleteToken.empty()) {
+        request += "X-Delete-Token: " + deleteToken + "\r\n";
+    }
+    request += "Content-Length: 0\r\nConnection: close\r\n\r\n";
     stream.writeAll(request.data(), request.size());
 
     std::string raw;

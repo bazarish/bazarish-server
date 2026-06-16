@@ -100,15 +100,19 @@ int main()
     HttpApiOptions httpOptions;
     // Stub blob proxy: echoes the requested host+path back so the test can assert
     // the endpoint validated and forwarded without a live router.
+    std::string proxiedMethod;
     std::string proxiedHost;
     std::string proxiedPath;
-    httpOptions.blobProxyFetch
-        = [&proxiedHost, &proxiedPath](const std::string& host, const std::string& path) {
-              proxiedHost = host;
-              proxiedPath = path;
-              const std::string body = "ciphertext-for-" + path;
-              return BlobProxyResult{200, Bytes(body.begin(), body.end())};
-          };
+    std::string proxiedToken;
+    httpOptions.blobProxyFetch = [&](const std::string& method, const std::string& host,
+                                     const std::string& path, const std::string& token) {
+        proxiedMethod = method;
+        proxiedHost = host;
+        proxiedPath = path;
+        proxiedToken = token;
+        const std::string body = method + "-for-" + path;
+        return BlobProxyResult{200, Bytes(body.begin(), body.end())};
+    };
     HttpApi api(storage, engine, httpOptions);
 
     const int port = api.bindToAnyPort("127.0.0.1");
@@ -269,9 +273,24 @@ int main()
         const httplib::Result result = client.Get("/v1/messaging/blob-proxy?host=" + b33 + "&path=/b/cap1",
             makeHeaders(alice, "GET", "/v1/messaging/blob-proxy", "", "alicedev"));
         CHECK(result && result->status == 200);
-        CHECK(result->body == "ciphertext-for-/b/cap1");
+        CHECK(result->body == "GET-for-/b/cap1");
+        CHECK(proxiedMethod == "GET");
         CHECK(proxiedHost == b33);
         CHECK(proxiedPath == "/b/cap1");
+
+        // DELETE (unsend) forwards the method and the delete-token.
+        const httplib::Result del = client.Get(
+            "/v1/messaging/blob-proxy?method=DELETE&host=" + b33 + "&path=/b/cap1&token=tok9",
+            makeHeaders(alice, "GET", "/v1/messaging/blob-proxy", "", "alicedev"));
+        CHECK(del && del->status == 200);
+        CHECK(proxiedMethod == "DELETE");
+        CHECK(proxiedToken == "tok9");
+
+        // An unsupported method is refused.
+        const httplib::Result bad = client.Get(
+            "/v1/messaging/blob-proxy?method=POST&host=" + b33 + "&path=/b/cap1",
+            makeHeaders(alice, "GET", "/v1/messaging/blob-proxy", "", "alicedev"));
+        CHECK(bad && bad->status == 400);
     }
 
     // A non-.b32.i2p host is refused (never an open proxy).

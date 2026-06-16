@@ -250,12 +250,12 @@ void HttpApi::setupRoutes()
             respondJson(response, {{"ok", true}});
         }));
 
-    // --- Blob proxy fetch (for clients without a local SAM bridge) ---
+    // --- Blob proxy (for clients without a local SAM bridge) ---
 
-    // Proxies a large-message blob download over I2P on the client's behalf:
-    // the client passes the blob's .b32.i2p host + path, the server fetches the
-    // (E2E-encrypted) ciphertext over a fresh transient SAM session and relays
-    // it back. Only .b32.i2p hosts are proxied — never an open proxy.
+    // Proxies a large-message blob op over I2P on the client's behalf: the client
+    // passes the blob's .b32.i2p host + path (+ method GET download / DELETE
+    // unsend, + delete-token), the server runs it over a fresh transient SAM
+    // session and relays the result. Only .b32.i2p hosts — never an open proxy.
     http_->Get("/v1/messaging/blob-proxy",
         authenticated([this, requireClient](const httplib::Request& request,
                           httplib::Response& response, const std::string& user) {
@@ -266,8 +266,16 @@ void HttpApi::setupRoutes()
                 respondError(response, 503, ErrorCode::kDeliveryRejected, "blob proxy disabled");
                 return;
             }
+            const std::string method = request.has_param("method")
+                ? request.get_param_value("method")
+                : std::string("GET");
+            if (method != "GET" && method != "DELETE") {
+                respondError(response, 400, ErrorCode::kDeliveryRejected, "unsupported proxy method");
+                return;
+            }
             const std::string host = request.get_param_value("host");
             const std::string path = request.get_param_value("path");
+            const std::string token = request.get_param_value("token");
             const std::string suffix = ".b32.i2p";
             if (host.size() <= suffix.size()
                 || host.compare(host.size() - suffix.size(), suffix.size(), suffix) != 0) {
@@ -276,10 +284,10 @@ void HttpApi::setupRoutes()
                 return;
             }
             try {
-                const BlobProxyResult fetched = options_.blobProxyFetch(host, path);
+                const BlobProxyResult fetched = options_.blobProxyFetch(method, host, path, token);
                 if (fetched.status != 200) {
                     respondError(response, 502, ErrorCode::kDeliveryRejected,
-                        "blob fetch returned status " + std::to_string(fetched.status));
+                        "blob op returned status " + std::to_string(fetched.status));
                     return;
                 }
                 response.set_content(std::string(fetched.body.begin(), fetched.body.end()),

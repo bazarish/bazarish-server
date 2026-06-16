@@ -3,6 +3,7 @@
 #include "DiskStorage.hpp"
 #include "HttpApi.hpp"
 #include "I2pFederation.hpp"
+#include "PerUserDestinations.hpp"
 #include "TcpFederation.hpp"
 
 #include <bazarish/Certificates.hpp>
@@ -198,6 +199,7 @@ int main(const int argc, const char** argv)
     // peers.json. Building the SAM session blocks while tunnels build.
     std::unique_ptr<bazarish::SamSession> samSession;
     std::unique_ptr<bazarish::server::I2pFederation> federation;
+    std::unique_ptr<bazarish::server::PerUserDestinations> perUserDests;
     std::unique_ptr<bazarish::server::TcpFederation> tcpFederation;
     bazarish::server::RemoteDeliverFn remoteDeliver;
     std::vector<std::string> endpoints;
@@ -231,6 +233,13 @@ int main(const int argc, const char** argv)
             *samSession, engine, resolve);
         federation->start();
         remoteDeliver = federation->asRemoteDeliverFn();
+
+        // Paid per-user destinations: operate client-owned offline keys as the
+        // user's personal federation destination. Restore any persisted ones.
+        perUserDests = std::make_unique<bazarish::server::PerUserDestinations>(
+            bazarish::SamClient::kDefaultHost, bazarish::SamClient::kDefaultPort,
+            engine, stateDir, privacy);
+        perUserDests->reloadPersisted(nowSeconds());
     }
 
     // Optional TCP federation: an operator private-channel / local-testing
@@ -283,6 +292,16 @@ int main(const int argc, const char** argv)
         return bazarish::server::openBlobDownload(bazarish::SamClient::kDefaultHost,
             bazarish::SamClient::kDefaultPort, blobHost, blobPath, range);
     };
+    if (perUserDests) {
+        httpOptions.provisionI2pDest = [&perUserDests](const std::string& user,
+                                           const std::string& transientB64,
+                                           const std::int64_t expiresUnix) {
+            perUserDests->provision(user, transientB64, expiresUnix);
+        };
+        httpOptions.revokeI2pDest = [&perUserDests](const std::string& user) {
+            perUserDests->revoke(user);
+        };
+    }
     bazarish::server::HttpApi api(storage, engine, httpOptions, std::move(remoteDeliver));
 
     std::printf("listening on %s:%d (private channel for facades)\n", host.c_str(), port);

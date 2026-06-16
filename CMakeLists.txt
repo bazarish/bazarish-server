@@ -27,6 +27,7 @@ add_library(bazarish_server_lib STATIC
     src/Federation.cpp
     src/I2pBlobFetch.cpp
     src/I2pFederation.cpp
+    src/PerUserDestinations.cpp
     src/TcpFederation.cpp
     src/HttpApi.cpp
 )
@@ -55,4 +56,5 @@ endfunction()
 bazarish_server_add_test(TestDiskStorage)
 bazarish_server_add_test(TestHttpApi)
 bazarish_server_add_test(TestFederation)
+bazarish_server_add_test(TestPerUserDestinations)
 bazarish_server_add_test(TestTcpFederation)

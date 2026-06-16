@@ -204,6 +204,40 @@ void HttpApi::setupRoutes()
             }
         });
 
+    // Per-user I2P destination (operator-internal). Set by the operator's
+    // service node when a paid user's i2pDest plan changes: it hands over the
+    // client-owned offline transient so this server can operate the user's
+    // personal destination. Same shared secret as quota. A request without a
+    // transient revokes the destination.
+    http_->Put("/v1/messaging/i2p-dest",
+        [this](const httplib::Request& request, httplib::Response& response) {
+            if (options_.operatorSecret.empty()
+                || request.get_header_value("X-Operator-Secret") != options_.operatorSecret) {
+                respondError(response, 403, ErrorCode::kDeliveryRejected,
+                    "operator authentication required");
+                return;
+            }
+            if (!options_.provisionI2pDest || !options_.revokeI2pDest) {
+                respondError(response, 503, ErrorCode::kDeliveryRejected,
+                    "per-user destinations not available");
+                return;
+            }
+            try {
+                const nlohmann::json body = nlohmann::json::parse(request.body);
+                const std::string user = body.at("user").get<std::string>();
+                const std::string transient = body.value("transient", std::string());
+                if (transient.empty()) {
+                    options_.revokeI2pDest(user);
+                } else {
+                    options_.provisionI2pDest(user, transient,
+                        body.at("expiresUnix").get<std::int64_t>());
+                }
+                respondJson(response, {{"ok", true}});
+            } catch (const std::exception& error) {
+                respondError(response, 400, ErrorCode::kDeliveryRejected, error.what());
+            }
+        });
+
     // --- Token hashes ---
 
     http_->Post("/v1/messaging/tokens",

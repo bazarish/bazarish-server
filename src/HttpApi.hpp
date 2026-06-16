@@ -41,6 +41,14 @@ struct HttpApiOptions {
     std::function<std::unique_ptr<I2pBlobReader>(
         const std::string& host, const std::string& path, const std::string& range)>
         blobProxyDownload;
+    // Brings up (or replaces) a paid user's personal I2P destination from a
+    // client-owned offline transient; the operator-internal i2p-dest endpoint
+    // calls it (same X-Operator-Secret as quota). Empty disables the endpoint.
+    std::function<void(const std::string& user, const std::string& transientB64,
+        std::int64_t expiresUnix)>
+        provisionI2pDest;
+    // Tears down a user's personal destination (grant lapsed/revoked).
+    std::function<void(const std::string& user)> revokeI2pDest;
 };
 
 // Result of relaying a sealed envelope to another server (federation).

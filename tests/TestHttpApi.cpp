@@ -169,6 +169,20 @@ int main()
         }
         return makeFakeReader(206, {{"content-range", "bytes 6-10/11"}}, "world");
     };
+    // Operator-internal per-user destination: stub the manager so the test can
+    // assert the endpoint authenticates and dispatches provision/revoke.
+    httpOptions.operatorSecret = "op-secret";
+    std::string provisionedUser;
+    std::string provisionedTransient;
+    std::int64_t provisionedExpires = 0;
+    std::string revokedUser;
+    httpOptions.provisionI2pDest = [&](const std::string& user, const std::string& transientB64,
+                                       const std::int64_t expiresUnix) {
+        provisionedUser = user;
+        provisionedTransient = transientB64;
+        provisionedExpires = expiresUnix;
+    };
+    httpOptions.revokeI2pDest = [&](const std::string& user) { revokedUser = user; };
     HttpApi api(storage, engine, httpOptions);
 
     const int port = api.bindToAnyPort("127.0.0.1");
@@ -366,6 +380,33 @@ int main()
             = client.Get("/v1/messaging/blob-proxy?host=evil.example.com&path=/x",
                 makeHeaders(alice, "GET", "/v1/messaging/blob-proxy", "", "alicedev"));
         CHECK(result && result->status == 400);
+    }
+
+    // Per-user I2P destination endpoint (operator-secret): auth + dispatch.
+    {
+        const std::string body = nlohmann::json{
+            {"user", "alicefp"}, {"transient", "tb64"}, {"expiresUnix", 1780001234}}
+                                     .dump();
+        // No secret, then wrong secret → 403.
+        const httplib::Result noAuth
+            = client.Put("/v1/messaging/i2p-dest", body, "application/json");
+        CHECK(noAuth && noAuth->status == 403);
+        const httplib::Result badAuth = client.Put("/v1/messaging/i2p-dest",
+            {{"X-Operator-Secret", "nope"}}, body, "application/json");
+        CHECK(badAuth && badAuth->status == 403);
+        // Correct secret with a transient provisions.
+        const httplib::Result ok = client.Put("/v1/messaging/i2p-dest",
+            {{"X-Operator-Secret", "op-secret"}}, body, "application/json");
+        CHECK(ok && ok->status == 200);
+        CHECK(provisionedUser == "alicefp");
+        CHECK(provisionedTransient == "tb64");
+        CHECK(provisionedExpires == 1780001234);
+        // Correct secret without a transient revokes.
+        const std::string revokeBody = nlohmann::json{{"user", "alicefp"}}.dump();
+        const httplib::Result revoked = client.Put("/v1/messaging/i2p-dest",
+            {{"X-Operator-Secret", "op-secret"}}, revokeBody, "application/json");
+        CHECK(revoked && revoked->status == 200);
+        CHECK(revokedUser == "alicefp");
     }
 
     api.stop();

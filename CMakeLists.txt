@@ -25,6 +25,7 @@ add_library(bazarish_server_lib STATIC
     src/DiskStorage.cpp
     src/DeliveryEngine.cpp
     src/Federation.cpp
+    src/FederationRateLimiter.cpp
     src/I2pBlobFetch.cpp
     src/FederationPool.cpp
     src/I2pFederation.cpp
@@ -57,6 +58,7 @@ endfunction()
 bazarish_server_add_test(TestDiskStorage)
 bazarish_server_add_test(TestHttpApi)
 bazarish_server_add_test(TestFederation)
+bazarish_server_add_test(TestFederationRateLimiter)
 bazarish_server_add_test(TestFederationPool)
 bazarish_server_add_test(TestPerUserDestinations)
 bazarish_server_add_test(TestTcpFederation)

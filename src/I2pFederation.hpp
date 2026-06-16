@@ -14,6 +14,8 @@
 
 namespace bazarish::server {
 
+class FederationRateLimiter;
+
 // The I2P federation node: an inbound accept loop that serves incoming
 // deliveries into the local DeliveryEngine, plus an outbound relay used as
 // the HttpApi RemoteDeliverFn. Server fingerprints are resolved to I2P
@@ -22,7 +24,8 @@ class I2pFederation {
 public:
     using Resolver = std::function<std::optional<std::string>(const std::string& serverFp)>;
 
-    I2pFederation(SamSession& session, DeliveryEngine& engine, Resolver resolve);
+    I2pFederation(SamSession& session, DeliveryEngine& engine, Resolver resolve,
+        FederationRateLimiter* limiter = nullptr);
     ~I2pFederation();
 
     I2pFederation(const I2pFederation&) = delete;
@@ -46,6 +49,7 @@ private:
     SamSession& session_;
     DeliveryEngine& engine_;
     Resolver resolve_;
+    FederationRateLimiter* limiter_;
     std::atomic<bool> running_;
     std::thread acceptThread_;
 };

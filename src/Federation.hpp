@@ -11,6 +11,8 @@
 
 namespace bazarish::server {
 
+class FederationRateLimiter;
+
 // Server-to-server delivery framing over an I2P stream (or any SamStream):
 //   request:  one JSON header line "{op,sealed,len}\n" + len raw payload bytes
 //   response: one JSON line "{delivered,errorCode,errorMessage}\n"
@@ -26,8 +28,11 @@ struct FederationDeliverResult {
 FederationDeliverResult federationSendDeliver(
     SamStream& stream, const Bytes& sealed, const Bytes& payload);
 
-// Server side: read one deliver request, run the engine and write the
-// result. now is unix seconds.
-void federationServeOnce(SamStream& stream, DeliveryEngine& engine, std::int64_t now);
+// Server side: read one deliver request, run the engine and write the result.
+// now is unix seconds. peerDest is the connecting peer's I2P destination; when
+// limiter is set and the peer is over its rate limit, the request is dropped
+// without serving. Both default to no rate-limiting.
+void federationServeOnce(SamStream& stream, DeliveryEngine& engine, std::int64_t now,
+    const std::string& peerDest = std::string(), FederationRateLimiter* limiter = nullptr);
 
 }  // namespace bazarish::server

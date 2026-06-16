@@ -16,6 +16,8 @@
 
 namespace bazarish::server {
 
+class FederationRateLimiter;
+
 // Operates per-user federation destinations for paid users that own their I2P
 // key. The user delegates a time-boxed OFFLINE transient to the server, which
 // brings the destination up over SAM as a STANDARD LeaseSet2 (an
@@ -28,7 +30,8 @@ namespace bazarish::server {
 class PerUserDestinations {
 public:
     PerUserDestinations(std::string samHost, std::uint16_t samPort,
-        DeliveryEngine& engine, std::filesystem::path stateDir, I2pPrivacy privacy);
+        DeliveryEngine& engine, std::filesystem::path stateDir, I2pPrivacy privacy,
+        FederationRateLimiter* limiter = nullptr);
     ~PerUserDestinations();
 
     PerUserDestinations(const PerUserDestinations&) = delete;
@@ -72,6 +75,7 @@ private:
     DeliveryEngine& engine_;
     const std::filesystem::path stateDir_;
     const I2pPrivacy privacy_;
+    FederationRateLimiter* const limiter_;
     mutable std::mutex mutex_;
     std::map<std::string, std::unique_ptr<Destination>> dests_;
 };

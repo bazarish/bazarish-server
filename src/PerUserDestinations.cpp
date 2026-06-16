@@ -25,12 +25,14 @@ std::int64_t nowSeconds()
 }  // namespace
 
 PerUserDestinations::PerUserDestinations(std::string samHost, const std::uint16_t samPort,
-    DeliveryEngine& engine, std::filesystem::path stateDir, const I2pPrivacy privacy)
+    DeliveryEngine& engine, std::filesystem::path stateDir, const I2pPrivacy privacy,
+    FederationRateLimiter* const limiter)
     : samHost_(std::move(samHost))
     , samPort_(samPort)
     , engine_(engine)
     , stateDir_(std::move(stateDir))
     , privacy_(privacy)
+    , limiter_(limiter)
 {
 }
 
@@ -78,7 +80,7 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
                 try {
                     std::string peer;
                     SamStream stream = session.accept(peer);
-                    federationServeOnce(stream, engine_, nowSeconds());
+                    federationServeOnce(stream, engine_, nowSeconds(), peer, limiter_);
                 } catch (const std::exception&) {
                     // A failed accept/serve must not kill the loop; on shutdown
                     // the running flag breaks out on the next iteration.

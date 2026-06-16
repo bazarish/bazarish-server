@@ -55,7 +55,7 @@ std::size_t poolIndexFor(const std::string& userFp, const std::size_t poolSize)
 
 FederationPool::FederationPool(std::string samHost, const std::uint16_t samPort,
     DeliveryEngine& engine, std::filesystem::path stateDir, std::string sessionIdPrefix,
-    const I2pPrivacy privacy, const std::size_t size)
+    const I2pPrivacy privacy, const std::size_t size, FederationRateLimiter* const limiter)
     : samHost_(std::move(samHost))
     , samPort_(samPort)
     , engine_(engine)
@@ -63,6 +63,7 @@ FederationPool::FederationPool(std::string samHost, const std::uint16_t samPort,
     , sessionIdPrefix_(std::move(sessionIdPrefix))
     , privacy_(privacy)
     , size_(size)
+    , limiter_(limiter)
 {
 }
 
@@ -100,7 +101,7 @@ void FederationPool::start()
                 try {
                     std::string peer;
                     SamStream stream = raw->session->accept(peer);
-                    federationServeOnce(stream, engine_, nowSeconds());
+                    federationServeOnce(stream, engine_, nowSeconds(), peer, limiter_);
                 } catch (const std::exception&) {
                     // A failed accept/serve must not kill the loop.
                 }

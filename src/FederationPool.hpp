@@ -16,6 +16,8 @@
 
 namespace bazarish::server {
 
+class FederationRateLimiter;
+
 // Deterministic, restart- and platform-stable index of the pool destination
 // assigned to a user fingerprint. Returns 0 when poolSize is 0.
 std::size_t poolIndexFor(const std::string& userFp, std::size_t poolSize);
@@ -31,7 +33,7 @@ class FederationPool {
 public:
     FederationPool(std::string samHost, std::uint16_t samPort, DeliveryEngine& engine,
         std::filesystem::path stateDir, std::string sessionIdPrefix, I2pPrivacy privacy,
-        std::size_t size);
+        std::size_t size, FederationRateLimiter* limiter = nullptr);
     ~FederationPool();
 
     FederationPool(const FederationPool&) = delete;
@@ -63,6 +65,7 @@ private:
     const std::string sessionIdPrefix_;
     const I2pPrivacy privacy_;
     const std::size_t size_;
+    FederationRateLimiter* const limiter_;
     std::vector<std::unique_ptr<Dest>> dests_;
     std::vector<std::string> destinations_;
 };

@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #include "Federation.hpp"
 
+#include "FederationRateLimiter.hpp"
+
 #include <nlohmann/json.hpp>
 
 #include <stdexcept>
@@ -62,8 +64,13 @@ FederationDeliverResult federationSendDeliver(
     return result;
 }
 
-void federationServeOnce(SamStream& stream, DeliveryEngine& engine, const std::int64_t now)
+void federationServeOnce(SamStream& stream, DeliveryEngine& engine, const std::int64_t now,
+    const std::string& peerDest, FederationRateLimiter* const limiter)
 {
+    if (limiter != nullptr && !limiter->allow(peerDest, now)) {
+        // Over the per-peer rate limit: drop the connection without serving.
+        return;
+    }
     const nlohmann::json header = nlohmann::json::parse(readHeaderLine(stream));
     if (header.at("op").get<std::string>() != "deliver") {
         throw std::runtime_error("unknown federation op");

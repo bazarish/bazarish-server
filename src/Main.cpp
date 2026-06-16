@@ -2,6 +2,7 @@
 #include "DeliveryEngine.hpp"
 #include "DiskStorage.hpp"
 #include "FederationPool.hpp"
+#include "FederationRateLimiter.hpp"
 #include "HttpApi.hpp"
 #include "I2pFederation.hpp"
 #include "PerUserDestinations.hpp"
@@ -39,6 +40,7 @@ void printUsage()
         "          [--i2p] [--federation-listen <host> <port>]\n"
         "          [--contact-request-limit <bytes>] [--operator-secret <secret>]\n"
         "          [--privacy <minimal|middle|max>] [--pool-size <n>]\n"
+        "          [--federation-rate-limit <n>]\n"
         "       bazarish-server --version\n"
         "\n"
         "The state directory holds the server keys and the content storage;\n"
@@ -50,7 +52,9 @@ void printUsage()
         "payload. --federation-listen enables a plain-TCP federation transport\n"
         "(operator private channel / local testing). Outbound federation\n"
         "resolves peers from <state>/peers.json ({\"<server-fingerprint>\":\n"
-        "\"<i2p-destination-or-host:port>\"}).\n",
+        "\"<i2p-destination-or-host:port>\"}). --federation-rate-limit caps\n"
+        "inbound I2P deliveries per connecting destination per 60s (default 240,\n"
+        "0 disables).\n",
         kVersion);
 }
 
@@ -150,6 +154,7 @@ int main(const int argc, const char** argv)
     std::string operatorSecret;
     bazarish::I2pPrivacy privacy = bazarish::I2pPrivacy::kMax;
     std::size_t poolSize = 0;
+    std::size_t federationRateLimit = 240;  // inbound deliveries per peer dest per 60s
     for (int i = 3; i < argc;) {
         if (std::strcmp(argv[i], "--listen") == 0 && i + 2 < argc) {
             host = argv[i + 1];
@@ -182,6 +187,9 @@ int main(const int argc, const char** argv)
         } else if (std::strcmp(argv[i], "--pool-size") == 0 && i + 1 < argc) {
             poolSize = static_cast<std::size_t>(std::strtoull(argv[i + 1], nullptr, 10));
             i += 2;
+        } else if (std::strcmp(argv[i], "--federation-rate-limit") == 0 && i + 1 < argc) {
+            federationRateLimit = static_cast<std::size_t>(std::strtoull(argv[i + 1], nullptr, 10));
+            i += 2;
         } else {
             printUsage();
             return 2;
@@ -203,6 +211,7 @@ int main(const int argc, const char** argv)
     // card and the inbound accept loop, plus outbound relay resolved from
     // peers.json. Building the SAM session blocks while tunnels build.
     std::unique_ptr<bazarish::SamSession> samSession;
+    std::unique_ptr<bazarish::server::FederationRateLimiter> federationLimiter;
     std::unique_ptr<bazarish::server::I2pFederation> federation;
     std::unique_ptr<bazarish::server::PerUserDestinations> perUserDests;
     std::unique_ptr<bazarish::server::FederationPool> federationPool;
@@ -235,8 +244,17 @@ int main(const int argc, const char** argv)
             return resolvePeer(peersPath, serverFp);
         };
 
+        // Inbound federation accountability is per-connecting-destination: one
+        // limiter, shared across every accept loop (home destination, address
+        // pool, per-user destinations), so a single peer cannot flood us.
+        // --federation-rate-limit 0 disables it.
+        if (federationRateLimit > 0) {
+            federationLimiter = std::make_unique<bazarish::server::FederationRateLimiter>(
+                federationRateLimit, 60);
+        }
+
         federation = std::make_unique<bazarish::server::I2pFederation>(
-            *samSession, engine, resolve);
+            *samSession, engine, resolve, federationLimiter.get());
         federation->start();
         remoteDeliver = federation->asRemoteDeliverFn();
 
@@ -244,7 +262,7 @@ int main(const int argc, const char** argv)
         // user's personal federation destination. Restore any persisted ones.
         perUserDests = std::make_unique<bazarish::server::PerUserDestinations>(
             bazarish::SamClient::kDefaultHost, bazarish::SamClient::kDefaultPort,
-            engine, stateDir, privacy);
+            engine, stateDir, privacy, federationLimiter.get());
         perUserDests->reloadPersisted(nowSeconds());
 
         // Free-tier address pool: server-owned encrypted-LeaseSet (b33)
@@ -257,7 +275,7 @@ int main(const int argc, const char** argv)
             federationPool = std::make_unique<bazarish::server::FederationPool>(
                 bazarish::SamClient::kDefaultHost, bazarish::SamClient::kDefaultPort, engine,
                 stateDir, "bazarish-pool-" + identity.fingerprint().substr(0, 8) + "-", privacy,
-                poolSize);
+                poolSize, federationLimiter.get());
             federationPool->start();
             std::printf("address pool up: %zu destinations\n",
                 federationPool->destinations().size());

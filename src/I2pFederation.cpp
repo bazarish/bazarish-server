@@ -18,10 +18,12 @@ std::int64_t nowSeconds()
 
 }  // namespace
 
-I2pFederation::I2pFederation(SamSession& session, DeliveryEngine& engine, Resolver resolve)
+I2pFederation::I2pFederation(SamSession& session, DeliveryEngine& engine, Resolver resolve,
+    FederationRateLimiter* const limiter)
     : session_(session)
     , engine_(engine)
     , resolve_(std::move(resolve))
+    , limiter_(limiter)
     , running_(false)
 {
 }
@@ -51,7 +53,7 @@ void I2pFederation::acceptLoop()
         try {
             std::string peer;
             SamStream stream = session_.accept(peer);
-            federationServeOnce(stream, engine_, nowSeconds());
+            federationServeOnce(stream, engine_, nowSeconds(), peer, limiter_);
         } catch (const std::exception&) {
             // A failed accept/serve (peer reset, timeout, malformed
             // request) must not take the loop down; the next inbound

@@ -672,15 +672,25 @@ void PortalApi::setupWebRoutes()
         const PaymentStatus status = gateway_.checkStatus(invoiceId);
         settleInvoice(invoiceId, status, nowSeconds());
         const std::string body = "<h2>Payment status</h2><p>Invoice <code>"
-            + htmlEscape(invoiceId) + "</code></p><p>Status: <strong>"
-            + htmlEscape(toString(status.state)) + "</strong></p><p>Balance: "
-            + std::to_string(ledger_.get(*user).balanceAtomic) + " "
+            + htmlEscape(invoiceId) + "</code></p><p>Status: <strong id=\"paystatus\">"
+            + htmlEscape(toString(status.state)) + "</strong></p><p>Balance: <span id=\"paybal\">"
+            + std::to_string(ledger_.get(*user).balanceAtomic) + "</span> "
             + htmlEscape(options_.settlementCurrency) + "</p><p><a href=\"/pay/"
             + htmlEscape(invoiceId)
             + "\">Refresh</a></p><form method=\"post\" action=\"/pay/" + htmlEscape(invoiceId)
             + "/txid\"><label for=\"tx\">Or submit a transaction id</label>"
               "<input id=\"tx\" name=\"txid\" required><button type=\"submit\">Submit txid</button>"
-              "</form><p><a href=\"/\">Back to portal</a></p>";
+              "</form><p><a href=\"/\">Back to portal</a></p>"
+              // Progressive enhancement: poll the JSON status endpoint so the page
+              // reflects confirmation without a manual reload. Same-origin only (no
+              // third-party request). With JS off, the Refresh link is the fallback.
+              "<script>(function(){var s=document.getElementById('paystatus'),"
+              "b=document.getElementById('paybal');function p(){"
+              "fetch('/portal'+location.pathname,{headers:{Accept:'application/json'}})"
+              ".then(function(r){return r.json()}).then(function(j){"
+              "if(s)s.textContent=j.state;if(b)b.textContent=j.balanceAtomic;"
+              "if(j.state!=='confirmed')setTimeout(p,4000)}).catch(function(){})}"
+              "setTimeout(p,4000)})();</script>";
         sendHtml(response, htmlPage("Payment", body));
     });
 

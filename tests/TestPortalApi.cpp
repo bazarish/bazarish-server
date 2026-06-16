@@ -375,6 +375,21 @@ void testWebUi()
     CHECK(buy && buy->status == 303);
     CHECK(buy->get_header_value("Location") == "/?msg=insufficient");
 
+    // Top up creates an invoice; its page links to the pay page.
+    const httplib::Result topup = client.Post("/topup", cookie, httplib::Params{{"amount", "1"}});
+    CHECK(topup && topup->status == 200);
+    std::smatch match;
+    CHECK(std::regex_search(topup->body, match, std::regex("/pay/([^\"]+)\"")));
+    const std::string invoiceId = match[1].str();
+
+    // The pay page carries the status, the JS-free Refresh fallback and the
+    // progressive-enhancement poller that calls the JSON status endpoint.
+    const httplib::Result pay = client.Get("/pay/" + invoiceId, cookie);
+    CHECK(pay && pay->status == 200);
+    CHECK(pay->body.find("id=\"paystatus\"") != std::string::npos);
+    CHECK(pay->body.find("Refresh") != std::string::npos);
+    CHECK(pay->body.find("<script>") != std::string::npos);
+
     // A logged-out action redirects to the login page rather than 401-ing.
     const httplib::Result guard = client.Get("/topup");
     CHECK(guard && guard->status == 303);

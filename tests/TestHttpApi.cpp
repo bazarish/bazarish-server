@@ -137,11 +137,15 @@ int main()
     DeliveryEngine engine(storage, serverFp, Key::fromPrivatePem(serverSealing.privatePem()),
         engineOptions);
     HttpApiOptions httpOptions;
-    // Routing is by destination: a send whose toDest is this server's home
-    // destination is delivered locally. The tests use serverFp as that local
-    // destination string (opaque to the routing check) and a different value
-    // for the unreachable-remote case.
-    httpOptions.localDest = serverFp;
+    // Routing is by destination. The tests assign every user the same
+    // destination (serverFp, opaque to the routing check) with the server's
+    // sealing key, so a send to serverFp is a same-destination local delivery;
+    // a send to any other destination federates (unreachable here).
+    const auto serverServingKey
+        = std::make_shared<Key>(Key::fromPrivatePem(serverSealing.privatePem()));
+    httpOptions.assignDestination = [serverFp, serverServingKey](const std::string&) {
+        return DestinationAssignment{serverFp, serverServingKey};
+    };
     // Stub blob proxy: records the unsend (DELETE) op so the test can assert the
     // endpoint validated and forwarded it without a live router.
     std::string proxiedMethod;
@@ -321,7 +325,11 @@ int main()
         CHECK(storage.tokenHashCount(alice.fingerprint()) == 1);
     }
 
-    // Unknown destination server: unreachable until federation lands.
+    // A different destination (not the sender's own) federates rather than
+    // delivering locally — even though no other-destination recipient exists
+    // here, so it reports unreachable (no federation transport wired in tests).
+    // This is the timing guarantee: a cross-destination recipient is never a
+    // fast local delivery.
     {
         const std::string remote = makeEnvelope(toBase32(Bytes(32, 0x42)), sealingPublic,
             {{"class", "content"}, {"mailbox", alice.fingerprint()},
@@ -330,6 +338,17 @@ int main()
         const nlohmann::json result = sendAndPoll(client, bob, "bobdev", remote);
         CHECK(result.at("status") == "failed");
         CHECK(result.at("error").at("code") == "RECIPIENT_SERVER_UNREACHABLE");
+    }
+
+    // The destination endpoint surfaces the caller's assigned destination + the
+    // public serving sealing key (the test assignment: serverFp + server key).
+    {
+        const httplib::Result result = client.Get("/v1/messaging/destination",
+            makeHeaders(bob, "GET", "/v1/messaging/destination", "", "bobdev"));
+        CHECK(result && result->status == 200);
+        const nlohmann::json body = nlohmann::json::parse(result->body);
+        CHECK(body.at("dest").get<std::string>() == serverFp);
+        CHECK(body.at("servingKey").get<std::string>() == toBase64(serverServingKey->publicDer()));
     }
 
     // Unknown attempt IDs are reported as such.

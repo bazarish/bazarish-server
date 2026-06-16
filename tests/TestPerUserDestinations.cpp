@@ -61,10 +61,13 @@ int main()
         CHECK(dests.size() == 1);
 
         // The destination has a serving sealing key, persisted and surfaced for
-        // the user's contact card.
-        const Bytes servingA = dests.servingKeyFor(alice);
-        CHECK(!servingA.empty());
+        // the user's contact card. Its address stays empty here (no SAM router,
+        // so the session never publishes).
+        const std::shared_ptr<Key> servingKeyA = dests.servingKeyFor(alice);
+        CHECK(servingKeyA != nullptr);
+        const Bytes servingA = servingKeyA->publicDer();
         CHECK(readFile(aliceFile).find("sealingKey") != std::string::npos);
+        CHECK(dests.destinationFor(alice).empty());
 
         // Same transient: a no-op (still one destination).
         dests.provision(alice, "transient-blob-A", kNow + 1000);
@@ -75,13 +78,13 @@ int main()
         dests.provision(alice, "transient-blob-B", kNow + 1000);
         CHECK(dests.size() == 1);
         CHECK(readFile(aliceFile).find("transient-blob-B") != std::string::npos);
-        CHECK(dests.servingKeyFor(alice) == servingA);
+        CHECK(dests.servingKeyFor(alice)->publicDer() == servingA);
 
         // Revoke forgets the destination and deletes the persisted transient.
         dests.revoke(alice);
         CHECK(!std::filesystem::exists(aliceFile));
         CHECK(dests.size() == 0);
-        CHECK(dests.servingKeyFor(alice).empty());
+        CHECK(dests.servingKeyFor(alice) == nullptr);
     }
 
     // reloadPersisted re-provisions non-expired transients and skips expired ones.
@@ -91,15 +94,16 @@ int main()
         PerUserDestinations writer("127.0.0.1", 1, engine, root, I2pPrivacy::kMinimal);
         writer.provision(alice, "transient-reload", kNow + 1000);
         writer.provision(bob, "transient-expired", kNow - 10);
-        aliceServing = writer.servingKeyFor(alice);
-        CHECK(!aliceServing.empty());
+        const std::shared_ptr<Key> key = writer.servingKeyFor(alice);
+        CHECK(key != nullptr);
+        aliceServing = key->publicDer();
     }
     {
         PerUserDestinations reloaded("127.0.0.1", 1, engine, root, I2pPrivacy::kMinimal);
         reloaded.reloadPersisted(kNow);
         CHECK(reloaded.size() == 1);  // alice restored; bob's expired transient skipped
         // The serving key survives the restart (the user's card stays valid).
-        CHECK(reloaded.servingKeyFor(alice) == aliceServing);
+        CHECK(reloaded.servingKeyFor(alice)->publicDer() == aliceServing);
     }
 
     std::printf("TestPerUserDestinations OK\n");

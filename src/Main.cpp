@@ -264,10 +264,32 @@ int main(const int argc, const char** argv)
 
     bazarish::server::HttpApiOptions httpOptions;
     httpOptions.operatorSecret = operatorSecret;
-    // The home destination: a send addressed to it is delivered locally; any
-    // other destination is federated. (samSession is always set — --i2p is
-    // required.)
-    httpOptions.localDest = samSession->publicDestination();
+    // Resolve a user's assigned serving destination + key: their personal
+    // destination if they delegated one, else their pool destination if the
+    // pool is enabled, else the home destination. Used to short-circuit only
+    // same-destination deliveries (a send to the sender's own destination) and
+    // to surface the destination to the user. samSession is always set (--i2p
+    // is required); homeServingKey is the same key the engine unseals with.
+    const auto homeServingKey
+        = std::make_shared<bazarish::Key>(bazarish::Key::fromPrivatePem(sealing.privatePem()));
+    const std::string homeDest = samSession->publicDestination();
+    httpOptions.assignDestination
+        = [&perUserDests, &federationPool, homeDest, homeServingKey](
+              const std::string& user) -> bazarish::server::DestinationAssignment {
+        // A user with a personal destination always resolves to it (its address
+        // may be empty until its session builds — then no local short-circuit
+        // matches and the delivery federates, which is safe).
+        if (perUserDests) {
+            const std::shared_ptr<bazarish::Key> key = perUserDests->servingKeyFor(user);
+            if (key) {
+                return {perUserDests->destinationFor(user), key};
+            }
+        }
+        if (federationPool) {
+            return {federationPool->destinationFor(user), federationPool->servingKeyFor(user)};
+        }
+        return {homeDest, homeServingKey};
+    };
     // Proxy blob ops over I2P for clients without a local SAM bridge, via a fresh
     // transient session on the local bridge (independent of federation). Unsend
     // (DELETE) is a small whole-body op; downloads (GET) stream so a large blob is

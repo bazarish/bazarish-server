@@ -65,7 +65,7 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
     auto dest = std::make_unique<Destination>();
     dest->transientB64 = transientB64;
     dest->expiresUnix = expiresUnix;
-    dest->sealingKey = std::make_unique<Key>(Key::fromPrivatePem(sealingKeyPem));
+    dest->sealingKey = std::make_shared<Key>(Key::fromPrivatePem(sealingKeyPem));
     Destination* const raw = dest.get();
     // SAM session ids must be unique on the bridge; the fingerprint disambiguates.
     const std::string sessionId = "bazarish-user-" + userFp.substr(0, 12);
@@ -75,6 +75,12 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
             // publish an encrypted LeaseSet2.
             SamSession session(samHost_, samPort_, sessionId, transientB64,
                 kStandardLeaseSetType, privacy_);
+            {
+                // Publish the resolved destination address so it can be surfaced
+                // to the user and matched for same-destination local delivery.
+                const std::lock_guard<std::mutex> lock(mutex_);
+                raw->dest = session.publicDestination();
+            }
             std::printf("per-user i2p destination up for %s\n", userFp.c_str());
             std::fflush(stdout);
             while (raw->running.load()) {
@@ -201,14 +207,24 @@ std::size_t PerUserDestinations::size() const
     return dests_.size();
 }
 
-Bytes PerUserDestinations::servingKeyFor(const std::string& userFp) const
+std::shared_ptr<Key> PerUserDestinations::servingKeyFor(const std::string& userFp) const
 {
     const std::lock_guard<std::mutex> lock(mutex_);
     const auto it = dests_.find(userFp);
-    if (it == dests_.end() || !it->second->sealingKey) {
-        return {};
+    if (it == dests_.end()) {
+        return nullptr;
     }
-    return it->second->sealingKey->publicDer();
+    return it->second->sealingKey;
+}
+
+std::string PerUserDestinations::destinationFor(const std::string& userFp) const
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = dests_.find(userFp);
+    if (it == dests_.end()) {
+        return std::string();
+    }
+    return it->second->dest;
 }
 
 }  // namespace bazarish::server

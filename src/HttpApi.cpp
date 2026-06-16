@@ -181,6 +181,25 @@ void HttpApi::setupRoutes()
             respondJson(response, {{"ok", true}});
         }));
 
+    // The caller's assigned serving destination + the public serving sealing
+    // key for it, so the client can fold both into its self-signed contact card
+    // (see docs-main api/InviteAnonymity.md). Resolved from the authenticated
+    // caller's fingerprint.
+    http_->Get("/v1/messaging/destination",
+        authenticated([this](const httplib::Request&, httplib::Response& response,
+                          const std::string& user) {
+            const DestinationAssignment assigned = options_.assignDestination
+                ? options_.assignDestination(user)
+                : DestinationAssignment{};
+            respondJson(response,
+                {
+                    {"dest", assigned.dest},
+                    {"servingKey", assigned.servingKey
+                            ? toBase64(assigned.servingKey->publicDer())
+                            : std::string()},
+                });
+        }));
+
     // --- Operator-internal: per-user storage quota ---
     //
     // Set by the operator's service node over the private channel when a user's
@@ -424,11 +443,17 @@ void HttpApi::setupRoutes()
 
             const std::int64_t now = nowSeconds();
             Attempt attempt;
-            // Routed by destination: a delivery to this server's own destination
-            // is local (unsealed with the home key); anything else is federated.
-            if (!options_.localDest.empty() && toDest == options_.localDest) {
+            // Routed by destination. Local short-circuit ONLY when toDest is the
+            // sender's own destination (same i2p destination): then the recipient
+            // shares that destination, so a local store leaks no co-location. Any
+            // other destination — including a recipient this server hosts on a
+            // different destination — is federated, so delivery latency cannot
+            // distinguish a local recipient from a remote one.
+            const DestinationAssignment sender
+                = options_.assignDestination ? options_.assignDestination(user) : DestinationAssignment{};
+            if (sender.servingKey && !sender.dest.empty() && toDest == sender.dest) {
                 const DeliveryEngine::Outcome outcome
-                    = engine_.deliver(sealed, payload, now, engine_.sealingKey());
+                    = engine_.deliver(sealed, payload, now, *sender.servingKey);
                 attempt.status = outcome.delivered ? "delivered" : "failed";
                 attempt.errorCode = outcome.errorCode;
                 attempt.errorMessage = outcome.errorMessage;

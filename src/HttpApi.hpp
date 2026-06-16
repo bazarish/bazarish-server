@@ -20,6 +20,20 @@ class Server;
 
 namespace bazarish::server {
 
+// A user's assigned serving destination and its serving sealing key (private
+// half held by this server). Used both to surface the destination to the user
+// and to decide same-destination local delivery. An empty dest / null key means
+// the user has no assigned destination yet.
+struct DestinationAssignment {
+    std::string dest;
+    std::shared_ptr<Key> servingKey;
+};
+
+// Resolves the authenticated caller's assigned destination. Looked up
+// server-side from the caller's fingerprint — never from a client-supplied
+// value — so a sender cannot forge it to force a revealing local delivery.
+using AssignDestinationFn = std::function<DestinationAssignment(const std::string& user)>;
+
 struct HttpApiOptions {
     // Hard cap on a single delivery envelope.
     std::uint64_t perMessageLimitBytes = 10 * 1024 * 1024;
@@ -49,11 +63,14 @@ struct HttpApiOptions {
         provisionI2pDest;
     // Tears down a user's personal destination (grant lapsed/revoked).
     std::function<void(const std::string& user)> revokeI2pDest;
-    // This server's own home delivery destination (its I2P destination). A send
-    // whose toDest equals it is delivered locally with the engine's home key;
-    // any other toDest is federated (dialled directly over I2P). Empty disables
-    // local delivery (every send federates).
-    std::string localDest;
+    // Resolves the caller's assigned destination + serving key. A send is
+    // delivered locally only when its toDest equals the caller's own assigned
+    // destination (same i2p destination); every other toDest — including a
+    // co-located recipient on a different destination — is federated, so
+    // delivery latency cannot reveal co-location (see docs-main
+    // api/InviteAnonymity.md). Also backs GET /v1/messaging/destination. Empty
+    // disables local delivery (every send federates).
+    AssignDestinationFn assignDestination;
 };
 
 // Result of relaying a sealed envelope to another destination (federation).
@@ -73,8 +90,9 @@ using RemoteDeliverFn = std::function<RemoteDeliveryResult(
 
 // The /v1/messaging/* HTTP API: client registry, token hashes, pending
 // fetch/ack and submit+poll sending. A send is routed by its toDest: a delivery
-// to this server's own destination runs the shared DeliveryEngine locally; any
-// other destination is dialled directly over I2P federation.
+// to the sender's own destination runs the shared DeliveryEngine locally; every
+// other destination — even a co-located recipient on a different destination —
+// is dialled over I2P federation, so timing reveals no co-location.
 class HttpApi {
 public:
     HttpApi(Storage& storage, DeliveryEngine& engine, HttpApiOptions options,

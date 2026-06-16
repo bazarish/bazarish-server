@@ -56,10 +56,14 @@ public:
     // Number of currently provisioned destinations (for tests / diagnostics).
     std::size_t size() const;
 
-    // SubjectPublicKeyInfo DER of userFp's serving sealing key — the public key
-    // a contact seals the delivery envelope to for this paid personal
-    // destination. Stable across renewals. Empty when the user has none.
-    Bytes servingKeyFor(const std::string& userFp) const;
+    // userFp's serving sealing key — the key a contact seals the delivery
+    // envelope to for this paid personal destination, whose private half this
+    // server holds. Stable across renewals. Null when the user has none.
+    std::shared_ptr<Key> servingKeyFor(const std::string& userFp) const;
+
+    // userFp's personal destination address (the master b32), learned once the
+    // SAM session publishes. Empty when the user has none or it is not up yet.
+    std::string destinationFor(const std::string& userFp) const;
 
 private:
     struct Destination {
@@ -69,7 +73,10 @@ private:
         std::int64_t expiresUnix = 0;
         // The destination's own serving sealing key (private half held here; its
         // public half is surfaced to the user). The accept loop unseals with it.
-        std::unique_ptr<Key> sealingKey;
+        std::shared_ptr<Key> sealingKey;
+        // The published destination address (master b32); set once the SAM
+        // session builds. Guarded by mutex_.
+        std::string dest;
     };
 
     // Starts the worker that builds the SAM session and serves its accept loop.

@@ -100,13 +100,13 @@ void FederationPool::start()
         const std::filesystem::path sealingPath
             = poolDir / ("dest-" + std::to_string(i) + ".sealing.pem");
         if (std::filesystem::exists(sealingPath)) {
-            dest->sealingKey = std::make_unique<Key>(Key::fromPrivatePem(readFile(sealingPath)));
+            dest->sealingKey = std::make_shared<Key>(Key::fromPrivatePem(readFile(sealingPath)));
         } else {
-            dest->sealingKey = std::make_unique<Key>(Key::generateSealing());
+            dest->sealingKey = std::make_shared<Key>(Key::generateSealing());
             writePrivate(sealingPath, dest->sealingKey->privatePem());
         }
         destinations_.push_back(dest->session->publicDestination());
-        servingKeysPublicDer_.push_back(dest->sealingKey->publicDer());
+        servingKeys_.push_back(dest->sealingKey);
         Dest* const raw = dest.get();
         raw->acceptThread = std::thread([this, raw]() {
             while (raw->running.load()) {
@@ -139,12 +139,12 @@ std::string FederationPool::destinationFor(const std::string& userFp) const
     return destinations_[poolIndexFor(userFp, destinations_.size())];
 }
 
-Bytes FederationPool::servingKeyFor(const std::string& userFp) const
+std::shared_ptr<Key> FederationPool::servingKeyFor(const std::string& userFp) const
 {
-    if (servingKeysPublicDer_.empty()) {
-        return {};
+    if (servingKeys_.empty()) {
+        return nullptr;
     }
-    return servingKeysPublicDer_[poolIndexFor(userFp, servingKeysPublicDer_.size())];
+    return servingKeys_[poolIndexFor(userFp, servingKeys_.size())];
 }
 
 const std::vector<std::string>& FederationPool::destinations() const

@@ -28,12 +28,19 @@ struct HttpApiOptions {
     // Shared secret authorising the operator-internal quota endpoint (checked
     // against the X-Operator-Secret header). Empty disables that endpoint.
     std::string operatorSecret;
-    // Runs a blob op over I2P for a client that has no SAM bridge of its own
-    // (the proxy fallback): method is GET (download) or DELETE (unsend), with an
-    // optional delete-token. Empty disables the blob-proxy endpoint.
+    // Runs a small blob op over I2P for a client that has no SAM bridge of its
+    // own (the proxy fallback): used for DELETE (unsend), with an optional
+    // delete-token. Empty disables proxy unsend.
     std::function<BlobProxyResult(const std::string& method, const std::string& host,
         const std::string& path, const std::string& deleteToken)>
         blobProxyFetch;
+    // Streams a blob download over I2P for a no-SAM client (proxy GET): host +
+    // path + optional Range → a pull reader the endpoint drains into the client
+    // response a chunk at a time, so a large blob is never buffered whole on the
+    // user's own server. Empty disables proxy downloads.
+    std::function<std::unique_ptr<I2pBlobReader>(
+        const std::string& host, const std::string& path, const std::string& range)>
+        blobProxyDownload;
 };
 
 // Result of relaying a sealed envelope to another server (federation).

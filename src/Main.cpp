@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #include "DeliveryEngine.hpp"
 #include "DiskStorage.hpp"
+#include "FederationPool.hpp"
 #include "HttpApi.hpp"
 #include "I2pFederation.hpp"
 #include "PerUserDestinations.hpp"
@@ -37,7 +38,7 @@ void printUsage()
         "Usage: bazarish-server --state <directory> [--listen <host> <port>]\n"
         "          [--i2p] [--federation-listen <host> <port>]\n"
         "          [--contact-request-limit <bytes>] [--operator-secret <secret>]\n"
-        "          [--privacy <minimal|middle|max>]\n"
+        "          [--privacy <minimal|middle|max>] [--pool-size <n>]\n"
         "       bazarish-server --version\n"
         "\n"
         "The state directory holds the server keys and the content storage;\n"
@@ -148,6 +149,7 @@ int main(const int argc, const char** argv)
     bazarish::server::DeliveryEngineOptions engineOptions;
     std::string operatorSecret;
     bazarish::I2pPrivacy privacy = bazarish::I2pPrivacy::kMax;
+    std::size_t poolSize = 0;
     for (int i = 3; i < argc;) {
         if (std::strcmp(argv[i], "--listen") == 0 && i + 2 < argc) {
             host = argv[i + 1];
@@ -177,6 +179,9 @@ int main(const int argc, const char** argv)
             }
             privacy = parsed.value();
             i += 2;
+        } else if (std::strcmp(argv[i], "--pool-size") == 0 && i + 1 < argc) {
+            poolSize = static_cast<std::size_t>(std::strtoull(argv[i + 1], nullptr, 10));
+            i += 2;
         } else {
             printUsage();
             return 2;
@@ -200,6 +205,7 @@ int main(const int argc, const char** argv)
     std::unique_ptr<bazarish::SamSession> samSession;
     std::unique_ptr<bazarish::server::I2pFederation> federation;
     std::unique_ptr<bazarish::server::PerUserDestinations> perUserDests;
+    std::unique_ptr<bazarish::server::FederationPool> federationPool;
     std::unique_ptr<bazarish::server::TcpFederation> tcpFederation;
     bazarish::server::RemoteDeliverFn remoteDeliver;
     std::vector<std::string> endpoints;
@@ -240,6 +246,22 @@ int main(const int argc, const char** argv)
             bazarish::SamClient::kDefaultHost, bazarish::SamClient::kDefaultPort,
             engine, stateDir, privacy);
         perUserDests->reloadPersisted(nowSeconds());
+
+        // Free-tier address pool: server-owned encrypted-LeaseSet (b33)
+        // destinations that free users are spread across. Optional (it builds a
+        // tunnel set per destination), enabled by --pool-size.
+        if (poolSize > 0) {
+            std::printf("starting federation address pool (%zu destinations; building tunnels)...\n",
+                poolSize);
+            std::fflush(stdout);
+            federationPool = std::make_unique<bazarish::server::FederationPool>(
+                bazarish::SamClient::kDefaultHost, bazarish::SamClient::kDefaultPort, engine,
+                stateDir, "bazarish-pool-" + identity.fingerprint().substr(0, 8) + "-", privacy,
+                poolSize);
+            federationPool->start();
+            std::printf("address pool up: %zu destinations\n",
+                federationPool->destinations().size());
+        }
     }
 
     // Optional TCP federation: an operator private-channel / local-testing

@@ -156,16 +156,6 @@ int main()
     CHECK(!storage.hasSeen(bob, "nonce-fresh"));
     CHECK(storage.isClientRegistered(bob, "bclient"));
 
-    // --- Content store: content-addressed, dedups, type-blind ---
-    const Bytes media = {0xde, 0xad, 0xbe, 0xef, 0x01, 0x02};
-    const std::string cid = "00ff00ff00ff00ff";  // any safe hex id
-    CHECK(!storage.hasContent(cid));
-    CHECK(storage.putContent(cid, media) == Storage::PutResult::kStored);
-    CHECK(storage.hasContent(cid));
-    CHECK(storage.getContent(cid) == media);
-    // Same id again is an idempotent duplicate, not a re-store.
-    CHECK(storage.putContent(cid, media) == Storage::PutResult::kDuplicate);
-
     // --- Per-user storage quota override ---
     const std::string dave = makeUser(0x42);
     CHECK(storage.userQuota(dave, kQuota) == kQuota);  // no override → fallback
@@ -183,7 +173,6 @@ int main()
     DiskStorage reopened(root);
     CHECK(reopened.usage(alice) == 100);
     CHECK(reopened.getBlob(alice, "msg4") == blob);
-    CHECK(reopened.getContent(cid) == media);
     CHECK(reopened.userQuota(dave, kQuota) == 8);  // override persisted
 
     std::filesystem::remove_all(root);

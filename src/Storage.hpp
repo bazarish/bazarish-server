@@ -108,18 +108,6 @@ public:
     virtual void setUserQuota(const std::string& user, std::uint64_t quotaBytes) = 0;
     // The user's quota override, or fallback (the server default) when none.
     virtual std::uint64_t userQuota(const std::string& user, std::uint64_t fallback) = 0;
-
-    // --- Content store (content-addressed bulk media) ---
-    //
-    // A global, content-addressed store for large encrypted media referenced
-    // from messages (see docs Messages.md). contentId is the lowercase hex
-    // SHA-256 of the ciphertext, so identical content dedups. The store holds
-    // opaque ciphertext and never sees the decryption key or the content type
-    // — adding a new media type needs no change here.
-
-    virtual PutResult putContent(const std::string& contentId, const Bytes& data) = 0;
-    virtual bool hasContent(const std::string& contentId) = 0;
-    virtual Bytes getContent(const std::string& contentId) = 0;
 };
 
 }  // namespace bazarish::server

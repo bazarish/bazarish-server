@@ -50,10 +50,6 @@ public:
     void setUserQuota(const std::string& user, std::uint64_t quotaBytes) override;
     std::uint64_t userQuota(const std::string& user, std::uint64_t fallback) override;
 
-    PutResult putContent(const std::string& contentId, const Bytes& data) override;
-    bool hasContent(const std::string& contentId) override;
-    Bytes getContent(const std::string& contentId) override;
-
 private:
     std::filesystem::path userDir(const std::string& user) const;
     std::uint64_t usageLocked(const std::string& user) const;

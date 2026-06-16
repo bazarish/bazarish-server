@@ -23,8 +23,6 @@ namespace bazarish::server {
 struct HttpApiOptions {
     // Hard cap on a single delivery envelope.
     std::uint64_t perMessageLimitBytes = 10 * 1024 * 1024;
-    // Hard cap on a single content-store object (encrypted bulk media).
-    std::uint64_t contentLimitBytes = 64 * 1024 * 1024;
     // How long a completed send attempt stays pollable.
     std::int64_t attemptRetentionSeconds = 600;
     // Shared secret authorising the operator-internal quota endpoint (checked

@@ -415,37 +415,4 @@ void DiskStorage::deleteIfFullyAcked(const std::string& user, const std::string&
     fs::remove(metaPath, ignored);
 }
 
-Storage::PutResult DiskStorage::putContent(const std::string& contentId, const Bytes& data)
-{
-    requireSafeId(contentId);
-    const std::lock_guard<std::mutex> lock(mutex_);
-    const fs::path dir = root_ / "content";
-    const fs::path path = dir / contentId;
-    // Content-addressed: identical ciphertext dedups to the same id.
-    if (fs::exists(path)) {
-        return PutResult::kDuplicate;
-    }
-    fs::create_directories(dir);
-    writeFileAtomic(path, data.data(), data.size());
-    return PutResult::kStored;
-}
-
-bool DiskStorage::hasContent(const std::string& contentId)
-{
-    requireSafeId(contentId);
-    const std::lock_guard<std::mutex> lock(mutex_);
-    return fs::exists(root_ / "content" / contentId);
-}
-
-Bytes DiskStorage::getContent(const std::string& contentId)
-{
-    requireSafeId(contentId);
-    const std::lock_guard<std::mutex> lock(mutex_);
-    std::ifstream in(root_ / "content" / contentId, std::ios::binary);
-    if (!in) {
-        throw std::runtime_error("no such content");
-    }
-    return Bytes(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-}
-
 }  // namespace bazarish::server

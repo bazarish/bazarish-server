@@ -250,44 +250,6 @@ void HttpApi::setupRoutes()
             respondJson(response, {{"ok", true}});
         }));
 
-    // --- Content store: type-blind, content-addressed bulk media ---
-    //
-    // The store holds opaque ciphertext addressed by sha256(ciphertext). It
-    // never learns the content type, the decryption key or the recipient —
-    // so a new media type needs no server change (see docs Messages.md).
-
-    http_->Post("/v1/content",
-        authenticated([this, requireClient](const httplib::Request& request,
-                          httplib::Response& response, const std::string& user) {
-            if (requireClient(request, response, user).empty()) {
-                return;
-            }
-            if (request.body.size() > options_.contentLimitBytes) {
-                respondError(response, 413, ErrorCode::kQuotaExceeded,
-                    "content exceeds the per-object limit of "
-                        + std::to_string(options_.contentLimitBytes) + " bytes");
-                return;
-            }
-            const Bytes data = bodyBytes(request);
-            const std::string contentId = toHex(sha256(data));
-            storage_.putContent(contentId, data);
-            respondJson(response, {{"id", contentId}, {"size", data.size()}});
-        }));
-
-    http_->Get(R"(/v1/content/([a-f0-9]+))",
-        authenticated([&store](const httplib::Request& request, httplib::Response& response,
-                          const std::string& user) {
-            (void)user;
-            const std::string contentId = request.matches[1].str();
-            if (!store.hasContent(contentId)) {
-                respondError(response, 404, ErrorCode::kDeliveryRejected, "no such content");
-                return;
-            }
-            const Bytes data = store.getContent(contentId);
-            response.set_content(
-                std::string(data.begin(), data.end()), "application/octet-stream");
-        }));
-
     // --- Blob proxy fetch (for clients without a local SAM bridge) ---
 
     // Proxies a large-message blob download over I2P on the client's behalf:

@@ -79,7 +79,10 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
                 // Publish the resolved destination address so it can be surfaced
                 // to the user and matched for same-destination local delivery.
                 const std::lock_guard<std::mutex> lock(mutex_);
-                raw->dest = session.publicDestination();
+                // A per-user destination is a STANDARD LeaseSet2 (offline keys
+                // cannot publish an encrypted one), so the routable address is
+                // the raw destination, not a b33.
+                raw->dest = session.routingAddress();
             }
             std::printf("per-user i2p destination up for %s\n", userFp.c_str());
             std::fflush(stdout);

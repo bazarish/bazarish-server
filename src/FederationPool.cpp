@@ -105,7 +105,8 @@ void FederationPool::start()
             dest->sealingKey = std::make_shared<Key>(Key::generateSealing());
             writePrivate(sealingPath, dest->sealingKey->privatePem());
         }
-        destinations_.push_back(dest->session->publicDestination());
+        // The routable address is the b33 (pool destinations are encrypted LS2).
+        destinations_.push_back(dest->session->routingAddress());
         servingKeys_.push_back(dest->sealingKey);
         Dest* const raw = dest.get();
         raw->acceptThread = std::thread([this, raw]() {

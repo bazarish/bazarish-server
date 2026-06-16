@@ -210,8 +210,11 @@ int main(const int argc, const char** argv)
             writePrivateFile(destPath, samSession->privateDestination());
         }
 
-        endpoints.push_back("i2p:" + samSession->publicDestination());
-        std::printf("i2p destination: %s\n", samSession->publicDestination().c_str());
+        // The shareable/routable address is the b33 (encrypted LeaseSet2), not
+        // the raw destination — peers can only reach the encrypted leaseset via
+        // the blinded b33.
+        endpoints.push_back("i2p:" + samSession->routingAddress());
+        std::printf("i2p destination: %s\n", samSession->routingAddress().c_str());
 
         // Inbound federation accountability is per-connecting-destination: one
         // limiter, shared across every accept loop (home destination, address
@@ -272,7 +275,7 @@ int main(const int argc, const char** argv)
     // is required); homeServingKey is the same key the engine unseals with.
     const auto homeServingKey
         = std::make_shared<bazarish::Key>(bazarish::Key::fromPrivatePem(sealing.privatePem()));
-    const std::string homeDest = samSession->publicDestination();
+    const std::string homeDest = samSession->routingAddress();
     httpOptions.assignDestination
         = [&perUserDests, &federationPool, homeDest, homeServingKey](
               const std::string& user) -> bazarish::server::DestinationAssignment {

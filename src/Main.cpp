@@ -36,6 +36,7 @@ void printUsage()
         "Usage: bazarish-server --state <directory> [--listen <host> <port>]\n"
         "          [--i2p] [--federation-listen <host> <port>]\n"
         "          [--contact-request-limit <bytes>] [--operator-secret <secret>]\n"
+        "          [--privacy <minimal|middle|max>]\n"
         "       bazarish-server --version\n"
         "\n"
         "The state directory holds the server keys and the content storage;\n"
@@ -145,6 +146,7 @@ int main(const int argc, const char** argv)
     int fedPort = 0;
     bazarish::server::DeliveryEngineOptions engineOptions;
     std::string operatorSecret;
+    bazarish::I2pPrivacy privacy = bazarish::I2pPrivacy::kMax;
     for (int i = 3; i < argc;) {
         if (std::strcmp(argv[i], "--listen") == 0 && i + 2 < argc) {
             host = argv[i + 1];
@@ -164,6 +166,15 @@ int main(const int argc, const char** argv)
         } else if (std::strcmp(argv[i], "--contact-request-limit") == 0 && i + 1 < argc) {
             engineOptions.contactRequestLimitBytes
                 = std::strtoull(argv[i + 1], nullptr, 10);
+            i += 2;
+        } else if (std::strcmp(argv[i], "--privacy") == 0 && i + 1 < argc) {
+            const std::optional<bazarish::I2pPrivacy> parsed
+                = bazarish::i2pPrivacyFromString(argv[i + 1]);
+            if (!parsed.has_value()) {
+                printUsage();
+                return 2;
+            }
+            privacy = parsed.value();
             i += 2;
         } else {
             printUsage();
@@ -200,8 +211,8 @@ int main(const int argc, const char** argv)
         // several local servers can share one router without colliding.
         const std::string sessionId = "bazarish-fed-" + identity.fingerprint().substr(0, 12);
         samSession = std::make_unique<bazarish::SamSession>(
-            bazarish::SamClient::kDefaultHost, bazarish::SamClient::kDefaultPort,
-            sessionId, privateKeys);
+            bazarish::SamClient::kDefaultHost, bazarish::SamClient::kDefaultPort, sessionId,
+            privateKeys, bazarish::kEncryptedLeaseSetType, privacy);
         if (!fs::exists(destPath)) {
             writePrivateFile(destPath, samSession->privateDestination());
         }

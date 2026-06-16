@@ -5,6 +5,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstdio>
 #include <ctime>
 #include <exception>
 #include <fstream>
@@ -65,12 +66,14 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
     Destination* const raw = dest.get();
     // SAM session ids must be unique on the bridge; the fingerprint disambiguates.
     const std::string sessionId = "bazarish-user-" + userFp.substr(0, 12);
-    raw->worker = std::thread([this, raw, sessionId, transientB64]() {
+    raw->worker = std::thread([this, raw, sessionId, transientB64, userFp]() {
         try {
             // A STANDARD LeaseSet2: an offline-signature destination cannot
             // publish an encrypted LeaseSet2.
             SamSession session(samHost_, samPort_, sessionId, transientB64,
                 kStandardLeaseSetType, privacy_);
+            std::printf("per-user i2p destination up for %s\n", userFp.c_str());
+            std::fflush(stdout);
             while (raw->running.load()) {
                 try {
                     std::string peer;

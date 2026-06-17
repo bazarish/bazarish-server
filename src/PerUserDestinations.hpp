@@ -2,6 +2,7 @@
 #pragma once
 
 #include "DeliveryEngine.hpp"
+#include "Federation.hpp"
 
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Sam.hpp>
@@ -53,6 +54,11 @@ public:
     // startup so paid destinations come back after a restart.
     void reloadPersisted(std::int64_t now);
 
+    // Wires the contact-card lookup served for op "card" on every per-user
+    // destination's accept loop. Set before reloadPersisted/provision. Unset
+    // means CARD_UNKNOWN.
+    void setGetCard(GetCardFn getCard);
+
     // Number of currently provisioned destinations (for tests / diagnostics).
     std::size_t size() const;
 
@@ -92,6 +98,7 @@ private:
     const std::filesystem::path stateDir_;
     const I2pPrivacy privacy_;
     FederationRateLimiter* const limiter_;
+    GetCardFn getCard_;
     mutable std::mutex mutex_;
     std::map<std::string, std::unique_ptr<Destination>> dests_;
 };

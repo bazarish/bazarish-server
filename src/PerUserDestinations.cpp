@@ -81,7 +81,7 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
                 const std::lock_guard<std::mutex> lock(mutex_);
                 // A per-user destination is a STANDARD LeaseSet2 (offline keys
                 // cannot publish an encrypted one), so the routable address is
-                // the raw destination, not a b33.
+                // its standard b32 (.b32.i2p), not a blinded b33.
                 raw->dest = session.routingAddress();
             }
             std::printf("per-user i2p destination up for %s\n", userFp.c_str());
@@ -90,8 +90,8 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
                 try {
                     std::string peer;
                     SamStream stream = session.accept(peer);
-                    federationServeOnce(
-                        stream, engine_, nowSeconds(), peer, limiter_, raw->sealingKey.get());
+                    federationServeOnce(stream, engine_, nowSeconds(), peer, limiter_,
+                        raw->sealingKey.get(), getCard_);
                 } catch (const std::exception&) {
                     // A failed accept/serve must not kill the loop; on shutdown
                     // the running flag breaks out on the next iteration.
@@ -202,6 +202,11 @@ void PerUserDestinations::reloadPersisted(const std::int64_t now)
             // Skip a malformed record rather than fail startup.
         }
     }
+}
+
+void PerUserDestinations::setGetCard(GetCardFn getCard)
+{
+    getCard_ = std::move(getCard);
 }
 
 std::size_t PerUserDestinations::size() const

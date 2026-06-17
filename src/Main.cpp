@@ -233,30 +233,33 @@ int main(const int argc, const char** argv)
                 federationRateLimit, 60);
         }
 
-        federation = std::make_unique<bazarish::server::I2pFederation>(
-            *samSession, engine, federationLimiter.get());
         // First-contact card fetch (op "card"): answer a peer's sealed query for
         // a local user's contact card by looking it up at the service node by
-        // fingerprint. Only when --service-node is set (else CARD_UNKNOWN).
+        // fingerprint. Served on every destination's accept loop (home, pool,
+        // per-user) so a descriptor pointing at any of them resolves. Only when
+        // --service-node is set (else CARD_UNKNOWN).
+        bazarish::server::GetCardFn getCard;
         if (!serviceNodeUrl.empty()) {
-            federation->setGetCard(
-                [serviceNodeUrl](const std::string& fp) -> std::optional<bazarish::Bytes> {
-                    httplib::Client client(serviceNodeUrl);
-                    client.set_connection_timeout(5);
-                    client.set_read_timeout(5);
-                    const httplib::Result res = client.Get("/v1/account/contact?user=" + fp);
-                    if (!res || res->status != 200) {
-                        return std::nullopt;
-                    }
-                    try {
-                        const nlohmann::json body = nlohmann::json::parse(res->body);
-                        return bazarish::fromBase64(
-                            body.at("subscriptionCert").get<std::string>());
-                    } catch (const std::exception&) {
-                        return std::nullopt;
-                    }
-                });
+            getCard = [serviceNodeUrl](const std::string& fp) -> std::optional<bazarish::Bytes> {
+                httplib::Client client(serviceNodeUrl);
+                client.set_connection_timeout(5);
+                client.set_read_timeout(5);
+                const httplib::Result res = client.Get("/v1/account/contact?user=" + fp);
+                if (!res || res->status != 200) {
+                    return std::nullopt;
+                }
+                try {
+                    const nlohmann::json body = nlohmann::json::parse(res->body);
+                    return bazarish::fromBase64(body.at("subscriptionCert").get<std::string>());
+                } catch (const std::exception&) {
+                    return std::nullopt;
+                }
+            };
         }
+
+        federation = std::make_unique<bazarish::server::I2pFederation>(
+            *samSession, engine, federationLimiter.get());
+        federation->setGetCard(getCard);
         federation->start();
         remoteDeliver = federation->asRemoteDeliverFn();
         remoteFetch = federation->asRemoteFetchFn();
@@ -266,6 +269,7 @@ int main(const int argc, const char** argv)
         perUserDests = std::make_unique<bazarish::server::PerUserDestinations>(
             bazarish::SamClient::kDefaultHost, bazarish::SamClient::kDefaultPort,
             engine, stateDir, privacy, federationLimiter.get());
+        perUserDests->setGetCard(getCard);
         perUserDests->reloadPersisted(nowSeconds());
 
         // Free-tier address pool: server-owned encrypted-LeaseSet (b33)
@@ -279,6 +283,7 @@ int main(const int argc, const char** argv)
                 bazarish::SamClient::kDefaultHost, bazarish::SamClient::kDefaultPort, engine,
                 stateDir, "bazarish-pool-" + identity.fingerprint().substr(0, 8) + "-", privacy,
                 poolSize, federationLimiter.get());
+            federationPool->setGetCard(getCard);
             federationPool->start();
             std::printf("address pool up: %zu destinations\n",
                 federationPool->destinations().size());

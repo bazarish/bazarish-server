@@ -114,8 +114,8 @@ void FederationPool::start()
                 try {
                     std::string peer;
                     SamStream stream = raw->session->accept(peer);
-                    federationServeOnce(
-                        stream, engine_, nowSeconds(), peer, limiter_, raw->sealingKey.get());
+                    federationServeOnce(stream, engine_, nowSeconds(), peer, limiter_,
+                        raw->sealingKey.get(), getCard_);
                 } catch (const std::exception&) {
                     // A failed accept/serve must not kill the loop.
                 }
@@ -123,6 +123,11 @@ void FederationPool::start()
         });
         dests_.push_back(std::move(dest));
     }
+}
+
+void FederationPool::setGetCard(GetCardFn getCard)
+{
+    getCard_ = std::move(getCard);
 }
 
 void FederationPool::stop()

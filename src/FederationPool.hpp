@@ -2,6 +2,7 @@
 #pragma once
 
 #include "DeliveryEngine.hpp"
+#include "Federation.hpp"
 
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Sam.hpp>
@@ -45,6 +46,10 @@ public:
     void start();
     void stop();
 
+    // Wires the contact-card lookup served for op "card" on every pool
+    // destination's accept loop. Set before start(). Unset means CARD_UNKNOWN.
+    void setGetCard(GetCardFn getCard);
+
     // The shareable destination of the pool entry assigned to a user.
     // Deterministic by fingerprint, so a user keeps the same pool destination
     // across restarts. Empty when the pool is empty.
@@ -76,6 +81,7 @@ private:
     const I2pPrivacy privacy_;
     const std::size_t size_;
     FederationRateLimiter* const limiter_;
+    GetCardFn getCard_;
     std::vector<std::unique_ptr<Dest>> dests_;
     std::vector<std::string> destinations_;
     // Parallel to destinations_: the serving sealing key of each pool entry, for

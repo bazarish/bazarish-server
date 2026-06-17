@@ -21,10 +21,10 @@ namespace {
 
 // Backends a request can be routed to.
 enum class Backend {
-    kNone,
-    kMessaging,
-    kAccount,
-    kBlobStorage,
+    eNone,
+    eMessaging,
+    eAccount,
+    eBlobStorage,
 };
 
 bool startsWith(const std::string& text, const std::string& prefix)
@@ -41,25 +41,25 @@ std::string pathOf(const std::string& target)
 Backend routeOf(const std::string& path)
 {
     if (startsWith(path, "/v1/messaging/")) {
-        return Backend::kMessaging;
+        return Backend::eMessaging;
     }
     if (startsWith(path, "/v1/account/")) {
-        return Backend::kAccount;
+        return Backend::eAccount;
     }
     // Only the blob upload endpoint is public. The operator quota endpoint
     // (/v1/storage/quota) and the I2P-only download paths (/b/*) are never
     // forwarded to the clearnet facade.
     if (startsWith(path, "/v1/storage/blob")) {
-        return Backend::kBlobStorage;
+        return Backend::eBlobStorage;
     }
-    return Backend::kNone;
+    return Backend::eNone;
 }
 
 // Monotonic counter giving each streamed upload a unique spool filename.
 std::atomic<std::uint64_t> g_spoolCounter{0};
 
 struct Route {
-    Backend backend = Backend::kNone;
+    Backend backend = Backend::eNone;
     std::string host;
     int port = 0;
     std::string target;  // request target with the secret base path stripped
@@ -84,19 +84,19 @@ std::optional<Route> resolveRoute(const bazarish::facade::FacadeOptions& options
     route.backend = routeOf(pathOf(target));
     route.target = target;
     switch (route.backend) {
-    case Backend::kMessaging:
+    case Backend::eMessaging:
         route.host = options.messagingHost;
         route.port = options.messagingPort;
         break;
-    case Backend::kAccount:
+    case Backend::eAccount:
         route.host = options.accountHost;
         route.port = options.accountPort;
         break;
-    case Backend::kBlobStorage:
+    case Backend::eBlobStorage:
         route.host = options.blobStorageHost;
         route.port = options.blobStoragePort;
         break;
-    case Backend::kNone:
+    case Backend::eNone:
         response.status = 404;
         return std::nullopt;
     }
@@ -207,7 +207,7 @@ void Facade::setupRoutes()
             contentType = request.get_header_value("Content-Type");
         }
 
-        if (route->backend != Backend::kBlobStorage) {
+        if (route->backend != Backend::eBlobStorage) {
             // Small body: buffer and forward like the catch-all.
             std::string body;
             reader([&body](const char* const data, const std::size_t length) {

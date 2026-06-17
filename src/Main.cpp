@@ -1,9 +1,12 @@
 // Bazarish project (c) 2026
 #include "Facade.hpp"
 
+#include <bazarish/Log.hpp>
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <optional>
 #include <string>
 
 namespace {
@@ -21,6 +24,7 @@ void printUsage()
         "                           [--account <host> <port>]\n"
         "                           [--blob-storage <host> <port>]\n"
         "                           [--base-path <secret-uri-prefix>]\n"
+        "                           [--log-level <error|warn|info|debug>]\n"
         "       bazarish-facade-http --version\n"
         "\n"
         "Transparent reverse proxy: /v1/messaging/* -> messaging server,\n"
@@ -42,6 +46,7 @@ int main(const int argc, const char** argv)
     std::string host = kDefaultHost;
     int port = kDefaultPort;
     bazarish::facade::FacadeOptions options;
+    bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
     for (int i = 1; i < argc;) {
         if (std::strcmp(argv[i], "--listen") == 0 && i + 2 < argc) {
             host = argv[i + 1];
@@ -62,21 +67,33 @@ int main(const int argc, const char** argv)
         } else if (std::strcmp(argv[i], "--base-path") == 0 && i + 1 < argc) {
             options.basePath = argv[i + 1];
             i += 2;
+        } else if (std::strcmp(argv[i], "--log-level") == 0 && i + 1 < argc) {
+            const std::optional<bazarish::log::Level> parsed
+                = bazarish::log::levelFromString(argv[i + 1]);
+            if (!parsed.has_value()) {
+                printUsage();
+                return 2;
+            }
+            logLevel = parsed.value();
+            i += 2;
         } else {
             printUsage();
             return 2;
         }
     }
 
+    bazarish::log::setComponent("facade-http");
+    bazarish::log::setLevel(logLevel);
+
     bazarish::facade::Facade facade(options);
     std::printf("bazarish-facade-http %s\n", kVersion);
-    std::printf("messaging -> %s:%d, account -> %s:%d\n", options.messagingHost.c_str(),
-        options.messagingPort, options.accountHost.c_str(), options.accountPort);
-    std::printf("listening on %s:%d\n", host.c_str(), port);
     std::fflush(stdout);
+    bazarish::log::info("messaging -> {}:{}, account -> {}:{}", options.messagingHost,
+        options.messagingPort, options.accountHost, options.accountPort);
+    bazarish::log::info("listening on {}:{}", host, port);
 
     if (!facade.listen(host, port)) {
-        std::fprintf(stderr, "failed to listen on %s:%d\n", host.c_str(), port);
+        bazarish::log::error("failed to listen on {}:{}", host, port);
         return 1;
     }
     return 0;

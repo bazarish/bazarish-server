@@ -11,6 +11,7 @@
 #include <bazarish/Crypto.hpp>
 #include <bazarish/Sam.hpp>
 
+#include <httplib/httplib.h>
 #include <nlohmann/json.hpp>
 
 #include <ctime>
@@ -38,7 +39,7 @@ void printUsage()
         "Usage: bazarish-server --state <directory> --i2p [--listen <host> <port>]\n"
         "          [--contact-request-limit <bytes>] [--operator-secret <secret>]\n"
         "          [--privacy <minimal|middle|max>] [--pool-size <n>]\n"
-        "          [--federation-rate-limit <n>]\n"
+        "          [--federation-rate-limit <n>] [--service-node <url>]\n"
         "       bazarish-server --version\n"
         "\n"
         "The state directory holds the server keys and the content storage;\n"
@@ -51,7 +52,9 @@ void printUsage()
         "--contact-request-limit <bytes> caps the tokenless contact-request\n"
         "payload. --pool-size <n> brings up a free-tier address pool.\n"
         "--federation-rate-limit caps inbound I2P deliveries per connecting\n"
-        "destination per 60s (default 240, 0 disables).\n",
+        "destination per 60s (default 240, 0 disables). --service-node <url>\n"
+        "is the local service node (e.g. http://127.0.0.1:PORT) used to answer\n"
+        "first-contact card fetches by fingerprint; without it card fetch is off.\n",
         kVersion);
 }
 
@@ -125,6 +128,7 @@ int main(const int argc, const char** argv)
     bool enableI2p = false;
     bazarish::server::DeliveryEngineOptions engineOptions;
     std::string operatorSecret;
+    std::string serviceNodeUrl;
     bazarish::I2pPrivacy privacy = bazarish::I2pPrivacy::kMax;
     std::size_t poolSize = 0;
     std::size_t federationRateLimit = 240;  // inbound deliveries per peer dest per 60s
@@ -157,6 +161,9 @@ int main(const int argc, const char** argv)
             i += 2;
         } else if (std::strcmp(argv[i], "--federation-rate-limit") == 0 && i + 1 < argc) {
             federationRateLimit = static_cast<std::size_t>(std::strtoull(argv[i + 1], nullptr, 10));
+            i += 2;
+        } else if (std::strcmp(argv[i], "--service-node") == 0 && i + 1 < argc) {
+            serviceNodeUrl = argv[i + 1];
             i += 2;
         } else {
             printUsage();
@@ -193,6 +200,7 @@ int main(const int argc, const char** argv)
     std::unique_ptr<bazarish::server::PerUserDestinations> perUserDests;
     std::unique_ptr<bazarish::server::FederationPool> federationPool;
     bazarish::server::RemoteDeliverFn remoteDeliver;
+    bazarish::server::RemoteFetchFn remoteFetch;
     std::vector<std::string> endpoints;
     if (enableI2p) {
         const fs::path destPath = stateDir / "i2p-dest.key";
@@ -227,8 +235,31 @@ int main(const int argc, const char** argv)
 
         federation = std::make_unique<bazarish::server::I2pFederation>(
             *samSession, engine, federationLimiter.get());
+        // First-contact card fetch (op "card"): answer a peer's sealed query for
+        // a local user's contact card by looking it up at the service node by
+        // fingerprint. Only when --service-node is set (else CARD_UNKNOWN).
+        if (!serviceNodeUrl.empty()) {
+            federation->setGetCard(
+                [serviceNodeUrl](const std::string& fp) -> std::optional<bazarish::Bytes> {
+                    httplib::Client client(serviceNodeUrl);
+                    client.set_connection_timeout(5);
+                    client.set_read_timeout(5);
+                    const httplib::Result res = client.Get("/v1/account/contact?user=" + fp);
+                    if (!res || res->status != 200) {
+                        return std::nullopt;
+                    }
+                    try {
+                        const nlohmann::json body = nlohmann::json::parse(res->body);
+                        return bazarish::fromBase64(
+                            body.at("subscriptionCert").get<std::string>());
+                    } catch (const std::exception&) {
+                        return std::nullopt;
+                    }
+                });
+        }
         federation->start();
         remoteDeliver = federation->asRemoteDeliverFn();
+        remoteFetch = federation->asRemoteFetchFn();
 
         // Paid per-user destinations: operate client-owned offline keys as the
         // user's personal federation destination. Restore any persisted ones.
@@ -317,7 +348,8 @@ int main(const int argc, const char** argv)
             perUserDests->revoke(user);
         };
     }
-    bazarish::server::HttpApi api(storage, engine, httpOptions, std::move(remoteDeliver));
+    bazarish::server::HttpApi api(
+        storage, engine, httpOptions, std::move(remoteDeliver), std::move(remoteFetch));
 
     std::printf("listening on %s:%d (private channel for facades)\n", host.c_str(), port);
     std::fflush(stdout);

@@ -195,7 +195,23 @@ int main()
         provisionedExpires = expiresUnix;
     };
     httpOptions.revokeI2pDest = [&](const std::string& user) { revokedUser = user; };
-    HttpApi api(storage, engine, httpOptions);
+
+    // Stub federation fetch relay (proxy fallback): record the op + toDest and
+    // return a canned sealed response.
+    std::string relayedOp;
+    std::string relayedToDest;
+    RemoteFetchFn remoteFetchStub = [&relayedOp, &relayedToDest](const std::string& toDest,
+                                        const std::string& op, const Bytes& sealed) {
+        relayedToDest = toDest;
+        relayedOp = op;
+        (void)sealed;
+        RemoteFetchResult result;
+        result.reachable = true;
+        result.ok = true;
+        result.sealed = Bytes{0xAB, 0xCD};
+        return result;
+    };
+    HttpApi api(storage, engine, httpOptions, {}, std::move(remoteFetchStub));
 
     const int port = api.bindToAnyPort("127.0.0.1");
     CHECK(port > 0);
@@ -352,6 +368,36 @@ int main()
         const nlohmann::json body = nlohmann::json::parse(result->body);
         CHECK(body.at("dest").get<std::string>() == serverDest);
         CHECK(body.at("servingKey").get<std::string>() == toBase64(serverServingKey->publicDer()));
+    }
+
+    // First-contact discovery relay: a sealed fetch is forwarded to toDest over
+    // the (stubbed) federation transport and the sealed response is returned.
+    {
+        const std::string body
+            = nlohmann::json(
+                  {{"toDest", serverDest}, {"op", "card"}, {"sealed", toBase64(Bytes{1, 2, 3})}})
+                  .dump();
+        const httplib::Result result = client.Post("/v1/messaging/fetch",
+            makeHeaders(bob, "POST", "/v1/messaging/fetch", body, "bobdev"), body,
+            "application/json");
+        CHECK(result && result->status == 200);
+        const nlohmann::json reply = nlohmann::json::parse(result->body);
+        CHECK(reply.at("ok").get<bool>());
+        CHECK(fromBase64(reply.at("sealed").get<std::string>()) == (Bytes{0xAB, 0xCD}));
+        CHECK(relayedOp == "card");
+        CHECK(relayedToDest == serverDest);
+    }
+
+    // A non-.b32.i2p toDest in a fetch is refused (the .b32.i2p invariant).
+    {
+        const std::string body
+            = nlohmann::json(
+                  {{"toDest", "stats.i2p"}, {"op", "card"}, {"sealed", toBase64(Bytes{1})}})
+                  .dump();
+        const httplib::Result result = client.Post("/v1/messaging/fetch",
+            makeHeaders(bob, "POST", "/v1/messaging/fetch", body, "bobdev"), body,
+            "application/json");
+        CHECK(result && result->status == 400);
     }
 
     // Unknown attempt IDs are reported as such.

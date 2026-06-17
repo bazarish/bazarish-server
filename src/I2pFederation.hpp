@@ -2,6 +2,7 @@
 #pragma once
 
 #include "DeliveryEngine.hpp"
+#include "Federation.hpp"
 #include "HttpApi.hpp"
 
 #include <bazarish/Sam.hpp>
@@ -40,12 +41,23 @@ public:
         const std::string& toDest, const Bytes& sealed, const Bytes& payload);
     RemoteDeliverFn asRemoteDeliverFn();
 
+    // Wires the contact-card lookup served on the inbound (home) accept loop for
+    // op "card". Set before start(). Unset means CARD_UNKNOWN.
+    void setGetCard(GetCardFn getCard);
+
+    // Relays a sealed fetch (op "card" or "resolve") to a destination over I2P;
+    // the HttpApi RemoteFetchFn (the proxy fallback for a no-SAM client).
+    RemoteFetchResult fetchOverI2p(
+        const std::string& toDest, const std::string& op, const Bytes& sealed);
+    RemoteFetchFn asRemoteFetchFn();
+
 private:
     void acceptLoop();
 
     SamSession& session_;
     DeliveryEngine& engine_;
     FederationRateLimiter* limiter_;
+    GetCardFn getCard_;
     std::atomic<bool> running_;
     std::thread acceptThread_;
 };

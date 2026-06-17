@@ -93,11 +93,12 @@ bazarish::auth::Headers collectAuthHeaders(const httplib::Request& request)
 namespace bazarish::server {
 
 HttpApi::HttpApi(Storage& storage, DeliveryEngine& engine, const HttpApiOptions options,
-    RemoteDeliverFn remoteDeliver)
+    RemoteDeliverFn remoteDeliver, RemoteFetchFn remoteFetch)
     : storage_(storage)
     , engine_(engine)
     , options_(options)
     , remoteDeliver_(std::move(remoteDeliver))
+    , remoteFetch_(std::move(remoteFetch))
     , http_(std::make_unique<httplib::Server>())
 {
     setupRoutes();
@@ -515,6 +516,44 @@ void HttpApi::setupRoutes()
                 };
             }
             respondJson(response, result);
+        }));
+
+    // First-contact discovery proxy (fallback for a client without a SAM bridge):
+    // relay a sealed fetch (op "card" to a serving server, "resolve" to the
+    // central resolver) to toDest over I2P and return the sealed response. The
+    // server moves opaque bytes — the client sealed the query and verifies the
+    // response (see docs-main api/FederatedResolve.md).
+    http_->Post("/v1/messaging/fetch",
+        authenticated([this](const httplib::Request& request, httplib::Response& response,
+                          const std::string& user) {
+            (void)user;
+            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const std::string toDest = body.at("toDest").get<std::string>();
+            validateB32I2pHost(toDest);
+            const std::string op = body.at("op").get<std::string>();
+            if (op != "card" && op != "resolve") {
+                respondError(response, 400, ErrorCode::kDeliveryRejected, "unsupported fetch op");
+                return;
+            }
+            const Bytes sealed = fromBase64(body.at("sealed").get<std::string>());
+            if (!remoteFetch_) {
+                respondError(
+                    response, 400, ErrorCode::kDeliveryRejected, "no federation transport");
+                return;
+            }
+            const RemoteFetchResult result = remoteFetch_(toDest, op, sealed);
+            if (!result.reachable) {
+                respondError(response, 400, ErrorCode::kRecipientServerUnreachable,
+                    "destination could not be reached");
+                return;
+            }
+            nlohmann::json reply = {{"ok", result.ok}};
+            if (result.ok) {
+                reply["sealed"] = toBase64(result.sealed);
+            } else if (!result.errorCode.empty()) {
+                reply["errorCode"] = result.errorCode;
+            }
+            respondJson(response, reply);
         }));
 }
 

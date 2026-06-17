@@ -5,6 +5,7 @@
 #include "DiskStorage.hpp"
 
 #include <bazarish/Cms.hpp>
+#include <bazarish/Resolve.hpp>
 #include <bazarish/Tokens.hpp>
 
 #include <nlohmann/json.hpp>
@@ -14,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <optional>
 #include <thread>
 
 #define CHECK(condition)                                                            \
@@ -60,6 +62,25 @@ FederationDeliverResult roundTrip(DeliveryEngine& engine, const Bytes& sealed, c
     });
     const FederationDeliverResult result
         = federationSendDeliver(clientStream, sealed, payload);
+    serverThread.join();
+    return result;
+}
+
+// Runs one client card fetch against an in-thread server (socketpair), with a
+// stub card lookup. servingKey == nullptr uses the engine's home sealing key.
+FederationFetchResult roundTripCard(DeliveryEngine& engine, const Bytes& sealedQuery,
+    const Key* const servingKey, const GetCardFn& getCard)
+{
+    int fds[2];
+    CHECK(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0);
+    SamStream serverStream(fds[0]);
+    SamStream clientStream(fds[1]);
+
+    std::thread serverThread([&engine, &serverStream, servingKey, &getCard]() {
+        federationServeOnce(
+            serverStream, engine, kNow, std::string(), nullptr, servingKey, getCard);
+    });
+    const FederationFetchResult result = federationSendFetch(clientStream, "card", sealedQuery);
     serverThread.join();
     return result;
 }
@@ -161,6 +182,43 @@ int main()
         const Bytes sealedHome
             = makeSealed(Key::fromPublicDer(destKey.publicDer()), "contact", alice, "fdest-2", {});
         CHECK(!roundTrip(engine, sealedHome, Bytes(50, 0x55)).delivered);
+    }
+
+    // Card fetch: a query sealed to the server's serving key returns the user's
+    // contact card sealed to the query's ephemeral response key.
+    {
+        const Key ephemeral = Key::generateSealing();
+        const Bytes cardDer(200, 0x5a);  // opaque "subscription certificate"
+        const GetCardFn getCard = [&](const std::string& fp) -> std::optional<Bytes> {
+            if (fp == alice) {
+                return cardDer;
+            }
+            return std::nullopt;
+        };
+
+        const CardFetchQuery query{alice, ephemeral.publicDer()};
+        const std::string queryJson = toJson(query).dump();
+        const Bytes sealedQuery = cms::seal(Bytes(queryJson.begin(), queryJson.end()), sealingPublic);
+
+        const FederationFetchResult ok = roundTripCard(engine, sealedQuery, nullptr, getCard);
+        CHECK(ok.ok);
+        const CardFetchResponse resp
+            = cardFetchResponseFromJson(nlohmann::json::parse(cms::unseal(ok.sealed, ephemeral)));
+        CHECK(resp.subscriptionCertDer == cardDer);
+
+        // An unknown user collapses into CARD_UNKNOWN.
+        const CardFetchQuery missing{toBase32(Bytes(32, 0x77)), ephemeral.publicDer()};
+        const std::string missingJson = toJson(missing).dump();
+        const Bytes sealedMissing
+            = cms::seal(Bytes(missingJson.begin(), missingJson.end()), sealingPublic);
+        const FederationFetchResult unknown = roundTripCard(engine, sealedMissing, nullptr, getCard);
+        CHECK(!unknown.ok);
+        CHECK(unknown.errorCode == "CARD_UNKNOWN");
+
+        // No card lookup wired -> CARD_UNKNOWN.
+        const FederationFetchResult noFn = roundTripCard(engine, sealedQuery, nullptr, GetCardFn{});
+        CHECK(!noFn.ok);
+        CHECK(noFn.errorCode == "CARD_UNKNOWN");
     }
 
     std::filesystem::remove_all(root);

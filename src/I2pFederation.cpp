@@ -51,7 +51,7 @@ void I2pFederation::acceptLoop()
         try {
             std::string peer;
             SamStream stream = session_.accept(peer);
-            federationServeOnce(stream, engine_, nowSeconds(), peer, limiter_);
+            federationServeOnce(stream, engine_, nowSeconds(), peer, limiter_, nullptr, getCard_);
         } catch (const std::exception&) {
             // A failed accept/serve (peer reset, timeout, malformed
             // request) must not take the loop down; the next inbound
@@ -86,6 +86,39 @@ RemoteDeliverFn I2pFederation::asRemoteDeliverFn()
 {
     return [this](const std::string& toDest, const Bytes& sealed, const Bytes& payload) {
         return deliver(toDest, sealed, payload);
+    };
+}
+
+void I2pFederation::setGetCard(GetCardFn getCard)
+{
+    getCard_ = std::move(getCard);
+}
+
+RemoteFetchResult I2pFederation::fetchOverI2p(
+    const std::string& toDest, const std::string& op, const Bytes& sealed)
+{
+    RemoteFetchResult result;
+    // Routing is by destination: dial toDest directly and relay the opaque
+    // sealed fetch. An unreachable destination leaves the lookup to the caller
+    // (the client retries, like a first delivery).
+    try {
+        SamStream stream = session_.connect(toDest);
+        const FederationFetchResult fetched = federationSendFetch(stream, op, sealed);
+        result.reachable = true;
+        result.ok = fetched.ok;
+        result.sealed = fetched.sealed;
+        result.errorCode = fetched.errorCode;
+        result.errorMessage = fetched.errorMessage;
+    } catch (const std::exception&) {
+        result.reachable = false;
+    }
+    return result;
+}
+
+RemoteFetchFn I2pFederation::asRemoteFetchFn()
+{
+    return [this](const std::string& toDest, const std::string& op, const Bytes& sealed) {
+        return fetchOverI2p(toDest, op, sealed);
     };
 }
 

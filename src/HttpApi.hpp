@@ -88,6 +88,21 @@ struct RemoteDeliveryResult {
 using RemoteDeliverFn = std::function<RemoteDeliveryResult(
     const std::string& toDest, const Bytes& sealed, const Bytes& payload)>;
 
+// Result of relaying a sealed fetch (card / resolve) to a destination.
+struct RemoteFetchResult {
+    bool reachable = false;
+    bool ok = false;
+    Bytes sealed;
+    std::string errorCode;
+    std::string errorMessage;
+};
+
+// Relays a sealed fetch request (op "card" or "resolve") to a destination over
+// I2P and returns the sealed response — the proxy fallback for a client without
+// a SAM bridge. The default (no transport wired) reports unreachable.
+using RemoteFetchFn = std::function<RemoteFetchResult(
+    const std::string& toDest, const std::string& op, const Bytes& sealed)>;
+
 // The /v1/messaging/* HTTP API: client registry, token hashes, pending
 // fetch/ack and submit+poll sending. A send is routed by its toDest: a delivery
 // to the sender's own destination runs the shared DeliveryEngine locally; every
@@ -96,7 +111,7 @@ using RemoteDeliverFn = std::function<RemoteDeliveryResult(
 class HttpApi {
 public:
     HttpApi(Storage& storage, DeliveryEngine& engine, HttpApiOptions options,
-        RemoteDeliverFn remoteDeliver = {});
+        RemoteDeliverFn remoteDeliver = {}, RemoteFetchFn remoteFetch = {});
     ~HttpApi();
 
     bool listen(const std::string& host, int port);
@@ -118,6 +133,7 @@ private:
     DeliveryEngine& engine_;
     const HttpApiOptions options_;
     RemoteDeliverFn remoteDeliver_;
+    RemoteFetchFn remoteFetch_;
 
     std::unique_ptr<httplib::Server> http_;
 

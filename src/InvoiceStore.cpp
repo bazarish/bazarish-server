@@ -67,4 +67,15 @@ std::optional<std::string> InvoiceStore::user(const std::string& invoiceId)
     return map.at(invoiceId).get<std::string>();
 }
 
+std::vector<std::string> InvoiceStore::ids()
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const nlohmann::json map = readMap(path_);
+    std::vector<std::string> result;
+    for (const auto& item : map.items()) {
+        result.push_back(item.key());
+    }
+    return result;
+}
+
 }  // namespace bazarish::service

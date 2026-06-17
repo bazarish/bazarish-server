@@ -112,6 +112,22 @@ LedgerStore::Account LedgerStore::get(const std::string& user)
     return load(user);
 }
 
+std::vector<std::string> LedgerStore::users()
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<std::string> result;
+    const fs::path dir = root_ / "ledger";
+    if (!fs::exists(dir)) {
+        return result;
+    }
+    for (const fs::directory_entry& item : fs::directory_iterator(dir)) {
+        if (item.is_regular_file() && item.path().extension() == ".json") {
+            result.push_back(item.path().stem().string());
+        }
+    }
+    return result;
+}
+
 std::uint64_t LedgerStore::credit(
     const std::string& user, const std::uint64_t amount, const std::string& ref, std::int64_t now)
 {

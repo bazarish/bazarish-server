@@ -38,6 +38,10 @@ public:
     // The account; a zero balance with no history when never touched.
     Account get(const std::string& user);
 
+    // Every account fingerprint that has a ledger file, for aggregate/admin
+    // views (total balances, total payments). A read-only directory scan.
+    std::vector<std::string> users();
+
     // Credits the balance (a confirmed top-up) and appends an entry; returns the
     // new balance. Throws on a zero amount or on balance overflow.
     std::uint64_t credit(

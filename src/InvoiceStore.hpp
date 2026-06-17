@@ -5,6 +5,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace bazarish::service {
 
@@ -18,6 +19,10 @@ public:
 
     void put(const std::string& invoiceId, const std::string& user);
     std::optional<std::string> user(const std::string& invoiceId);
+
+    // All invoice ids on record, for aggregate/admin views (outstanding
+    // top-up invoices are these minus the ones already credited in the ledger).
+    std::vector<std::string> ids();
 
 private:
     std::filesystem::path path_;

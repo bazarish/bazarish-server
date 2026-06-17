@@ -12,6 +12,7 @@
 
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Certificates.hpp>
+#include <bazarish/Log.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -22,6 +23,7 @@
 #include <fstream>
 #include <map>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -42,7 +44,7 @@ void printUsage()
         "         [--listen <host> <port>] [--portal-listen <host> <port>]\n"
         "         [--payments-config <path>]\n"
         "         [--messaging <host> <port>] [--blob-storage <host> <port>]\n"
-        "         [--operator-secret <secret>]\n"
+        "         [--operator-secret <secret>] [--log-level <error|warn|info|debug>]\n"
         "       bazarish-service-node --version\n"
         "\n"
         "The server card (produced by bazarish-server --i2p) binds this\n"
@@ -178,6 +180,7 @@ int main(const int argc, const char** argv)
     std::string blobStorageHost;
     int blobStoragePort = 0;
     std::string operatorSecret;
+    bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
     for (int i = 5; i < argc;) {
         const std::string flag = argv[i];
         if (flag == "--listen" && i + 2 < argc) {
@@ -202,11 +205,23 @@ int main(const int argc, const char** argv)
         } else if (flag == "--operator-secret" && i + 1 < argc) {
             operatorSecret = argv[i + 1];
             i += 2;
+        } else if (flag == "--log-level" && i + 1 < argc) {
+            const std::optional<bazarish::log::Level> parsed
+                = bazarish::log::levelFromString(argv[i + 1]);
+            if (!parsed.has_value()) {
+                printUsage();
+                return 2;
+            }
+            logLevel = parsed.value();
+            i += 2;
         } else {
             printUsage();
             return 2;
         }
     }
+
+    bazarish::log::setComponent("service-node");
+    bazarish::log::setLevel(logLevel);
 
     const bazarish::Bytes cardDer = readFileBytes(cardPath);
     const bazarish::ServerCard card = bazarish::ServerCard::verify(cardDer);
@@ -302,16 +317,16 @@ int main(const int argc, const char** argv)
         portalThread = std::thread(
             [portalHost, portalPort]() { portal->listen(portalHost, portalPort); });
         portalThread.detach();
-        std::printf("portal on %s:%d\n", portalHost.c_str(), portalPort);
+        bazarish::log::info("portal on {}:{}", portalHost, portalPort);
     }
 
     std::printf("bazarish-service-node %s\n", kVersion);
     std::printf("bound to server: %s\n", card.server.c_str());
-    std::printf("listening on %s:%d (private channel for facades)\n", host.c_str(), port);
     std::fflush(stdout);
+    bazarish::log::info("listening on {}:{} (private channel for facades)", host, port);
 
     if (!api.listen(host, port)) {
-        std::fprintf(stderr, "failed to listen on %s:%d\n", host.c_str(), port);
+        bazarish::log::error("failed to listen on {}:{}", host, port);
         return 1;
     }
     return 0;

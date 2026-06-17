@@ -4,6 +4,7 @@
 #include <bazarish/Auth.hpp>
 #include <bazarish/Crypto.hpp>
 #include <bazarish/Errors.hpp>
+#include <bazarish/I2pAddress.hpp>
 
 #include <httplib/httplib.h>
 #include <nlohmann/json.hpp>
@@ -438,6 +439,9 @@ void HttpApi::setupRoutes()
             }
             const nlohmann::json body = nlohmann::json::parse(request.body);
             const std::string toDest = body.at("toDest").get<std::string>();
+            // Routing target must be a full .b32.i2p host (no raw destinations,
+            // no addressbook names). Rejected as a 400 by the wrapper.
+            validateB32I2pHost(toDest);
             const Bytes sealed = fromBase64(body.at("sealed").get<std::string>());
             const Bytes payload = fromBase64(body.at("payload").get<std::string>());
 

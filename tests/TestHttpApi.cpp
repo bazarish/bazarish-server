@@ -129,6 +129,9 @@ int main()
     const Identity serverIdentity = Identity::generate();
     const Key serverSealing = Key::generateSealing();
     const std::string serverFp = serverIdentity.fingerprint();
+    // A valid .b32.i2p destination for routing — the send path now enforces the
+    // .b32.i2p invariant, so a bare fingerprint placeholder no longer routes.
+    const std::string serverDest = "dlkbeyqjykssca6o7qlbwgq4fr2hry7kw2ursn2sh3lt3acox6gq.b32.i2p";
     const Key sealingPublic = Key::fromPublicDer(serverSealing.publicDer());
 
     DeliveryEngineOptions engineOptions;
@@ -138,13 +141,13 @@ int main()
         engineOptions);
     HttpApiOptions httpOptions;
     // Routing is by destination. The tests assign every user the same
-    // destination (serverFp, opaque to the routing check) with the server's
-    // sealing key, so a send to serverFp is a same-destination local delivery;
-    // a send to any other destination federates (unreachable here).
+    // destination (serverDest, a valid .b32.i2p host) with the server's sealing
+    // key, so a send to serverDest is a same-destination local delivery; a send
+    // to any other destination federates (unreachable here).
     const auto serverServingKey
         = std::make_shared<Key>(Key::fromPrivatePem(serverSealing.privatePem()));
-    httpOptions.assignDestination = [serverFp, serverServingKey](const std::string&) {
-        return DestinationAssignment{serverFp, serverServingKey};
+    httpOptions.assignDestination = [serverDest, serverServingKey](const std::string&) {
+        return DestinationAssignment{serverDest, serverServingKey};
     };
     // Stub blob proxy: records the unsend (DELETE) op so the test can assert the
     // endpoint validated and forwarded it without a live router.
@@ -249,7 +252,7 @@ int main()
 
     // Bob delivers a message to Alice through the full local pipeline.
     const Bytes payload = {'e', '2', 'e', '-', 'b', 'l', 'o', 'b'};
-    const std::string envelope = makeEnvelope(serverFp, sealingPublic,
+    const std::string envelope = makeEnvelope(serverDest, sealingPublic,
         {{"class", "content"}, {"mailbox", alice.fingerprint()}, {"token", toBase64(token1)},
             {"messageId", "msg-1"}},
         payload);
@@ -286,7 +289,7 @@ int main()
 
     // A bogus token is rejected without detail.
     {
-        const std::string bad = makeEnvelope(serverFp, sealingPublic,
+        const std::string bad = makeEnvelope(serverDest, sealingPublic,
             {{"class", "content"}, {"mailbox", alice.fingerprint()},
                 {"token", toBase64(generateDeliveryToken())}, {"messageId", "msg-2"}},
             payload);
@@ -297,13 +300,13 @@ int main()
 
     // Tokenless contact requests pass within the size cap and fail above it.
     {
-        const std::string request = makeEnvelope(serverFp, sealingPublic,
+        const std::string request = makeEnvelope(serverDest, sealingPublic,
             {{"class", "contact"}, {"mailbox", alice.fingerprint()},
                 {"messageId", "req-1"}},
             Bytes(200, 0x55));
         CHECK(sendAndPoll(client, bob, "bobdev", request).at("status") == "delivered");
 
-        const std::string oversized = makeEnvelope(serverFp, sealingPublic,
+        const std::string oversized = makeEnvelope(serverDest, sealingPublic,
             {{"class", "contact"}, {"mailbox", alice.fingerprint()},
                 {"messageId", "req-2"}},
             Bytes(300, 0x55));
@@ -315,7 +318,7 @@ int main()
     // Quota exhaustion restores the consumed token (STORAGE_FULL is only
     // visible past a valid token).
     {
-        const std::string big = makeEnvelope(serverFp, sealingPublic,
+        const std::string big = makeEnvelope(serverDest, sealingPublic,
             {{"class", "content"}, {"mailbox", alice.fingerprint()},
                 {"token", toBase64(token2)}, {"messageId", "msg-3"}},
             Bytes(2000, 0x77));
@@ -331,7 +334,7 @@ int main()
     // This is the timing guarantee: a cross-destination recipient is never a
     // fast local delivery.
     {
-        const std::string remote = makeEnvelope(toBase32(Bytes(32, 0x42)), sealingPublic,
+        const std::string remote = makeEnvelope(toBase32(Bytes(32, 0x42)) + ".b32.i2p", sealingPublic,
             {{"class", "content"}, {"mailbox", alice.fingerprint()},
                 {"token", toBase64(token2)}, {"messageId", "msg-4"}},
             payload);
@@ -341,13 +344,13 @@ int main()
     }
 
     // The destination endpoint surfaces the caller's assigned destination + the
-    // public serving sealing key (the test assignment: serverFp + server key).
+    // public serving sealing key (the test assignment: serverDest + server key).
     {
         const httplib::Result result = client.Get("/v1/messaging/destination",
             makeHeaders(bob, "GET", "/v1/messaging/destination", "", "bobdev"));
         CHECK(result && result->status == 200);
         const nlohmann::json body = nlohmann::json::parse(result->body);
-        CHECK(body.at("dest").get<std::string>() == serverFp);
+        CHECK(body.at("dest").get<std::string>() == serverDest);
         CHECK(body.at("servingKey").get<std::string>() == toBase64(serverServingKey->publicDer()));
     }
 

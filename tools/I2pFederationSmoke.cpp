@@ -88,7 +88,7 @@ int main()
         try {
             std::printf("connecting sender -> recipient over I2P (attempt %d)...\n", attempt);
             std::fflush(stdout);
-            stream.emplace(sender.connect(recipient.publicDestination()));
+            stream.emplace(sender.connect(recipient.routingAddress()));
         } catch (const std::exception& error) {
             std::printf("  connect attempt %d failed: %s\n", attempt, error.what());
             std::fflush(stdout);

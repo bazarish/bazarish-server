@@ -9,6 +9,7 @@
 
 #include <bazarish/Certificates.hpp>
 #include <bazarish/Crypto.hpp>
+#include <bazarish/Log.hpp>
 #include <bazarish/Sam.hpp>
 
 #include <httplib/httplib.h>
@@ -40,6 +41,7 @@ void printUsage()
         "          [--contact-request-limit <bytes>] [--operator-secret <secret>]\n"
         "          [--privacy <minimal|middle|max>] [--pool-size <n>]\n"
         "          [--federation-rate-limit <n>] [--service-node <url>]\n"
+        "          [--log-level <error|warn|info|debug>]\n"
         "       bazarish-server --version\n"
         "\n"
         "The state directory holds the server keys and the content storage;\n"
@@ -132,6 +134,7 @@ int main(const int argc, const char** argv)
     bazarish::I2pPrivacy privacy = bazarish::I2pPrivacy::kMax;
     std::size_t poolSize = 0;
     std::size_t federationRateLimit = 240;  // inbound deliveries per peer dest per 60s
+    bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
     for (int i = 3; i < argc;) {
         if (std::strcmp(argv[i], "--listen") == 0 && i + 2 < argc) {
             host = argv[i + 1];
@@ -165,6 +168,15 @@ int main(const int argc, const char** argv)
         } else if (std::strcmp(argv[i], "--service-node") == 0 && i + 1 < argc) {
             serviceNodeUrl = argv[i + 1];
             i += 2;
+        } else if (std::strcmp(argv[i], "--log-level") == 0 && i + 1 < argc) {
+            const std::optional<bazarish::log::Level> parsed
+                = bazarish::log::levelFromString(argv[i + 1]);
+            if (!parsed.has_value()) {
+                printUsage();
+                return 2;
+            }
+            logLevel = parsed.value();
+            i += 2;
         } else {
             printUsage();
             return 2;
@@ -180,6 +192,9 @@ int main(const int argc, const char** argv)
         return 2;
     }
 
+    bazarish::log::setComponent("server-core");
+    bazarish::log::setLevel(logLevel);
+
     fs::create_directories(stateDir);
     const bazarish::Identity identity = loadOrCreateIdentity(stateDir);
     bazarish::Key sealing = loadOrCreateSealingKey(stateDir);
@@ -190,6 +205,7 @@ int main(const int argc, const char** argv)
 
     std::printf("bazarish-server %s\n", kVersion);
     std::printf("server fingerprint: %s\n", identity.fingerprint().c_str());
+    std::fflush(stdout);
 
     // Optional I2P federation: a persistent destination, a published server
     // card and the inbound accept loop, plus outbound relay resolved from
@@ -206,8 +222,7 @@ int main(const int argc, const char** argv)
         const fs::path destPath = stateDir / "i2p-dest.key";
         const std::string privateKeys
             = fs::exists(destPath) ? readFileText(destPath) : std::string("TRANSIENT");
-        std::printf("starting I2P federation (building tunnels via SAM)...\n");
-        std::fflush(stdout);
+        bazarish::log::info("starting I2P federation (building tunnels via SAM)...");
         // The SAM session id must be unique per session on the bridge, so
         // several local servers can share one router without colliding.
         const std::string sessionId = "bazarish-fed-" + identity.fingerprint().substr(0, 12);
@@ -223,6 +238,7 @@ int main(const int argc, const char** argv)
         // the blinded b33.
         endpoints.push_back("i2p:" + samSession->routingAddress());
         std::printf("i2p destination: %s\n", samSession->routingAddress().c_str());
+        std::fflush(stdout);
 
         // Inbound federation accountability is per-connecting-destination: one
         // limiter, shared across every accept loop (home destination, address
@@ -276,16 +292,15 @@ int main(const int argc, const char** argv)
         // destinations that free users are spread across. Optional (it builds a
         // tunnel set per destination), enabled by --pool-size.
         if (poolSize > 0) {
-            std::printf("starting federation address pool (%zu destinations; building tunnels)...\n",
-                poolSize);
-            std::fflush(stdout);
+            bazarish::log::info(
+                "starting federation address pool ({} destinations; building tunnels)...", poolSize);
             federationPool = std::make_unique<bazarish::server::FederationPool>(
                 bazarish::SamClient::kDefaultHost, bazarish::SamClient::kDefaultPort, engine,
                 stateDir, "bazarish-pool-" + identity.fingerprint().substr(0, 8) + "-", privacy,
                 poolSize, federationLimiter.get());
             federationPool->setGetCard(getCard);
             federationPool->start();
-            std::printf("address pool up: %zu destinations\n",
+            bazarish::log::info("address pool up: {} destinations",
                 federationPool->destinations().size());
         }
     }
@@ -356,11 +371,10 @@ int main(const int argc, const char** argv)
     bazarish::server::HttpApi api(
         storage, engine, httpOptions, std::move(remoteDeliver), std::move(remoteFetch));
 
-    std::printf("listening on %s:%d (private channel for facades)\n", host.c_str(), port);
-    std::fflush(stdout);
+    bazarish::log::info("listening on {}:{} (private channel for facades)", host, port);
 
     if (!api.listen(host, port)) {
-        std::fprintf(stderr, "failed to listen on %s:%d\n", host.c_str(), port);
+        bazarish::log::error("failed to listen on {}:{}", host, port);
         return 1;
     }
     return 0;

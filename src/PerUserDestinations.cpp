@@ -3,9 +3,9 @@
 
 #include "Federation.hpp"
 
+#include <bazarish/Log.hpp>
 #include <nlohmann/json.hpp>
 
-#include <cstdio>
 #include <ctime>
 #include <exception>
 #include <fstream>
@@ -84,8 +84,7 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
                 // its standard b32 (.b32.i2p), not a blinded b33.
                 raw->dest = session.routingAddress();
             }
-            std::printf("per-user i2p destination up for %s\n", userFp.c_str());
-            std::fflush(stdout);
+            bazarish::log::info("per-user i2p destination up for {}", userFp);
             while (raw->running.load()) {
                 try {
                     std::string peer;

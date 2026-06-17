@@ -75,6 +75,27 @@ int main()
         CHECK_THROWS(ledger.get("not-a-fingerprint"));
     }
 
+    // Overdraft: one step into the negative is allowed, a second is refused
+    // until a top-up clears the debt (the i2pDest grace).
+    {
+        LedgerStore ledger(root, "XMR");
+        const std::string grace = Identity::generate().fingerprint();
+        ledger.credit(grace, 30, "topup", t);
+        // Strict debit cannot exceed balance; overdraft can, once.
+        CHECK(!ledger.debit(grace, 100, "renew", t));
+        CHECK(ledger.get(grace).balanceAtomic == 30);
+        CHECK(ledger.debitOverdraft(grace, 100, "renew:i2pDest", t));
+        CHECK(ledger.get(grace).balanceAtomic == -70);
+        // While negative, both debit and a second overdraft are refused.
+        CHECK(!ledger.debitOverdraft(grace, 100, "renew:i2pDest", t + 1));
+        CHECK(!ledger.debit(grace, 1, "buy", t + 1));
+        CHECK(ledger.get(grace).balanceAtomic == -70);
+        // A top-up clears the debt and re-arms the overdraft.
+        CHECK(ledger.credit(grace, 200, "topup2", t + 2) == 130);
+        CHECK(ledger.debitOverdraft(grace, 200, "renew:i2pDest", t + 3));
+        CHECK(ledger.get(grace).balanceAtomic == -70);
+    }
+
     // Persistence across reopen.
     {
         LedgerStore reopened(root, "XMR");

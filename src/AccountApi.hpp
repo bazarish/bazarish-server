@@ -18,6 +18,8 @@ class Server;
 
 namespace bazarish::service {
 
+class ServiceLifecycle;
+
 // A recurring paid service the portal offers, advertised in the discovery
 // response. Every paid service is term-based and renewed from the user's
 // cabinet — none are one-shot, so an ongoing server-side cost (an always-online
@@ -71,6 +73,10 @@ struct AccountApiOptions {
     std::function<void(const std::string& user, const std::string& transientB64,
         std::int64_t expiresUnix)>
         publishI2pTransient;
+    // Auto-renew/grace and the per-user i2p-dest status. Null in a deployment
+    // without paid services: the transient upload then falls back to a plain
+    // entitlement check and the status endpoint is unavailable.
+    ServiceLifecycle* lifecycle = nullptr;
 };
 
 // The /v1/account/* HTTP API: subscriptions, aliases and alias resolution.

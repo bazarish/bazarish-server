@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #include "AccountApi.hpp"
 
+#include "ServiceLifecycle.hpp"
+
 #include <bazarish/Auth.hpp>
 #include <bazarish/Certificates.hpp>
 #include <bazarish/Errors.hpp>
@@ -169,6 +171,12 @@ void AccountApi::setupRoutes()
               }
               grants_.takeSubscription(cert.user);  // consume the one-shot grant
 
+              // Catch up auto-renewals so the storage entitlement read below
+              // reflects any elapsed terms (and a lapse pushes the free quota).
+              if (options_.lifecycle) {
+                  options_.lifecycle->evaluate(cert.user, now);
+              }
+
               // Effective quota: the paid storage plan while its entitlement is
               // active, otherwise the grant's (free) quota.
               std::uint64_t effectiveQuota = grant->quotaBytes;
@@ -265,8 +273,10 @@ void AccountApi::setupRoutes()
 
     // Receives a paid user's client-owned offline I2P transient and hands it to
     // the messaging server, which operates the user's personal destination.
-    // i2pDest is a paid service: an active entitlement is required. An empty
-    // transient revokes the destination.
+    // i2pDest is a paid service: an active entitlement is required (auto-renewed
+    // from balance, with the one-step grace). An empty transient revokes the
+    // destination. The transient's validity is recorded so the status endpoint
+    // can tell the client's other devices when to issue the next one.
     http_->Post("/v1/account/i2p-dest",
         authenticated([this](const httplib::Request& request, httplib::Response& response,
                           const std::string& user) {
@@ -275,11 +285,18 @@ void AccountApi::setupRoutes()
                     "per-user destinations not available");
                 return;
             }
-            const std::optional<GrantStore::ServiceGrant> entitlement
-                = grants_.peekService(user, "i2pDest");
-            if (!entitlement.has_value() || entitlement->paidThrough <= nowSeconds()) {
+            const std::int64_t now = nowSeconds();
+            bool active = false;
+            if (options_.lifecycle) {
+                active = options_.lifecycle->evaluate(user, now).i2pDest.active;
+            } else {
+                const std::optional<GrantStore::ServiceGrant> entitlement
+                    = grants_.peekService(user, "i2pDest");
+                active = entitlement.has_value() && entitlement->paidThrough > now;
+            }
+            if (!active) {
                 respondError(response, 403, ErrorCode::eDeliveryRejected,
-                    "no active i2pDest entitlement — buy one on the service portal first");
+                    "no active i2pDest entitlement — enable it on the service portal first");
                 return;
             }
             const nlohmann::json body = nlohmann::json::parse(request.body);
@@ -287,7 +304,64 @@ void AccountApi::setupRoutes()
             const std::int64_t expiresUnix
                 = transient.empty() ? 0 : body.at("expiresUnix").get<std::int64_t>();
             options_.publishI2pTransient(user, transient, expiresUnix);
+            grants_.setI2pTransient(user, expiresUnix, now);
             respondJson(response, {{"ok", true}});
+        }));
+
+    // The per-user i2p-dest status the client polls: whether the option is on,
+    // whether it is paid-active, the recorded transient validity (so any device
+    // knows when to re-issue without storing it), the effective storage quota,
+    // and honest projected shutoff dates computed from the balance.
+    http_->Get("/v1/account/i2p-status",
+        authenticated([this](const httplib::Request&, httplib::Response& response,
+                          const std::string& user) {
+            if (!options_.lifecycle) {
+                respondError(response, 503, ErrorCode::eDeliveryRejected,
+                    "per-user destinations not available");
+                return;
+            }
+            const ServiceLifecycle::Snapshot snap
+                = options_.lifecycle->evaluate(user, nowSeconds());
+            respondJson(response,
+                {
+                    {"enabled", snap.i2pDest.enabled},
+                    {"active", snap.i2pDest.active},
+                    {"paidThrough", snap.i2pDest.paidThrough},
+                    {"projectedShutoff", snap.i2pDest.projectedShutoff},
+                    {"transientExpires", snap.transientExpires},
+                    {"transientUpdatedAt", snap.transientUpdatedAt},
+                    {"storageQuotaBytes", snap.storageQuotaBytes},
+                    {"storageActive", snap.storage.active},
+                    {"storageProjectedShutoff", snap.storage.projectedShutoff},
+                    {"balanceAtomic", std::to_string(snap.balanceAtomic)},
+                    {"currency", options_.settlementCurrency},
+                });
+        }));
+
+    // Turns the per-user i2p-dest option on or off. Enabling charges one term up
+    // front (or resumes if still paid); disabling stops auto-renew and drops the
+    // personal destination so the user falls back to their fixed pool address.
+    http_->Post("/v1/account/i2p-dest/setting",
+        authenticated([this](const httplib::Request& request, httplib::Response& response,
+                          const std::string& user) {
+            if (!options_.lifecycle) {
+                respondError(response, 503, ErrorCode::eDeliveryRejected,
+                    "per-user destinations not available");
+                return;
+            }
+            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const bool enabled = body.at("enabled").get<bool>();
+            const std::int64_t now = nowSeconds();
+            if (enabled) {
+                if (!options_.lifecycle->enableI2pDest(user, now)) {
+                    respondError(response, 402, ErrorCode::eDeliveryRejected,
+                        "insufficient balance — top up to enable a personal destination");
+                    return;
+                }
+            } else {
+                options_.lifecycle->disableI2pDest(user, now);
+            }
+            respondJson(response, {{"ok", true}, {"enabled", enabled}});
         }));
 
     http_->Delete("/v1/account/alias",

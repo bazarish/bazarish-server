@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #include "PortalApi.hpp"
 
+#include "ServiceLifecycle.hpp"
+
 #include <httplib/httplib.h>
 #include <nlohmann/json.hpp>
 
@@ -144,6 +146,10 @@ std::string flashBanner(const std::string& code)
         text = "Insufficient balance — top up first.";
     } else if (code == "notoffered") {
         text = "That service is not offered here.";
+    } else if (code == "i2pon") {
+        text = "Personal I2P destination on — upload a key from your client to go live.";
+    } else if (code == "i2poff") {
+        text = "Personal I2P destination off — back on the shared pool address.";
     } else {
         return {};
     }
@@ -457,6 +463,35 @@ void PortalApi::setupRoutes()
                 });
         }));
 
+    // Turn the per-user i2p-dest option on/off (the cabinet toggle, JSON face).
+    http_->Post("/portal/i2p-dest",
+        withSession([this](const httplib::Request& request, httplib::Response& response,
+                        const std::string& userId) {
+            if (options_.lifecycle == nullptr) {
+                response.status = 404;
+                respondJson(response, {{"error", "not offered"}});
+                return;
+            }
+            const nlohmann::json body = nlohmann::json::parse(request.body, nullptr, false);
+            if (body.is_discarded() || !body.contains("enabled")) {
+                response.status = 400;
+                respondJson(response, {{"error", "bad request"}});
+                return;
+            }
+            const bool enabled = body.at("enabled").get<bool>();
+            const std::int64_t now = nowSeconds();
+            if (enabled) {
+                if (!options_.lifecycle->enableI2pDest(userId, now)) {
+                    response.status = 402;
+                    respondJson(response, {{"error", "insufficient balance"}});
+                    return;
+                }
+            } else {
+                options_.lifecycle->disableI2pDest(userId, now);
+            }
+            respondJson(response, {{"ok", true}, {"enabled", enabled}});
+        }));
+
     setupWebRoutes();
 }
 
@@ -529,9 +564,57 @@ void PortalApi::setupWebRoutes()
                     "<p><a href=\"/register\">Register (free)</a></p>";
         }
 
-        if (!options_.paidServices.empty()) {
+        // Per-user i2p-dest: an opt-in toggle (not a one-shot buy), with the
+        // privacy trade-off spelled out. Off by default — the user already has a
+        // free, fixed pool address; turning this on serves them on their own
+        // stable destination, billed per term and auto-renewed from balance.
+        const auto i2pPlan = options_.paidServices.find("i2pDest");
+        if (options_.lifecycle != nullptr && i2pPlan != options_.paidServices.end()) {
+            const ServiceLifecycle::Snapshot snap = options_.lifecycle->evaluate(userId, now);
+            body += "<h2>Personal I2P destination</h2>"
+                    "<div class=\"svc\"><p class=\"muted\">Off by default you share a fixed "
+                    "address from the server pool. Turn this on to be served on your own stable "
+                    "destination (portable across servers, kept even if you move). The trade-off: "
+                    "your own destination is a unique, lasting address across all your contacts — "
+                    "less crowd-blending than the shared pool.</p>";
+            body += "<p>" + std::to_string(i2pPlan->second.priceAtomic) + " "
+                + htmlEscape(options_.settlementCurrency) + " / "
+                + std::to_string(i2pPlan->second.termSeconds / (24 * 3600)) + " days.</p>";
+            if (snap.i2pDest.enabled && snap.i2pDest.active) {
+                body += "<p class=\"muted\">On — active, "
+                    + std::to_string((snap.i2pDest.paidThrough - now) / (24 * 3600))
+                    + " days paid.</p>";
+            } else if (snap.i2pDest.enabled) {
+                body += "<p class=\"err\">On but unpaid — your personal destination is offline. "
+                        "Top up to restore it, or turn it off to fall back to the pool.</p>";
+            } else {
+                body += "<p class=\"muted\">Off — using the shared pool address.</p>";
+            }
+            body += "<form method=\"post\" action=\"/i2p-dest\">"
+                    "<input type=\"hidden\" name=\"enabled\" value=\""
+                + std::string(snap.i2pDest.enabled ? "false" : "true")
+                + "\"><button type=\"submit\">"
+                + std::string(snap.i2pDest.enabled ? "Turn off" : "Turn on")
+                + "</button></form></div>";
+        }
+
+        // Other paid services (username, storage) keep the one-shot buy/renew
+        // flow. i2pDest is handled by its toggle above.
+        bool anyOther = false;
+        for (const auto& [name, service] : options_.paidServices) {
+            if (name == "i2pDest") {
+                continue;
+            }
+            anyOther = true;
+            (void)service;
+            break;
+        }
+        if (anyOther) {
             body += "<h2>Services</h2>";
             for (const auto& [name, service] : options_.paidServices) {
+                if (name == "i2pDest") {
+                    continue;
+                }
                 const std::optional<GrantStore::ServiceGrant> grant
                     = grants_.peekService(userId, name);
                 body += "<div class=\"svc\"><strong>" + htmlEscape(name) + "</strong> — "
@@ -722,6 +805,29 @@ void PortalApi::setupWebRoutes()
             redirectTo(response, "/?msg=insufficient");
         } else {
             redirectTo(response, "/?msg=bought");
+        }
+    });
+
+    http_->Post("/i2p-dest", [this, webUser](
+                                 const httplib::Request& request, httplib::Response& response) {
+        const std::optional<std::string> user = webUser(request);
+        if (!user.has_value()) {
+            redirectTo(response, "/login");
+            return;
+        }
+        if (options_.lifecycle == nullptr) {
+            redirectTo(response, "/?msg=notoffered");
+            return;
+        }
+        if (request.get_param_value("enabled") == "true") {
+            if (!options_.lifecycle->enableI2pDest(*user, nowSeconds())) {
+                redirectTo(response, "/?msg=insufficient");
+                return;
+            }
+            redirectTo(response, "/?msg=i2pon");
+        } else {
+            options_.lifecycle->disableI2pDest(*user, nowSeconds());
+            redirectTo(response, "/?msg=i2poff");
         }
     });
 }

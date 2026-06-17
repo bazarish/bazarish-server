@@ -37,6 +37,7 @@ add_library(bazarish_service_lib STATIC
     src/GrantStore.cpp
     src/InvoiceStore.cpp
     src/QuotaPublisher.cpp
+    src/ServiceLifecycle.cpp
     src/TransientPublisher.cpp
 )
 target_include_directories(bazarish_service_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -77,3 +78,5 @@ bazarish_service_add_test(TestCaptcha)
 bazarish_service_add_test(TestPortalApi)
 bazarish_service_add_test(TestGrantStore)
 bazarish_service_add_test(TestQuotaPublisher)
+bazarish_service_add_test(TestServiceLifecycle)
+bazarish_service_add_test(TestI2pDestApi)

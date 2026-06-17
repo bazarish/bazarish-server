@@ -6,6 +6,7 @@
 #include "PaymentGateway.hpp"
 #include "PortalApi.hpp"
 #include "QuotaPublisher.hpp"
+#include "ServiceLifecycle.hpp"
 #include "TransientPublisher.hpp"
 #include "SelfHostedCaptcha.hpp"
 #include "SubscriptionStore.hpp"
@@ -260,6 +261,20 @@ int main(const int argc, const char** argv)
               blobQuota.publish(user, quotaBytes);
           };
 
+    // Auto-renews the term-based paid services (i2pDest with its one-step grace,
+    // storage strict) from the prepaid balance, the single source of truth for
+    // the i2p-dest toggle/status shared by the account API and the portal.
+    const auto priceOf = [](const ServiceConfig& svc) -> std::uint64_t {
+        return (svc.enabled && !svc.priceAtomic.empty())
+            ? static_cast<std::uint64_t>(std::stoull(svc.priceAtomic))
+            : 0;
+    };
+    bazarish::service::ServiceLifecycle lifecycle(grants, ledger,
+        {priceOf(payments.i2pDest), payments.i2pDest.periodDays * 24 * 3600},
+        {priceOf(payments.storage), payments.storage.periodDays * 24 * 3600},
+        payments.storage.quotaBytes, payments.freeStorageBytes, publishQuota,
+        [&transientPub](const std::string& user) { transientPub.publish(user, "", 0); });
+
     bazarish::service::AccountApiOptions options;
     options.serverFingerprint = card.server;
     options.serverCardDer = cardDer;
@@ -280,6 +295,7 @@ int main(const int argc, const char** argv)
                                       const std::int64_t expiresUnix) {
         transientPub.publish(user, transientB64, expiresUnix);
     };
+    options.lifecycle = &lifecycle;
     bazarish::service::AccountApi api(store, grants, options);
 
     // The browser-facing portal (sign-in-with-key, captcha registration, …),
@@ -312,6 +328,7 @@ int main(const int argc, const char** argv)
         addPaid("storage", payments.storage);
         portalOptions.storageQuotaBytes = payments.storage.quotaBytes;
         portalOptions.publishQuota = publishQuota;
+        portalOptions.lifecycle = &lifecycle;
         portal = std::make_unique<bazarish::service::PortalApi>(
             portalOptions, *captcha, grants, ledger, invoices, *gateway);
         portalThread = std::thread(

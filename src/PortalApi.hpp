@@ -21,6 +21,8 @@ class Server;
 
 namespace bazarish::service {
 
+class ServiceLifecycle;
+
 struct PortalApiOptions {
     // This service node's fingerprint — the login challenge audience, so a
     // challenge issued here cannot be replayed against another portal.
@@ -52,6 +54,10 @@ struct PortalApiOptions {
     // Pushes a user's effective storage quota to the messaging server. Empty =
     // no push (e.g. tests).
     std::function<void(const std::string& user, std::uint64_t quotaBytes)> publishQuota;
+    // Drives the per-user i2p-dest toggle (enable/disable). Null in a deployment
+    // without per-user destinations: the cabinet then offers no personal-dest
+    // option.
+    ServiceLifecycle* lifecycle = nullptr;
 };
 
 // The service node's web portal (browser-facing). It exposes two faces on one

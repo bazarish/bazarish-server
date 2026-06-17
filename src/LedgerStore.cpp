@@ -72,14 +72,14 @@ LedgerStore::Account LedgerStore::load(const std::string& user) const
     }
     const nlohmann::json body = readJsonFile(path);
     account.currency = body.value("currency", currency_);
-    account.balanceAtomic = body.at("balanceAtomic").get<std::uint64_t>();
+    account.balanceAtomic = body.at("balanceAtomic").get<std::int64_t>();
     for (const nlohmann::json& item : body.at("entries")) {
         Entry entry;
         entry.ts = item.at("ts").get<std::int64_t>();
         entry.type = item.at("type").get<std::string>();
         entry.amountAtomic = item.at("amountAtomic").get<std::uint64_t>();
         entry.ref = item.at("ref").get<std::string>();
-        entry.balanceAfter = item.at("balanceAfter").get<std::uint64_t>();
+        entry.balanceAfter = item.at("balanceAfter").get<std::int64_t>();
         account.entries.push_back(std::move(entry));
     }
     return account;
@@ -128,19 +128,36 @@ std::vector<std::string> LedgerStore::users()
     return result;
 }
 
-std::uint64_t LedgerStore::credit(
+namespace {
+
+// The largest movement that fits the signed balance. Amounts are passed as
+// unsigned (a magnitude); a single account never approaches this in practice
+// (it is half the unsigned ceiling, ~9.2e18 piconero), so this only rejects
+// nonsense.
+bool amountFitsSigned(const std::uint64_t amount)
+{
+    return amount <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+}
+
+}  // namespace
+
+std::int64_t LedgerStore::credit(
     const std::string& user, const std::uint64_t amount, const std::string& ref, std::int64_t now)
 {
     requireUser(user);
     if (amount == 0) {
         throw std::invalid_argument("credit amount must be positive");
     }
+    if (!amountFitsSigned(amount)) {
+        throw std::overflow_error("ledger credit amount too large");
+    }
     const std::lock_guard<std::mutex> lock(mutex_);
     Account account = load(user);
-    if (amount > std::numeric_limits<std::uint64_t>::max() - account.balanceAtomic) {
+    const std::int64_t add = static_cast<std::int64_t>(amount);
+    if (account.balanceAtomic > std::numeric_limits<std::int64_t>::max() - add) {
         throw std::overflow_error("ledger balance overflow");
     }
-    account.balanceAtomic += amount;
+    account.balanceAtomic += add;
     account.entries.push_back({now, "credit", amount, ref, account.balanceAtomic});
     save(user, account);
     return account.balanceAtomic;
@@ -153,6 +170,9 @@ bool LedgerStore::creditOnce(
     if (amount == 0) {
         throw std::invalid_argument("credit amount must be positive");
     }
+    if (!amountFitsSigned(amount)) {
+        throw std::overflow_error("ledger credit amount too large");
+    }
     const std::lock_guard<std::mutex> lock(mutex_);
     Account account = load(user);
     for (const Entry& entry : account.entries) {
@@ -160,10 +180,11 @@ bool LedgerStore::creditOnce(
             return false;  // already applied — duplicate notification
         }
     }
-    if (amount > std::numeric_limits<std::uint64_t>::max() - account.balanceAtomic) {
+    const std::int64_t add = static_cast<std::int64_t>(amount);
+    if (account.balanceAtomic > std::numeric_limits<std::int64_t>::max() - add) {
         throw std::overflow_error("ledger balance overflow");
     }
-    account.balanceAtomic += amount;
+    account.balanceAtomic += add;
     account.entries.push_back({now, "credit", amount, ref, account.balanceAtomic});
     save(user, account);
     return true;
@@ -175,10 +196,32 @@ bool LedgerStore::debit(
     requireUser(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     Account account = load(user);
-    if (amount == 0 || amount > account.balanceAtomic) {
+    if (amount == 0 || !amountFitsSigned(amount)) {
         return false;
     }
-    account.balanceAtomic -= amount;
+    const std::int64_t sub = static_cast<std::int64_t>(amount);
+    if (sub > account.balanceAtomic) {
+        return false;  // a purchase never takes the balance below zero
+    }
+    account.balanceAtomic -= sub;
+    account.entries.push_back({now, "debit", amount, ref, account.balanceAtomic});
+    save(user, account);
+    return true;
+}
+
+bool LedgerStore::debitOverdraft(
+    const std::string& user, const std::uint64_t amount, const std::string& ref, std::int64_t now)
+{
+    requireUser(user);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    Account account = load(user);
+    if (amount == 0 || !amountFitsSigned(amount)) {
+        return false;
+    }
+    if (account.balanceAtomic < 0) {
+        return false;  // grace already spent — top up to re-arm it
+    }
+    account.balanceAtomic -= static_cast<std::int64_t>(amount);  // may go negative once
     account.entries.push_back({now, "debit", amount, ref, account.balanceAtomic});
     save(user, account);
     return true;

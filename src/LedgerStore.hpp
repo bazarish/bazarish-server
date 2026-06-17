@@ -24,12 +24,15 @@ public:
         std::string type;  // "credit" | "debit"
         std::uint64_t amountAtomic = 0;
         std::string ref;  // e.g. "topup:<txid>", "buy:username"
-        std::uint64_t balanceAfter = 0;
+        std::int64_t balanceAfter = 0;
     };
 
+    // The balance is signed: a paid service may auto-renew the user one term
+    // into the negative (a grace period the operator extends on credit). A
+    // negative balance is a debt the user must top up; see debitOverdraft.
     struct Account {
         std::string currency;
-        std::uint64_t balanceAtomic = 0;
+        std::int64_t balanceAtomic = 0;
         std::vector<Entry> entries;
     };
 
@@ -44,7 +47,7 @@ public:
 
     // Credits the balance (a confirmed top-up) and appends an entry; returns the
     // new balance. Throws on a zero amount or on balance overflow.
-    std::uint64_t credit(
+    std::int64_t credit(
         const std::string& user, std::uint64_t amount, const std::string& ref, std::int64_t now);
 
     // Idempotent credit by ref: if a credit with this ref was already applied,
@@ -54,8 +57,19 @@ public:
         const std::string& user, std::uint64_t amount, const std::string& ref, std::int64_t now);
 
     // Debits the balance for a purchase and appends an entry. Returns false and
-    // changes nothing when the amount is zero or exceeds the balance.
+    // changes nothing when the amount is zero or would take the balance below
+    // zero. A purchase never goes into debt.
     bool debit(
+        const std::string& user, std::uint64_t amount, const std::string& ref, std::int64_t now);
+
+    // Debits the balance allowing the result to go negative exactly once: it
+    // succeeds (taking the balance below zero if needed) only while the balance
+    // is currently >= 0, and is refused once the balance is already negative.
+    // This is the one-step grace an auto-renewing service (i2pDest) uses — the
+    // first unfunded renewal is served on credit, a second is not. A top-up that
+    // clears the debt (balance back to >= 0) re-arms the grace. Returns false on
+    // a zero amount or when the balance is already negative.
+    bool debitOverdraft(
         const std::string& user, std::uint64_t amount, const std::string& ref, std::int64_t now);
 
 private:

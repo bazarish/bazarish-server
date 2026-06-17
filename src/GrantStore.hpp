@@ -29,6 +29,16 @@ public:
     struct ServiceGrant {
         std::int64_t paidThrough = 0;
         std::int64_t grantedAt = 0;
+        // Whether the user wants this auto-renewing service kept on. An i2pDest
+        // stays enabled across a lapse (offline until top-up) until the user
+        // turns it off explicitly; storage flips to false when it drops to the
+        // free quota. Defaults true so a freshly bought service is on.
+        bool enabled = true;
+        // The currently provisioned i2pDest transient's validity (i2pDest only),
+        // recorded when the client uploads it so any of the user's devices can
+        // see when to issue the next one without holding the expiry itself.
+        std::int64_t transientExpires = 0;
+        std::int64_t transientUpdatedAt = 0;
     };
 
     explicit GrantStore(std::filesystem::path root);
@@ -52,6 +62,16 @@ public:
 
     // The current entitlement for a service; nullopt if never bought.
     std::optional<ServiceGrant> peekService(const std::string& user, const std::string& service);
+
+    // Flips the auto-renew "enabled" flag of an existing service entry (the
+    // i2pDest toggle, or storage dropping to free). A no-op if the service was
+    // never bought.
+    void setServiceEnabled(const std::string& user, const std::string& service, bool enabled);
+
+    // Records the validity of the i2pDest transient the client just uploaded, so
+    // the status endpoint can report it. A no-op if i2pDest was never bought.
+    void setI2pTransient(
+        const std::string& user, std::int64_t transientExpires, std::int64_t updatedAt);
 
 private:
     std::filesystem::path grantPath(const std::string& user) const;

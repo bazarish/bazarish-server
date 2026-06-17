@@ -7,6 +7,7 @@
 #include "PortalApi.hpp"
 #include "PortalSession.hpp"
 #include "SelfHostedCaptcha.hpp"
+#include "ServiceLifecycle.hpp"
 
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Crypto.hpp>
@@ -400,6 +401,88 @@ void testWebUi()
     fs::remove_all(grantRoot);
 }
 
+// The per-user i2p-dest toggle on the portal: enable charges a term and the
+// cabinet shows it on; disable turns it off again. Driven by ServiceLifecycle.
+void testI2pDestToggle()
+{
+    namespace fs = std::filesystem;
+    const Identity identity = Identity::generate();
+    const fs::path grantRoot
+        = fs::temp_directory_path() / ("bazarish-grants-" + toHex(randomBytes(8)));
+
+    SelfHostedCaptcha captcha("captcha-secret", 5, 300);
+    GrantStore grants(grantRoot);
+    LedgerStore ledger(grantRoot, "XMR");
+    InvoiceStore invoices(grantRoot / "invoices.json");
+    MockPaymentGateway gateway(false);
+    ServiceLifecycle life(
+        grants, ledger, {100, 30 * 24 * 3600}, {0, 0}, 0, 10 * 1024 * 1024, {}, {});
+
+    PortalApiOptions options;
+    options.audience = "test-server-fp";
+    options.challengeSecret = "challenge-secret";
+    options.sessionSecret = "session-secret";
+    options.settlementCurrency = "XMR";
+    options.requireCaptcha = false;
+    options.paidServices["i2pDest"] = {100, 30 * 24 * 3600};
+    options.lifecycle = &life;
+    PortalApi api(options, captcha, grants, ledger, invoices, gateway);
+
+    const int port = api.bindToAnyPort("127.0.0.1");
+    std::thread serverThread([&api]() { (void)api.listenAfterBind(); });
+    httplib::Client client("127.0.0.1", port);
+
+    httplib::Result challengeResponse;
+    for (int attempt = 0; attempt < 200; ++attempt) {
+        challengeResponse = client.Get("/portal/login");
+        if (challengeResponse) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    CHECK(challengeResponse && challengeResponse->status == 200);
+    const std::string challenge
+        = nlohmann::json::parse(challengeResponse->body).at("challenge").get<std::string>();
+    const std::string blob = signLoginBlob(identity, now(), challenge);
+    const httplib::Result login = client.Post("/portal/login",
+        nlohmann::json({{"challenge", challenge}, {"blob", blob}}).dump(), "application/json");
+    CHECK(login && login->status == 200);
+    const httplib::Headers cookie
+        = {{"Cookie", "session=" + cookieToken(login->get_header_value("Set-Cookie"))}};
+
+    // Enabling with no balance is refused.
+    const httplib::Result broke = client.Post(
+        "/portal/i2p-dest", cookie, nlohmann::json({{"enabled", true}}).dump(), "application/json");
+    CHECK(broke && broke->status == 402);
+
+    // Top up, then enable: charges a term, the entitlement is active.
+    ledger.credit(identity.fingerprint(), 1000, "topup", now());
+    const httplib::Result on = client.Post(
+        "/portal/i2p-dest", cookie, nlohmann::json({{"enabled", true}}).dump(), "application/json");
+    CHECK(on && on->status == 200);
+    const std::optional<GrantStore::ServiceGrant> g
+        = grants.peekService(identity.fingerprint(), "i2pDest");
+    CHECK(g.has_value() && g->enabled && g->paidThrough > now());
+    CHECK(ledger.get(identity.fingerprint()).balanceAtomic == 900);
+
+    // The cabinet renders the personal-destination section, on.
+    const httplib::Result cabinet = client.Get("/", cookie);
+    CHECK(cabinet && cabinet->status == 200);
+    CHECK(cabinet->body.find("Personal I2P destination") != std::string::npos);
+    CHECK(cabinet->body.find("Turn off") != std::string::npos);
+
+    // Disable: the toggle goes off, no second charge.
+    const httplib::Result off = client.Post(
+        "/portal/i2p-dest", cookie, nlohmann::json({{"enabled", false}}).dump(), "application/json");
+    CHECK(off && off->status == 200);
+    CHECK(!grants.peekService(identity.fingerprint(), "i2pDest")->enabled);
+    CHECK(ledger.get(identity.fingerprint()).balanceAtomic == 900);
+
+    api.stop();
+    serverThread.join();
+    fs::remove_all(grantRoot);
+}
+
 }  // namespace
 
 int main()
@@ -408,6 +491,7 @@ int main()
     testLoginFlow();
     testOpenRegistration();
     testWebUi();
+    testI2pDestToggle();
     std::printf("TestPortalApi: all checks passed\n");
     return 0;
 }

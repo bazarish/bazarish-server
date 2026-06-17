@@ -147,7 +147,7 @@ int main()
     const auto serverServingKey
         = std::make_shared<Key>(Key::fromPrivatePem(serverSealing.privatePem()));
     httpOptions.assignDestination = [serverDest, serverServingKey](const std::string&) {
-        return DestinationAssignment{serverDest, serverServingKey};
+        return DestinationAssignment{serverDest, serverServingKey, "home"};
     };
     // Stub blob proxy: records the unsend (DELETE) op so the test can assert the
     // endpoint validated and forwarded it without a live router.
@@ -368,6 +368,7 @@ int main()
         const nlohmann::json body = nlohmann::json::parse(result->body);
         CHECK(body.at("dest").get<std::string>() == serverDest);
         CHECK(body.at("servingKey").get<std::string>() == toBase64(serverServingKey->publicDer()));
+        CHECK(body.at("state").get<std::string>() == "home");
     }
 
     // First-contact discovery relay: a sealed fetch is forwarded to toDest over

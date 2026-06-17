@@ -52,7 +52,8 @@ void printUsage()
         "card. A send is delivered locally when its toDest is one of this\n"
         "server's destinations, otherwise it is dialled directly over I2P.\n"
         "--contact-request-limit <bytes> caps the tokenless contact-request\n"
-        "payload. --pool-size <n> brings up a free-tier address pool.\n"
+        "payload. --pool-size <n> sizes the free-tier address pool (default 10;\n"
+        "0 disables it, falling free users back to the home destination).\n"
         "--federation-rate-limit caps inbound I2P deliveries per connecting\n"
         "destination per 60s (default 240, 0 disables). --service-node <url>\n"
         "is the local service node (e.g. http://127.0.0.1:PORT) used to answer\n"
@@ -132,7 +133,7 @@ int main(const int argc, const char** argv)
     std::string operatorSecret;
     std::string serviceNodeUrl;
     bazarish::I2pPrivacy privacy = bazarish::I2pPrivacy::eMax;
-    std::size_t poolSize = 0;
+    std::size_t poolSize = 10;
     std::size_t federationRateLimit = 240;  // inbound deliveries per peer dest per 60s
     bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
     for (int i = 3; i < argc;) {
@@ -336,13 +337,16 @@ int main(const int argc, const char** argv)
         if (perUserDests) {
             const std::shared_ptr<bazarish::Key> key = perUserDests->servingKeyFor(user);
             if (key) {
-                return {perUserDests->destinationFor(user), key};
+                const std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
+                return {perUserDests->destinationFor(user), key,
+                    perUserDests->stateFor(user, now)};
             }
         }
         if (federationPool) {
-            return {federationPool->destinationFor(user), federationPool->servingKeyFor(user)};
+            return {federationPool->destinationFor(user), federationPool->servingKeyFor(user),
+                "pool"};
         }
-        return {homeDest, homeServingKey};
+        return {homeDest, homeServingKey, "home"};
     };
     // Proxy blob ops over I2P for clients without a local SAM bridge, via a fresh
     // transient session on the local bridge (independent of federation). Unsend

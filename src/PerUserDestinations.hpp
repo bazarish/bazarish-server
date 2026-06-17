@@ -71,6 +71,16 @@ public:
     // SAM session publishes. Empty when the user has none or it is not up yet.
     std::string destinationFor(const std::string& userFp) const;
 
+    // userFp's personal-destination state, for the status the client polls:
+    //   ""          — no personal destination,
+    //   "building"  — provisioned, the SAM session has not published yet (so the
+    //                 client must not yet hand out the personal address),
+    //   "active"    — published and within the transient's validity,
+    //   "expired"   — the offline transient lapsed: the personal destination is
+    //                 offline (the user does not fall back to the pool while the
+    //                 option is on; they re-issue a transient or top up).
+    std::string stateFor(const std::string& userFp, std::int64_t now) const;
+
 private:
     struct Destination {
         std::atomic<bool> running{true};

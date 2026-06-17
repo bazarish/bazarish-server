@@ -69,6 +69,13 @@ int main()
         CHECK(readFile(aliceFile).find("sealingKey") != std::string::npos);
         CHECK(dests.destinationFor(alice).empty());
 
+        // State: provisioned but the session never published (no router) and the
+        // transient is still in date -> "building"; past its expiry -> "expired";
+        // an unknown user -> "".
+        CHECK(dests.stateFor(alice, kNow) == "building");
+        CHECK(dests.stateFor(alice, kNow + 2000) == "expired");
+        CHECK(dests.stateFor("nobody", kNow).empty());
+
         // Same transient: a no-op (still one destination).
         dests.provision(alice, "transient-blob-A", kNow + 1000);
         CHECK(dests.size() == 1);

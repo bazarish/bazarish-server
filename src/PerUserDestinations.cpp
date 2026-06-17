@@ -234,4 +234,17 @@ std::string PerUserDestinations::destinationFor(const std::string& userFp) const
     return it->second->dest;
 }
 
+std::string PerUserDestinations::stateFor(const std::string& userFp, const std::int64_t now) const
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = dests_.find(userFp);
+    if (it == dests_.end()) {
+        return std::string();
+    }
+    if (it->second->expiresUnix != 0 && now >= it->second->expiresUnix) {
+        return "expired";
+    }
+    return it->second->dest.empty() ? "building" : "active";
+}
+
 }  // namespace bazarish::server

@@ -199,6 +199,7 @@ void HttpApi::setupRoutes()
                     {"servingKey", assigned.servingKey
                             ? toBase64(assigned.servingKey->publicDer())
                             : std::string()},
+                    {"state", assigned.state},
                 });
         }));
 

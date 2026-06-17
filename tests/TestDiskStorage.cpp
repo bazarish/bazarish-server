@@ -87,8 +87,8 @@ int main()
 
     // --- Pending content: put, dedup, quota ---
     const Bytes blob(100, 0xab);
-    CHECK(storage.putBlob(alice, "msg1", blob, "content", kNow, kQuota) == Storage::PutResult::kStored);
-    CHECK(storage.putBlob(alice, "msg1", blob, "content", kNow, kQuota) == Storage::PutResult::kDuplicate);
+    CHECK(storage.putBlob(alice, "msg1", blob, "content", kNow, kQuota) == Storage::PutResult::eStored);
+    CHECK(storage.putBlob(alice, "msg1", blob, "content", kNow, kQuota) == Storage::PutResult::eDuplicate);
     CHECK(storage.usage(alice) == 100);
     CHECK(storage.hasBlob(alice, "msg1"));
     CHECK(!storage.hasBlob(alice, "nosuchblob"));
@@ -97,7 +97,7 @@ int main()
 
     const Bytes bigBlob(static_cast<std::size_t>(kQuota), 0xcd);
     CHECK(storage.putBlob(alice, "msg2", bigBlob, "content", kNow, kQuota)
-        == Storage::PutResult::kQuotaExceeded);
+        == Storage::PutResult::eQuotaExceeded);
     CHECK(storage.usage(alice) == 100);
 
     // --- Pending list and the delete-when-all-acked rule ---
@@ -117,7 +117,7 @@ int main()
     storage.ackBlob(alice, "msg1", "client2");
 
     // --- Retiring a client re-evaluates completeness ---
-    CHECK(storage.putBlob(alice, "msg3", blob, "content", kNow, kQuota) == Storage::PutResult::kStored);
+    CHECK(storage.putBlob(alice, "msg3", blob, "content", kNow, kQuota) == Storage::PutResult::eStored);
     storage.ackBlob(alice, "msg3", "client1");
     CHECK(storage.usage(alice) == 100);
     storage.unregisterClient(alice, "client2");
@@ -125,14 +125,14 @@ int main()
 
     // --- A user with no registered clients keeps content until the sweep ---
     storage.unregisterClient(alice, "client1");
-    CHECK(storage.putBlob(alice, "msg4", blob, "content", kNow, kQuota) == Storage::PutResult::kStored);
+    CHECK(storage.putBlob(alice, "msg4", blob, "content", kNow, kQuota) == Storage::PutResult::eStored);
     CHECK(storage.usage(alice) == 100);
 
     // --- TTL sweep ---
     const std::string bob = makeUser(0x02);
     storage.registerClient(bob, "bclient");
-    CHECK(storage.putBlob(bob, "old", blob, "content", kNow - 100, kQuota) == Storage::PutResult::kStored);
-    CHECK(storage.putBlob(bob, "fresh", blob, "contact", kNow + 100, kQuota) == Storage::PutResult::kStored);
+    CHECK(storage.putBlob(bob, "old", blob, "content", kNow - 100, kQuota) == Storage::PutResult::eStored);
+    CHECK(storage.putBlob(bob, "fresh", blob, "contact", kNow + 100, kQuota) == Storage::PutResult::eStored);
     storage.purgeExpired(kNow);
     CHECK((storage.listPending(bob, "bclient")
         == std::vector<Storage::PendingEntry>{{"fresh", "contact"}}));
@@ -163,11 +163,11 @@ int main()
     CHECK(storage.userQuota(dave, kQuota) == 8);        // override returned
     CHECK(storage.userQuota(alice, kQuota) == kQuota);  // unrelated user unaffected
     CHECK(storage.putBlob(dave, "tiny", Bytes{1, 2, 3}, "content", kNow, 8)
-        == Storage::PutResult::kStored);
+        == Storage::PutResult::eStored);
     // Over the per-user quota — refused even though kQuota would allow it.
     CHECK(storage.putBlob(dave, "over", Bytes(20, 'x'), "content", kNow,
               storage.userQuota(dave, kQuota))
-        == Storage::PutResult::kQuotaExceeded);
+        == Storage::PutResult::eQuotaExceeded);
 
     // --- Persistence across instances ---
     DiskStorage reopened(root);

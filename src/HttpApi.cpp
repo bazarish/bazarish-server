@@ -137,15 +137,15 @@ void HttpApi::setupRoutes()
                 user = auth::verifyRequest(collectAuthHeaders(request), nowSeconds(),
                     request.method, request.path, bodyBytes(request));
             } catch (const std::exception& error) {
-                respondError(response, 401, ErrorCode::kDeliveryRejected, error.what());
+                respondError(response, 401, ErrorCode::eDeliveryRejected, error.what());
                 return;
             }
             try {
                 handler(request, response, user);
             } catch (const nlohmann::json::exception& error) {
-                respondError(response, 400, ErrorCode::kDeliveryRejected, error.what());
+                respondError(response, 400, ErrorCode::eDeliveryRejected, error.what());
             } catch (const std::invalid_argument& error) {
-                respondError(response, 400, ErrorCode::kDeliveryRejected, error.what());
+                respondError(response, 400, ErrorCode::eDeliveryRejected, error.what());
             }
         };
     };
@@ -159,7 +159,7 @@ void HttpApi::setupRoutes()
                                    const std::string& user) -> std::string {
         const std::string clientId = request.get_header_value("X-Bazarish-Client");
         if (clientId.empty() || !store.isClientRegistered(user, clientId)) {
-            respondError(response, 403, ErrorCode::kClientUnregistered,
+            respondError(response, 403, ErrorCode::eClientUnregistered,
                 "client ID is not registered for this user");
             return {};
         }
@@ -211,7 +211,7 @@ void HttpApi::setupRoutes()
         [this, &store](const httplib::Request& request, httplib::Response& response) {
             if (options_.operatorSecret.empty()
                 || request.get_header_value("X-Operator-Secret") != options_.operatorSecret) {
-                respondError(response, 403, ErrorCode::kDeliveryRejected,
+                respondError(response, 403, ErrorCode::eDeliveryRejected,
                     "operator authentication required");
                 return;
             }
@@ -221,7 +221,7 @@ void HttpApi::setupRoutes()
                     body.at("quotaBytes").get<std::uint64_t>());
                 respondJson(response, {{"ok", true}});
             } catch (const std::exception& error) {
-                respondError(response, 400, ErrorCode::kDeliveryRejected, error.what());
+                respondError(response, 400, ErrorCode::eDeliveryRejected, error.what());
             }
         });
 
@@ -234,12 +234,12 @@ void HttpApi::setupRoutes()
         [this](const httplib::Request& request, httplib::Response& response) {
             if (options_.operatorSecret.empty()
                 || request.get_header_value("X-Operator-Secret") != options_.operatorSecret) {
-                respondError(response, 403, ErrorCode::kDeliveryRejected,
+                respondError(response, 403, ErrorCode::eDeliveryRejected,
                     "operator authentication required");
                 return;
             }
             if (!options_.provisionI2pDest || !options_.revokeI2pDest) {
-                respondError(response, 503, ErrorCode::kDeliveryRejected,
+                respondError(response, 503, ErrorCode::eDeliveryRejected,
                     "per-user destinations not available");
                 return;
             }
@@ -255,7 +255,7 @@ void HttpApi::setupRoutes()
                 }
                 respondJson(response, {{"ok", true}});
             } catch (const std::exception& error) {
-                respondError(response, 400, ErrorCode::kDeliveryRejected, error.what());
+                respondError(response, 400, ErrorCode::eDeliveryRejected, error.what());
             }
         });
 
@@ -319,7 +319,7 @@ void HttpApi::setupRoutes()
             }
             const std::string blobId = request.matches[1].str();
             if (!store.hasBlob(user, blobId)) {
-                respondError(response, 404, ErrorCode::kDeliveryRejected, "no such blob");
+                respondError(response, 404, ErrorCode::eDeliveryRejected, "no such blob");
                 return;
             }
             const Bytes data = store.getBlob(user, blobId);
@@ -355,7 +355,7 @@ void HttpApi::setupRoutes()
                 ? request.get_param_value("method")
                 : std::string("GET");
             if (method != "GET" && method != "DELETE") {
-                respondError(response, 400, ErrorCode::kDeliveryRejected, "unsupported proxy method");
+                respondError(response, 400, ErrorCode::eDeliveryRejected, "unsupported proxy method");
                 return;
             }
             const std::string host = request.get_param_value("host");
@@ -367,27 +367,27 @@ void HttpApi::setupRoutes()
             if (host.size() <= suffix.size()
                 || host.compare(host.size() - suffix.size(), suffix.size(), suffix) != 0) {
                 respondError(
-                    response, 400, ErrorCode::kDeliveryRejected, "host is not a .b32.i2p address");
+                    response, 400, ErrorCode::eDeliveryRejected, "host is not a .b32.i2p address");
                 return;
             }
             // Unsend: a small whole-body op.
             if (method == "DELETE") {
                 if (!options_.blobProxyFetch) {
-                    respondError(response, 503, ErrorCode::kDeliveryRejected, "blob proxy disabled");
+                    respondError(response, 503, ErrorCode::eDeliveryRejected, "blob proxy disabled");
                     return;
                 }
                 try {
                     const BlobProxyResult fetched
                         = options_.blobProxyFetch(method, host, path, token);
                     if (fetched.status != 200) {
-                        respondError(response, 502, ErrorCode::kDeliveryRejected,
+                        respondError(response, 502, ErrorCode::eDeliveryRejected,
                             "blob op returned status " + std::to_string(fetched.status));
                         return;
                     }
                     response.set_content(std::string(fetched.body.begin(), fetched.body.end()),
                         "application/octet-stream");
                 } catch (const std::exception& error) {
-                    respondError(response, 502, ErrorCode::kDeliveryRejected, error.what());
+                    respondError(response, 502, ErrorCode::eDeliveryRejected, error.what());
                 }
                 return;
             }
@@ -396,18 +396,18 @@ void HttpApi::setupRoutes()
             // from the upstream Content-Length or Content-Range) so the recipient
             // can detect a truncated transfer and resume with a Range request.
             if (!options_.blobProxyDownload) {
-                respondError(response, 503, ErrorCode::kDeliveryRejected, "blob proxy disabled");
+                respondError(response, 503, ErrorCode::eDeliveryRejected, "blob proxy disabled");
                 return;
             }
             std::shared_ptr<I2pBlobReader> reader;
             try {
                 reader = options_.blobProxyDownload(host, path, range);
             } catch (const std::exception& error) {
-                respondError(response, 502, ErrorCode::kDeliveryRejected, error.what());
+                respondError(response, 502, ErrorCode::eDeliveryRejected, error.what());
                 return;
             }
             if (reader->status() != 200 && reader->status() != 206) {
-                respondError(response, 502, ErrorCode::kDeliveryRejected,
+                respondError(response, 502, ErrorCode::eDeliveryRejected,
                     "blob op returned status " + std::to_string(reader->status()));
                 return;
             }
@@ -433,7 +433,7 @@ void HttpApi::setupRoutes()
                 return;
             }
             if (request.body.size() > options_.perMessageLimitBytes) {
-                respondError(response, 413, ErrorCode::kQuotaExceeded,
+                respondError(response, 413, ErrorCode::eQuotaExceeded,
                     "envelope exceeds the per-message limit of "
                         + std::to_string(options_.perMessageLimitBytes) + " bytes");
                 return;
@@ -470,7 +470,7 @@ void HttpApi::setupRoutes()
                 if (!remote.reachable) {
                     attempt.status = "failed";
                     attempt.errorCode
-                        = std::string(toString(ErrorCode::kRecipientServerUnreachable));
+                        = std::string(toString(ErrorCode::eRecipientServerUnreachable));
                     attempt.errorMessage = "recipient server could not be reached";
                 } else {
                     attempt.status = remote.delivered ? "delivered" : "failed";
@@ -504,7 +504,7 @@ void HttpApi::setupRoutes()
             const std::lock_guard<std::mutex> lock(attemptsMutex_);
             const auto found = attempts_.find(request.matches[1].str());
             if (found == attempts_.end()) {
-                respondError(response, 404, ErrorCode::kAttemptUnknown,
+                respondError(response, 404, ErrorCode::eAttemptUnknown,
                     "attempt is not known (expired or server restarted)");
                 return;
             }
@@ -532,18 +532,18 @@ void HttpApi::setupRoutes()
             validateB32I2pHost(toDest);
             const std::string op = body.at("op").get<std::string>();
             if (op != "card" && op != "resolve") {
-                respondError(response, 400, ErrorCode::kDeliveryRejected, "unsupported fetch op");
+                respondError(response, 400, ErrorCode::eDeliveryRejected, "unsupported fetch op");
                 return;
             }
             const Bytes sealed = fromBase64(body.at("sealed").get<std::string>());
             if (!remoteFetch_) {
                 respondError(
-                    response, 400, ErrorCode::kDeliveryRejected, "no federation transport");
+                    response, 400, ErrorCode::eDeliveryRejected, "no federation transport");
                 return;
             }
             const RemoteFetchResult result = remoteFetch_(toDest, op, sealed);
             if (!result.reachable) {
-                respondError(response, 400, ErrorCode::kRecipientServerUnreachable,
+                respondError(response, 400, ErrorCode::eRecipientServerUnreachable,
                     "destination could not be reached");
                 return;
             }

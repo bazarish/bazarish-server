@@ -183,10 +183,10 @@ Storage::PutResult DiskStorage::putBlob(const std::string& user, const std::stri
     const fs::path blobs = userDir(user) / "blobs";
     const fs::path meta = userDir(user) / "meta";
     if (fs::exists(blobs / blobId)) {
-        return PutResult::kDuplicate;
+        return PutResult::eDuplicate;
     }
     if (usageLocked(user) + data.size() > quotaBytes) {
-        return PutResult::kQuotaExceeded;
+        return PutResult::eQuotaExceeded;
     }
 
     fs::create_directories(blobs);
@@ -202,7 +202,7 @@ Storage::PutResult DiskStorage::putBlob(const std::string& user, const std::stri
     // to the TTL sweep, the reverse is harmless.
     writeFileAtomic(meta / (blobId + ".json"), metaText.data(), metaText.size());
     writeFileAtomic(blobs / blobId, data.data(), data.size());
-    return PutResult::kStored;
+    return PutResult::eStored;
 }
 
 bool DiskStorage::hasBlob(const std::string& user, const std::string& blobId)

@@ -44,12 +44,12 @@ public:
     // --- Pending content ---
 
     enum class PutResult {
-        kStored,
+        eStored,
         // Same blobId already present: success without storing again
         // (idempotent retries must not consume a second token).
-        kDuplicate,
+        eDuplicate,
         // Storing would exceed quotaBytes; nothing was stored.
-        kQuotaExceeded,
+        eQuotaExceeded,
     };
 
     // Delivery class, surfaced back to fetching clients ("content" or

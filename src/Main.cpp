@@ -131,7 +131,7 @@ int main(const int argc, const char** argv)
     bazarish::server::DeliveryEngineOptions engineOptions;
     std::string operatorSecret;
     std::string serviceNodeUrl;
-    bazarish::I2pPrivacy privacy = bazarish::I2pPrivacy::kMax;
+    bazarish::I2pPrivacy privacy = bazarish::I2pPrivacy::eMax;
     std::size_t poolSize = 0;
     std::size_t federationRateLimit = 240;  // inbound deliveries per peer dest per 60s
     bazarish::log::Level logLevel = bazarish::log::Level::eInfo;

@@ -65,13 +65,13 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
         if (deliveryClass == "content") {
             token = fromBase64(inner.at("token").get<std::string>());
         } else if (deliveryClass != "contact") {
-            return fail(ErrorCode::kDeliveryRejected, "unknown delivery class");
+            return fail(ErrorCode::eDeliveryRejected, "unknown delivery class");
         }
         if (!isFingerprint(mailbox)) {
-            return fail(ErrorCode::kDeliveryRejected, "mailbox is not a fingerprint");
+            return fail(ErrorCode::eDeliveryRejected, "mailbox is not a fingerprint");
         }
     } catch (const std::exception&) {
-        return fail(ErrorCode::kDeliveryRejected, "envelope rejected");
+        return fail(ErrorCode::eDeliveryRejected, "envelope rejected");
     }
 
     // Dedup before anything else: a retry of a delivered message must
@@ -91,27 +91,27 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
 
     if (deliveryClass == "contact") {
         if (payload.size() > options_.contactRequestLimitBytes) {
-            return fail(ErrorCode::kContactRequestTooLarge,
+            return fail(ErrorCode::eContactRequestTooLarge,
                 "contact request exceeds " + std::to_string(options_.contactRequestLimitBytes)
                     + " bytes");
         }
     } else {
         if (token.size() != kDeliveryTokenSize
             || !storage_.consumeTokenHash(mailbox, deliveryTokenHash(token))) {
-            return fail(ErrorCode::kDeliveryRejected, "delivery rejected");
+            return fail(ErrorCode::eDeliveryRejected, "delivery rejected");
         }
     }
 
     const Storage::PutResult result = storage_.putBlob(mailbox, messageId, payload, deliveryClass,
         now, storage_.userQuota(mailbox, options_.defaultQuotaBytes));
-    if (result == Storage::PutResult::kQuotaExceeded) {
+    if (result == Storage::PutResult::eQuotaExceeded) {
         if (deliveryClass == "content") {
             // The store did not happen: restore the token so the sender
             // can retry after the recipient frees space.
             storage_.registerTokenHashes(mailbox, {deliveryTokenHash(token)});
-            return fail(ErrorCode::kStorageFull, "recipient storage quota is exhausted");
+            return fail(ErrorCode::eStorageFull, "recipient storage quota is exhausted");
         }
-        return fail(ErrorCode::kDeliveryRejected, "delivery rejected");
+        return fail(ErrorCode::eDeliveryRejected, "delivery rejected");
     }
 
     // Record the admitted messageId so a later replay (after this blob is acked

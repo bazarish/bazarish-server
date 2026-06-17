@@ -13,11 +13,11 @@ namespace bazarish::service {
 
 // Settlement state of a payment, normalised across all backends.
 enum class PaymentState {
-    kPending,    // invoice created, nothing (or not enough) received yet
-    kPaid,       // funds seen but not final (0-conf / processing)
-    kConfirmed,  // settled: enough confirmations, or the gateway calls it final
-    kExpired,    // the invoice window passed unpaid
-    kFailed,     // backend error, or underpaid past policy
+    ePending,    // invoice created, nothing (or not enough) received yet
+    ePaid,       // funds seen but not final (0-conf / processing)
+    eConfirmed,  // settled: enough confirmations, or the gateway calls it final
+    eExpired,    // the invoice window passed unpaid
+    eFailed,     // backend error, or underpaid past policy
 };
 
 const char* toString(PaymentState state);
@@ -35,12 +35,12 @@ struct Invoice {
     std::string payTo;  // an on-chain address OR a hosted checkout URL
     Money amount;
     std::int64_t expiresAt = 0;  // unix seconds; 0 means no explicit expiry
-    PaymentState state = PaymentState::kPending;
+    PaymentState state = PaymentState::ePending;
 };
 
 // The current settlement status of a previously created invoice.
 struct PaymentStatus {
-    PaymentState state = PaymentState::kPending;
+    PaymentState state = PaymentState::ePending;
     std::string paidAmount;  // exact decimal string of what has been received
     int confirmations = 0;   // on-chain confirmations (0 for instant gateways)
 };

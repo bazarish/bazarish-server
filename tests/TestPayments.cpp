@@ -51,14 +51,14 @@ void testMockLifecycle()
     const Invoice invoice = gateway.createInvoice({"0.01", "BTC"}, "fp:per-user-dest");
     CHECK(!invoice.id.empty());
     CHECK(invoice.payTo == "mock:" + invoice.id);
-    CHECK(gateway.checkStatus(invoice.id).state == PaymentState::kPending);
+    CHECK(gateway.checkStatus(invoice.id).state == PaymentState::ePending);
 
     gateway.markPaid(invoice.id, "0.01", 0);
-    CHECK(gateway.checkStatus(invoice.id).state == PaymentState::kPaid);
+    CHECK(gateway.checkStatus(invoice.id).state == PaymentState::ePaid);
 
     gateway.markPaid(invoice.id, "0.01", 3);
     const PaymentStatus settled = gateway.checkStatus(invoice.id);
-    CHECK(settled.state == PaymentState::kConfirmed);
+    CHECK(settled.state == PaymentState::eConfirmed);
     CHECK(settled.paidAmount == "0.01");
     CHECK(settled.confirmations == 3);
 
@@ -66,7 +66,7 @@ void testMockLifecycle()
 
     MockPaymentGateway autoGateway(true);
     const Invoice instant = autoGateway.createInvoice({"5", "USD"}, "ref");
-    CHECK(autoGateway.checkStatus(instant.id).state == PaymentState::kConfirmed);
+    CHECK(autoGateway.checkStatus(instant.id).state == PaymentState::eConfirmed);
 }
 
 // The factory builds built-ins by type, honours a custom registration, and
@@ -77,12 +77,12 @@ void testFactoryAndRegistry()
     CHECK(mock != nullptr);
     CHECK(mock->name() == "mock");
     CHECK(mock->checkStatus(mock->createInvoice({"1", "BTC"}, "r").id).state
-        == PaymentState::kPending);
+        == PaymentState::ePending);
 
     const std::unique_ptr<PaymentGateway> autoMock
         = makePaymentGateway({"mock", {{"autoconfirm", "true"}}});
     CHECK(autoMock->checkStatus(autoMock->createInvoice({"1", "BTC"}, "r").id).state
-        == PaymentState::kConfirmed);
+        == PaymentState::eConfirmed);
 
     // A self-written backend plugs in by registering its own type name.
     registerPaymentGateway("my-gateway", [](const std::map<std::string, std::string>&) {
@@ -91,7 +91,7 @@ void testFactoryAndRegistry()
     const std::unique_ptr<PaymentGateway> custom = makePaymentGateway({"my-gateway", {}});
     CHECK(custom != nullptr);
     CHECK(custom->checkStatus(custom->createInvoice({"1", "BTC"}, "r").id).state
-        == PaymentState::kConfirmed);
+        == PaymentState::eConfirmed);
 
     CHECK_THROWS(makePaymentGateway({"does-not-exist", {}}));
 
@@ -182,16 +182,16 @@ void testMoneroAgainstStub()
 
     // checkStatus across confirmed / seen-but-unconfirmed / nothing.
     const PaymentStatus confirmed = gateway.checkStatus("7");
-    CHECK(confirmed.state == PaymentState::kConfirmed);
+    CHECK(confirmed.state == PaymentState::eConfirmed);
     CHECK(confirmed.paidAmount == "1000000");
     CHECK(confirmed.confirmations == 12);
-    CHECK(gateway.checkStatus("8").state == PaymentState::kPaid);
-    CHECK(gateway.checkStatus("9").state == PaymentState::kPending);
+    CHECK(gateway.checkStatus("8").state == PaymentState::ePaid);
+    CHECK(gateway.checkStatus("9").state == PaymentState::ePending);
 
     // verifyByTxid (pull path): a matching txid settles; a txid crediting another
     // subaddress does not count for this invoice.
-    CHECK(gateway.verifyByTxid("7", "tx-confirmed").state == PaymentState::kConfirmed);
-    CHECK(gateway.verifyByTxid("7", "tx-wrong-sub").state == PaymentState::kPending);
+    CHECK(gateway.verifyByTxid("7", "tx-confirmed").state == PaymentState::eConfirmed);
+    CHECK(gateway.verifyByTxid("7", "tx-wrong-sub").state == PaymentState::ePending);
 
     // parseWebhook (push path): a correctly-HMAC'd callback settles via the
     // wallet; a wrong signature is ignored.
@@ -199,7 +199,7 @@ void testMoneroAgainstStub()
     const std::optional<PaymentStatus> good
         = gateway.parseWebhook(callbackBody, hmacSha256Hex("shared-secret", callbackBody));
     CHECK(good.has_value());
-    CHECK(good->state == PaymentState::kConfirmed);
+    CHECK(good->state == PaymentState::eConfirmed);
     CHECK(!gateway.parseWebhook(callbackBody, "deadbeef").has_value());
 
     stub.stop();

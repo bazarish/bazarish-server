@@ -27,10 +27,10 @@ Invoice MockPaymentGateway::createInvoice(const Money& amount, const std::string
     invoice.payTo = "mock:" + id;  // synthetic receiving "address"
     invoice.amount = amount;
     if (autoConfirm_) {
-        status.state = PaymentState::kConfirmed;
+        status.state = PaymentState::eConfirmed;
         status.paidAmount = amount.amount;
         status.confirmations = 1;
-        invoice.state = PaymentState::kConfirmed;
+        invoice.state = PaymentState::eConfirmed;
     }
     statuses_[id] = status;
     return invoice;
@@ -56,7 +56,7 @@ void MockPaymentGateway::markPaid(
     }
     it->second.paidAmount = paidAmount;
     it->second.confirmations = confirmations;
-    it->second.state = confirmations >= 1 ? PaymentState::kConfirmed : PaymentState::kPaid;
+    it->second.state = confirmations >= 1 ? PaymentState::eConfirmed : PaymentState::ePaid;
 }
 
 std::unique_ptr<PaymentGateway> makeMockPaymentGateway(

@@ -85,9 +85,9 @@ private:
     // Buying (or renewing) a paid service: debit the balance and extend the
     // entitlement. Shared by the JSON and the HTML buy paths so the money
     // handling lives in one place.
-    enum class BuyOutcome { kOk, kNotOffered, kInsufficient };
+    enum class BuyOutcome { eOk, eNotOffered, eInsufficient };
     struct BuyResult {
-        BuyOutcome outcome = BuyOutcome::kOk;
+        BuyOutcome outcome = BuyOutcome::eOk;
         std::int64_t paidThrough = 0;
     };
     BuyResult buyService(const std::string& user, const std::string& service, std::int64_t now);

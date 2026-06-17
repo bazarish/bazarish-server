@@ -100,15 +100,15 @@ PaymentStatus statusFromTransfers(const nlohmann::json& transfers, const std::ui
     }
     PaymentStatus status;
     if (confirmed > 0) {
-        status.state = PaymentState::kConfirmed;
+        status.state = PaymentState::eConfirmed;
         status.paidAmount = std::to_string(confirmed);
         status.confirmations = maxConf;
     } else if (seen > 0) {
-        status.state = PaymentState::kPaid;
+        status.state = PaymentState::ePaid;
         status.paidAmount = std::to_string(seen);
         status.confirmations = maxConf;
     } else {
-        status.state = PaymentState::kPending;
+        status.state = PaymentState::ePending;
         status.paidAmount = "0";
     }
     return status;
@@ -136,7 +136,7 @@ Invoice MoneroPaymentGateway::createInvoice(const Money& amount, const std::stri
     invoice.id = std::to_string(result.at("address_index").get<std::uint32_t>());
     invoice.payTo = result.at("address").get<std::string>();
     invoice.amount = amount;
-    invoice.state = PaymentState::kPending;
+    invoice.state = PaymentState::ePending;
     return invoice;
 }
 

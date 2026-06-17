@@ -172,7 +172,7 @@ PortalApi::PortalApi(PortalApiOptions options, Captcha& captcha, GrantStore& gra
 bool PortalApi::settleInvoice(
     const std::string& invoiceId, const PaymentStatus& status, const std::int64_t now)
 {
-    if (status.state != PaymentState::kConfirmed) {
+    if (status.state != PaymentState::eConfirmed) {
         return false;
     }
     const std::optional<std::string> user = invoices_.user(invoiceId);
@@ -196,10 +196,10 @@ PortalApi::BuyResult PortalApi::buyService(
 {
     const auto offered = options_.paidServices.find(service);
     if (offered == options_.paidServices.end()) {
-        return {BuyOutcome::kNotOffered, 0};
+        return {BuyOutcome::eNotOffered, 0};
     }
     if (!ledger_.debit(user, offered->second.priceAtomic, "buy:" + service, now)) {
-        return {BuyOutcome::kInsufficient, 0};
+        return {BuyOutcome::eInsufficient, 0};
     }
     // Renewal stacks onto any remaining term.
     const std::optional<GrantStore::ServiceGrant> existing = grants_.peekService(user, service);
@@ -210,7 +210,7 @@ PortalApi::BuyResult PortalApi::buyService(
     if (service == "storage" && options_.publishQuota) {
         options_.publishQuota(user, options_.storageQuotaBytes);
     }
-    return {BuyOutcome::kOk, paidThrough};
+    return {BuyOutcome::eOk, paidThrough};
 }
 
 PortalApi::~PortalApi() = default;
@@ -438,12 +438,12 @@ void PortalApi::setupRoutes()
             }
             const std::string service = body.at("service").get<std::string>();
             const BuyResult result = buyService(userId, service, nowSeconds());
-            if (result.outcome == BuyOutcome::kNotOffered) {
+            if (result.outcome == BuyOutcome::eNotOffered) {
                 response.status = 404;
                 respondJson(response, {{"error", "service not offered"}});
                 return;
             }
-            if (result.outcome == BuyOutcome::kInsufficient) {
+            if (result.outcome == BuyOutcome::eInsufficient) {
                 response.status = 402;
                 respondJson(response, {{"error", "insufficient balance"}});
                 return;
@@ -716,9 +716,9 @@ void PortalApi::setupWebRoutes()
             return;
         }
         const BuyResult result = buyService(*user, request.get_param_value("service"), nowSeconds());
-        if (result.outcome == BuyOutcome::kNotOffered) {
+        if (result.outcome == BuyOutcome::eNotOffered) {
             redirectTo(response, "/?msg=notoffered");
-        } else if (result.outcome == BuyOutcome::kInsufficient) {
+        } else if (result.outcome == BuyOutcome::eInsufficient) {
             redirectTo(response, "/?msg=insufficient");
         } else {
             redirectTo(response, "/?msg=bought");

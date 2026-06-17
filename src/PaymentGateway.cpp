@@ -12,15 +12,15 @@ namespace bazarish::service {
 const char* toString(const PaymentState state)
 {
     switch (state) {
-        case PaymentState::kPending:
+        case PaymentState::ePending:
             return "pending";
-        case PaymentState::kPaid:
+        case PaymentState::ePaid:
             return "paid";
-        case PaymentState::kConfirmed:
+        case PaymentState::eConfirmed:
             return "confirmed";
-        case PaymentState::kExpired:
+        case PaymentState::eExpired:
             return "expired";
-        case PaymentState::kFailed:
+        case PaymentState::eFailed:
             return "failed";
     }
     return "unknown";

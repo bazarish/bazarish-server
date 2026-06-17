@@ -98,15 +98,15 @@ void AccountApi::setupRoutes()
                 user = auth::verifyRequest(collectAuthHeaders(request), nowSeconds(),
                     request.method, request.path, bodyBytes(request));
             } catch (const std::exception& error) {
-                respondError(response, 401, ErrorCode::kDeliveryRejected, error.what());
+                respondError(response, 401, ErrorCode::eDeliveryRejected, error.what());
                 return;
             }
             try {
                 handler(request, response, user);
             } catch (const nlohmann::json::exception& error) {
-                respondError(response, 400, ErrorCode::kDeliveryRejected, error.what());
+                respondError(response, 400, ErrorCode::eDeliveryRejected, error.what());
             } catch (const std::invalid_argument& error) {
-                respondError(response, 400, ErrorCode::kDeliveryRejected, error.what());
+                respondError(response, 400, ErrorCode::eDeliveryRejected, error.what());
             }
         };
     };
@@ -123,28 +123,28 @@ void AccountApi::setupRoutes()
               try {
                   cert = SubscriptionCertificate::verify(der);
               } catch (const std::exception& error) {
-                  respondError(response, 400, ErrorCode::kDeliveryRejected,
+                  respondError(response, 400, ErrorCode::eDeliveryRejected,
                       std::string("invalid subscription certificate: ") + error.what());
                   return;
               }
               if (cert.user != user) {
-                  respondError(response, 403, ErrorCode::kDeliveryRejected,
+                  respondError(response, 403, ErrorCode::eDeliveryRejected,
                       "certificate does not name the authenticated user");
                   return;
               }
               if (cert.server != options_.serverFingerprint) {
-                  respondError(response, 400, ErrorCode::kDeliveryRejected,
+                  respondError(response, 400, ErrorCode::eDeliveryRejected,
                       "certificate names a different server");
                   return;
               }
               const std::int64_t now = nowSeconds();
               if (cert.isExpired(now)) {
-                  respondError(response, 400, ErrorCode::kSubscriptionExpired,
+                  respondError(response, 400, ErrorCode::eSubscriptionExpired,
                       "certificate is already expired");
                   return;
               }
               if (cert.notAfter - cert.issuedAt > options_.maxTermSeconds) {
-                  respondError(response, 400, ErrorCode::kSubscriptionTermTooLong,
+                  respondError(response, 400, ErrorCode::eSubscriptionTermTooLong,
                       "requested term exceeds the server maximum of "
                           + std::to_string(options_.maxTermSeconds) + " seconds");
                   return;
@@ -158,12 +158,12 @@ void AccountApi::setupRoutes()
               const std::optional<GrantStore::SubscriptionGrant> grant
                   = grants_.peekSubscription(cert.user);
               if (!grant.has_value()) {
-                  respondError(response, 403, ErrorCode::kDeliveryRejected,
+                  respondError(response, 403, ErrorCode::eDeliveryRejected,
                       "no pending subscription grant — register on the service portal first");
                   return;
               }
               if (cert.notAfter - cert.issuedAt > grant->termSeconds) {
-                  respondError(response, 400, ErrorCode::kSubscriptionTermTooLong,
+                  respondError(response, 400, ErrorCode::eSubscriptionTermTooLong,
                       "requested term exceeds the granted term");
                   return;
               }
@@ -210,7 +210,7 @@ void AccountApi::setupRoutes()
             const std::optional<SubscriptionStore::Subscription> record
                 = store_.getSubscription(user);
             if (!record.has_value() || record->notAfter < nowSeconds()) {
-                respondError(response, 404, ErrorCode::kSubscriptionExpired,
+                respondError(response, 404, ErrorCode::eSubscriptionExpired,
                     "no active subscription");
                 return;
             }
@@ -235,12 +235,12 @@ void AccountApi::setupRoutes()
             try {
                 cert = AliasCertificate::verify(der);
             } catch (const std::exception& error) {
-                respondError(response, 400, ErrorCode::kDeliveryRejected,
+                respondError(response, 400, ErrorCode::eDeliveryRejected,
                     std::string("invalid alias certificate: ") + error.what());
                 return;
             }
             if (cert.user != user) {
-                respondError(response, 403, ErrorCode::kDeliveryRejected,
+                respondError(response, 403, ErrorCode::eDeliveryRejected,
                     "certificate does not name the authenticated user");
                 return;
             }
@@ -250,13 +250,13 @@ void AccountApi::setupRoutes()
             const std::optional<GrantStore::ServiceGrant> entitlement
                 = grants_.peekService(user, "username");
             if (!entitlement.has_value() || entitlement->paidThrough <= nowSeconds()) {
-                respondError(response, 403, ErrorCode::kDeliveryRejected,
+                respondError(response, 403, ErrorCode::eDeliveryRejected,
                     "no active username entitlement — buy one on the service portal first");
                 return;
             }
             SubscriptionStore::Alias record{cert.alias, cert.user, der};
             if (!store_.putAlias(record)) {
-                respondError(response, 409, ErrorCode::kAliasTaken,
+                respondError(response, 409, ErrorCode::eAliasTaken,
                     "alias is already registered to another user");
                 return;
             }
@@ -271,14 +271,14 @@ void AccountApi::setupRoutes()
         authenticated([this](const httplib::Request& request, httplib::Response& response,
                           const std::string& user) {
             if (!options_.publishI2pTransient) {
-                respondError(response, 503, ErrorCode::kDeliveryRejected,
+                respondError(response, 503, ErrorCode::eDeliveryRejected,
                     "per-user destinations not available");
                 return;
             }
             const std::optional<GrantStore::ServiceGrant> entitlement
                 = grants_.peekService(user, "i2pDest");
             if (!entitlement.has_value() || entitlement->paidThrough <= nowSeconds()) {
-                respondError(response, 403, ErrorCode::kDeliveryRejected,
+                respondError(response, 403, ErrorCode::eDeliveryRejected,
                     "no active i2pDest entitlement — buy one on the service portal first");
                 return;
             }
@@ -310,11 +310,11 @@ void AccountApi::setupRoutes()
             try {
                 aliasRecord = store_.getAlias(alias);
             } catch (const std::invalid_argument&) {
-                respondError(response, 400, ErrorCode::kAliasUnknown, "malformed alias");
+                respondError(response, 400, ErrorCode::eAliasUnknown, "malformed alias");
                 return;
             }
             if (!aliasRecord.has_value()) {
-                respondError(response, 404, ErrorCode::kAliasUnknown, "no such alias");
+                respondError(response, 404, ErrorCode::eAliasUnknown, "no such alias");
                 return;
             }
             const std::optional<SubscriptionStore::Subscription> subscription
@@ -322,7 +322,7 @@ void AccountApi::setupRoutes()
             if (!subscription.has_value()) {
                 // The alias exists but its owner is not currently subscribed
                 // here: nothing routable to return.
-                respondError(response, 404, ErrorCode::kAliasUnknown,
+                respondError(response, 404, ErrorCode::eAliasUnknown,
                     "alias owner has no active subscription");
                 return;
             }
@@ -346,7 +346,7 @@ void AccountApi::setupRoutes()
             const std::optional<SubscriptionStore::Subscription> subscription
                 = store_.getSubscription(user);
             if (!subscription.has_value()) {
-                respondError(response, 404, ErrorCode::kSubscriptionExpired,
+                respondError(response, 404, ErrorCode::eSubscriptionExpired,
                     "no active subscription for this user");
                 return;
             }

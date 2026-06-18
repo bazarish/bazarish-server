@@ -102,9 +102,10 @@ void testFactoryAndRegistry()
 // Local HMAC-SHA256 hex (mirrors the gateway) so the test can sign a webhook.
 std::string hmacSha256Hex(const std::string& key, const std::string& data)
 {
-    EVP_MAC* const mac = EVP_MAC_fetch(nullptr, "HMAC", nullptr);
-    EVP_MAC_CTX* const ctx = EVP_MAC_CTX_new(mac);
-    EVP_MAC_free(mac);
+    const std::unique_ptr<EVP_MAC, decltype(&EVP_MAC_free)> mac(
+        EVP_MAC_fetch(nullptr, "HMAC", nullptr), &EVP_MAC_free);
+    const std::unique_ptr<EVP_MAC_CTX, decltype(&EVP_MAC_CTX_free)> ctx(
+        EVP_MAC_CTX_new(mac.get()), &EVP_MAC_CTX_free);
     char digest[] = "SHA256";
     OSSL_PARAM params[] = {
         OSSL_PARAM_construct_utf8_string("digest", digest, 0),
@@ -112,10 +113,9 @@ std::string hmacSha256Hex(const std::string& key, const std::string& data)
     };
     unsigned char out[EVP_MAX_MD_SIZE];
     std::size_t outLen = 0;
-    EVP_MAC_init(ctx, reinterpret_cast<const unsigned char*>(key.data()), key.size(), params);
-    EVP_MAC_update(ctx, reinterpret_cast<const unsigned char*>(data.data()), data.size());
-    EVP_MAC_final(ctx, out, &outLen, sizeof out);
-    EVP_MAC_CTX_free(ctx);
+    EVP_MAC_init(ctx.get(), reinterpret_cast<const unsigned char*>(key.data()), key.size(), params);
+    EVP_MAC_update(ctx.get(), reinterpret_cast<const unsigned char*>(data.data()), data.size());
+    EVP_MAC_final(ctx.get(), out, &outLen, sizeof out);
     static const char* const kHex = "0123456789abcdef";
     std::string hex;
     for (std::size_t i = 0; i < outLen; ++i) {

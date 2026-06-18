@@ -6,18 +6,20 @@
 #include <openssl/params.h>
 
 #include <cstddef>
+#include <memory>
 #include <stdexcept>
 
 namespace bazarish::service {
 
 std::string hmacSha256Hex(const std::string& key, const std::string& data)
 {
-    EVP_MAC* const mac = EVP_MAC_fetch(nullptr, "HMAC", nullptr);
+    const std::unique_ptr<EVP_MAC, decltype(&EVP_MAC_free)> mac(
+        EVP_MAC_fetch(nullptr, "HMAC", nullptr), &EVP_MAC_free);
     if (mac == nullptr) {
         throw std::runtime_error("HMAC: EVP_MAC_fetch failed");
     }
-    EVP_MAC_CTX* const ctx = EVP_MAC_CTX_new(mac);
-    EVP_MAC_free(mac);
+    const std::unique_ptr<EVP_MAC_CTX, decltype(&EVP_MAC_CTX_free)> ctx(
+        EVP_MAC_CTX_new(mac.get()), &EVP_MAC_CTX_free);
     if (ctx == nullptr) {
         throw std::runtime_error("HMAC: EVP_MAC_CTX_new failed");
     }
@@ -29,11 +31,13 @@ std::string hmacSha256Hex(const std::string& key, const std::string& data)
     unsigned char out[EVP_MAX_MD_SIZE];
     std::size_t outLen = 0;
     const bool ok
-        = EVP_MAC_init(ctx, reinterpret_cast<const unsigned char*>(key.data()), key.size(), params)
+        = EVP_MAC_init(ctx.get(), reinterpret_cast<const unsigned char*>(key.data()), key.size(),
+              params)
             == 1
-        && EVP_MAC_update(ctx, reinterpret_cast<const unsigned char*>(data.data()), data.size()) == 1
-        && EVP_MAC_final(ctx, out, &outLen, sizeof out) == 1;
-    EVP_MAC_CTX_free(ctx);
+        && EVP_MAC_update(
+               ctx.get(), reinterpret_cast<const unsigned char*>(data.data()), data.size())
+            == 1
+        && EVP_MAC_final(ctx.get(), out, &outLen, sizeof out) == 1;
     if (!ok) {
         throw std::runtime_error("HMAC computation failed");
     }

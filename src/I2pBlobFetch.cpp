@@ -2,57 +2,18 @@
 #include "I2pBlobFetch.hpp"
 
 #include <bazarish/Sam.hpp>
+#include <bazarish/SamHttp.hpp>
 
 #include <algorithm>
-#include <array>
-#include <cctype>
 #include <cstddef>
 #include <cstring>
 #include <map>
 #include <memory>
-#include <stdexcept>
 #include <string>
 
 namespace bazarish::server {
 
 namespace {
-
-// Parses the status code from an HTTP status line ("HTTP/1.1 404 Not Found").
-int parseStatus(const std::string& head)
-{
-    const std::size_t space = head.find(' ');
-    if (space == std::string::npos) {
-        throw std::runtime_error("malformed i2p http status line");
-    }
-    return std::stoi(head.substr(space + 1, 3));
-}
-
-// Parses the header lines after the status line into a lowercased map.
-std::map<std::string, std::string> parseHeaders(const std::string& head)
-{
-    std::map<std::string, std::string> headers;
-    const std::size_t firstLineEnd = head.find("\r\n");
-    std::size_t lineStart = (firstLineEnd == std::string::npos) ? head.size() : firstLineEnd + 2;
-    while (lineStart < head.size()) {
-        const std::size_t lineEnd = head.find("\r\n", lineStart);
-        const std::size_t stop = (lineEnd == std::string::npos) ? head.size() : lineEnd;
-        const std::string line = head.substr(lineStart, stop - lineStart);
-        lineStart = (lineEnd == std::string::npos) ? head.size() : lineEnd + 2;
-        const std::size_t colon = line.find(':');
-        if (colon == std::string::npos) {
-            continue;
-        }
-        std::string key = line.substr(0, colon);
-        std::transform(key.begin(), key.end(), key.begin(),
-            [](const unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        std::size_t valueStart = colon + 1;
-        while (valueStart < line.size() && (line[valueStart] == ' ' || line[valueStart] == '\t')) {
-            ++valueStart;
-        }
-        headers[key] = line.substr(valueStart);
-    }
-    return headers;
-}
 
 // Streaming download over a fresh transient SAM session: reads the response head
 // at construction, then hands out body bytes incrementally (leftover head bytes
@@ -67,27 +28,17 @@ public:
         // No half-close — SAM treats SHUT_WR as a full stream teardown — so
         // Connection: close drives the response to EOF.
         stream_ = std::make_unique<SamStream>(session_->connect(host));
-        std::string request = "GET " + path + " HTTP/1.1\r\nHost: " + host + "\r\n";
+        std::map<std::string, std::string> headers;
         if (!range.empty()) {
-            request += "Range: " + range + "\r\n";
+            headers["Range"] = range;
         }
-        request += "Content-Length: 0\r\nConnection: close\r\n\r\n";
+        const std::string request = buildSamHttpRequest("GET", host, path, headers, 0);
         stream_->writeAll(request.data(), request.size());
 
-        std::string head;
-        std::array<char, 65536> buffer{};
-        std::size_t headerEnd = std::string::npos;
-        while ((headerEnd = head.find("\r\n\r\n")) == std::string::npos) {
-            const std::size_t got = stream_->readSome(buffer.data(), buffer.size());
-            if (got == 0) {
-                throw std::runtime_error("malformed i2p http response");
-            }
-            head.append(buffer.data(), got);
-        }
-        const std::string headBlock = head.substr(0, headerEnd);
-        status_ = parseStatus(headBlock.substr(0, headBlock.find("\r\n")));
-        headers_ = parseHeaders(headBlock);
-        leftover_ = head.substr(headerEnd + 4);
+        SamHttpHead head = readSamHttpHead(*stream_);
+        status_ = head.status;
+        headers_ = std::move(head.headers);
+        leftover_ = std::move(head.leftover);
     }
 
     int status() const override { return status_; }
@@ -119,37 +70,23 @@ BlobProxyResult fetchBlobOverI2p(const std::string& samHost, const std::uint16_t
     const std::string& host, const std::string& path, const std::string& method,
     const std::string& deleteToken)
 {
-    // Mirrors the client's BlobTransport::i2pRequest; dedupe into common when the
-    // SAM HTTP helper is shared. No half-close — SAM treats SHUT_WR as a full
-    // stream teardown — so Connection: close drives the response to EOF.
+    // Shares the SAM HTTP wire format and response parser with the client's blob
+    // fetch (common SamHttp). No half-close — SAM treats SHUT_WR as a full stream
+    // teardown — so Connection: close drives the response to EOF.
     SamSession session(samHost, samPort, "blobproxy-" + toHex(randomBytes(6)));
     SamStream stream = session.connect(host);
 
-    std::string request = method + " " + path + " HTTP/1.1\r\nHost: " + host + "\r\n";
+    std::map<std::string, std::string> headers;
     if (!deleteToken.empty()) {
-        request += "X-Delete-Token: " + deleteToken + "\r\n";
+        headers["X-Delete-Token"] = deleteToken;
     }
-    request += "Content-Length: 0\r\nConnection: close\r\n\r\n";
+    const std::string request = buildSamHttpRequest(method, host, path, headers, 0);
     stream.writeAll(request.data(), request.size());
 
-    std::string raw;
-    std::array<char, 65536> buffer{};
-    for (;;) {
-        const std::size_t got = stream.readSome(buffer.data(), buffer.size());
-        if (got == 0) {
-            break;
-        }
-        raw.append(buffer.data(), got);
-    }
-
-    const std::size_t headerEnd = raw.find("\r\n\r\n");
-    if (headerEnd == std::string::npos) {
-        throw std::runtime_error("malformed i2p http response");
-    }
+    const SamHttpResponse response = readSamHttpResponse(stream);
     BlobProxyResult result;
-    result.status = parseStatus(raw.substr(0, raw.find("\r\n")));
-    const std::string payload = raw.substr(headerEnd + 4);
-    result.body = Bytes(payload.begin(), payload.end());
+    result.status = response.status;
+    result.body = Bytes(response.body.begin(), response.body.end());
     return result;
 }
 

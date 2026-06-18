@@ -40,7 +40,7 @@ void printUsage()
         "Usage: bazarish-server --state <directory> --i2p [--listen <host> <port>]\n"
         "          [--contact-request-limit <bytes>] [--operator-secret <secret>]\n"
         "          [--privacy <minimal|middle|max>] [--pool-size <n>]\n"
-        "          [--federation-rate-limit <n>] [--service-node <url>]\n"
+        "          [--sam-port <port>] [--federation-rate-limit <n>] [--service-node <url>]\n"
         "          [--log-level <error|warn|info|debug>]\n"
         "       bazarish-server --version\n"
         "\n"
@@ -133,6 +133,10 @@ int main(const int argc, const char** argv)
     std::string operatorSecret;
     std::string serviceNodeUrl;
     bazarish::I2pPrivacy privacy = bazarish::I2pPrivacy::eMax;
+    // SAM API: the host is loopback-only and never configurable (an unprotected
+    // SAM control socket must never be reachable over the network); only the
+    // port is a knob.
+    std::uint16_t samPort = bazarish::SamClient::kDefaultPort;
     std::size_t poolSize = 10;
     std::size_t federationRateLimit = 240;  // inbound deliveries per peer dest per 60s
     bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
@@ -159,6 +163,9 @@ int main(const int argc, const char** argv)
                 return 2;
             }
             privacy = parsed.value();
+            i += 2;
+        } else if (std::strcmp(argv[i], "--sam-port") == 0 && i + 1 < argc) {
+            samPort = static_cast<std::uint16_t>(std::strtoul(argv[i + 1], nullptr, 10));
             i += 2;
         } else if (std::strcmp(argv[i], "--pool-size") == 0 && i + 1 < argc) {
             poolSize = static_cast<std::size_t>(std::strtoull(argv[i + 1], nullptr, 10));
@@ -228,7 +235,7 @@ int main(const int argc, const char** argv)
         // several local servers can share one router without colliding.
         const std::string sessionId = "bazarish-fed-" + identity.fingerprint().substr(0, 12);
         samSession = std::make_unique<bazarish::SamSession>(
-            bazarish::SamClient::kDefaultHost, bazarish::SamClient::kDefaultPort, sessionId,
+            bazarish::SamClient::kDefaultHost, samPort, sessionId,
             privateKeys, bazarish::kEncryptedLeaseSetType, privacy);
         if (!fs::exists(destPath)) {
             writePrivateFile(destPath, samSession->privateDestination());
@@ -284,7 +291,7 @@ int main(const int argc, const char** argv)
         // Paid per-user destinations: operate client-owned offline keys as the
         // user's personal federation destination. Restore any persisted ones.
         perUserDests = std::make_unique<bazarish::server::PerUserDestinations>(
-            bazarish::SamClient::kDefaultHost, bazarish::SamClient::kDefaultPort,
+            bazarish::SamClient::kDefaultHost, samPort,
             engine, stateDir, privacy, federationLimiter.get());
         perUserDests->setGetCard(getCard);
         perUserDests->reloadPersisted(nowSeconds());
@@ -296,7 +303,7 @@ int main(const int argc, const char** argv)
             bazarish::log::info(
                 "starting federation address pool ({} destinations; building tunnels)...", poolSize);
             federationPool = std::make_unique<bazarish::server::FederationPool>(
-                bazarish::SamClient::kDefaultHost, bazarish::SamClient::kDefaultPort, engine,
+                bazarish::SamClient::kDefaultHost, samPort, engine,
                 stateDir, "bazarish-pool-" + identity.fingerprint().substr(0, 8) + "-", privacy,
                 poolSize, federationLimiter.get());
             federationPool->setGetCard(getCard);
@@ -352,15 +359,15 @@ int main(const int argc, const char** argv)
     // transient session on the local bridge (independent of federation). Unsend
     // (DELETE) is a small whole-body op; downloads (GET) stream so a large blob is
     // never buffered whole here.
-    httpOptions.blobProxyFetch = [](const std::string& method, const std::string& blobHost,
+    httpOptions.blobProxyFetch = [samPort](const std::string& method, const std::string& blobHost,
                                      const std::string& blobPath, const std::string& deleteToken) {
         return bazarish::server::fetchBlobOverI2p(bazarish::SamClient::kDefaultHost,
-            bazarish::SamClient::kDefaultPort, blobHost, blobPath, method, deleteToken);
+            samPort, blobHost, blobPath, method, deleteToken);
     };
-    httpOptions.blobProxyDownload = [](const std::string& blobHost, const std::string& blobPath,
+    httpOptions.blobProxyDownload = [samPort](const std::string& blobHost, const std::string& blobPath,
                                         const std::string& range) {
         return bazarish::server::openBlobDownload(bazarish::SamClient::kDefaultHost,
-            bazarish::SamClient::kDefaultPort, blobHost, blobPath, range);
+            samPort, blobHost, blobPath, range);
     };
     if (perUserDests) {
         httpOptions.provisionI2pDest = [&perUserDests](const std::string& user,

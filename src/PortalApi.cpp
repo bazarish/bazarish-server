@@ -598,7 +598,7 @@ void PortalApi::setupWebRoutes()
                 + "</button></form></div>";
         }
 
-        // Other paid services (username, storage) keep the one-shot buy/renew
+        // Other paid services (e.g. storage) keep the one-shot buy/renew
         // flow. i2pDest is handled by its toggle above.
         bool anyOther = false;
         for (const auto& [name, service] : options_.paidServices) {

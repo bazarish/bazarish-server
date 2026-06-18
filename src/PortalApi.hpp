@@ -46,7 +46,7 @@ struct PortalApiOptions {
         std::uint64_t priceAtomic = 0;
         std::int64_t termSeconds = 0;
     };
-    // Keyed by service name ("username", "i2pDest", "storage").
+    // Keyed by service name ("i2pDest", "storage").
     std::map<std::string, PaidService> paidServices;
     // The quota the storage plan grants, pushed to the messaging server on a
     // storage purchase.

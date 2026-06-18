@@ -37,7 +37,6 @@ int main()
     SubscriptionStore store(root);
 
     const std::string alice = makeUser(0x01);
-    const std::string bob = makeUser(0x02);
 
     // Subscriptions.
     CHECK(!store.getSubscription(alice).has_value());
@@ -51,33 +50,6 @@ int main()
     CHECK(loaded->certificate == (Bytes{0xaa, 0xbb}));
     store.deleteSubscription(alice);
     CHECK(!store.getSubscription(alice).has_value());
-
-    // Aliases: register, ownership, conflicts.
-    CHECK(store.putAlias({"alice", alice, Bytes{0x01}}));
-    const auto aliasRecord = store.getAlias("alice");
-    CHECK(aliasRecord.has_value());
-    CHECK(aliasRecord->user == alice);
-    // Re-registering one's own alias refreshes it.
-    CHECK(store.putAlias({"alice", alice, Bytes{0x02}}));
-    CHECK(store.getAlias("alice")->certificate == (Bytes{0x02}));
-    // Another user cannot take it.
-    CHECK(!store.putAlias({"alice", bob, Bytes{0x03}}));
-    CHECK(store.getAlias("alice")->user == alice);
-    // Non-owner cannot delete; owner can.
-    CHECK(!store.deleteAlias("alice", bob));
-    CHECK(store.getAlias("alice").has_value());
-    CHECK(store.deleteAlias("alice", alice));
-    CHECK(!store.getAlias("alice").has_value());
-
-    // Validation.
-    CHECK(!store.getAlias("nope").has_value());
-    bool threw = false;
-    try {
-        store.putAlias({"Bad Alias", alice, Bytes{}});
-    } catch (const std::exception&) {
-        threw = true;
-    }
-    CHECK(threw);
 
     // Persistence across instances.
     store.putSubscription(sub);

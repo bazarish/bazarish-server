@@ -111,7 +111,7 @@ void testLoginFlow()
     options.sessionSecret = "session-secret";
     options.defaultQuotaBytes = 10 * 1024 * 1024;
     options.settlementCurrency = "XMR";
-    options.paidServices["username"] = {600, 365 * 24 * 3600};
+    options.paidServices["storage"] = {600, 365 * 24 * 3600};
     PortalApi api(options, captcha, grants, ledger, invoices, gateway);
 
     const int port = api.bindToAnyPort("127.0.0.1");
@@ -221,17 +221,17 @@ void testLoginFlow()
     const httplib::Result again = client.Get("/portal/pay/" + invoiceId, cookie);
     CHECK(nlohmann::json::parse(again->body).at("balanceAtomic").get<std::string>() == "1000");
 
-    // Buy the username (600): balance drops to 400, entitlement is recorded.
+    // Buy storage (600): balance drops to 400, entitlement is recorded.
     const httplib::Result bought = client.Post(
-        "/portal/buy", cookie, nlohmann::json({{"service", "username"}}).dump(), "application/json");
+        "/portal/buy", cookie, nlohmann::json({{"service", "storage"}}).dump(), "application/json");
     CHECK(bought && bought->status == 200);
     CHECK(nlohmann::json::parse(bought->body).at("balanceAtomic").get<std::string>() == "400");
-    CHECK(grants.peekService(identity.fingerprint(), "username").has_value());
+    CHECK(grants.peekService(identity.fingerprint(), "storage").has_value());
 
     // A second purchase (600) exceeds the remaining balance (400) → refused,
     // balance unchanged.
     const httplib::Result broke = client.Post(
-        "/portal/buy", cookie, nlohmann::json({{"service", "username"}}).dump(), "application/json");
+        "/portal/buy", cookie, nlohmann::json({{"service", "storage"}}).dump(), "application/json");
     CHECK(broke && broke->status == 402);
     const httplib::Result balanceAfter = client.Get("/portal/balance", cookie);
     CHECK(nlohmann::json::parse(balanceAfter->body).at("balanceAtomic").get<std::string>() == "400");
@@ -324,7 +324,7 @@ void testWebUi()
     options.defaultQuotaBytes = 10 * 1024 * 1024;
     options.settlementCurrency = "XMR";
     options.requireCaptcha = false;
-    options.paidServices["username"] = {600, 365 * 24 * 3600};
+    options.paidServices["storage"] = {600, 365 * 24 * 3600};
     PortalApi api(options, captcha, grants, ledger, invoices, gateway);
 
     const int port = api.bindToAnyPort("127.0.0.1");
@@ -362,7 +362,7 @@ void testWebUi()
     CHECK(cabinet && cabinet->status == 200);
     CHECK(cabinet->body.find(identity.fingerprint()) != std::string::npos);
     CHECK(cabinet->body.find("Balance") != std::string::npos);
-    CHECK(cabinet->body.find("username") != std::string::npos);
+    CHECK(cabinet->body.find("storage") != std::string::npos);
 
     // Free registration through the form (captcha off) records a grant.
     const httplib::Result registered = client.Post("/register", cookie, httplib::Params{});
@@ -372,7 +372,7 @@ void testWebUi()
 
     // Buying with a zero balance redirects back with the insufficient flash.
     const httplib::Result buy
-        = client.Post("/buy", cookie, httplib::Params{{"service", "username"}});
+        = client.Post("/buy", cookie, httplib::Params{{"service", "storage"}});
     CHECK(buy && buy->status == 303);
     CHECK(buy->get_header_value("Location") == "/?msg=insufficient");
 

@@ -28,7 +28,7 @@ struct PortalService {
     bool enabled = false;
     // Price per term, in atomic units of the settlement currency (never float).
     std::string priceAtomic;
-    // Billing term length in days (e.g. 365 for a username, 30 for an i2p-dest).
+    // Billing term length in days (e.g. 30 for an i2p-dest).
     std::int64_t periodDays = 0;
 };
 
@@ -58,7 +58,6 @@ struct AccountApiOptions {
     std::vector<std::string> portalLinks;
     std::string settlementCurrency = "XMR";
     bool freeRegistrationCaptcha = false;
-    PortalService usernameService;
     PortalService i2pDestService;
     // Storage: every account gets defaultQuotaBytes free; storagePlan is the
     // optional paid upgrade (a bigger quota, billed monthly).

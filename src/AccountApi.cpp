@@ -233,44 +233,6 @@ void AccountApi::setupRoutes()
             respondJson(response, {{"ok", true}});
         }));
 
-    http_->Post("/v1/account/alias",
-        authenticated([this](const httplib::Request& request, httplib::Response& response,
-                          const std::string& user) {
-            const nlohmann::json body = nlohmann::json::parse(request.body);
-            const Bytes der = fromBase64(body.at("cert").get<std::string>());
-
-            AliasCertificate cert;
-            try {
-                cert = AliasCertificate::verify(der);
-            } catch (const std::exception& error) {
-                respondError(response, 400, ErrorCode::eDeliveryRejected,
-                    std::string("invalid alias certificate: ") + error.what());
-                return;
-            }
-            if (cert.user != user) {
-                respondError(response, 403, ErrorCode::eDeliveryRejected,
-                    "certificate does not name the authenticated user");
-                return;
-            }
-            // A username is a paid service: the user must hold an active username
-            // entitlement bought (and renewed) on the portal. There is no open
-            // registration.
-            const std::optional<GrantStore::ServiceGrant> entitlement
-                = grants_.peekService(user, "username");
-            if (!entitlement.has_value() || entitlement->paidThrough <= nowSeconds()) {
-                respondError(response, 403, ErrorCode::eDeliveryRejected,
-                    "no active username entitlement — buy one on the service portal first");
-                return;
-            }
-            SubscriptionStore::Alias record{cert.alias, cert.user, der};
-            if (!store_.putAlias(record)) {
-                respondError(response, 409, ErrorCode::eAliasTaken,
-                    "alias is already registered to another user");
-                return;
-            }
-            respondJson(response, {{"ok", true}, {"alias", cert.alias}});
-        }));
-
     // Receives a paid user's client-owned offline I2P transient and hands it to
     // the messaging server, which operates the user's personal destination.
     // i2pDest is a paid service: an active entitlement is required (auto-renewed
@@ -364,50 +326,6 @@ void AccountApi::setupRoutes()
             respondJson(response, {{"ok", true}, {"enabled", enabled}});
         }));
 
-    http_->Delete("/v1/account/alias",
-        authenticated([this](const httplib::Request& request, httplib::Response& response,
-                          const std::string& user) {
-            const nlohmann::json body = nlohmann::json::parse(request.body);
-            const std::string alias = body.at("alias").get<std::string>();
-            store_.deleteAlias(alias, user);
-            respondJson(response, {{"ok", true}});
-        }));
-
-    // Alias resolution: returns the trust-chain artifacts the service node
-    // holds (alias certificate + subscription certificate). The messaging
-    // server adds its server card. Aliases are findable by design, so this
-    // is unauthenticated and ALIAS_UNKNOWN is explicit (no anti-enumeration).
-    http_->Get("/v1/account/resolve",
-        [this](const httplib::Request& request, httplib::Response& response) {
-            const std::string alias = request.get_param_value("alias");
-            std::optional<SubscriptionStore::Alias> aliasRecord;
-            try {
-                aliasRecord = store_.getAlias(alias);
-            } catch (const std::invalid_argument&) {
-                respondError(response, 400, ErrorCode::eAliasUnknown, "malformed alias");
-                return;
-            }
-            if (!aliasRecord.has_value()) {
-                respondError(response, 404, ErrorCode::eAliasUnknown, "no such alias");
-                return;
-            }
-            const std::optional<SubscriptionStore::Subscription> subscription
-                = store_.getSubscription(aliasRecord->user);
-            if (!subscription.has_value()) {
-                // The alias exists but its owner is not currently subscribed
-                // here: nothing routable to return.
-                respondError(response, 404, ErrorCode::eAliasUnknown,
-                    "alias owner has no active subscription");
-                return;
-            }
-            respondJson(response,
-                {
-                    {"user", aliasRecord->user},
-                    {"aliasCert", toBase64(aliasRecord->certificate)},
-                    {"subscriptionCert", toBase64(subscription->certificate)},
-                });
-        });
-
     // Contact lookup by fingerprint: returns the user's subscription
     // certificate, which carries the serving server and the sealing prekey a
     // first-contact sender uses to E2E-encrypt the contact request. Like
@@ -457,7 +375,6 @@ void AccountApi::setupRoutes()
                         {
                             {"freeRegistration",
                                 {{"enabled", true}, {"captcha", options_.freeRegistrationCaptcha}}},
-                            {"username", serviceJson(options_.usernameService)},
                             {"i2pDest", serviceJson(options_.i2pDestService)},
                             {"storage",
                                 {

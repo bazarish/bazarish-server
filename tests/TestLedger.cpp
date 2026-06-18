@@ -54,7 +54,7 @@ int main()
         CHECK(ledger.credit(user, 1000, "topup:tx1", t) == 1000);
         CHECK(ledger.credit(user, 500, "topup:tx2", t + 1) == 1500);
 
-        CHECK(ledger.debit(user, 700, "buy:username", t + 2));
+        CHECK(ledger.debit(user, 700, "buy:storage", t + 2));
         const LedgerStore::Account afterDebit = ledger.get(user);
         CHECK(afterDebit.balanceAtomic == 800);
         CHECK(afterDebit.entries.size() == 3);

@@ -24,7 +24,7 @@ public:
         std::int64_t grantedAt = 0;
     };
 
-    // A paid service entitlement (username / i2pDest / storage), valid until
+    // A paid service entitlement (i2pDest / storage), valid until
     // paidThrough (unix seconds).
     struct ServiceGrant {
         std::int64_t paidThrough = 0;

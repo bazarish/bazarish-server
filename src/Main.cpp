@@ -90,7 +90,6 @@ struct PaymentsConfig {
     bazarish::service::PaymentGatewayConfig gateway{"mock", {{"autoconfirm", "true"}}};
     std::string settlementCurrency = "XMR";
     std::uint64_t freeStorageBytes = 10 * 1024 * 1024;
-    ServiceConfig username{true, "100", 365, 0};
     ServiceConfig i2pDest{true, "100", 30, 0};
     ServiceConfig storage{true, "100", 30, 5ULL * 1024 * 1024 * 1024};
     PortalConfig portal;
@@ -129,9 +128,6 @@ PaymentsConfig loadPaymentsConfig(const fs::path& path)
     config.freeStorageBytes = doc.value("freeStorageBytes", config.freeStorageBytes);
     if (doc.contains("services")) {
         const nlohmann::json& services = doc.at("services");
-        if (services.contains("username")) {
-            config.username = parseService(services.at("username"));
-        }
         if (services.contains("i2pDest")) {
             config.i2pDest = parseService(services.at("i2pDest"));
         }
@@ -283,8 +279,6 @@ int main(const int argc, const char** argv)
     options.portalMessage = payments.portal.message;
     options.portalLinks = payments.portal.links;
     options.freeRegistrationCaptcha = payments.portal.captchaEnabled;
-    options.usernameService
-        = {payments.username.enabled, payments.username.priceAtomic, payments.username.periodDays};
     options.i2pDestService
         = {payments.i2pDest.enabled, payments.i2pDest.priceAtomic, payments.i2pDest.periodDays};
     options.storagePlan = {payments.storage.enabled, payments.storage.quotaBytes,
@@ -323,7 +317,6 @@ int main(const int argc, const char** argv)
                         svc.periodDays * 24 * 3600};
             }
         };
-        addPaid("username", payments.username);
         addPaid("i2pDest", payments.i2pDest);
         addPaid("storage", payments.storage);
         portalOptions.storageQuotaBytes = payments.storage.quotaBytes;

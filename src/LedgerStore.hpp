@@ -23,7 +23,7 @@ public:
         std::int64_t ts = 0;
         std::string type;  // "credit" | "debit"
         std::uint64_t amountAtomic = 0;
-        std::string ref;  // e.g. "topup:<txid>", "buy:username"
+        std::string ref;  // e.g. "topup:<txid>", "buy:storage"
         std::int64_t balanceAfter = 0;
     };
 

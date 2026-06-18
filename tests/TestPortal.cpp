@@ -80,7 +80,6 @@ void testPortalDiscovery()
     options.portalLinks = {"https://portal.example/a", "http://abc.onion/b"};
     options.settlementCurrency = "XMR";
     options.freeRegistrationCaptcha = true;
-    options.usernameService = {true, "100000000", 365};      // yearly
     options.i2pDestService = {true, "500000000", 30};        // monthly
     options.defaultQuotaBytes = 10 * 1024 * 1024;            // free minimum
     options.storagePlan = {true, 5ULL * 1024 * 1024 * 1024, "300000000", 30};  // 5 GiB / month
@@ -107,9 +106,6 @@ void testPortalDiscovery()
     const nlohmann::json& services = body.at("services");
     CHECK(services.at("freeRegistration").at("enabled").get<bool>());
     CHECK(services.at("freeRegistration").at("captcha").get<bool>());
-    CHECK(services.at("username").at("enabled").get<bool>());
-    CHECK(services.at("username").at("priceAtomic").get<std::string>() == "100000000");
-    CHECK(services.at("username").at("periodDays").get<std::int64_t>() == 365);  // yearly
     CHECK(services.at("i2pDest").at("periodDays").get<std::int64_t>() == 30);    // monthly
     CHECK(services.at("i2pDest").at("currency").get<std::string>() == "XMR");
     const nlohmann::json& storage = services.at("storage");

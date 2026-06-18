@@ -149,58 +149,6 @@ int main()
         CHECK(nlohmann::json::parse(result->body).at("notAfter") == now + 3 * 24 * 3600);
     }
 
-    // Registering a username requires an active username entitlement bought on
-    // the portal; without one the request is refused.
-    {
-        const Bytes cert = AliasCertificate::issue(alice, "alice", now, std::nullopt);
-        const std::string body = nlohmann::json{{"cert", toBase64(cert)}}.dump();
-        const httplib::Result ungranted = client.Post("/v1/account/alias",
-            makeHeaders(alice, "POST", "/v1/account/alias", body), body, "application/json");
-        CHECK(ungranted && ungranted->status == 403);
-    }
-
-    // Register an alias (with an entitlement) and resolve it to the full chain.
-    {
-        grants.grantService(alice.fingerprint(), "username", now + 365 * 24 * 3600, now);
-        const Bytes cert = AliasCertificate::issue(alice, "alice", now, std::nullopt);
-        const std::string body = nlohmann::json{{"cert", toBase64(cert)}}.dump();
-        const httplib::Result result = client.Post("/v1/account/alias",
-            makeHeaders(alice, "POST", "/v1/account/alias", body), body, "application/json");
-        CHECK(result && result->status == 200);
-
-        const httplib::Result resolved = client.Get("/v1/account/resolve?alias=alice");
-        CHECK(resolved && resolved->status == 200);
-        const nlohmann::json chain = nlohmann::json::parse(resolved->body);
-        CHECK(chain.at("user") == alice.fingerprint());
-        // The returned chain verifies independently.
-        const AliasCertificate aliasCert
-            = AliasCertificate::verify(fromBase64(chain.at("aliasCert").get<std::string>()));
-        CHECK(aliasCert.alias == "alice");
-        const SubscriptionCertificate subCert = SubscriptionCertificate::verify(
-            fromBase64(chain.at("subscriptionCert").get<std::string>()));
-        CHECK(subCert.user == alice.fingerprint());
-        CHECK(subCert.server == serverFp);
-    }
-
-    // Mallory cannot take alice's alias (even with her own username entitlement).
-    {
-        grants.grantService(mallory.fingerprint(), "username", now + 365 * 24 * 3600, now);
-        const Bytes cert = AliasCertificate::issue(mallory, "alice", now, std::nullopt);
-        const std::string body = nlohmann::json{{"cert", toBase64(cert)}}.dump();
-        const httplib::Result result = client.Post("/v1/account/alias",
-            makeHeaders(mallory, "POST", "/v1/account/alias", body), body,
-            "application/json");
-        CHECK(result && result->status == 409);
-        CHECK(nlohmann::json::parse(result->body).at("error").at("code") == "ALIAS_TAKEN");
-    }
-
-    // Unknown alias resolution is an explicit error (no anti-enumeration).
-    {
-        const httplib::Result result = client.Get("/v1/account/resolve?alias=ghost");
-        CHECK(result && result->status == 404);
-        CHECK(nlohmann::json::parse(result->body).at("error").at("code") == "ALIAS_UNKNOWN");
-    }
-
     // Contact lookup by fingerprint returns the subscription certificate
     // with the user's sealing prekey; unknown users are an explicit 404.
     {

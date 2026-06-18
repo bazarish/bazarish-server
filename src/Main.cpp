@@ -40,7 +40,8 @@ void printUsage()
         "Usage: bazarish-server --state <directory> --i2p [--listen <host> <port>]\n"
         "          [--contact-request-limit <bytes>] [--operator-secret <secret>]\n"
         "          [--privacy <minimal|middle|max>] [--pool-size <n>]\n"
-        "          [--sam-port <port>] [--federation-rate-limit <n>] [--service-node <url>]\n"
+        "          [--sam-port <port>] [--tunnel-quantity <n>]\n"
+        "          [--federation-rate-limit <n>] [--service-node <url>]\n"
         "          [--log-level <error|warn|info|debug>]\n"
         "       bazarish-server --version\n"
         "\n"
@@ -137,6 +138,10 @@ int main(const int argc, const char** argv)
     // SAM control socket must never be reachable over the network); only the
     // port is a knob.
     std::uint16_t samPort = bazarish::SamClient::kDefaultPort;
+    // Public server destinations carry inbound federation traffic, so they run a
+    // full tunnel pool (load balancing across tunnels for one address); 16 is the
+    // I2P ceiling. Operators on a constrained uplink can lower it.
+    int tunnelQuantity = bazarish::kMaxTunnelQuantity;
     std::size_t poolSize = 10;
     std::size_t federationRateLimit = 240;  // inbound deliveries per peer dest per 60s
     bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
@@ -166,6 +171,9 @@ int main(const int argc, const char** argv)
             i += 2;
         } else if (std::strcmp(argv[i], "--sam-port") == 0 && i + 1 < argc) {
             samPort = static_cast<std::uint16_t>(std::strtoul(argv[i + 1], nullptr, 10));
+            i += 2;
+        } else if (std::strcmp(argv[i], "--tunnel-quantity") == 0 && i + 1 < argc) {
+            tunnelQuantity = std::atoi(argv[i + 1]);
             i += 2;
         } else if (std::strcmp(argv[i], "--pool-size") == 0 && i + 1 < argc) {
             poolSize = static_cast<std::size_t>(std::strtoull(argv[i + 1], nullptr, 10));
@@ -236,7 +244,7 @@ int main(const int argc, const char** argv)
         const std::string sessionId = "bazarish-fed-" + identity.fingerprint().substr(0, 12);
         samSession = std::make_unique<bazarish::SamSession>(
             bazarish::SamClient::kDefaultHost, samPort, sessionId,
-            privateKeys, bazarish::kEncryptedLeaseSetType, privacy);
+            privateKeys, bazarish::kEncryptedLeaseSetType, privacy, tunnelQuantity);
         if (!fs::exists(destPath)) {
             writePrivateFile(destPath, samSession->privateDestination());
         }
@@ -292,7 +300,7 @@ int main(const int argc, const char** argv)
         // user's personal federation destination. Restore any persisted ones.
         perUserDests = std::make_unique<bazarish::server::PerUserDestinations>(
             bazarish::SamClient::kDefaultHost, samPort,
-            engine, stateDir, privacy, federationLimiter.get());
+            engine, stateDir, privacy, tunnelQuantity, federationLimiter.get());
         perUserDests->setGetCard(getCard);
         perUserDests->reloadPersisted(nowSeconds());
 
@@ -305,7 +313,7 @@ int main(const int argc, const char** argv)
             federationPool = std::make_unique<bazarish::server::FederationPool>(
                 bazarish::SamClient::kDefaultHost, samPort, engine,
                 stateDir, "bazarish-pool-" + identity.fingerprint().substr(0, 8) + "-", privacy,
-                poolSize, federationLimiter.get());
+                poolSize, tunnelQuantity, federationLimiter.get());
             federationPool->setGetCard(getCard);
             federationPool->start();
             bazarish::log::info("address pool up: {} destinations",

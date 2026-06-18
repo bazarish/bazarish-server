@@ -35,7 +35,8 @@ class FederationPool {
 public:
     FederationPool(std::string samHost, std::uint16_t samPort, DeliveryEngine& engine,
         std::filesystem::path stateDir, std::string sessionIdPrefix, I2pPrivacy privacy,
-        std::size_t size, FederationRateLimiter* limiter = nullptr);
+        std::size_t size, int tunnelQuantity = kDefaultTunnelQuantity,
+        FederationRateLimiter* limiter = nullptr);
     ~FederationPool();
 
     FederationPool(const FederationPool&) = delete;
@@ -80,6 +81,7 @@ private:
     const std::string sessionIdPrefix_;
     const I2pPrivacy privacy_;
     const std::size_t size_;
+    const int tunnelQuantity_;
     FederationRateLimiter* const limiter_;
     GetCardFn getCard_;
     std::vector<std::unique_ptr<Dest>> dests_;

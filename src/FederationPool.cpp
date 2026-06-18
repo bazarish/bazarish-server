@@ -55,7 +55,8 @@ std::size_t poolIndexFor(const std::string& userFp, const std::size_t poolSize)
 
 FederationPool::FederationPool(std::string samHost, const std::uint16_t samPort,
     DeliveryEngine& engine, std::filesystem::path stateDir, std::string sessionIdPrefix,
-    const I2pPrivacy privacy, const std::size_t size, FederationRateLimiter* const limiter)
+    const I2pPrivacy privacy, const std::size_t size, const int tunnelQuantity,
+    FederationRateLimiter* const limiter)
     : samHost_(std::move(samHost))
     , samPort_(samPort)
     , engine_(engine)
@@ -63,6 +64,7 @@ FederationPool::FederationPool(std::string samHost, const std::uint16_t samPort,
     , sessionIdPrefix_(std::move(sessionIdPrefix))
     , privacy_(privacy)
     , size_(size)
+    , tunnelQuantity_(tunnelQuantity)
     , limiter_(limiter)
 {
 }
@@ -90,7 +92,8 @@ void FederationPool::start()
         // Encrypted LeaseSet2 (the default): a pool destination is server-owned,
         // so blinding has the signing key and the shareable address is a b33.
         dest->session = std::make_unique<SamSession>(samHost_, samPort_,
-            sessionIdPrefix_ + std::to_string(i), privateKeys, kEncryptedLeaseSetType, privacy_);
+            sessionIdPrefix_ + std::to_string(i), privateKeys, kEncryptedLeaseSetType, privacy_,
+            tunnelQuantity_);
         if (!std::filesystem::exists(keyPath)) {
             writePrivate(keyPath, dest->session->privateDestination());
         }

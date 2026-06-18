@@ -26,12 +26,13 @@ std::int64_t nowSeconds()
 
 PerUserDestinations::PerUserDestinations(std::string samHost, const std::uint16_t samPort,
     DeliveryEngine& engine, std::filesystem::path stateDir, const I2pPrivacy privacy,
-    FederationRateLimiter* const limiter)
+    const int tunnelQuantity, FederationRateLimiter* const limiter)
     : samHost_(std::move(samHost))
     , samPort_(samPort)
     , engine_(engine)
     , stateDir_(std::move(stateDir))
     , privacy_(privacy)
+    , tunnelQuantity_(tunnelQuantity)
     , limiter_(limiter)
 {
 }
@@ -74,7 +75,7 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
             // A STANDARD LeaseSet2: an offline-signature destination cannot
             // publish an encrypted LeaseSet2.
             SamSession session(samHost_, samPort_, sessionId, transientB64,
-                kStandardLeaseSetType, privacy_);
+                kStandardLeaseSetType, privacy_, tunnelQuantity_);
             {
                 // Publish the resolved destination address so it can be surfaced
                 // to the user and matched for same-destination local delivery.

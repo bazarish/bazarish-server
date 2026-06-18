@@ -33,7 +33,7 @@ class PerUserDestinations {
 public:
     PerUserDestinations(std::string samHost, std::uint16_t samPort,
         DeliveryEngine& engine, std::filesystem::path stateDir, I2pPrivacy privacy,
-        FederationRateLimiter* limiter = nullptr);
+        int tunnelQuantity = kDefaultTunnelQuantity, FederationRateLimiter* limiter = nullptr);
     ~PerUserDestinations();
 
     PerUserDestinations(const PerUserDestinations&) = delete;
@@ -107,6 +107,7 @@ private:
     DeliveryEngine& engine_;
     const std::filesystem::path stateDir_;
     const I2pPrivacy privacy_;
+    const int tunnelQuantity_;
     FederationRateLimiter* const limiter_;
     GetCardFn getCard_;
     mutable std::mutex mutex_;

@@ -404,7 +404,7 @@ void DiskStorage::deleteIfFullyAcked(const std::string& user, const std::string&
         }
     }
     // Every registered client has acked (or none are registered while the
-    // blob still exists — in that degenerate case the content is kept
+    // blob still exists - in that degenerate case the content is kept
     // until the TTL sweep, so a user temporarily without clients does not
     // lose mail).
     if (clients.empty()) {

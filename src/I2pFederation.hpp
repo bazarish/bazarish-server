@@ -17,7 +17,7 @@ class FederationRateLimiter;
 
 // The I2P federation node: an inbound accept loop that serves incoming
 // deliveries into the local DeliveryEngine, plus an outbound relay used as the
-// HttpApi RemoteDeliverFn. Routing is by destination — the outbound relay dials
+// HttpApi RemoteDeliverFn. Routing is by destination - the outbound relay dials
 // the recipient's I2P destination directly (see docs-main api/InviteAnonymity.md).
 class I2pFederation {
 public:
@@ -32,7 +32,7 @@ public:
     void start();
     // Signals the loop to stop. A blocking accept only returns on the next
     // inbound connection or the SAM socket timeout, so shutdown is not
-    // instantaneous — acceptable for a long-running daemon.
+    // instantaneous - acceptable for a long-running daemon.
     void stop();
 
     // Relays a sealed envelope to the recipient's I2P destination toDest; the

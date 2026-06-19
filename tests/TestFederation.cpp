@@ -46,7 +46,7 @@ Bytes makeSealed(const Key& sealingPublic, const std::string& kind,
     return cms::seal(Bytes(text.begin(), text.end()), sealingPublic);
 }
 
-// Runs one client deliver against an in-thread server using a socketpair —
+// Runs one client deliver against an in-thread server using a socketpair -
 // the same SamStream wraps both ends, so the federation protocol is
 // exercised without I2P.
 FederationDeliverResult roundTrip(DeliveryEngine& engine, const Bytes& sealed, const Bytes& payload,

@@ -18,11 +18,11 @@ struct BlobProxyResult {
 
 // Performs a blob operation over I2P on a client's behalf (the proxy fallback
 // for clients without a local SAM bridge): opens a FRESH transient SAM session
-// (a throwaway destination — unlinkability) to the .b32.i2p host and runs the
+// (a throwaway destination - unlinkability) to the .b32.i2p host and runs the
 // HTTP/1.1 request (method GET for download, DELETE for unsend) on path. A
 // non-empty deleteToken is sent as the X-Delete-Token header. Construction
 // blocks on tunnel build. Throws on transport failure. Buffers the whole
-// response — used for small ops (DELETE); downloads stream (see below).
+// response - used for small ops (DELETE); downloads stream (see below).
 BlobProxyResult fetchBlobOverI2p(const std::string& samHost, std::uint16_t samPort,
     const std::string& host, const std::string& path, const std::string& method = "GET",
     const std::string& deleteToken = "");
@@ -39,7 +39,7 @@ public:
     // content-range, from which the proxy derives the full blob length).
     virtual const std::map<std::string, std::string>& headers() const = 0;
     // Pulls up to len bytes of the body into out; returns the count, 0 at EOF
-    // (a clean close or a mid-stream drop both surface as EOF — the recipient
+    // (a clean close or a mid-stream drop both surface as EOF - the recipient
     // resumes via a Range request).
     virtual std::size_t readBody(char* out, std::size_t len) = 0;
 };

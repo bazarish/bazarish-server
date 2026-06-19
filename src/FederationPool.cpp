@@ -99,7 +99,7 @@ void FederationPool::start()
         }
         // The pool entry's own serving sealing key (persisted so the address a
         // contact seals to is stable across restarts). Contacts on this pool
-        // destination all seal to it — same k-anonymity set as the destination.
+        // destination all seal to it - same k-anonymity set as the destination.
         const std::filesystem::path sealingPath
             = poolDir / ("dest-" + std::to_string(i) + ".sealing.pem");
         if (std::filesystem::exists(sealingPath)) {

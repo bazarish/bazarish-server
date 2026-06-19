@@ -80,8 +80,8 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
         return delivered();
     }
 
-    // Replay protection: a messageId admitted earlier — even one since fetched,
-    // acked and swept from the mailbox — must not be re-admitted. The one-time
+    // Replay protection: a messageId admitted earlier - even one since fetched,
+    // acked and swept from the mailbox - must not be re-admitted. The one-time
     // token already guards content replays, but a tokenless contact request has
     // no token to spend, so the seen-cache is what closes that gap. Idempotent
     // success: no token spend, no second store.

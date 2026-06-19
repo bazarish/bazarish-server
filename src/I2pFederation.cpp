@@ -65,7 +65,7 @@ RemoteDeliveryResult I2pFederation::deliver(
 {
     RemoteDeliveryResult result;
     // Routing is by destination: toDest is the recipient's I2P destination, so
-    // dial it directly — no server-fingerprint resolution. An unreachable
+    // dial it directly - no server-fingerprint resolution. An unreachable
     // destination (e.g. its leaseset has not published yet) leaves the message
     // on the caller for retry.
     try {

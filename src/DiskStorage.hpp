@@ -8,7 +8,7 @@
 
 namespace bazarish::server {
 
-// Filesystem storage backend — the simple-deploy default.
+// Filesystem storage backend - the simple-deploy default.
 //
 // Layout under the root directory:
 //   users/<fingerprint>/clients/<clientId>   registered client marker

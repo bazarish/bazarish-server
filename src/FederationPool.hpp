@@ -55,7 +55,7 @@ public:
     // Deterministic by fingerprint, so a user keeps the same pool destination
     // across restarts. Empty when the pool is empty.
     std::string destinationFor(const std::string& userFp) const;
-    // The serving sealing key of the pool entry assigned to a user — the key a
+    // The serving sealing key of the pool entry assigned to a user - the key a
     // contact seals the delivery envelope to, whose private half this server
     // holds (so it both surfaces the public half and unseals same-destination
     // local deliveries). Shared by the free users on that pool destination (same

@@ -36,7 +36,7 @@ FederationDeliverResult federationSendDeliver(
 // fingerprint for the federation card fetch; nullopt when the user is unknown.
 using GetCardFn = std::function<std::optional<Bytes>(const std::string& fingerprint)>;
 
-// Result of a sealed fetch (op "card" — and "resolve" at the central resolver):
+// Result of a sealed fetch (op "card" - and "resolve" at the central resolver):
 // an opaque sealed response, or an error.
 struct FederationFetchResult {
     bool ok = false;

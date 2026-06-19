@@ -18,7 +18,7 @@ struct DeliveryEngineOptions {
 // The delivery pipeline for one server: unseal the envelope, deduplicate by
 // messageId, consume a one-time token (or admit a contact request), check
 // size/quota and store. Shared by local sends (sender == this server) and
-// incoming federation deliveries — both end at the same mailbox rules.
+// incoming federation deliveries - both end at the same mailbox rules.
 class DeliveryEngine {
 public:
     DeliveryEngine(Storage& storage, std::string serverFingerprint, Key sealingKey,
@@ -34,7 +34,7 @@ public:
     // sealed is the CMS envelope addressed to the serving sealing key of the
     // destination it arrived on; payload is the opaque E2E blob. The caller
     // (each accept loop / the local send path) supplies the sealing key for
-    // that destination — a home/pool/per-user destination each has its own (see
+    // that destination - a home/pool/per-user destination each has its own (see
     // docs-main api/InviteAnonymity.md). now is unix seconds.
     Outcome deliver(
         const Bytes& sealed, const Bytes& payload, std::int64_t now, const Key& sealingKey);

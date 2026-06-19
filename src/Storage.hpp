@@ -14,8 +14,8 @@ namespace bazarish::server {
 // ciphertext; the interface never interprets blob contents.
 //
 // Identifier conventions enforced by implementations:
-//   user    — a key fingerprint (52 chars base32);
-//   clientId, blobId — [a-z0-9_-], length 1..64. blobId is the
+//   user    - a key fingerprint (52 chars base32);
+//   clientId, blobId - [a-z0-9_-], length 1..64. blobId is the
 //   client-generated messageId, which makes putBlob deduplication the
 //   messageId deduplication required by the delivery flow.
 class Storage {
@@ -71,8 +71,8 @@ public:
     // --- Replay protection (seen-messageId cache) ---
     //
     // Records every messageId admitted into a mailbox, independent of the
-    // blob's lifecycle, so a replay of an already-delivered envelope — even one
-    // since fetched, acked and swept from the mailbox — is recognised and
+    // blob's lifecycle, so a replay of an already-delivered envelope - even one
+    // since fetched, acked and swept from the mailbox - is recognised and
     // refused re-admission. One-time tokens already guard content-class
     // replays; tokenless contact requests have no token to spend, so this cache
     // is what closes them. Markers are retained until the TTL sweep

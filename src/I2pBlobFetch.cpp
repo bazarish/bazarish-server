@@ -25,7 +25,7 @@ public:
         : session_(std::make_unique<SamSession>(
               samHost, samPort, "blobproxy-" + toHex(randomBytes(6))))
     {
-        // No half-close — SAM treats SHUT_WR as a full stream teardown — so
+        // No half-close - SAM treats SHUT_WR as a full stream teardown - so
         // Connection: close drives the response to EOF.
         stream_ = std::make_unique<SamStream>(session_->connect(host));
         std::map<std::string, std::string> headers;
@@ -71,8 +71,8 @@ BlobProxyResult fetchBlobOverI2p(const std::string& samHost, const std::uint16_t
     const std::string& deleteToken)
 {
     // Shares the SAM HTTP wire format and response parser with the client's blob
-    // fetch (common SamHttp). No half-close — SAM treats SHUT_WR as a full stream
-    // teardown — so Connection: close drives the response to EOF.
+    // fetch (common SamHttp). No half-close - SAM treats SHUT_WR as a full stream
+    // teardown - so Connection: close drives the response to EOF.
     SamSession session(samHost, samPort, "blobproxy-" + toHex(randomBytes(6)));
     SamStream stream = session.connect(host);
 

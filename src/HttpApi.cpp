@@ -345,7 +345,7 @@ void HttpApi::setupRoutes()
     // Proxies a large-message blob op over I2P on the client's behalf: the client
     // passes the blob's .b32.i2p host + path (+ method GET download / DELETE
     // unsend, + delete-token), the server runs it over a fresh transient SAM
-    // session and relays the result. Only .b32.i2p hosts — never an open proxy.
+    // session and relays the result. Only .b32.i2p hosts - never an open proxy.
     http_->Get("/v1/messaging/blob-proxy",
         authenticated([this, requireClient](const httplib::Request& request,
                           httplib::Response& response, const std::string& user) {
@@ -452,8 +452,8 @@ void HttpApi::setupRoutes()
             // Routed by destination. Local short-circuit ONLY when toDest is the
             // sender's own destination (same i2p destination): then the recipient
             // shares that destination, so a local store leaks no co-location. Any
-            // other destination — including a recipient this server hosts on a
-            // different destination — is federated, so delivery latency cannot
+            // other destination - including a recipient this server hosts on a
+            // different destination - is federated, so delivery latency cannot
             // distinguish a local recipient from a remote one.
             const DestinationAssignment sender
                 = options_.assignDestination ? options_.assignDestination(user) : DestinationAssignment{};
@@ -522,7 +522,7 @@ void HttpApi::setupRoutes()
     // First-contact discovery proxy (fallback for a client without a SAM bridge):
     // relay a sealed fetch (op "card" to a serving server, "resolve" to the
     // central resolver) to toDest over I2P and return the sealed response. The
-    // server moves opaque bytes — the client sealed the query and verifies the
+    // server moves opaque bytes - the client sealed the query and verifies the
     // response (see docs-main api/FederatedResolve.md).
     http_->Post("/v1/messaging/fetch",
         authenticated([this](const httplib::Request& request, httplib::Response& response,

@@ -250,7 +250,7 @@ int main(const int argc, const char** argv)
         }
 
         // The shareable/routable address is the b33 (encrypted LeaseSet2), not
-        // the raw destination — peers can only reach the encrypted leaseset via
+        // the raw destination - peers can only reach the encrypted leaseset via
         // the blinded b33.
         endpoints.push_back("i2p:" + samSession->routingAddress());
         std::printf("i2p destination: %s\n", samSession->routingAddress().c_str());
@@ -347,7 +347,7 @@ int main(const int argc, const char** argv)
         = [&perUserDests, &federationPool, homeDest, homeServingKey](
               const std::string& user) -> bazarish::server::DestinationAssignment {
         // A user with a personal destination always resolves to it (its address
-        // may be empty until its session builds — then no local short-circuit
+        // may be empty until its session builds - then no local short-circuit
         // matches and the delivery federates, which is safe).
         if (perUserDests) {
             const std::shared_ptr<bazarish::Key> key = perUserDests->servingKeyFor(user);

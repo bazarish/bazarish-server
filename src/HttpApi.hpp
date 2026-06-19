@@ -35,8 +35,8 @@ struct DestinationAssignment {
 };
 
 // Resolves the authenticated caller's assigned destination. Looked up
-// server-side from the caller's fingerprint — never from a client-supplied
-// value — so a sender cannot forge it to force a revealing local delivery.
+// server-side from the caller's fingerprint - never from a client-supplied
+// value - so a sender cannot forge it to force a revealing local delivery.
 using AssignDestinationFn = std::function<DestinationAssignment(const std::string& user)>;
 
 struct HttpApiOptions {
@@ -54,7 +54,7 @@ struct HttpApiOptions {
         const std::string& path, const std::string& deleteToken)>
         blobProxyFetch;
     // Streams a blob download over I2P for a no-SAM client (proxy GET): host +
-    // path + optional Range → a pull reader the endpoint drains into the client
+    // path + optional Range -> a pull reader the endpoint drains into the client
     // response a chunk at a time, so a large blob is never buffered whole on the
     // user's own server. Empty disables proxy downloads.
     std::function<std::unique_ptr<I2pBlobReader>(
@@ -70,8 +70,8 @@ struct HttpApiOptions {
     std::function<void(const std::string& user)> revokeI2pDest;
     // Resolves the caller's assigned destination + serving key. A send is
     // delivered locally only when its toDest equals the caller's own assigned
-    // destination (same i2p destination); every other toDest — including a
-    // co-located recipient on a different destination — is federated, so
+    // destination (same i2p destination); every other toDest - including a
+    // co-located recipient on a different destination - is federated, so
     // delivery latency cannot reveal co-location (see docs-main
     // api/InviteAnonymity.md). Also backs GET /v1/messaging/destination. Empty
     // disables local delivery (every send federates).
@@ -87,7 +87,7 @@ struct RemoteDeliveryResult {
 };
 
 // Relays a sealed envelope to a destination over I2P federation (dialled
-// directly — routing is by destination, not by server fingerprint; see
+// directly - routing is by destination, not by server fingerprint; see
 // docs-main api/InviteAnonymity.md). The default (no transport wired) reports
 // unreachable.
 using RemoteDeliverFn = std::function<RemoteDeliveryResult(
@@ -103,7 +103,7 @@ struct RemoteFetchResult {
 };
 
 // Relays a sealed fetch request (op "card" or "resolve") to a destination over
-// I2P and returns the sealed response — the proxy fallback for a client without
+// I2P and returns the sealed response - the proxy fallback for a client without
 // a SAM bridge. The default (no transport wired) reports unreachable.
 using RemoteFetchFn = std::function<RemoteFetchResult(
     const std::string& toDest, const std::string& op, const Bytes& sealed)>;
@@ -111,7 +111,7 @@ using RemoteFetchFn = std::function<RemoteFetchResult(
 // The /v1/messaging/* HTTP API: client registry, token hashes, pending
 // fetch/ack and submit+poll sending. A send is routed by its toDest: a delivery
 // to the sender's own destination runs the shared DeliveryEngine locally; every
-// other destination — even a co-located recipient on a different destination —
+// other destination - even a co-located recipient on a different destination -
 // is dialled over I2P federation, so timing reveals no co-location.
 class HttpApi {
 public:

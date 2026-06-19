@@ -129,7 +129,7 @@ int main()
     const Identity serverIdentity = Identity::generate();
     const Key serverSealing = Key::generateSealing();
     const std::string serverFp = serverIdentity.fingerprint();
-    // A valid .b32.i2p destination for routing — the send path now enforces the
+    // A valid .b32.i2p destination for routing - the send path now enforces the
     // .b32.i2p invariant, so a bare fingerprint placeholder no longer routes.
     const std::string serverDest = "dlkbeyqjykssca6o7qlbwgq4fr2hry7kw2ursn2sh3lt3acox6gq.b32.i2p";
     const Key sealingPublic = Key::fromPublicDer(serverSealing.publicDer());
@@ -165,7 +165,7 @@ int main()
         return BlobProxyResult{200, Bytes(body.begin(), body.end())};
     };
     // Stub streaming download: serves "hello-world" whole on a plain GET, and the
-    // requested tail (as a 206) when a Range is forwarded — so the test can assert
+    // requested tail (as a 206) when a Range is forwarded - so the test can assert
     // the endpoint streams the body, forwards the Range and publishes X-Blob-Total.
     std::string downHost;
     std::string downPath;
@@ -345,7 +345,7 @@ int main()
     }
 
     // A different destination (not the sender's own) federates rather than
-    // delivering locally — even though no other-destination recipient exists
+    // delivering locally - even though no other-destination recipient exists
     // here, so it reports unreachable (no federation transport wired in tests).
     // This is the timing guarantee: a cross-destination recipient is never a
     // fast local delivery.
@@ -461,7 +461,7 @@ int main()
         const std::string body = nlohmann::json{
             {"user", "alicefp"}, {"transient", "tb64"}, {"expiresUnix", 1780001234}}
                                      .dump();
-        // No secret, then wrong secret → 403.
+        // No secret, then wrong secret -> 403.
         const httplib::Result noAuth
             = client.Put("/v1/messaging/i2p-dest", body, "application/json");
         CHECK(noAuth && noAuth->status == 403);

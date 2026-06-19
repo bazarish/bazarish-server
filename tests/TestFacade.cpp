@@ -134,7 +134,7 @@ int main()
     }
 
     // A large blob upload streams through (spooled, then content-provided over
-    // several chunks) without the facade buffering it whole — the backend
+    // several chunks) without the facade buffering it whole - the backend
     // receives the exact bytes.
     {
         const std::string big(200000, 'Z');

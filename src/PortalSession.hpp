@@ -7,7 +7,7 @@
 namespace bazarish::service {
 
 // A stateless portal session token issued after a successful sign-in-with-key
-// login. The token is `userId.exp.tag` where tag = HMAC(secret, userId|exp) —
+// login. The token is `userId.exp.tag` where tag = HMAC(secret, userId|exp) -
 // all cookie-safe characters (base32 fingerprint, digits, hex), so it drops
 // straight into a Set-Cookie value with no encoding. Stateless: the portal
 // verifies it without storage; logout/rotation is by shortening the TTL or

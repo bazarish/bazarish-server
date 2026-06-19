@@ -150,7 +150,7 @@ void testMoneroAgainstStub()
                 result = {{"in", nlohmann::json::array({transfer(1000000, 12, 7)})}};
             } else if (index == 8) {
                 result = {{"in", nlohmann::json::array({transfer(500000, 2, 8)})}};
-            }  // index 9 → no "in" key → pending
+            }  // index 9 -> no "in" key -> pending
         } else if (method == "get_transfer_by_txid") {
             const std::string txid = params.at("txid").get<std::string>();
             if (txid == "tx-confirmed") {

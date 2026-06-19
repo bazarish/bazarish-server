@@ -11,7 +11,7 @@ namespace bazarish::service {
 // Issues and verifies sign-in-with-key login challenges for one service portal.
 //
 // A challenge is base64(JSON {nonce, ts, aud}) bound by an HMAC tag under a
-// portal-local secret, so the portal confirms — statelessly — that it issued
+// portal-local secret, so the portal confirms - statelessly - that it issued
 // the challenge, that it is fresh, and that it names this audience (this node's
 // fingerprint, stopping a challenge being replayed against another server).
 // Verification additionally enforces single use within the freshness window (a

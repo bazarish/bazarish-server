@@ -13,7 +13,7 @@ namespace bazarish::service {
 // configured account; the invoice id is that subaddress's minor index. Both a
 // push path (a watcher posts a callback authenticated by an HMAC over a shared
 // secret) and a pull path (the frontend submits a txid) converge on the same
-// wallet-verified settlement — a callback's amount is never trusted, it only
+// wallet-verified settlement - a callback's amount is never trusted, it only
 // triggers a get_transfer_by_txid against the wallet. Amounts are atomic
 // piconero (integer strings). Parameters: url (http://host:port of
 // monero-wallet-rpc), user/password (optional HTTP digest auth), account

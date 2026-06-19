@@ -17,11 +17,11 @@ namespace bazarish::service {
 // grace, so the account API, the portal and the status endpoint all agree.
 //
 // Renewal rules differ per service:
-//   * i2pDest — one step into the negative is allowed (a grace term served on
+//   * i2pDest - one step into the negative is allowed (a grace term served on
 //     credit); refused once the balance is already negative. Stays "enabled"
 //     across a lapse so a later top-up auto-revives it; the user turns it off
 //     explicitly via disableI2pDest.
-//   * storage — strict: when the balance cannot cover a renewal the upgrade
+//   * storage - strict: when the balance cannot cover a renewal the upgrade
 //     drops to the free quota (a visible shrink, pushed to the messaging server)
 //     and stops auto-renewing; the user re-buys to restore it.
 //
@@ -69,7 +69,7 @@ public:
     Snapshot evaluate(const std::string& user, std::int64_t now);
 
     // Turns the i2pDest toggle on. Resumes immediately if the entitlement is
-    // still paid; otherwise charges one term up front (strict — it needs a
+    // still paid; otherwise charges one term up front (strict - it needs a
     // non-negative balance covering the price). Returns false if it cannot be
     // paid, true once active.
     bool enableI2pDest(const std::string& user, std::int64_t now);

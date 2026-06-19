@@ -177,7 +177,7 @@ bool LedgerStore::creditOnce(
     Account account = load(user);
     for (const Entry& entry : account.entries) {
         if (entry.type == "credit" && entry.ref == ref) {
-            return false;  // already applied — duplicate notification
+            return false;  // already applied - duplicate notification
         }
     }
     const std::int64_t add = static_cast<std::int64_t>(amount);
@@ -219,7 +219,7 @@ bool LedgerStore::debitOverdraft(
         return false;
     }
     if (account.balanceAtomic < 0) {
-        return false;  // grace already spent — top up to re-arm it
+        return false;  // grace already spent - top up to re-arm it
     }
     account.balanceAtomic -= static_cast<std::int64_t>(amount);  // may go negative once
     account.entries.push_back({now, "debit", amount, ref, account.balanceAtomic});

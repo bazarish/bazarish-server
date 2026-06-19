@@ -19,7 +19,7 @@ namespace bazarish::service {
 // default 5), window (validity seconds, default 300).
 //
 // Baseline caveat: the code characters appear in the SVG markup, so this deters
-// image-OCR and casual bots but not a source-reading bot — deployments wanting
+// image-OCR and casual bots but not a source-reading bot - deployments wanting
 // strong resistance should register a rasterised or proof-of-work captcha.
 class SelfHostedCaptcha : public Captcha {
 public:

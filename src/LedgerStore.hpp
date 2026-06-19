@@ -65,7 +65,7 @@ public:
     // Debits the balance allowing the result to go negative exactly once: it
     // succeeds (taking the balance below zero if needed) only while the balance
     // is currently >= 0, and is refused once the balance is already negative.
-    // This is the one-step grace an auto-renewing service (i2pDest) uses — the
+    // This is the one-step grace an auto-renewing service (i2pDest) uses - the
     // first unfunded renewal is served on credit, a second is not. A top-up that
     // clears the debt (balance back to >= 0) re-arms the grace. Returns false on
     // a zero amount or when the balance is already negative.

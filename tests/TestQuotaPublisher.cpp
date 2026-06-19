@@ -63,7 +63,7 @@ int main()
     CHECK(body.at("user").get<std::string>() == user);
     CHECK(body.at("quotaBytes").get<std::uint64_t>() == 5368709120ULL);
 
-    // A wrong operator secret is rejected by the server → false.
+    // A wrong operator secret is rejected by the server -> false.
     const QuotaPublisher wrongSecret(url, "nope");
     CHECK(!wrongSecret.publish(user, 1));
 
@@ -74,7 +74,7 @@ int main()
     CHECK(storageBody.at("user").get<std::string>() == user);
     CHECK(storageBody.at("quotaBytes").get<std::uint64_t>() == 42ULL);
 
-    // Not configured (no base URL) → no-op false, no request made.
+    // Not configured (no base URL) -> no-op false, no request made.
     const QuotaPublisher disabled("", "op-secret");
     CHECK(!disabled.publish(user, 1));
 

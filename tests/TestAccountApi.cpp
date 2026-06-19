@@ -193,13 +193,13 @@ int main()
             = nlohmann::json{{"transient", "user-transient-b64"},
                   {"expiresUnix", now + 7 * 24 * 3600}}
                   .dump();
-        // No entitlement → 403, nothing published.
+        // No entitlement -> 403, nothing published.
         const httplib::Result ungranted = client.Post("/v1/account/i2p-dest",
             makeHeaders(alice, "POST", "/v1/account/i2p-dest", body), body, "application/json");
         CHECK(ungranted && ungranted->status == 403);
         CHECK(pubCalls == 0);
 
-        // With an active entitlement → 200, publishes the transient.
+        // With an active entitlement -> 200, publishes the transient.
         grants.grantService(alice.fingerprint(), "i2pDest", now + 30 * 24 * 3600, now);
         const httplib::Result ok = client.Post("/v1/account/i2p-dest",
             makeHeaders(alice, "POST", "/v1/account/i2p-dest", body), body, "application/json");

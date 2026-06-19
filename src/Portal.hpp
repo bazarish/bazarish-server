@@ -8,7 +8,7 @@
 
 namespace bazarish::service {
 
-// Sign-in-with-key wire contract — must stay in lockstep with the client
+// Sign-in-with-key wire contract - must stay in lockstep with the client
 // (client-qt6 Session::signLogin). The challenge is signed as the body of a
 // canonical request under this fixed method/path (so a login blob can never be
 // replayed as a real API call); the four hybrid-auth headers are packed into

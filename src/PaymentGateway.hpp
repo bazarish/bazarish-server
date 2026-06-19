@@ -22,7 +22,7 @@ enum class PaymentState {
 
 const char* toString(PaymentState state);
 
-// A monetary amount as an exact decimal string (never a float — money must not
+// A monetary amount as an exact decimal string (never a float - money must not
 // lose precision) plus its currency/asset code ("BTC", "XMR", "USD", ...).
 struct Money {
     std::string amount;
@@ -46,7 +46,7 @@ struct PaymentStatus {
 };
 
 // A pluggable payment backend. Each implementation maps the normalised
-// invoice/status model onto one concrete processor — bitcoind, monerod,
+// invoice/status model onto one concrete processor - bitcoind, monerod,
 // BTCPayServer, a fiat gateway, or anything self-written. Implementations must
 // be safe to call concurrently from multiple request threads.
 class PaymentGateway {
@@ -85,7 +85,7 @@ public:
 };
 
 // Backend configuration: a type name plus an opaque key/value parameter bag
-// (RPC endpoint, credentials, store id, …). Generic on purpose so a
+// (RPC endpoint, credentials, store id, ...). Generic on purpose so a
 // self-written gateway needs no change to this struct or the factory plumbing.
 struct PaymentGatewayConfig {
     std::string type;

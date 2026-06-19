@@ -82,7 +82,7 @@ ServiceLifecycle::Snapshot ServiceLifecycle::evaluate(const std::string& user, c
                 std::int64_t paidThrough = g->paidThrough;
                 while (now >= paidThrough) {
                     if (!ledger_.debitOverdraft(user, i2pDest_.priceAtomic, "renew:i2pDest", now)) {
-                        break;  // already in debt — the grace is spent, it lapses
+                        break;  // already in debt - the grace is spent, it lapses
                     }
                     paidThrough += i2pDest_.termSeconds;
                     grants_.grantService(user, "i2pDest", paidThrough, now);

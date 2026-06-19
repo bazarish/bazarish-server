@@ -114,7 +114,7 @@ void AccountApi::setupRoutes()
     };
 
     // Validates and stores a subscription certificate. Shared by subscribe
-    // and renew — renewal is simply a fresh certificate.
+    // and renew - renewal is simply a fresh certificate.
     const auto handleSubscribe
         = [this](const httplib::Request& request, httplib::Response& response,
               const std::string& user) {
@@ -155,7 +155,7 @@ void AccountApi::setupRoutes()
               // Registration is authorised on the service portal (captcha for
               // free, payment for paid), which records a pending grant. The
               // Client redeems it here with its user-signed certificate; the
-              // grant supplies the quota and bounds the term. No grant → the
+              // grant supplies the quota and bounds the term. No grant -> the
               // user must register on the portal first.
               const std::optional<GrantStore::SubscriptionGrant> grant
                   = grants_.peekSubscription(cert.user);
@@ -351,7 +351,7 @@ void AccountApi::setupRoutes()
         });
 
     // Onboarding discovery: where to register and what this server offers.
-    // Unauthenticated — the client shows the message and link(s); registration
+    // Unauthenticated - the client shows the message and link(s); registration
     // and paid services happen on the portal (captcha / payment), not here.
     http_->Get("/v1/account/portal",
         [this](const httplib::Request&, httplib::Response& response) {

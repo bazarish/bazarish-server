@@ -10,7 +10,7 @@
 namespace bazarish::service {
 
 // A challenge to present to a human: an opaque id to pass back with the answer,
-// plus a rendered body and its content type (JS-free — e.g. an SVG image).
+// plus a rendered body and its content type (JS-free - e.g. an SVG image).
 struct CaptchaChallenge {
     std::string id;
     std::string contentType;
@@ -33,7 +33,7 @@ public:
     virtual bool verify(const std::string& id, const std::string& answer, std::int64_t now) = 0;
 };
 
-// Backend configuration: a type name plus an opaque param bag — same shape as
+// Backend configuration: a type name plus an opaque param bag - same shape as
 // the payment-gateway registry so a self-written captcha needs no plumbing
 // change.
 struct CaptchaConfig {

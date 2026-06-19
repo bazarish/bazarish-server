@@ -180,7 +180,7 @@ std::optional<PaymentStatus> MoneroPaymentGateway::parseWebhook(
         return std::nullopt;  // callbacks disabled when no secret is configured
     }
     if (!constantTimeEqual(hmacSha256Hex(config_.callbackSecret, body), signature)) {
-        return std::nullopt;  // not authentic — ignore
+        return std::nullopt;  // not authentic - ignore
     }
     const nlohmann::json payload = nlohmann::json::parse(body, nullptr, false);
     if (payload.is_discarded() || !payload.contains("invoiceId") || !payload.contains("txid")) {

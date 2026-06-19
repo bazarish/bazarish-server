@@ -43,7 +43,7 @@ public:
 
     explicit GrantStore(std::filesystem::path root);
 
-    // Grants (or refreshes) a pending subscription for the user — the quota and
+    // Grants (or refreshes) a pending subscription for the user - the quota and
     // maximum term the node will then accept on the user's submitted cert.
     void grantSubscription(const std::string& user, std::uint64_t quotaBytes,
         std::int64_t termSeconds, std::int64_t now);
@@ -55,7 +55,7 @@ public:
     std::optional<SubscriptionGrant> takeSubscription(const std::string& user);
 
     // Records a paid service entitlement valid until paidThrough (a purchase or
-    // renewal). Unlike a subscription grant this is not one-shot — it is the
+    // renewal). Unlike a subscription grant this is not one-shot - it is the
     // standing paid-through marker the downstream feature reads.
     void grantService(const std::string& user, const std::string& service,
         std::int64_t paidThrough, std::int64_t now);

@@ -24,7 +24,7 @@ namespace bazarish::service {
 class ServiceLifecycle;
 
 struct PortalApiOptions {
-    // This service node's fingerprint — the login challenge audience, so a
+    // This service node's fingerprint - the login challenge audience, so a
     // challenge issued here cannot be replayed against another portal.
     std::string audience;
     // Portal-local HMAC secrets (login challenge binding, session cookie).

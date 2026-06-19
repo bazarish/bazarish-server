@@ -22,7 +22,7 @@ class ServiceLifecycle;
 
 // A recurring paid service the portal offers, advertised in the discovery
 // response. Every paid service is term-based and renewed from the user's
-// cabinet — none are one-shot, so an ongoing server-side cost (an always-online
+// cabinet - none are one-shot, so an ongoing server-side cost (an always-online
 // destination, stored bytes, a reserved name) maps to ongoing payment.
 struct PortalService {
     bool enabled = false;

@@ -565,7 +565,7 @@ void PortalApi::setupWebRoutes()
         }
 
         // Per-user i2p-dest: an opt-in toggle (not a one-shot buy), with the
-        // privacy trade-off spelled out. Off by default — the user already has a
+        // privacy trade-off spelled out. Off by default - the user already has a
         // free, fixed pool address; turning this on serves them on their own
         // stable destination, billed per term and auto-renewed from balance.
         const auto i2pPlan = options_.paidServices.find("i2pDest");

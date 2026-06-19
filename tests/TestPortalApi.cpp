@@ -151,12 +151,12 @@ void testLoginFlow()
     CHECK(nlohmann::json::parse(me->body).at("userId").get<std::string>()
         == identity.fingerprint());
 
-    // No cookie → unauthenticated.
+    // No cookie -> unauthenticated.
     const httplib::Result anon = client.Get("/portal/me");
     CHECK(anon);
     CHECK(anon->status == 401);
 
-    // A bad signature → login rejected.
+    // A bad signature -> login rejected.
     const nlohmann::json badBody = {{"challenge", challenge}, {"blob", "not-a-valid-blob"}};
     const httplib::Result badLogin
         = client.Post("/portal/login", badBody.dump(), "application/json");
@@ -201,7 +201,7 @@ void testLoginFlow()
     CHECK(balance0 && balance0->status == 200);
     CHECK(nlohmann::json::parse(balance0->body).at("balanceAtomic").get<std::string>() == "0");
 
-    // Top up: create an invoice (mock gateway → pending until marked paid).
+    // Top up: create an invoice (mock gateway -> pending until marked paid).
     const httplib::Result topup = client.Post(
         "/portal/topup", cookie, nlohmann::json({{"amount", "1000"}}).dump(), "application/json");
     CHECK(topup && topup->status == 200);
@@ -228,7 +228,7 @@ void testLoginFlow()
     CHECK(nlohmann::json::parse(bought->body).at("balanceAtomic").get<std::string>() == "400");
     CHECK(grants.peekService(identity.fingerprint(), "storage").has_value());
 
-    // A second purchase (600) exceeds the remaining balance (400) → refused,
+    // A second purchase (600) exceeds the remaining balance (400) -> refused,
     // balance unchanged.
     const httplib::Result broke = client.Post(
         "/portal/buy", cookie, nlohmann::json({{"service", "storage"}}).dump(), "application/json");

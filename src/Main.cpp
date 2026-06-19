@@ -83,8 +83,8 @@ struct PortalConfig {
     std::int64_t captchaTtlSeconds = 300;
 };
 
-// The whole payments config. Its defaults are a local dev setup — an
-// auto-confirm mock gateway and a few cheap services — so the demos and a
+// The whole payments config. Its defaults are a local dev setup - an
+// auto-confirm mock gateway and a few cheap services - so the demos and a
 // no-config run work out of the box; a real deployment passes --payments-config.
 struct PaymentsConfig {
     bazarish::service::PaymentGatewayConfig gateway{"mock", {{"autoconfirm", "true"}}};
@@ -292,7 +292,7 @@ int main(const int argc, const char** argv)
     options.lifecycle = &lifecycle;
     bazarish::service::AccountApi api(store, grants, options);
 
-    // The browser-facing portal (sign-in-with-key, captcha registration, …),
+    // The browser-facing portal (sign-in-with-key, captcha registration, ...),
     // sharing the grant store with the account API. Secrets are per-run; a
     // restart simply invalidates outstanding challenges/sessions.
     static std::unique_ptr<bazarish::service::SelfHostedCaptcha> captcha;

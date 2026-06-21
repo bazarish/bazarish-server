@@ -5,6 +5,7 @@
 #include "I2pBlobFetch.hpp"
 #include "Storage.hpp"
 
+#include <bazarish/Auth.hpp>
 #include <bazarish/Bytes.hpp>
 
 #include <cstdint>
@@ -144,6 +145,8 @@ private:
 
     std::mutex attemptsMutex_;
     std::map<std::string, Attempt> attempts_;
+
+    auth::ReplayCache replayCache_;
 };
 
 }  // namespace bazarish::server

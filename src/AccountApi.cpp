@@ -93,12 +93,12 @@ void AccountApi::stop()
 
 void AccountApi::setupRoutes()
 {
-    const auto authenticated = [](auto handler) {
-        return [handler](const httplib::Request& request, httplib::Response& response) {
+    const auto authenticated = [this](auto handler) {
+        return [this, handler](const httplib::Request& request, httplib::Response& response) {
             std::string user;
             try {
                 user = auth::verifyRequest(collectAuthHeaders(request), nowSeconds(),
-                    request.method, request.path, bodyBytes(request));
+                    request.method, request.path, bodyBytes(request), replayCache_);
             } catch (const std::exception& error) {
                 respondError(response, 401, ErrorCode::eDeliveryRejected, error.what());
                 return;

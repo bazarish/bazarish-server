@@ -4,6 +4,7 @@
 #include "GrantStore.hpp"
 #include "SubscriptionStore.hpp"
 
+#include <bazarish/Auth.hpp>
 #include <bazarish/Bytes.hpp>
 
 #include <cstdint>
@@ -98,6 +99,8 @@ private:
     GrantStore& grants_;
     const AccountApiOptions options_;
     std::unique_ptr<httplib::Server> http_;
+
+    auth::ReplayCache replayCache_;
 };
 
 }  // namespace bazarish::service

@@ -38,7 +38,7 @@ void printUsage()
     std::printf(
         "bazarish-server %s\n"
         "Usage: bazarish-server --state <directory> --i2p [--listen <host> <port>]\n"
-        "          [--contact-request-limit <bytes>] [--operator-secret <secret>]\n"
+        "          [--contact-request-limit <bytes>] [--operator-fingerprint <fp>]...\n"
         "          [--privacy <minimal|middle|max>] [--pool-size <n>]\n"
         "          [--sam-port <port>] [--tunnel-quantity <n>]\n"
         "          [--federation-rate-limit <n>] [--service-node <url>]\n"
@@ -131,7 +131,7 @@ int main(const int argc, const char** argv)
     int port = kDefaultPort;
     bool enableI2p = false;
     bazarish::server::DeliveryEngineOptions engineOptions;
-    std::string operatorSecret;
+    std::vector<std::string> operatorFingerprints;
     std::string serviceNodeUrl;
     bazarish::I2pPrivacy privacy = bazarish::I2pPrivacy::eMax;
     // SAM API: the host is loopback-only and never configurable (an unprotected
@@ -150,8 +150,8 @@ int main(const int argc, const char** argv)
             host = argv[i + 1];
             port = std::atoi(argv[i + 2]);
             i += 3;
-        } else if (std::strcmp(argv[i], "--operator-secret") == 0 && i + 1 < argc) {
-            operatorSecret = argv[i + 1];
+        } else if (std::strcmp(argv[i], "--operator-fingerprint") == 0 && i + 1 < argc) {
+            operatorFingerprints.emplace_back(argv[i + 1]);
             i += 2;
         } else if (std::strcmp(argv[i], "--i2p") == 0) {
             enableI2p = true;
@@ -333,7 +333,8 @@ int main(const int argc, const char** argv)
     }
 
     bazarish::server::HttpApiOptions httpOptions;
-    httpOptions.operatorSecret = operatorSecret;
+    httpOptions.operatorFingerprints = operatorFingerprints;
+    httpOptions.version = kVersion;
     // Resolve a user's assigned serving destination + key: their personal
     // destination if they delegated one, else their pool destination if the
     // pool is enabled, else the home destination. Used to short-circuit only

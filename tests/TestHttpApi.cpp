@@ -182,8 +182,10 @@ int main()
         return makeFakeReader(206, {{"content-range", "bytes 6-10/11"}}, "world");
     };
     // Operator-internal per-user destination: stub the manager so the test can
-    // assert the endpoint authenticates and dispatches provision/revoke.
-    httpOptions.operatorSecret = "op-secret";
+    // assert the endpoint authenticates and dispatches provision/revoke. The
+    // operator is authorised by signature (its fingerprint), not a shared secret.
+    const Identity operatorIdentity = Identity::generate();
+    httpOptions.operatorFingerprints = {operatorIdentity.fingerprint()};
     std::string provisionedUser;
     std::string provisionedTransient;
     std::int64_t provisionedExpires = 0;
@@ -456,31 +458,47 @@ int main()
         CHECK(result && result->status == 400);
     }
 
-    // Per-user I2P destination endpoint (operator-secret): auth + dispatch.
+    // Per-user I2P destination endpoint (operator signature): auth + dispatch.
     {
         const std::string body = nlohmann::json{
             {"user", "alicefp"}, {"transient", "tb64"}, {"expiresUnix", 1780001234}}
                                      .dump();
-        // No secret, then wrong secret -> 403.
+        // No signature, then a signature from an unauthorised identity -> 403.
         const httplib::Result noAuth
             = client.Put("/v1/messaging/i2p-dest", body, "application/json");
         CHECK(noAuth && noAuth->status == 403);
         const httplib::Result badAuth = client.Put("/v1/messaging/i2p-dest",
-            {{"X-Operator-Secret", "nope"}}, body, "application/json");
+            makeHeaders(Identity::generate(), "PUT", "/v1/messaging/i2p-dest", body, ""), body,
+            "application/json");
         CHECK(badAuth && badAuth->status == 403);
-        // Correct secret with a transient provisions.
+        // The authorised operator's signature with a transient provisions.
         const httplib::Result ok = client.Put("/v1/messaging/i2p-dest",
-            {{"X-Operator-Secret", "op-secret"}}, body, "application/json");
+            makeHeaders(operatorIdentity, "PUT", "/v1/messaging/i2p-dest", body, ""), body,
+            "application/json");
         CHECK(ok && ok->status == 200);
         CHECK(provisionedUser == "alicefp");
         CHECK(provisionedTransient == "tb64");
         CHECK(provisionedExpires == 1780001234);
-        // Correct secret without a transient revokes.
+        // The authorised operator's signature without a transient revokes.
         const std::string revokeBody = nlohmann::json{{"user", "alicefp"}}.dump();
         const httplib::Result revoked = client.Put("/v1/messaging/i2p-dest",
-            {{"X-Operator-Secret", "op-secret"}}, revokeBody, "application/json");
+            makeHeaders(operatorIdentity, "PUT", "/v1/messaging/i2p-dest", revokeBody, ""),
+            revokeBody, "application/json");
         CHECK(revoked && revoked->status == 200);
         CHECK(revokedUser == "alicefp");
+    }
+
+    // /healthz: operator-signed liveness with memory info; unsigned is rejected.
+    {
+        const httplib::Result unauth = client.Get("/healthz");
+        CHECK(unauth && unauth->status == 403);
+        const httplib::Result ok = client.Get(
+            "/healthz", makeHeaders(operatorIdentity, "GET", "/healthz", "", ""));
+        CHECK(ok && ok->status == 200);
+        const nlohmann::json health = nlohmann::json::parse(ok->body);
+        CHECK(health.at("service").get<std::string>() == "server-core");
+        CHECK(health.contains("ramBytes"));
+        CHECK(health.contains("ramPeakBytes"));
     }
 
     api.stop();

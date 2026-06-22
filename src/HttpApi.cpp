@@ -4,6 +4,7 @@
 #include <bazarish/Auth.hpp>
 #include <bazarish/Crypto.hpp>
 #include <bazarish/Errors.hpp>
+#include <bazarish/Health.hpp>
 #include <bazarish/I2pAddress.hpp>
 
 #include <httplib/httplib.h>
@@ -100,6 +101,7 @@ HttpApi::HttpApi(Storage& storage, DeliveryEngine& engine, const HttpApiOptions 
     , remoteDeliver_(std::move(remoteDeliver))
     , remoteFetch_(std::move(remoteFetch))
     , http_(std::make_unique<httplib::Server>())
+    , startedAt_(nowSeconds())
 {
     setupRoutes();
 }
@@ -128,6 +130,36 @@ void HttpApi::stop()
 
 void HttpApi::setupRoutes()
 {
+    // Authorizes an operator-internal request by hybrid signature: the caller
+    // must sign the request with an identity whose fingerprint is configured as an
+    // operator (the service node for quota/transient pushes, the admin panel for
+    // management and health). No shared secret. Responds 403 and returns false on
+    // any failure.
+    const auto operatorAuthorized
+        = [this](const httplib::Request& request, httplib::Response& response) -> bool {
+        try {
+            auth::authorizeRequest(collectAuthHeaders(request), nowSeconds(), request.method,
+                request.path, bodyBytes(request), options_.operatorFingerprints);
+            return true;
+        } catch (const std::exception& error) {
+            respondError(response, 403, ErrorCode::eDeliveryRejected, error.what());
+            return false;
+        }
+    };
+
+    // Authenticated liveness for the admin panel: service name, version, uptime
+    // and resident memory. Operator-only (signed), so it leaks nothing to an
+    // unauthenticated caller.
+    http_->Get("/healthz",
+        [this, operatorAuthorized](const httplib::Request& request, httplib::Response& response) {
+            if (!operatorAuthorized(request, response)) {
+                return;
+            }
+            response.set_content(
+                health::reportJson("server-core", options_.version, startedAt_, nowSeconds()),
+                "application/json");
+        });
+
     // Wraps a handler with request authentication and uniform error
     // mapping. The handler receives the verified caller fingerprint.
     const auto authenticated = [this](auto handler) {
@@ -206,14 +238,12 @@ void HttpApi::setupRoutes()
     // --- Operator-internal: per-user storage quota ---
     //
     // Set by the operator's service node over the private channel when a user's
-    // storage plan changes. Authorised by a shared secret, not by user auth (the
-    // user must not set their own quota).
+    // storage plan changes. Authorised by an operator signature, not by user auth
+    // (the user must not set their own quota).
     http_->Put("/v1/messaging/quota",
-        [this, &store](const httplib::Request& request, httplib::Response& response) {
-            if (options_.operatorSecret.empty()
-                || request.get_header_value("X-Operator-Secret") != options_.operatorSecret) {
-                respondError(response, 403, ErrorCode::eDeliveryRejected,
-                    "operator authentication required");
+        [&store, operatorAuthorized](
+            const httplib::Request& request, httplib::Response& response) {
+            if (!operatorAuthorized(request, response)) {
                 return;
             }
             try {
@@ -229,14 +259,11 @@ void HttpApi::setupRoutes()
     // Per-user I2P destination (operator-internal). Set by the operator's
     // service node when a paid user's i2pDest plan changes: it hands over the
     // client-owned offline transient so this server can operate the user's
-    // personal destination. Same shared secret as quota. A request without a
+    // personal destination. Same operator signature as quota. A request without a
     // transient revokes the destination.
     http_->Put("/v1/messaging/i2p-dest",
-        [this](const httplib::Request& request, httplib::Response& response) {
-            if (options_.operatorSecret.empty()
-                || request.get_header_value("X-Operator-Secret") != options_.operatorSecret) {
-                respondError(response, 403, ErrorCode::eDeliveryRejected,
-                    "operator authentication required");
+        [this, operatorAuthorized](const httplib::Request& request, httplib::Response& response) {
+            if (!operatorAuthorized(request, response)) {
                 return;
             }
             if (!options_.provisionI2pDest || !options_.revokeI2pDest) {

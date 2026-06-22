@@ -155,9 +155,9 @@ void HttpApi::registerRoutes()
         if (!error.empty()) {
             body += "<p class=\"err\">" + htmlEscape(error) + "</p>";
         }
-        body += "<p>Sign in with your Bazarish identity. Run this in your client, then paste "
-                "the result below:</p>";
-        body += "<pre>bazarish-client sign-login &lt;state&gt; " + htmlEscape(challenge) + "</pre>";
+        body += "<p>Sign in with your Bazarish key. Copy this challenge, sign it in your client "
+                "(Signature), and paste the result below. The key never enters the browser.</p>";
+        body += "<pre>" + htmlEscape(challenge) + "</pre>";
         body += "<form method=\"post\" action=\"/login\">";
         body += "<input type=\"hidden\" name=\"challenge\" value=\"" + htmlEscape(challenge)
             + "\">";

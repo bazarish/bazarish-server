@@ -1,13 +1,19 @@
 // Bazarish project (c) 2026
 #include "Facade.hpp"
 
+#include <bazarish/Auth.hpp>
+#include <bazarish/Bytes.hpp>
+#include <bazarish/Health.hpp>
+
 #include <httplib/httplib.h>
 
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -30,6 +36,27 @@ enum class Backend {
 bool startsWith(const std::string& text, const std::string& prefix)
 {
     return text.size() >= prefix.size() && text.compare(0, prefix.size(), prefix) == 0;
+}
+
+std::int64_t nowSeconds()
+{
+    return std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
+
+// Collects the four request-auth headers from a request into the map the auth
+// primitives expect.
+bazarish::auth::Headers collectAuthHeaders(const httplib::Request& request)
+{
+    bazarish::auth::Headers headers;
+    for (const char* const name : {bazarish::auth::kHeaderKeys, bazarish::auth::kHeaderTimestamp,
+             bazarish::auth::kHeaderSignatureClassical, bazarish::auth::kHeaderSignaturePq}) {
+        if (request.has_header(name)) {
+            headers[name] = request.get_header_value(name);
+        }
+    }
+    return headers;
 }
 
 // The path portion of a request target, without the query string.
@@ -128,6 +155,7 @@ void copyResponse(const httplib::Result& upstream, httplib::Response& response)
 Facade::Facade(FacadeOptions options)
     : options_(std::move(options))
     , http_(std::make_unique<httplib::Server>())
+    , startedAt_(nowSeconds())
 {
     setupRoutes();
 }
@@ -293,6 +321,27 @@ void Facade::setupRoutes()
         std::error_code ec;
         std::filesystem::remove(tempPath, ec);
     };
+
+    // Authenticated liveness for the admin panel, answered locally (never
+    // forwarded). Registered before the catch-all so it wins the match. Gated by
+    // an operator secret, so it leaks nothing to an unauthenticated caller and
+    // ignores the secret base path (it lives on the private ops socket).
+    http_->Get("/healthz", [this](const httplib::Request& request, httplib::Response& response) {
+        try {
+            bazarish::auth::authorizeRequest(collectAuthHeaders(request), nowSeconds(),
+                request.method, request.path, bazarish::Bytes(),
+                options_.operatorFingerprints);
+        } catch (const std::exception&) {
+            response.status = 403;
+            response.set_content(
+                "{\"error\":{\"message\":\"operator authentication required\"}}",
+                "application/json");
+            return;
+        }
+        response.set_content(
+            health::reportJson("facade", options_.version, startedAt_, nowSeconds()),
+            "application/json");
+    });
 
     // Register the catch-all for the methods the API uses; PUT is streamed.
     http_->Get(".*", handler);

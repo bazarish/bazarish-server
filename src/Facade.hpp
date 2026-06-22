@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace httplib {
 class Server;
@@ -23,6 +24,12 @@ struct FacadeOptions {
     // Secret URI prefix the facade requires and strips before forwarding
     // (e.g. "/s/9f3c..."). Empty means the reverse proxy owns the secret.
     std::string basePath;
+    // Version string reported by /healthz.
+    std::string version;
+    // Fingerprints authorised to call /healthz (the admin panel). The caller
+    // proves possession by signing the request; no shared secret. Empty disables
+    // /healthz.
+    std::vector<std::string> operatorFingerprints;
 };
 
 // The HTTP facade: the "last mile" between client and infrastructure. A
@@ -45,6 +52,7 @@ private:
 
     const FacadeOptions options_;
     std::unique_ptr<httplib::Server> http_;
+    std::int64_t startedAt_ = 0;
 };
 
 }  // namespace bazarish::facade

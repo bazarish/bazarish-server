@@ -24,6 +24,7 @@ void printUsage()
         "                           [--account <host> <port>]\n"
         "                           [--blob-storage <host> <port>]\n"
         "                           [--base-path <secret-uri-prefix>]\n"
+        "                           [--operator-fingerprint <fp>]...\n"
         "                           [--log-level <error|warn|info|debug>]\n"
         "       bazarish-facade-http --version\n"
         "\n"
@@ -46,6 +47,7 @@ int main(const int argc, const char** argv)
     std::string host = kDefaultHost;
     int port = kDefaultPort;
     bazarish::facade::FacadeOptions options;
+    options.version = kVersion;
     bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
     for (int i = 1; i < argc;) {
         if (std::strcmp(argv[i], "--listen") == 0 && i + 2 < argc) {
@@ -66,6 +68,9 @@ int main(const int argc, const char** argv)
             i += 3;
         } else if (std::strcmp(argv[i], "--base-path") == 0 && i + 1 < argc) {
             options.basePath = argv[i + 1];
+            i += 2;
+        } else if (std::strcmp(argv[i], "--operator-fingerprint") == 0 && i + 1 < argc) {
+            options.operatorFingerprints.emplace_back(argv[i + 1]);
             i += 2;
         } else if (std::strcmp(argv[i], "--log-level") == 0 && i + 1 < argc) {
             const std::optional<bazarish::log::Level> parsed

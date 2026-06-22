@@ -1,9 +1,14 @@
 // Bazarish project (c) 2026
 #include "QuotaPublisher.hpp"
 
+#include <bazarish/Auth.hpp>
+#include <bazarish/Bytes.hpp>
+#include <bazarish/Crypto.hpp>
+
 #include <httplib/httplib.h>
 #include <nlohmann/json.hpp>
 
+#include <ctime>
 #include <exception>
 #include <utility>
 
@@ -41,9 +46,9 @@ HostPort parseUrl(const std::string& url)
 }  // namespace
 
 QuotaPublisher::QuotaPublisher(
-    std::string baseUrl, std::string operatorSecret, std::string endpointPath)
+    std::string baseUrl, const Identity& signer, std::string endpointPath)
     : baseUrl_(std::move(baseUrl))
-    , operatorSecret_(std::move(operatorSecret))
+    , signer_(signer)
     , endpointPath_(std::move(endpointPath))
 {
 }
@@ -59,9 +64,13 @@ bool QuotaPublisher::publish(const std::string& user, const std::uint64_t quotaB
         client.set_connection_timeout(5, 0);
         client.set_read_timeout(10, 0);
         const nlohmann::json body = {{"user", user}, {"quotaBytes", quotaBytes}};
-        const httplib::Headers headers = {{"X-Operator-Secret", operatorSecret_}};
+        const std::string bodyText = body.dump();
+        const auth::Headers signature = auth::signRequest(signer_,
+            static_cast<std::int64_t>(std::time(nullptr)), "PUT", endpointPath_,
+            Bytes(bodyText.begin(), bodyText.end()));
+        const httplib::Headers headers(signature.begin(), signature.end());
         const httplib::Result response
-            = client.Put(endpointPath_, headers, body.dump(), "application/json");
+            = client.Put(endpointPath_, headers, bodyText, "application/json");
         return response && response->status == 200;
     } catch (const std::exception&) {
         return false;  // best effort

@@ -6,6 +6,7 @@
 #include <bazarish/Auth.hpp>
 #include <bazarish/Certificates.hpp>
 #include <bazarish/Errors.hpp>
+#include <bazarish/Health.hpp>
 
 #include <httplib/httplib.h>
 #include <nlohmann/json.hpp>
@@ -65,6 +66,7 @@ AccountApi::AccountApi(
     , grants_(grants)
     , options_(options)
     , http_(std::make_unique<httplib::Server>())
+    , startedAt_(nowSeconds())
 {
     setupRoutes();
 }
@@ -93,6 +95,23 @@ void AccountApi::stop()
 
 void AccountApi::setupRoutes()
 {
+    // Authenticated liveness for the admin panel: service name, version, uptime
+    // and resident memory. Operator-only (signed), so it leaks nothing to an
+    // unauthenticated caller.
+    http_->Get("/healthz", [this](const httplib::Request& request, httplib::Response& response) {
+        try {
+            auth::authorizeRequest(collectAuthHeaders(request), nowSeconds(), request.method,
+                request.path, Bytes(request.body.begin(), request.body.end()),
+                options_.operatorFingerprints);
+        } catch (const std::exception& error) {
+            respondError(response, 403, ErrorCode::eDeliveryRejected, error.what());
+            return;
+        }
+        response.set_content(
+            health::reportJson("service-node", options_.version, startedAt_, nowSeconds()),
+            "application/json");
+    });
+
     const auto authenticated = [this](auto handler) {
         return [this, handler](const httplib::Request& request, httplib::Response& response) {
             std::string user;

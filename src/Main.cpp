@@ -13,6 +13,7 @@
 
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Certificates.hpp>
+#include <bazarish/Crypto.hpp>
 #include <bazarish/Log.hpp>
 
 #include <nlohmann/json.hpp>
@@ -45,7 +46,7 @@ void printUsage()
         "         [--listen <host> <port>] [--portal-listen <host> <port>]\n"
         "         [--payments-config <path>]\n"
         "         [--messaging <host> <port>] [--blob-storage <host> <port>]\n"
-        "         [--operator-secret <secret>] [--log-level <error|warn|info|debug>]\n"
+        "         [--operator-fingerprint <fp>]... [--log-level <error|warn|info|debug>]\n"
         "       bazarish-service-node --version\n"
         "\n"
         "The server card (produced by bazarish-server --i2p) binds this\n"
@@ -62,6 +63,43 @@ bazarish::Bytes readFileBytes(const fs::path& path)
     }
     return bazarish::Bytes(
         std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
+std::string readFileText(const fs::path& path)
+{
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        throw std::runtime_error("failed to open " + path.string());
+    }
+    return std::string(
+        std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
+void writePrivateFile(const fs::path& path, const std::string& text)
+{
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        throw std::runtime_error("failed to open " + path.string());
+    }
+    out << text;
+    if (!out) {
+        throw std::runtime_error("failed to write " + path.string());
+    }
+    fs::permissions(path, fs::perms::owner_read | fs::perms::owner_write);
+}
+
+// Loads the service node's own signing identity from the state directory,
+// generating it on first start. The node signs its operator pushes (quota,
+// transient) with it, and a backend authorises it by fingerprint.
+bazarish::Identity loadOrCreateIdentity(const fs::path& stateDir)
+{
+    const fs::path path = stateDir / "identity.pem";
+    if (fs::exists(path)) {
+        return bazarish::Identity::fromPrivatePem(readFileText(path));
+    }
+    bazarish::Identity identity = bazarish::Identity::generate();
+    writePrivateFile(path, identity.privatePem());
+    return identity;
 }
 
 // One paid service, parsed from the payments config.
@@ -176,7 +214,7 @@ int main(const int argc, const char** argv)
     int messagingPort = 0;
     std::string blobStorageHost;
     int blobStoragePort = 0;
-    std::string operatorSecret;
+    std::vector<std::string> operatorFingerprints;
     bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
     for (int i = 5; i < argc;) {
         const std::string flag = argv[i];
@@ -199,8 +237,8 @@ int main(const int argc, const char** argv)
             blobStorageHost = argv[i + 1];
             blobStoragePort = std::atoi(argv[i + 2]);
             i += 3;
-        } else if (flag == "--operator-secret" && i + 1 < argc) {
-            operatorSecret = argv[i + 1];
+        } else if (flag == "--operator-fingerprint" && i + 1 < argc) {
+            operatorFingerprints.emplace_back(argv[i + 1]);
             i += 2;
         } else if (flag == "--log-level" && i + 1 < argc) {
             const std::optional<bazarish::log::Level> parsed
@@ -229,6 +267,12 @@ int main(const int argc, const char** argv)
         = paymentsConfigPath.empty() ? PaymentsConfig{} : loadPaymentsConfig(paymentsConfigPath);
 
     fs::create_directories(stateDir);
+    // The service node's own signing identity: it signs its operator pushes
+    // (quota, transient) so the backends authorise it by fingerprint. Print the
+    // fingerprint so the operator can list it in each backend's
+    // --operator-fingerprint.
+    const bazarish::Identity nodeIdentity = loadOrCreateIdentity(stateDir);
+    std::printf("service-node operator fingerprint: %s\n", nodeIdentity.fingerprint().c_str());
     bazarish::service::SubscriptionStore store(stateDir / "store");
     bazarish::service::GrantStore grants(stateDir / "store");
     bazarish::service::LedgerStore ledger(stateDir / "store", payments.settlementCurrency);
@@ -237,7 +281,7 @@ int main(const int argc, const char** argv)
         = bazarish::service::makePaymentGateway(payments.gateway);
 
     // Pushes a user's effective storage quota to both backends over the private
-    // channel (operator secret): the messaging server (mailbox quota,
+    // channel, signed by the node identity: the messaging server (mailbox quota,
     // /v1/messaging/quota) and the blob store (blob-hosting quota,
     // /v1/storage/quota). Each is a no-op until its --messaging / --blob-storage
     // endpoint is given.
@@ -247,10 +291,10 @@ int main(const int argc, const char** argv)
     const std::string blobStorageUrl = blobStoragePort > 0
         ? "http://" + blobStorageHost + ":" + std::to_string(blobStoragePort)
         : std::string();
-    const bazarish::service::QuotaPublisher messagingQuota(messagingUrl, operatorSecret);
+    const bazarish::service::QuotaPublisher messagingQuota(messagingUrl, nodeIdentity);
     const bazarish::service::QuotaPublisher blobQuota(
-        blobStorageUrl, operatorSecret, "/v1/storage/quota");
-    const bazarish::service::TransientPublisher transientPub(messagingUrl, operatorSecret);
+        blobStorageUrl, nodeIdentity, "/v1/storage/quota");
+    const bazarish::service::TransientPublisher transientPub(messagingUrl, nodeIdentity);
     const auto publishQuota
         = [&messagingQuota, &blobQuota](const std::string& user, const std::uint64_t quotaBytes) {
               messagingQuota.publish(user, quotaBytes);
@@ -274,6 +318,8 @@ int main(const int argc, const char** argv)
     bazarish::service::AccountApiOptions options;
     options.serverFingerprint = card.server;
     options.serverCardDer = cardDer;
+    options.version = kVersion;
+    options.operatorFingerprints = operatorFingerprints;
     options.settlementCurrency = payments.settlementCurrency;
     options.defaultQuotaBytes = payments.freeStorageBytes;
     options.portalMessage = payments.portal.message;

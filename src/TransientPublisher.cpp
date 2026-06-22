@@ -1,9 +1,14 @@
 // Bazarish project (c) 2026
 #include "TransientPublisher.hpp"
 
+#include <bazarish/Auth.hpp>
+#include <bazarish/Bytes.hpp>
+#include <bazarish/Crypto.hpp>
+
 #include <httplib/httplib.h>
 #include <nlohmann/json.hpp>
 
+#include <ctime>
 #include <exception>
 #include <utility>
 
@@ -41,9 +46,9 @@ HostPort parseUrl(const std::string& url)
 }  // namespace
 
 TransientPublisher::TransientPublisher(
-    std::string baseUrl, std::string operatorSecret, std::string endpointPath)
+    std::string baseUrl, const Identity& signer, std::string endpointPath)
     : baseUrl_(std::move(baseUrl))
-    , operatorSecret_(std::move(operatorSecret))
+    , signer_(signer)
     , endpointPath_(std::move(endpointPath))
 {
 }
@@ -64,9 +69,13 @@ bool TransientPublisher::publish(const std::string& user, const std::string& tra
             body["transient"] = transientB64;
             body["expiresUnix"] = expiresUnix;
         }
-        const httplib::Headers headers = {{"X-Operator-Secret", operatorSecret_}};
+        const std::string bodyText = body.dump();
+        const auth::Headers signature = auth::signRequest(signer_,
+            static_cast<std::int64_t>(std::time(nullptr)), "PUT", endpointPath_,
+            Bytes(bodyText.begin(), bodyText.end()));
+        const httplib::Headers headers(signature.begin(), signature.end());
         const httplib::Result response
-            = client.Put(endpointPath_, headers, body.dump(), "application/json");
+            = client.Put(endpointPath_, headers, bodyText, "application/json");
         return response && response->status == 200;
     } catch (const std::exception&) {
         return false;  // best effort

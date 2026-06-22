@@ -51,6 +51,12 @@ struct AccountApiOptions {
     std::uint64_t defaultQuotaBytes = 10 * 1024 * 1024;
     // Maximum subscription validity the server accepts.
     std::int64_t maxTermSeconds = 14 * 24 * 3600;
+    // Version string reported by /healthz.
+    std::string version;
+    // Fingerprints authorised to call /healthz (the admin panel). The caller
+    // proves possession by signing the request; no shared secret. Empty disables
+    // /healthz.
+    std::vector<std::string> operatorFingerprints;
 
     // Service-portal onboarding, advertised by GET /v1/account/portal so a
     // client can show the user where to register. Onboarding itself happens on
@@ -99,6 +105,7 @@ private:
     GrantStore& grants_;
     const AccountApiOptions options_;
     std::unique_ptr<httplib::Server> http_;
+    std::int64_t startedAt_ = 0;
 
     auth::ReplayCache replayCache_;
 };

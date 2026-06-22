@@ -191,33 +191,52 @@ void HttpApi::registerRoutes()
         redirectTo(response, "/login?msg=loggedout");
     });
 
-    http_->Get("/", [this](const httplib::Request& request, httplib::Response& response) {
-        if (!sessions_.valid(cookieValue(request, kCookieName), nowSeconds())) {
-            redirectTo(response, "/login");
-            return;
-        }
-
-        // Probe every service concurrently so one slow/down service cannot stall
-        // the whole dashboard.
+    // Probes every service concurrently (one slow/down service cannot stall the
+    // dashboard) and returns the status table body rows. Shared by the full page
+    // render and the /api/status partial the page polls every few seconds.
+    const auto renderRows = [this]() -> std::string {
         std::vector<std::future<HealthResult>> probes;
         probes.reserve(config_.services.size());
         for (std::size_t i = 0; i < config_.services.size(); ++i) {
             probes.push_back(std::async(std::launch::async,
                 [this, i]() { return probeHealth(config_.services[i], identity_); }));
         }
+        std::string rows;
+        if (config_.services.empty()) {
+            rows += "<tr><td colspan=\"6\" class=\"muted\">No services configured.</td></tr>";
+        }
+        for (std::size_t i = 0; i < config_.services.size(); ++i) {
+            rows += serviceRow(config_.services[i], probes[i].get());
+        }
+        return rows;
+    };
+
+    // The status table rows alone, for the in-page poller. Session-guarded like
+    // the dashboard; a 401 tells the page to bounce to the sign-in screen.
+    http_->Get("/api/status", [this, renderRows](
+                                  const httplib::Request& request, httplib::Response& response) {
+        if (!sessions_.valid(cookieValue(request, kCookieName), nowSeconds())) {
+            response.status = 401;
+            return;
+        }
+        response.set_content(renderRows(), "text/html; charset=utf-8");
+    });
+
+    http_->Get("/", [this, renderRows](
+                        const httplib::Request& request, httplib::Response& response) {
+        if (!sessions_.valid(cookieValue(request, kCookieName), nowSeconds())) {
+            redirectTo(response, "/login");
+            return;
+        }
 
         std::string body = flashBanner(request.get_param_value("msg"));
         body += "<form method=\"post\" action=\"/logout\" style=\"float:right\">"
                 "<button>Sign out</button></form>";
-        body += "<h2>Services</h2><table><tr><th>Service</th><th>Status</th><th>Version</th>"
-                "<th>Uptime</th><th>RAM (now / peak)</th><th>Latency</th></tr>";
-        if (config_.services.empty()) {
-            body += "<tr><td colspan=\"6\" class=\"muted\">No services configured.</td></tr>";
-        }
-        for (std::size_t i = 0; i < config_.services.size(); ++i) {
-            body += serviceRow(config_.services[i], probes[i].get());
-        }
-        body += "</table>";
+        body += "<h2>Services</h2><table><thead><tr><th>Service</th><th>Status</th>"
+                "<th>Version</th><th>Uptime</th><th>RAM (now / peak)</th><th>Latency</th></tr>"
+                "</thead><tbody id=\"svcrows\">";
+        body += renderRows();
+        body += "</tbody></table><p class=\"muted\">Live - refreshes every 5s.</p>";
 
         // Management: a quota form (server-core + blob-storage) and an I2P-dest
         // form (server-core), built from the configured services.
@@ -255,7 +274,16 @@ void HttpApi::registerRoutes()
             body += "<button>Apply</button></form>";
         }
 
-        sendHtml(response, htmlPage("Dashboard", body));
+        // Poll the status partial and swap the table body in place, so the live
+        // figures refresh without reloading the page or disturbing the forms.
+        body += "<script>setInterval(function(){"
+                "fetch('/api/status',{headers:{'Accept':'text/html'}}).then(function(r){"
+                "if(!r.ok){window.location='/login';return null;}return r.text();})"
+                ".then(function(h){if(h!==null){"
+                "document.getElementById('svcrows').innerHTML=h;}})"
+                ".catch(function(){});},5000);</script>";
+
+        sendHtml(response, htmlPage("Dashboard", body, /*wide=*/true));
     });
 
     const auto findService = [this](const std::string& name) -> const ServiceEntry* {

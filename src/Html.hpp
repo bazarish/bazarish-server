@@ -13,7 +13,8 @@ std::string htmlEscape(const std::string& s);
 std::string bytesHuman(std::uint64_t bytes);
 
 // Wraps a page body in the shared document shell. All styling is inline so the
-// panel pulls in no third-party resource.
-std::string htmlPage(const std::string& title, const std::string& body);
+// panel pulls in no third-party resource. Set wide for the dashboard so the
+// status table fits without cramping.
+std::string htmlPage(const std::string& title, const std::string& body, bool wide = false);
 
 }  // namespace bazarish::admin

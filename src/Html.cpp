@@ -49,7 +49,7 @@ std::string bytesHuman(const std::uint64_t bytes)
     return buffer;
 }
 
-std::string htmlPage(const std::string& title, const std::string& body)
+std::string htmlPage(const std::string& title, const std::string& body, const bool wide)
 {
     return "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">"
            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
@@ -63,6 +63,7 @@ std::string htmlPage(const std::string& title, const std::string& body)
           "font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}"
           "main{width:100%;max-width:48rem;margin:2.5rem 1rem;padding:1.75rem;"
           "background:#1c1f24;border:1px solid #2a2f37;border-radius:14px}"
+          "main.wide{max-width:72rem}"
           "h1{font-size:1.25rem;margin:0 0 1.25rem}h2{font-size:1.05rem;margin:1.5rem 0 .5rem}"
           "a{color:#7cc0ff}label{display:block;margin:.75rem 0 .25rem;font-size:.9rem;color:#aeb4bd}"
           "input,textarea,select{width:100%;padding:.6rem;background:#0f1115;color:#e6e8eb;"
@@ -81,8 +82,9 @@ std::string htmlPage(const std::string& title, const std::string& body)
           ".svc{border:1px solid #2a2f37;border-radius:10px;padding:.75rem 1rem;margin:.6rem 0}"
           ".muted{color:#8b929c;font-size:.85rem}"
           ".up{color:#7ee08a;font-weight:600}.down{color:#f3838e;font-weight:600}"
-          "</style></head><body><main><h1>Bazarish admin panel</h1>"
-        + body + "</main></body></html>";
+          "</style></head><body><main"
+        + std::string(wide ? " class=\"wide\"" : "")
+        + "><h1>Bazarish admin panel</h1>" + body + "</main></body></html>";
 }
 
 }  // namespace bazarish::admin

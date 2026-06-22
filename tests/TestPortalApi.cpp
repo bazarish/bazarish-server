@@ -342,7 +342,7 @@ void testWebUi()
     // Logged out, the home page is the sign-in-with-key login form.
     CHECK(home && home->status == 200);
     CHECK(home->get_header_value("Content-Type").find("text/html") != std::string::npos);
-    CHECK(home->body.find("sign-login") != std::string::npos);
+    CHECK(home->body.find("action=\"/login\"") != std::string::npos);
 
     // Sign in through the HTML form (challenge from the API, signed by the key).
     const std::string challenge = nlohmann::json::parse(client.Get("/portal/login")->body)

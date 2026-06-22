@@ -511,10 +511,10 @@ void PortalApi::setupWebRoutes()
     const auto loginPage = [this]() {
         const std::string challenge = login_.issue(nowSeconds());
         const std::string body = "<p>Sign in with your key — your private key never enters the "
-                                 "browser. In your Bazarish client run:</p><pre>bazarish-client "
-                                 "sign-login "
+                                 "browser. Copy this challenge, sign it in your Bazarish client "
+                                 "(Signature), and paste the result below.</p><pre>"
             + htmlEscape(challenge)
-            + "</pre><p>then paste the resulting blob below.</p>"
+            + "</pre>"
               "<form method=\"post\" action=\"/login\">"
               "<input type=\"hidden\" name=\"challenge\" value=\""
             + htmlEscape(challenge)

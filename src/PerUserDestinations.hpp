@@ -22,7 +22,7 @@ class FederationRateLimiter;
 
 // Operates per-user federation destinations for paid users that own their I2P
 // key. The user delegates a time-boxed OFFLINE transient to the server, which
-// brings the destination up over SAM as a STANDARD LeaseSet2 (an
+// brings the destination up over I2P as a STANDARD LeaseSet2 (an
 // offline-signature destination cannot publish an encrypted LeaseSet2) with its
 // own inbound accept loop feeding the shared DeliveryEngine. The destination's
 // address equals the user's master b32, so it is stable as the user moves
@@ -71,12 +71,12 @@ public:
     std::shared_ptr<Key> servingKeyFor(const std::string& userFp) const;
 
     // userFp's personal destination address (the master b32), learned once the
-    // SAM session publishes. Empty when the user has none or it is not up yet.
+    // destination publishes. Empty when the user has none or it is not up yet.
     std::string destinationFor(const std::string& userFp) const;
 
     // userFp's personal-destination state, for the status the client polls:
     //   ""          - no personal destination,
-    //   "building"  - provisioned, the SAM session has not published yet (so the
+    //   "building"  - provisioned, the destination has not published yet (so the
     //                 client must not yet hand out the personal address),
     //   "active"    - published and within the transient's validity,
     //   "expired"   - the offline transient lapsed: the personal destination is
@@ -93,12 +93,12 @@ private:
         // The destination's own serving sealing key (private half held here; its
         // public half is surfaced to the user). The accept loop unseals with it.
         std::shared_ptr<Key> sealingKey;
-        // The published destination address (master b32); set once the SAM
-        // session builds. Guarded by mutex_.
+        // The published destination address (master b32); set once the
+        // destination builds. Guarded by mutex_.
         std::string dest;
     };
 
-    // Starts the worker that builds the SAM session and serves its accept loop.
+    // Starts the worker that builds the I2P destination and serves its accept loop.
     void bringUp(const std::string& userFp, const std::string& transientB64,
         std::int64_t expiresUnix, const std::string& sealingKeyPem);
     void teardownLocked(const std::string& userFp);

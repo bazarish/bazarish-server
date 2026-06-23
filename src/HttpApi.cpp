@@ -367,12 +367,12 @@ void HttpApi::setupRoutes()
             respondJson(response, {{"ok", true}});
         }));
 
-    // --- Blob proxy (for clients without a local SAM bridge) ---
+    // --- Blob proxy (for clients without their own I2P transport) ---
 
     // Proxies a large-message blob op over I2P on the client's behalf: the client
     // passes the blob's .b32.i2p host + path (+ method GET download / DELETE
-    // unsend, + delete-token), the server runs it over a fresh transient SAM
-    // session and relays the result. Only .b32.i2p hosts - never an open proxy.
+    // unsend, + delete-token), the server runs it over a fresh transient I2P
+    // destination and relays the result. Only .b32.i2p hosts - never an open proxy.
     http_->Get("/v1/messaging/blob-proxy",
         authenticated([this, requireClient](const httplib::Request& request,
                           httplib::Response& response, const std::string& user) {
@@ -546,7 +546,7 @@ void HttpApi::setupRoutes()
             respondJson(response, result);
         }));
 
-    // First-contact discovery proxy (fallback for a client without a SAM bridge):
+    // First-contact discovery proxy (fallback for a client without its own I2P transport):
     // relay a sealed fetch (op "card" to a serving server, "resolve" to the
     // central resolver) to toDest over I2P and return the sealed response. The
     // server moves opaque bytes - the client sealed the query and verifies the

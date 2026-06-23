@@ -46,7 +46,7 @@ public:
     void setGetCard(GetCardFn getCard);
 
     // Relays a sealed fetch (op "card" or "resolve") to a destination over I2P;
-    // the HttpApi RemoteFetchFn (the proxy fallback for a no-SAM client).
+    // the HttpApi RemoteFetchFn (the proxy fallback for a client with no I2P transport).
     RemoteFetchResult fetchOverI2p(
         const std::string& toDest, const std::string& op, const Bytes& sealed);
     RemoteFetchFn asRemoteFetchFn();

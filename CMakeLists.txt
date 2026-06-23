@@ -40,11 +40,6 @@ add_executable(bazarish-server src/Main.cpp)
 target_link_libraries(bazarish-server PRIVATE bazarish_server_lib)
 target_compile_options(bazarish-server PRIVATE -Wall -Wextra -Werror)
 
-# Live I2P federation smoke (manual; depends on a local SAM bridge).
-add_executable(i2p-federation-smoke tools/I2pFederationSmoke.cpp)
-target_link_libraries(i2p-federation-smoke PRIVATE bazarish_server_lib)
-target_compile_options(i2p-federation-smoke PRIVATE -Wall -Wextra -Werror)
-
 enable_testing()
 
 function(bazarish_server_add_test name)

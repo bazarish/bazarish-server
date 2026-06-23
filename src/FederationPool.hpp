@@ -25,7 +25,7 @@ class FederationRateLimiter;
 std::size_t poolIndexFor(const std::string& userFp, std::size_t poolSize);
 
 // A free-tier address pool: N server-owned federation destinations, each a
-// persisted encrypted LeaseSet2 (b33) SAM session with its own inbound accept
+// persisted encrypted LeaseSet2 (b33) I2P destination with its own inbound accept
 // loop feeding the shared DeliveryEngine. Free users are spread deterministically
 // across the pool (k-anonymity: a floodfill that sees a pool destination cannot
 // tell which of the users behind it a message is for). Keys persist so a pool

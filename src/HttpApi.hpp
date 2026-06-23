@@ -54,13 +54,14 @@ struct HttpApiOptions {
     std::vector<std::string> operatorFingerprints;
     // Version string reported by /healthz.
     std::string version;
-    // Runs a small blob op over I2P for a client that has no SAM bridge of its
+    // Runs a small blob op over I2P for a client that has no I2P transport of its
     // own (the proxy fallback): used for DELETE (unsend), with an optional
     // delete-token. Empty disables proxy unsend.
     std::function<BlobProxyResult(const std::string& method, const std::string& host,
         const std::string& path, const std::string& deleteToken)>
         blobProxyFetch;
-    // Streams a blob download over I2P for a no-SAM client (proxy GET): host +
+    // Streams a blob download over I2P for a client with no I2P transport of its
+    // own (proxy GET): host +
     // path + optional Range -> a pull reader the endpoint drains into the client
     // response a chunk at a time, so a large blob is never buffered whole on the
     // user's own server. Empty disables proxy downloads.
@@ -111,7 +112,7 @@ struct RemoteFetchResult {
 
 // Relays a sealed fetch request (op "card" or "resolve") to a destination over
 // I2P and returns the sealed response - the proxy fallback for a client without
-// a SAM bridge. The default (no transport wired) reports unreachable.
+// its own I2P transport. The default (no transport wired) reports unreachable.
 using RemoteFetchFn = std::function<RemoteFetchResult(
     const std::string& toDest, const std::string& op, const Bytes& sealed)>;
 

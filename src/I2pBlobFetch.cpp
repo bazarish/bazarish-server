@@ -1,7 +1,7 @@
 // Bazarish project (c) 2026
 #include "I2pBlobFetch.hpp"
 
-#include <bazarish/SamHttp.hpp>
+#include <bazarish/I2pHttp.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -34,10 +34,10 @@ public:
         if (!range.empty()) {
             headers["Range"] = range;
         }
-        const std::string request = buildSamHttpRequest("GET", host, path, headers, 0);
+        const std::string request = buildI2pHttpRequest("GET", host, path, headers, 0);
         stream_->writeAll(request.data(), request.size());
 
-        SamHttpHead head = readSamHttpHead(*stream_);
+        I2pHttpHead head = readI2pHttpHead(*stream_);
         status_ = head.status;
         headers_ = std::move(head.headers);
         leftover_ = std::move(head.leftover);
@@ -79,10 +79,10 @@ BlobProxyResult fetchBlobOverI2p(bazarish::i2p::Endpoint& endpoint, const std::s
     if (!deleteToken.empty()) {
         headers["X-Delete-Token"] = deleteToken;
     }
-    const std::string request = buildSamHttpRequest(method, host, path, headers, 0);
+    const std::string request = buildI2pHttpRequest(method, host, path, headers, 0);
     stream->writeAll(request.data(), request.size());
 
-    const SamHttpResponse response = readSamHttpResponse(*stream);
+    const I2pHttpResponse response = readI2pHttpResponse(*stream);
     BlobProxyResult result;
     result.status = response.status;
     result.body = Bytes(response.body.begin(), response.body.end());

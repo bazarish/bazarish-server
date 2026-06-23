@@ -551,6 +551,16 @@ void PortalApi::setupWebRoutes()
         const std::int64_t now = nowSeconds();
         std::string body = flashBanner(msg);
         body += "<p class=\"muted\">Signed in as <code>" + htmlEscape(userId) + "</code></p>";
+
+        // The server descriptor: paste it into a client to connect it here. Shown
+        // as a legible string (no base64) so it can be checked at a glance.
+        if (!options_.serverDescriptor.empty()) {
+            body += "<h2>Server descriptor</h2>"
+                    "<p class=\"muted\">Paste this into your client to connect it to this "
+                    "server.</p><pre>"
+                + htmlEscape(options_.serverDescriptor) + "</pre>";
+        }
+
         body += "<h2>Balance</h2><p>" + std::to_string(ledger_.get(userId).balanceAtomic) + " "
             + htmlEscape(options_.settlementCurrency)
             + "</p><p><a href=\"/topup\">Top up</a></p>";

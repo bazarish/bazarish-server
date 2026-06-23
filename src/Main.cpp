@@ -15,6 +15,7 @@
 #include <bazarish/Certificates.hpp>
 #include <bazarish/Crypto.hpp>
 #include <bazarish/Log.hpp>
+#include <bazarish/ServerDescriptor.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -116,6 +117,9 @@ struct ServiceConfig {
 struct PortalConfig {
     std::string message;
     std::vector<std::string> links;
+    // This server's facade URLs, shown in the cabinet as the server descriptor a
+    // client pastes to connect (client failover order).
+    std::vector<std::string> facades;
     bool captchaEnabled = true;
     int captchaLength = 5;
     std::int64_t captchaTtlSeconds = 300;
@@ -178,6 +182,9 @@ PaymentsConfig loadPaymentsConfig(const fs::path& path)
         config.portal.message = portal.value("message", std::string());
         if (portal.contains("links")) {
             config.portal.links = portal.at("links").get<std::vector<std::string>>();
+        }
+        if (portal.contains("facades")) {
+            config.portal.facades = portal.at("facades").get<std::vector<std::string>>();
         }
         if (portal.contains("captcha")) {
             const nlohmann::json& captcha = portal.at("captcha");
@@ -350,6 +357,10 @@ int main(const int argc, const char** argv)
             payments.portal.captchaTtlSeconds);
         bazarish::service::PortalApiOptions portalOptions;
         portalOptions.audience = card.server;
+        // The server descriptor a client pastes to connect: this server's
+        // fingerprint plus its configured facade URLs, shown in the cabinet.
+        portalOptions.serverDescriptor = bazarish::encodeServerDescriptor(
+            {card.server, payments.portal.facades});
         portalOptions.requireCaptcha = payments.portal.captchaEnabled;
         portalOptions.challengeSecret = bazarish::toHex(bazarish::randomBytes(16));
         portalOptions.sessionSecret = bazarish::toHex(bazarish::randomBytes(16));

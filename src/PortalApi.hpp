@@ -27,6 +27,9 @@ struct PortalApiOptions {
     // This service node's fingerprint - the login challenge audience, so a
     // challenge issued here cannot be replayed against another portal.
     std::string audience;
+    // The server descriptor string (bazarish://server?...) shown in the cabinet
+    // so a signed-in user can copy it into their client. Empty hides the section.
+    std::string serverDescriptor;
     // Portal-local HMAC secrets (login challenge binding, session cookie).
     std::string challengeSecret;
     std::string sessionSecret;

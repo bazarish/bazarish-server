@@ -5,7 +5,7 @@
 #include "Federation.hpp"
 
 #include <bazarish/Bytes.hpp>
-#include <bazarish/Sam.hpp>
+#include <bazarish/I2p.hpp>
 
 #include <atomic>
 #include <cstddef>
@@ -33,9 +33,9 @@ std::size_t poolIndexFor(const std::string& userFp, std::size_t poolSize);
 // while their tunnels build, exactly like the home federation destination.
 class FederationPool {
 public:
-    FederationPool(std::string samHost, std::uint16_t samPort, DeliveryEngine& engine,
-        std::filesystem::path stateDir, std::string sessionIdPrefix, I2pPrivacy privacy,
-        std::size_t size, int tunnelQuantity = kDefaultTunnelQuantity,
+    FederationPool(bazarish::i2p::Router& router, DeliveryEngine& engine,
+        std::filesystem::path stateDir, bazarish::i2p::Privacy privacy, std::size_t size,
+        int tunnelQuantity = bazarish::i2p::kDefaultTunnelQuantity,
         FederationRateLimiter* limiter = nullptr);
     ~FederationPool();
 
@@ -66,7 +66,7 @@ public:
 
 private:
     struct Dest {
-        std::unique_ptr<SamSession> session;
+        std::shared_ptr<bazarish::i2p::Endpoint> endpoint;
         // The pool destination's own serving sealing key: the accept loop
         // unseals delivery envelopes addressed to it with this key.
         std::shared_ptr<Key> sealingKey;
@@ -74,12 +74,10 @@ private:
         std::thread acceptThread;
     };
 
-    const std::string samHost_;
-    const std::uint16_t samPort_;
+    bazarish::i2p::Router& router_;
     DeliveryEngine& engine_;
     const std::filesystem::path stateDir_;
-    const std::string sessionIdPrefix_;
-    const I2pPrivacy privacy_;
+    const bazarish::i2p::Privacy privacy_;
     const std::size_t size_;
     const int tunnelQuantity_;
     FederationRateLimiter* const limiter_;

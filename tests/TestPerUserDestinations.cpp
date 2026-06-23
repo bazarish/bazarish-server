@@ -52,7 +52,7 @@ int main()
     // Port 1 is closed, so each destination's worker fails its SAM session fast:
     // the test exercises persistence and lifecycle without a live router.
     {
-        PerUserDestinations dests("127.0.0.1", 1, engine, root, I2pPrivacy::eMinimal);
+        PerUserDestinations dests(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
 
         // Provision persists the transient and registers the destination.
         dests.provision(alice, "transient-blob-A", kNow + 1000);
@@ -98,7 +98,7 @@ int main()
     const std::string bob = toBase32(Bytes(32, 0x02));
     Bytes aliceServing;
     {
-        PerUserDestinations writer("127.0.0.1", 1, engine, root, I2pPrivacy::eMinimal);
+        PerUserDestinations writer(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
         writer.provision(alice, "transient-reload", kNow + 1000);
         writer.provision(bob, "transient-expired", kNow - 10);
         const std::shared_ptr<Key> key = writer.servingKeyFor(alice);
@@ -106,7 +106,7 @@ int main()
         aliceServing = key->publicDer();
     }
     {
-        PerUserDestinations reloaded("127.0.0.1", 1, engine, root, I2pPrivacy::eMinimal);
+        PerUserDestinations reloaded(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
         reloaded.reloadPersisted(kNow);
         CHECK(reloaded.size() == 1);  // alice restored; bob's expired transient skipped
         // The serving key survives the restart (the user's card stays valid).

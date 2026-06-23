@@ -2,6 +2,7 @@
 #pragma once
 
 #include <bazarish/Bytes.hpp>
+#include <bazarish/I2p.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -17,14 +18,13 @@ struct BlobProxyResult {
 };
 
 // Performs a blob operation over I2P on a client's behalf (the proxy fallback
-// for clients without a local SAM bridge): opens a FRESH transient SAM session
-// (a throwaway destination - unlinkability) to the .b32.i2p host and runs the
-// HTTP/1.1 request (method GET for download, DELETE for unsend) on path. A
-// non-empty deleteToken is sent as the X-Delete-Token header. Construction
-// blocks on tunnel build. Throws on transport failure. Buffers the whole
+// for clients without their own embedded router): opens a stream from the given
+// client endpoint to the .b32.i2p host and runs the HTTP/1.1 request (method GET
+// for download, DELETE for unsend) on path. A non-empty deleteToken is sent as
+// the X-Delete-Token header. Throws on transport failure. Buffers the whole
 // response - used for small ops (DELETE); downloads stream (see below).
-BlobProxyResult fetchBlobOverI2p(const std::string& samHost, std::uint16_t samPort,
-    const std::string& host, const std::string& path, const std::string& method = "GET",
+BlobProxyResult fetchBlobOverI2p(bazarish::i2p::Endpoint& endpoint, const std::string& host,
+    const std::string& path, const std::string& method = "GET",
     const std::string& deleteToken = "");
 
 // Pull-style reader for a STREAMED blob download over I2P: the proxy drains it
@@ -44,11 +44,11 @@ public:
     virtual std::size_t readBody(char* out, std::size_t len) = 0;
 };
 
-// Opens a streaming GET of path on the .b32.i2p host over a fresh transient SAM
-// session, with an optional Range header (e.g. "bytes=N-" to resume). Blocks on
-// tunnel build and reading the response head. Throws on transport failure before
-// the head is read.
-std::unique_ptr<I2pBlobReader> openBlobDownload(const std::string& samHost, std::uint16_t samPort,
+// Opens a streaming GET of path on the .b32.i2p host over a stream from the given
+// client endpoint, with an optional Range header (e.g. "bytes=N-" to resume).
+// Blocks on reading the response head. Throws on transport failure before the
+// head is read.
+std::unique_ptr<I2pBlobReader> openBlobDownload(bazarish::i2p::Endpoint& endpoint,
     const std::string& host, const std::string& path, const std::string& range = "");
 
 }  // namespace bazarish::server

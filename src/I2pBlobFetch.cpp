@@ -1,33 +1,35 @@
 // Bazarish project (c) 2026
 #include "I2pBlobFetch.hpp"
 
-#include <bazarish/Sam.hpp>
 #include <bazarish/SamHttp.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cstring>
 #include <map>
 #include <memory>
+#include <stdexcept>
 #include <string>
 
 namespace bazarish::server {
 
 namespace {
 
-// Streaming download over a fresh transient SAM session: reads the response head
-// at construction, then hands out body bytes incrementally (leftover head bytes
+constexpr std::chrono::seconds kConnectTimeout{60};
+
+// Streaming download over a client endpoint: reads the response head at
+// construction, then hands out body bytes incrementally (leftover head bytes
 // first, then straight off the stream).
 class I2pBlobDownload final : public I2pBlobReader {
 public:
-    I2pBlobDownload(const std::string& samHost, const std::uint16_t samPort,
-        const std::string& host, const std::string& path, const std::string& range)
-        : session_(std::make_unique<SamSession>(
-              samHost, samPort, "blobproxy-" + toHex(randomBytes(6))))
+    I2pBlobDownload(bazarish::i2p::Endpoint& endpoint, const std::string& host,
+        const std::string& path, const std::string& range)
     {
-        // No half-close - SAM treats SHUT_WR as a full stream teardown - so
-        // Connection: close drives the response to EOF.
-        stream_ = std::make_unique<SamStream>(session_->connect(host));
+        stream_ = endpoint.connect(host, kConnectTimeout);
+        if (!stream_) {
+            throw std::runtime_error("i2p blob download: cannot reach " + host);
+        }
         std::map<std::string, std::string> headers;
         if (!range.empty()) {
             headers["Range"] = range;
@@ -56,8 +58,7 @@ public:
     }
 
 private:
-    std::unique_ptr<SamSession> session_;
-    std::unique_ptr<SamStream> stream_;
+    std::unique_ptr<bazarish::i2p::Stream> stream_;
     int status_ = 0;
     std::map<std::string, std::string> headers_;
     std::string leftover_;
@@ -66,35 +67,32 @@ private:
 
 }  // namespace
 
-BlobProxyResult fetchBlobOverI2p(const std::string& samHost, const std::uint16_t samPort,
-    const std::string& host, const std::string& path, const std::string& method,
-    const std::string& deleteToken)
+BlobProxyResult fetchBlobOverI2p(bazarish::i2p::Endpoint& endpoint, const std::string& host,
+    const std::string& path, const std::string& method, const std::string& deleteToken)
 {
-    // Shares the SAM HTTP wire format and response parser with the client's blob
-    // fetch (common SamHttp). No half-close - SAM treats SHUT_WR as a full stream
-    // teardown - so Connection: close drives the response to EOF.
-    SamSession session(samHost, samPort, "blobproxy-" + toHex(randomBytes(6)));
-    SamStream stream = session.connect(host);
+    auto stream = endpoint.connect(host, kConnectTimeout);
+    if (!stream) {
+        throw std::runtime_error("i2p blob fetch: cannot reach " + host);
+    }
 
     std::map<std::string, std::string> headers;
     if (!deleteToken.empty()) {
         headers["X-Delete-Token"] = deleteToken;
     }
     const std::string request = buildSamHttpRequest(method, host, path, headers, 0);
-    stream.writeAll(request.data(), request.size());
+    stream->writeAll(request.data(), request.size());
 
-    const SamHttpResponse response = readSamHttpResponse(stream);
+    const SamHttpResponse response = readSamHttpResponse(*stream);
     BlobProxyResult result;
     result.status = response.status;
     result.body = Bytes(response.body.begin(), response.body.end());
     return result;
 }
 
-std::unique_ptr<I2pBlobReader> openBlobDownload(const std::string& samHost,
-    const std::uint16_t samPort, const std::string& host, const std::string& path,
-    const std::string& range)
+std::unique_ptr<I2pBlobReader> openBlobDownload(bazarish::i2p::Endpoint& endpoint,
+    const std::string& host, const std::string& path, const std::string& range)
 {
-    return std::make_unique<I2pBlobDownload>(samHost, samPort, host, path, range);
+    return std::make_unique<I2pBlobDownload>(endpoint, host, path, range);
 }
 
 }  // namespace bazarish::server

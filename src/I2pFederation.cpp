@@ -3,6 +3,7 @@
 
 #include "Federation.hpp"
 
+#include <chrono>
 #include <ctime>
 #include <stdexcept>
 
@@ -18,8 +19,8 @@ std::int64_t nowSeconds()
 }  // namespace
 
 I2pFederation::I2pFederation(
-    SamSession& session, DeliveryEngine& engine, FederationRateLimiter* const limiter)
-    : session_(session)
+    bazarish::i2p::Endpoint& endpoint, DeliveryEngine& engine, FederationRateLimiter* const limiter)
+    : endpoint_(endpoint)
     , engine_(engine)
     , limiter_(limiter)
     , running_(false)
@@ -48,14 +49,16 @@ void I2pFederation::stop()
 void I2pFederation::acceptLoop()
 {
     while (running_) {
+        std::string peer;
+        auto stream = endpoint_.accept(peer, std::chrono::seconds(30));
+        if (!stream) {
+            continue;  // accept timeout / stop: re-check running
+        }
         try {
-            std::string peer;
-            SamStream stream = session_.accept(peer);
-            federationServeOnce(stream, engine_, nowSeconds(), peer, limiter_, nullptr, getCard_);
+            federationServeOnce(*stream, engine_, nowSeconds(), peer, limiter_, nullptr, getCard_);
         } catch (const std::exception&) {
-            // A failed accept/serve (peer reset, timeout, malformed
-            // request) must not take the loop down; the next inbound
-            // connection gets a fresh accept.
+            // A failed serve (peer reset, malformed request) must not take the
+            // loop down; the next inbound connection gets a fresh accept.
         }
     }
 }
@@ -69,9 +72,13 @@ RemoteDeliveryResult I2pFederation::deliver(
     // destination (e.g. its leaseset has not published yet) leaves the message
     // on the caller for retry.
     try {
-        SamStream stream = session_.connect(toDest);
+        auto stream = endpoint_.connect(toDest, std::chrono::seconds(60));
+        if (!stream) {
+            result.reachable = false;
+            return result;
+        }
         const FederationDeliverResult delivered
-            = federationSendDeliver(stream, sealed, payload);
+            = federationSendDeliver(*stream, sealed, payload);
         result.reachable = true;
         result.delivered = delivered.delivered;
         result.errorCode = delivered.errorCode;
@@ -102,8 +109,12 @@ RemoteFetchResult I2pFederation::fetchOverI2p(
     // sealed fetch. An unreachable destination leaves the lookup to the caller
     // (the client retries, like a first delivery).
     try {
-        SamStream stream = session_.connect(toDest);
-        const FederationFetchResult fetched = federationSendFetch(stream, op, sealed);
+        auto stream = endpoint_.connect(toDest, std::chrono::seconds(60));
+        if (!stream) {
+            result.reachable = false;
+            return result;
+        }
+        const FederationFetchResult fetched = federationSendFetch(*stream, op, sealed);
         result.reachable = true;
         result.ok = fetched.ok;
         result.sealed = fetched.sealed;

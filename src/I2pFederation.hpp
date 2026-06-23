@@ -5,7 +5,7 @@
 #include "Federation.hpp"
 #include "HttpApi.hpp"
 
-#include <bazarish/Sam.hpp>
+#include <bazarish/I2p.hpp>
 
 #include <atomic>
 #include <string>
@@ -21,8 +21,8 @@ class FederationRateLimiter;
 // the recipient's I2P destination directly (see docs-main api/InviteAnonymity.md).
 class I2pFederation {
 public:
-    I2pFederation(
-        SamSession& session, DeliveryEngine& engine, FederationRateLimiter* limiter = nullptr);
+    I2pFederation(bazarish::i2p::Endpoint& endpoint, DeliveryEngine& engine,
+        FederationRateLimiter* limiter = nullptr);
     ~I2pFederation();
 
     I2pFederation(const I2pFederation&) = delete;
@@ -31,7 +31,7 @@ public:
     // Starts the inbound accept loop on a background thread.
     void start();
     // Signals the loop to stop. A blocking accept only returns on the next
-    // inbound connection or the SAM socket timeout, so shutdown is not
+    // inbound connection or the accept timeout, so shutdown is not
     // instantaneous - acceptable for a long-running daemon.
     void stop();
 
@@ -54,7 +54,7 @@ public:
 private:
     void acceptLoop();
 
-    SamSession& session_;
+    bazarish::i2p::Endpoint& endpoint_;
     DeliveryEngine& engine_;
     FederationRateLimiter* limiter_;
     GetCardFn getCard_;

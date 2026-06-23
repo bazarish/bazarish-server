@@ -9,8 +9,8 @@
 
 #include <bazarish/Certificates.hpp>
 #include <bazarish/Crypto.hpp>
+#include <bazarish/I2p.hpp>
 #include <bazarish/Log.hpp>
-#include <bazarish/Sam.hpp>
 
 #include <httplib/httplib.h>
 #include <nlohmann/json.hpp>
@@ -40,7 +40,7 @@ void printUsage()
         "Usage: bazarish-server --state <directory> --i2p [--listen <host> <port>]\n"
         "          [--contact-request-limit <bytes>] [--operator-fingerprint <fp>]...\n"
         "          [--privacy <minimal|middle|max>] [--pool-size <n>]\n"
-        "          [--sam-port <port>] [--tunnel-quantity <n>]\n"
+        "          [--tunnel-quantity <n>]\n"
         "          [--federation-rate-limit <n>] [--service-node <url>]\n"
         "          [--log-level <error|warn|info|debug>]\n"
         "       bazarish-server --version\n"
@@ -133,15 +133,11 @@ int main(const int argc, const char** argv)
     bazarish::server::DeliveryEngineOptions engineOptions;
     std::vector<std::string> operatorFingerprints;
     std::string serviceNodeUrl;
-    bazarish::I2pPrivacy privacy = bazarish::I2pPrivacy::eMax;
-    // SAM API: the host is loopback-only and never configurable (an unprotected
-    // SAM control socket must never be reachable over the network); only the
-    // port is a knob.
-    std::uint16_t samPort = bazarish::SamClient::kDefaultPort;
+    bazarish::i2p::Privacy privacy = bazarish::i2p::Privacy::eMax;
     // Public server destinations carry inbound federation traffic, so they run a
     // full tunnel pool (load balancing across tunnels for one address); 16 is the
     // I2P ceiling. Operators on a constrained uplink can lower it.
-    int tunnelQuantity = bazarish::kMaxTunnelQuantity;
+    int tunnelQuantity = bazarish::i2p::kMaxTunnelQuantity;
     std::size_t poolSize = 10;
     std::size_t federationRateLimit = 240;  // inbound deliveries per peer dest per 60s
     bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
@@ -161,16 +157,13 @@ int main(const int argc, const char** argv)
                 = std::strtoull(argv[i + 1], nullptr, 10);
             i += 2;
         } else if (std::strcmp(argv[i], "--privacy") == 0 && i + 1 < argc) {
-            const std::optional<bazarish::I2pPrivacy> parsed
-                = bazarish::i2pPrivacyFromString(argv[i + 1]);
+            const std::optional<bazarish::i2p::Privacy> parsed
+                = bazarish::i2p::privacyFromString(argv[i + 1]);
             if (!parsed.has_value()) {
                 printUsage();
                 return 2;
             }
             privacy = parsed.value();
-            i += 2;
-        } else if (std::strcmp(argv[i], "--sam-port") == 0 && i + 1 < argc) {
-            samPort = static_cast<std::uint16_t>(std::strtoul(argv[i + 1], nullptr, 10));
             i += 2;
         } else if (std::strcmp(argv[i], "--tunnel-quantity") == 0 && i + 1 < argc) {
             tunnelQuantity = std::atoi(argv[i + 1]);
@@ -223,10 +216,12 @@ int main(const int argc, const char** argv)
     std::printf("server fingerprint: %s\n", identity.fingerprint().c_str());
     std::fflush(stdout);
 
-    // Optional I2P federation: a persistent destination, a published server
-    // card and the inbound accept loop, plus outbound relay resolved from
-    // peers.json. Building the SAM session blocks while tunnels build.
-    std::unique_ptr<bazarish::SamSession> samSession;
+    // Optional I2P federation: an embedded router, a persistent home destination,
+    // a published server card and the inbound accept loop, plus outbound relay
+    // resolved from peers.json.
+    std::unique_ptr<bazarish::i2p::Router> router;
+    std::shared_ptr<bazarish::i2p::Endpoint> homeEndpoint;
+    std::shared_ptr<bazarish::i2p::Endpoint> blobEndpoint;
     std::unique_ptr<bazarish::server::FederationRateLimiter> federationLimiter;
     std::unique_ptr<bazarish::server::I2pFederation> federation;
     std::unique_ptr<bazarish::server::PerUserDestinations> perUserDests;
@@ -236,24 +231,31 @@ int main(const int argc, const char** argv)
     std::vector<std::string> endpoints;
     if (enableI2p) {
         const fs::path destPath = stateDir / "i2p-dest.key";
-        const std::string privateKeys
-            = fs::exists(destPath) ? readFileText(destPath) : std::string("TRANSIENT");
-        bazarish::log::info("starting I2P federation (building tunnels via SAM)...");
-        // The SAM session id must be unique per session on the bridge, so
-        // several local servers can share one router without colliding.
-        const std::string sessionId = "bazarish-fed-" + identity.fingerprint().substr(0, 12);
-        samSession = std::make_unique<bazarish::SamSession>(
-            bazarish::SamClient::kDefaultHost, samPort, sessionId,
-            privateKeys, bazarish::kEncryptedLeaseSetType, privacy, tunnelQuantity);
+        bazarish::log::info("starting embedded I2P router + federation (building tunnels)...");
+        // The embedded router (server role: relays transit). State under <state>/i2p.
+        router = std::make_unique<bazarish::i2p::Router>(
+            bazarish::i2p::RouterConfig{stateDir / "i2p", bazarish::i2p::Role::eServer});
+        const std::string rawHome = fs::exists(destPath) ? readFileText(destPath) : std::string();
+        bazarish::i2p::Keys homeKeys = rawHome.empty()
+            ? bazarish::i2p::Keys::generate()
+            : bazarish::i2p::Keys::fromBlob(bazarish::Bytes(rawHome.begin(), rawHome.end()));
+        // Encrypted LeaseSet2 (server-owned): the shareable address is the blinded b33.
+        homeEndpoint = router->createEndpoint(bazarish::i2p::EndpointConfig{
+            homeKeys, bazarish::i2p::LeaseSetKind::eEncrypted, privacy, tunnelQuantity, true});
         if (!fs::exists(destPath)) {
-            writePrivateFile(destPath, samSession->privateDestination());
+            const bazarish::Bytes blob = homeEndpoint->privateBlob();
+            writePrivateFile(destPath, std::string(blob.begin(), blob.end()));
         }
+        // A separate client endpoint for proxying blob ops outbound (no inbound
+        // role); connecting out does not need a published leaseset.
+        blobEndpoint = router->createEndpoint(bazarish::i2p::EndpointConfig{
+            bazarish::i2p::Keys::generate(), bazarish::i2p::LeaseSetKind::eEncrypted, privacy,
+            bazarish::i2p::kDefaultTunnelQuantity, false});
 
-        // The shareable/routable address is the b33 (encrypted LeaseSet2), not
-        // the raw destination - peers can only reach the encrypted leaseset via
-        // the blinded b33.
-        endpoints.push_back("i2p:" + samSession->routingAddress());
-        std::printf("i2p destination: %s\n", samSession->routingAddress().c_str());
+        // The shareable/routable address is the b33 (encrypted LeaseSet2): peers
+        // reach the encrypted leaseset only via the blinded b33.
+        endpoints.push_back("i2p:" + homeEndpoint->routingHost());
+        std::printf("i2p destination: %s\n", homeEndpoint->routingHost().c_str());
         std::fflush(stdout);
 
         // Inbound federation accountability is per-connecting-destination: one
@@ -290,7 +292,7 @@ int main(const int argc, const char** argv)
         }
 
         federation = std::make_unique<bazarish::server::I2pFederation>(
-            *samSession, engine, federationLimiter.get());
+            *homeEndpoint, engine, federationLimiter.get());
         federation->setGetCard(getCard);
         federation->start();
         remoteDeliver = federation->asRemoteDeliverFn();
@@ -299,8 +301,7 @@ int main(const int argc, const char** argv)
         // Paid per-user destinations: operate client-owned offline keys as the
         // user's personal federation destination. Restore any persisted ones.
         perUserDests = std::make_unique<bazarish::server::PerUserDestinations>(
-            bazarish::SamClient::kDefaultHost, samPort,
-            engine, stateDir, privacy, tunnelQuantity, federationLimiter.get());
+            router.get(), engine, stateDir, privacy, tunnelQuantity, federationLimiter.get());
         perUserDests->setGetCard(getCard);
         perUserDests->reloadPersisted(nowSeconds());
 
@@ -311,9 +312,8 @@ int main(const int argc, const char** argv)
             bazarish::log::info(
                 "starting federation address pool ({} destinations; building tunnels)...", poolSize);
             federationPool = std::make_unique<bazarish::server::FederationPool>(
-                bazarish::SamClient::kDefaultHost, samPort, engine,
-                stateDir, "bazarish-pool-" + identity.fingerprint().substr(0, 8) + "-", privacy,
-                poolSize, tunnelQuantity, federationLimiter.get());
+                *router, engine, stateDir, privacy, poolSize, tunnelQuantity,
+                federationLimiter.get());
             federationPool->setGetCard(getCard);
             federationPool->start();
             bazarish::log::info("address pool up: {} destinations",
@@ -339,11 +339,11 @@ int main(const int argc, const char** argv)
     // destination if they delegated one, else their pool destination if the
     // pool is enabled, else the home destination. Used to short-circuit only
     // same-destination deliveries (a send to the sender's own destination) and
-    // to surface the destination to the user. samSession is always set (--i2p
+    // to surface the destination to the user. homeEndpoint is always set (--i2p
     // is required); homeServingKey is the same key the engine unseals with.
     const auto homeServingKey
         = std::make_shared<bazarish::Key>(bazarish::Key::fromPrivatePem(sealing.privatePem()));
-    const std::string homeDest = samSession->routingAddress();
+    const std::string homeDest = homeEndpoint->routingHost();
     httpOptions.assignDestination
         = [&perUserDests, &federationPool, homeDest, homeServingKey](
               const std::string& user) -> bazarish::server::DestinationAssignment {
@@ -364,19 +364,17 @@ int main(const int argc, const char** argv)
         }
         return {homeDest, homeServingKey, "home"};
     };
-    // Proxy blob ops over I2P for clients without a local SAM bridge, via a fresh
-    // transient session on the local bridge (independent of federation). Unsend
-    // (DELETE) is a small whole-body op; downloads (GET) stream so a large blob is
-    // never buffered whole here.
-    httpOptions.blobProxyFetch = [samPort](const std::string& method, const std::string& blobHost,
+    // Proxy blob ops over I2P for clients without their own embedded router, via
+    // the server's dedicated blob client endpoint (independent of federation).
+    // Unsend (DELETE) is a small whole-body op; downloads (GET) stream so a large
+    // blob is never buffered whole here.
+    httpOptions.blobProxyFetch = [blobEndpoint](const std::string& method, const std::string& blobHost,
                                      const std::string& blobPath, const std::string& deleteToken) {
-        return bazarish::server::fetchBlobOverI2p(bazarish::SamClient::kDefaultHost,
-            samPort, blobHost, blobPath, method, deleteToken);
+        return bazarish::server::fetchBlobOverI2p(*blobEndpoint, blobHost, blobPath, method, deleteToken);
     };
-    httpOptions.blobProxyDownload = [samPort](const std::string& blobHost, const std::string& blobPath,
-                                        const std::string& range) {
-        return bazarish::server::openBlobDownload(bazarish::SamClient::kDefaultHost,
-            samPort, blobHost, blobPath, range);
+    httpOptions.blobProxyDownload = [blobEndpoint](const std::string& blobHost,
+                                        const std::string& blobPath, const std::string& range) {
+        return bazarish::server::openBlobDownload(*blobEndpoint, blobHost, blobPath, range);
     };
     if (perUserDests) {
         httpOptions.provisionI2pDest = [&perUserDests](const std::string& user,

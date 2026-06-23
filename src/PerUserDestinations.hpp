@@ -5,7 +5,7 @@
 #include "Federation.hpp"
 
 #include <bazarish/Bytes.hpp>
-#include <bazarish/Sam.hpp>
+#include <bazarish/I2p.hpp>
 
 #include <atomic>
 #include <cstdint>
@@ -31,9 +31,12 @@ class FederationRateLimiter;
 // blocks the caller.
 class PerUserDestinations {
 public:
-    PerUserDestinations(std::string samHost, std::uint16_t samPort,
-        DeliveryEngine& engine, std::filesystem::path stateDir, I2pPrivacy privacy,
-        int tunnelQuantity = kDefaultTunnelQuantity, FederationRateLimiter* limiter = nullptr);
+    // router may be null (provision/reload then only persist + register state;
+    // no destination is built - used in tests and when running router-less).
+    PerUserDestinations(bazarish::i2p::Router* router, DeliveryEngine& engine,
+        std::filesystem::path stateDir, bazarish::i2p::Privacy privacy,
+        int tunnelQuantity = bazarish::i2p::kDefaultTunnelQuantity,
+        FederationRateLimiter* limiter = nullptr);
     ~PerUserDestinations();
 
     PerUserDestinations(const PerUserDestinations&) = delete;
@@ -102,11 +105,10 @@ private:
     std::filesystem::path pathFor(const std::string& userFp) const;
     std::filesystem::path destsDir() const;
 
-    const std::string samHost_;
-    const std::uint16_t samPort_;
+    bazarish::i2p::Router* const router_;
     DeliveryEngine& engine_;
     const std::filesystem::path stateDir_;
-    const I2pPrivacy privacy_;
+    const bazarish::i2p::Privacy privacy_;
     const int tunnelQuantity_;
     FederationRateLimiter* const limiter_;
     GetCardFn getCard_;

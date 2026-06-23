@@ -5,6 +5,7 @@
 
 #include <sys/stat.h>
 
+#include <chrono>
 #include <cstdint>
 #include <ctime>
 #include <exception>
@@ -53,15 +54,12 @@ std::size_t poolIndexFor(const std::string& userFp, const std::size_t poolSize)
     return static_cast<std::size_t>(h % poolSize);
 }
 
-FederationPool::FederationPool(std::string samHost, const std::uint16_t samPort,
-    DeliveryEngine& engine, std::filesystem::path stateDir, std::string sessionIdPrefix,
-    const I2pPrivacy privacy, const std::size_t size, const int tunnelQuantity,
-    FederationRateLimiter* const limiter)
-    : samHost_(std::move(samHost))
-    , samPort_(samPort)
+FederationPool::FederationPool(bazarish::i2p::Router& router, DeliveryEngine& engine,
+    std::filesystem::path stateDir, const bazarish::i2p::Privacy privacy, const std::size_t size,
+    const int tunnelQuantity, FederationRateLimiter* const limiter)
+    : router_(router)
     , engine_(engine)
     , stateDir_(std::move(stateDir))
-    , sessionIdPrefix_(std::move(sessionIdPrefix))
     , privacy_(privacy)
     , size_(size)
     , tunnelQuantity_(tunnelQuantity)
@@ -86,16 +84,19 @@ void FederationPool::start()
     std::filesystem::create_directories(poolDir, ec);
     for (std::size_t i = 0; i < size_; ++i) {
         const std::filesystem::path keyPath = poolDir / ("dest-" + std::to_string(i) + ".key");
-        const std::string privateKeys
-            = std::filesystem::exists(keyPath) ? readFile(keyPath) : std::string("TRANSIENT");
+        const bool haveKey = std::filesystem::exists(keyPath);
         auto dest = std::make_unique<Dest>();
-        // Encrypted LeaseSet2 (the default): a pool destination is server-owned,
-        // so blinding has the signing key and the shareable address is a b33.
-        dest->session = std::make_unique<SamSession>(samHost_, samPort_,
-            sessionIdPrefix_ + std::to_string(i), privateKeys, kEncryptedLeaseSetType, privacy_,
-            tunnelQuantity_);
-        if (!std::filesystem::exists(keyPath)) {
-            writePrivate(keyPath, dest->session->privateDestination());
+        // Encrypted LeaseSet2: a pool destination is server-owned, so blinding has
+        // the signing key and the shareable address is a b33.
+        const std::string rawKey = haveKey ? readFile(keyPath) : std::string();
+        bazarish::i2p::Keys keys = haveKey
+            ? bazarish::i2p::Keys::fromBlob(Bytes(rawKey.begin(), rawKey.end()))
+            : bazarish::i2p::Keys::generate();
+        dest->endpoint = router_.createEndpoint(bazarish::i2p::EndpointConfig{
+            keys, bazarish::i2p::LeaseSetKind::eEncrypted, privacy_, tunnelQuantity_, true});
+        if (!haveKey) {
+            const Bytes blob = dest->endpoint->privateBlob();
+            writePrivate(keyPath, std::string(blob.begin(), blob.end()));
         }
         // The pool entry's own serving sealing key (persisted so the address a
         // contact seals to is stable across restarts). Contacts on this pool
@@ -109,18 +110,21 @@ void FederationPool::start()
             writePrivate(sealingPath, dest->sealingKey->privatePem());
         }
         // The routable address is the b33 (pool destinations are encrypted LS2).
-        destinations_.push_back(dest->session->routingAddress());
+        destinations_.push_back(dest->endpoint->routingHost());
         servingKeys_.push_back(dest->sealingKey);
         Dest* const raw = dest.get();
         raw->acceptThread = std::thread([this, raw]() {
             while (raw->running.load()) {
+                std::string peer;
+                auto stream = raw->endpoint->accept(peer, std::chrono::seconds(30));
+                if (!stream) {
+                    continue;  // accept timeout / stop: re-check running
+                }
                 try {
-                    std::string peer;
-                    SamStream stream = raw->session->accept(peer);
-                    federationServeOnce(stream, engine_, nowSeconds(), peer, limiter_,
+                    federationServeOnce(*stream, engine_, nowSeconds(), peer, limiter_,
                         raw->sealingKey.get(), getCard_);
                 } catch (const std::exception&) {
-                    // A failed accept/serve must not kill the loop.
+                    // A failed serve must not kill the loop.
                 }
             }
         });

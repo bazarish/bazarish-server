@@ -11,11 +11,14 @@
 #include <nlohmann/json.hpp>
 
 #include <sys/socket.h>
+#include <unistd.h>
 
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <optional>
+#include <stdexcept>
 #include <thread>
 
 #define CHECK(condition)                                                            \
@@ -34,6 +37,47 @@ namespace {
 
 constexpr std::int64_t kNow = 1780000000;
 
+// A minimal fd-backed stream exposing the readExact/writeAll surface the
+// federation framing templates over - stands in for a bazarish::i2p::Stream so
+// the protocol can be socketpair-tested without a router.
+struct SocketStream {
+    int fd;
+    explicit SocketStream(int f) : fd(f) {}
+    ~SocketStream()
+    {
+        if (fd >= 0) {
+            ::close(fd);
+        }
+    }
+    SocketStream(const SocketStream&) = delete;
+    SocketStream& operator=(const SocketStream&) = delete;
+
+    void readExact(void* buffer, std::size_t size)
+    {
+        auto* p = static_cast<char*>(buffer);
+        std::size_t got = 0;
+        while (got < size) {
+            const ssize_t r = ::read(fd, p + got, size - got);
+            if (r <= 0) {
+                throw std::runtime_error("short read");
+            }
+            got += static_cast<std::size_t>(r);
+        }
+    }
+    void writeAll(const void* data, std::size_t size)
+    {
+        const auto* p = static_cast<const char*>(data);
+        std::size_t off = 0;
+        while (off < size) {
+            const ssize_t w = ::write(fd, p + off, size - off);
+            if (w < 0) {
+                throw std::runtime_error("write error");
+            }
+            off += static_cast<std::size_t>(w);
+        }
+    }
+};
+
 // Builds a sealed envelope addressed to the recipient server's sealing key.
 Bytes makeSealed(const Key& sealingPublic, const std::string& kind,
     const std::string& mailbox, const std::string& messageId, const Bytes& token)
@@ -47,15 +91,15 @@ Bytes makeSealed(const Key& sealingPublic, const std::string& kind,
 }
 
 // Runs one client deliver against an in-thread server using a socketpair -
-// the same SamStream wraps both ends, so the federation protocol is
+// the same SocketStream wraps both ends, so the federation protocol is
 // exercised without I2P.
 FederationDeliverResult roundTrip(DeliveryEngine& engine, const Bytes& sealed, const Bytes& payload,
     const Key* const servingKey = nullptr)
 {
     int fds[2];
     CHECK(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0);
-    SamStream serverStream(fds[0]);
-    SamStream clientStream(fds[1]);
+    SocketStream serverStream(fds[0]);
+    SocketStream clientStream(fds[1]);
 
     std::thread serverThread([&engine, &serverStream, servingKey]() {
         federationServeOnce(serverStream, engine, kNow, std::string(), nullptr, servingKey);
@@ -73,8 +117,8 @@ FederationFetchResult roundTripCard(DeliveryEngine& engine, const Bytes& sealedQ
 {
     int fds[2];
     CHECK(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0);
-    SamStream serverStream(fds[0]);
-    SamStream clientStream(fds[1]);
+    SocketStream serverStream(fds[0]);
+    SocketStream clientStream(fds[1]);
 
     std::thread serverThread([&engine, &serverStream, servingKey, &getCard]() {
         federationServeOnce(

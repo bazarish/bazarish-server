@@ -3,9 +3,11 @@
 
 #include "Federation.hpp"
 
+#include <bazarish/Crypto.hpp>
 #include <bazarish/Log.hpp>
 #include <nlohmann/json.hpp>
 
+#include <chrono>
 #include <ctime>
 #include <exception>
 #include <fstream>
@@ -24,11 +26,10 @@ std::int64_t nowSeconds()
 
 }  // namespace
 
-PerUserDestinations::PerUserDestinations(std::string samHost, const std::uint16_t samPort,
-    DeliveryEngine& engine, std::filesystem::path stateDir, const I2pPrivacy privacy,
+PerUserDestinations::PerUserDestinations(bazarish::i2p::Router* const router,
+    DeliveryEngine& engine, std::filesystem::path stateDir, const bazarish::i2p::Privacy privacy,
     const int tunnelQuantity, FederationRateLimiter* const limiter)
-    : samHost_(std::move(samHost))
-    , samPort_(samPort)
+    : router_(router)
     , engine_(engine)
     , stateDir_(std::move(stateDir))
     , privacy_(privacy)
@@ -68,40 +69,43 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
     dest->expiresUnix = expiresUnix;
     dest->sealingKey = std::make_shared<Key>(Key::fromPrivatePem(sealingKeyPem));
     Destination* const raw = dest.get();
-    // SAM session ids must be unique on the bridge; the fingerprint disambiguates.
-    const std::string sessionId = "bazarish-user-" + userFp.substr(0, 12);
-    raw->worker = std::thread([this, raw, sessionId, transientB64, userFp]() {
-        try {
-            // A STANDARD LeaseSet2: an offline-signature destination cannot
-            // publish an encrypted LeaseSet2.
-            SamSession session(samHost_, samPort_, sessionId, transientB64,
-                kStandardLeaseSetType, privacy_, tunnelQuantity_);
-            {
-                // Publish the resolved destination address so it can be surfaced
-                // to the user and matched for same-destination local delivery.
-                const std::lock_guard<std::mutex> lock(mutex_);
-                // A per-user destination is a STANDARD LeaseSet2 (offline keys
-                // cannot publish an encrypted one), so the routable address is
-                // its standard b32 (.b32.i2p), not a blinded b33.
-                raw->dest = session.routingAddress();
-            }
-            bazarish::log::info("per-user i2p destination up for {}", userFp);
-            while (raw->running.load()) {
-                try {
-                    std::string peer;
-                    SamStream stream = session.accept(peer);
-                    federationServeOnce(stream, engine_, nowSeconds(), peer, limiter_,
-                        raw->sealingKey.get(), getCard_);
-                } catch (const std::exception&) {
-                    // A failed accept/serve must not kill the loop; on shutdown
-                    // the running flag breaks out on the next iteration.
+    // Without a router (tests / router-less mode) only the persisted/registered
+    // state is kept; no destination is built, so it stays in "building".
+    if (router_ != nullptr) {
+        raw->worker = std::thread([this, raw, transientB64, userFp]() {
+            try {
+                // The transient is a base64-encoded i2pd private-keys blob with an
+                // offline section; a STANDARD LeaseSet2 (offline-signature dests
+                // cannot publish an encrypted one), so the address is the master b32.
+                const bazarish::i2p::Keys keys = bazarish::i2p::Keys::fromBlob(fromBase64(transientB64));
+                auto endpoint = router_->createEndpoint(bazarish::i2p::EndpointConfig{
+                    keys, bazarish::i2p::LeaseSetKind::eStandard, privacy_, tunnelQuantity_, true});
+                {
+                    // Publish the resolved address for surfacing to the user and
+                    // same-destination local delivery matching.
+                    const std::lock_guard<std::mutex> lock(mutex_);
+                    raw->dest = endpoint->routingHost();
                 }
+                bazarish::log::info("per-user i2p destination up for {}", userFp);
+                while (raw->running.load()) {
+                    std::string peer;
+                    auto stream = endpoint->accept(peer, std::chrono::seconds(30));
+                    if (!stream) {
+                        continue;  // accept timeout / stop
+                    }
+                    try {
+                        federationServeOnce(*stream, engine_, nowSeconds(), peer, limiter_,
+                            raw->sealingKey.get(), getCard_);
+                    } catch (const std::exception&) {
+                        // A failed serve must not kill the loop.
+                    }
+                }
+            } catch (const std::exception&) {
+                // Bad/expired transient: the destination stays down until the
+                // next provision.
             }
-        } catch (const std::exception&) {
-            // Building the session failed (bad/expired transient, SAM down):
-            // the destination stays down until the next provision.
-        }
-    });
+        });
+    }
     dests_[userFp] = std::move(dest);
 }
 

@@ -49,8 +49,8 @@ int main()
     const std::string alice = toBase32(Bytes(32, 0x01));
     const std::filesystem::path aliceFile = root / "i2p-user-dests" / alice;
 
-    // Port 1 is closed, so each destination's worker fails its SAM session fast:
-    // the test exercises persistence and lifecycle without a live router.
+    // With no live router, each destination's worker cannot publish: the test
+    // exercises persistence and lifecycle without a live I2P transport.
     {
         PerUserDestinations dests(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
 
@@ -61,8 +61,8 @@ int main()
         CHECK(dests.size() == 1);
 
         // The destination has a serving sealing key, persisted and surfaced for
-        // the user's contact card. Its address stays empty here (no SAM router,
-        // so the session never publishes).
+        // the user's contact card. Its address stays empty here (no live router,
+        // so the destination never publishes).
         const std::shared_ptr<Key> servingKeyA = dests.servingKeyFor(alice);
         CHECK(servingKeyA != nullptr);
         const Bytes servingA = servingKeyA->publicDer();

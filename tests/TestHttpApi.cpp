@@ -38,7 +38,7 @@ namespace {
 
 // In-memory I2pBlobReader for the streaming blob-proxy test: serves a fixed body
 // from a fixed status + headers, handing it out in readBody() chunks like the
-// real SAM-backed reader.
+// real I2P-backed reader.
 class FakeReader final : public I2pBlobReader {
 public:
     FakeReader(int status, std::map<std::string, std::string> headers, std::string body)

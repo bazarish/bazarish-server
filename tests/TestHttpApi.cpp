@@ -12,6 +12,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -110,11 +111,21 @@ nlohmann::json sendAndPoll(httplib::Client& client, const Identity& sender,
     const std::string attemptId
         = nlohmann::json::parse(posted->body).at("attemptId").get<std::string>();
 
+    // Delivery now runs on a background worker (store-and-forward), so the
+    // attempt starts "pending"; poll until it reaches a terminal state.
     const std::string pollPath = "/v1/messaging/send/" + attemptId;
-    const httplib::Result polled
-        = client.Get(pollPath, makeHeaders(sender, "GET", pollPath, "", clientId));
-    CHECK(polled && polled->status == 200);
-    return nlohmann::json::parse(polled->body);
+    nlohmann::json body;
+    for (int i = 0; i < 200; ++i) {
+        const httplib::Result polled
+            = client.Get(pollPath, makeHeaders(sender, "GET", pollPath, "", clientId));
+        CHECK(polled && polled->status == 200);
+        body = nlohmann::json::parse(polled->body);
+        if (body.at("status") != "pending") {
+            return body;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return body;
 }
 
 }  // namespace
@@ -140,6 +151,9 @@ int main()
     DeliveryEngine engine(storage, serverFp, Key::fromPrivatePem(serverSealing.privatePem()),
         engineOptions);
     HttpApiOptions httpOptions;
+    // No retry backoff in tests: a federated (unreachable) send should reach its
+    // terminal "failed" at once instead of looping for minutes.
+    httpOptions.deliveryRetryDelaySeconds = 0;
     // Routing is by destination. The tests assign every user the same
     // destination (serverDest, a valid .b32.i2p host) with the server's sealing
     // key, so a send to serverDest is a same-destination local delivery; a send

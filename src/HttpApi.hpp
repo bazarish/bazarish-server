@@ -8,12 +8,15 @@
 #include <bazarish/Auth.hpp>
 #include <bazarish/Bytes.hpp>
 
+#include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace httplib {
@@ -46,6 +49,11 @@ struct HttpApiOptions {
     std::uint64_t perMessageLimitBytes = 10 * 1024 * 1024;
     // How long a completed send attempt stays pollable.
     std::int64_t attemptRetentionSeconds = 600;
+    // Background delivery (store-and-forward) retry policy for a recipient whose
+    // I2P leaseset is momentarily unpublished: how many federation rounds before
+    // giving up, and the delay between them (the first round is immediate).
+    int deliveryMaxRounds = 12;
+    std::int64_t deliveryRetryDelaySeconds = 10;
     // Fingerprints of the identities authorised to call the operator-internal
     // endpoints (quota, per-user destination) and /healthz. The caller proves
     // possession by signing the request (hybrid auth); no shared secret. The
@@ -134,13 +142,31 @@ public:
 
 private:
     struct Attempt {
-        std::string status;  // "delivered" or "failed"
+        std::string status;  // "pending", "delivered" or "failed"
         std::string errorCode;
         std::string errorMessage;
         std::int64_t completedAt = 0;
     };
 
+    // A send accepted into the outbound buffer and delivered off the request
+    // thread by a background worker (store-and-forward), so the client's POST
+    // returns at once. The sealed envelope already names its recipient
+    // destination; senderDest/senderServingKey back the same-destination local
+    // short-circuit.
+    struct DeliveryJob {
+        std::string attemptId;
+        std::string toDest;
+        Bytes sealed;
+        Bytes payload;
+        std::string senderDest;
+        std::shared_ptr<Key> senderServingKey;
+    };
+
     void setupRoutes();
+    void deliveryWorkerLoop();
+    void runDeliveryJob(const DeliveryJob& job);
+    void setAttempt(const std::string& attemptId, const Attempt& attempt);
+    void stopWorkers();
 
     Storage& storage_;
     DeliveryEngine& engine_;
@@ -153,6 +179,14 @@ private:
 
     std::mutex attemptsMutex_;
     std::map<std::string, Attempt> attempts_;
+
+    // Background delivery executor (store-and-forward): the request thread only
+    // enqueues; these workers federate with retries and record the outcome.
+    std::mutex jobsMutex_;
+    std::condition_variable jobsCv_;
+    std::deque<DeliveryJob> jobs_;
+    std::vector<std::thread> deliveryWorkers_;
+    bool stopping_ = false;
 
     auth::ReplayCache replayCache_;
 };

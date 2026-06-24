@@ -11,12 +11,16 @@
 #include <nlohmann/json.hpp>
 
 #include <array>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <ctime>
+#include <deque>
 #include <map>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -104,9 +108,20 @@ HttpApi::HttpApi(Storage& storage, DeliveryEngine& engine, const HttpApiOptions 
     , startedAt_(nowSeconds())
 {
     setupRoutes();
+    // Background delivery workers (store-and-forward). A small fixed pool: each
+    // worker may sit in a per-message retry loop for a while, so size it for the
+    // expected number of concurrently-in-flight slow deliveries.
+    constexpr int kDeliveryWorkers = 4;
+    deliveryWorkers_.reserve(kDeliveryWorkers);
+    for (int i = 0; i < kDeliveryWorkers; ++i) {
+        deliveryWorkers_.emplace_back([this]() { deliveryWorkerLoop(); });
+    }
 }
 
-HttpApi::~HttpApi() = default;
+HttpApi::~HttpApi()
+{
+    stopWorkers();
+}
 
 bool HttpApi::listen(const std::string& host, const int port)
 {
@@ -126,6 +141,110 @@ bool HttpApi::listenAfterBind()
 void HttpApi::stop()
 {
     http_->stop();
+    stopWorkers();
+}
+
+void HttpApi::stopWorkers()
+{
+    {
+        const std::lock_guard<std::mutex> lock(jobsMutex_);
+        if (stopping_) {
+            return;
+        }
+        stopping_ = true;
+    }
+    jobsCv_.notify_all();
+    for (std::thread& worker : deliveryWorkers_) {
+        if (worker.joinable()) {
+            worker.join();
+        }
+    }
+    deliveryWorkers_.clear();
+}
+
+void HttpApi::setAttempt(const std::string& attemptId, const Attempt& attempt)
+{
+    const std::lock_guard<std::mutex> lock(attemptsMutex_);
+    attempts_[attemptId] = attempt;
+}
+
+void HttpApi::deliveryWorkerLoop()
+{
+    for (;;) {
+        DeliveryJob job;
+        {
+            std::unique_lock<std::mutex> lock(jobsMutex_);
+            jobsCv_.wait(lock, [this]() { return stopping_ || !jobs_.empty(); });
+            if (stopping_ && jobs_.empty()) {
+                return;
+            }
+            job = std::move(jobs_.front());
+            jobs_.pop_front();
+        }
+        runDeliveryJob(job);
+    }
+}
+
+void HttpApi::runDeliveryJob(const DeliveryJob& job)
+{
+    // A foreign server may be momentarily unreachable while its I2P leaseset
+    // publishes; that is transient, so retry for a bounded time. Any other
+    // outcome (delivered, token rejected, too large, reachable-but-refused) is
+    // terminal. The attempt stays "pending" between rounds so a polling client
+    // keeps waiting instead of seeing a spurious failure.
+    const int kMaxRounds = options_.deliveryMaxRounds > 0 ? options_.deliveryMaxRounds : 1;
+    const auto kRetryDelay = std::chrono::seconds(options_.deliveryRetryDelaySeconds);
+    const std::string unreachableCode
+        = std::string(toString(ErrorCode::eRecipientServerUnreachable));
+    for (int round = 0; round < kMaxRounds; ++round) {
+        {
+            const std::lock_guard<std::mutex> lock(jobsMutex_);
+            if (stopping_) {
+                return;
+            }
+        }
+        Attempt attempt;
+        const std::int64_t now = nowSeconds();
+        if (job.senderServingKey && !job.senderDest.empty() && job.toDest == job.senderDest) {
+            const DeliveryEngine::Outcome outcome
+                = engine_.deliver(job.sealed, job.payload, now, *job.senderServingKey);
+            attempt.status = outcome.delivered ? "delivered" : "failed";
+            attempt.errorCode = outcome.errorCode;
+            attempt.errorMessage = outcome.errorMessage;
+        } else {
+            RemoteDeliveryResult remote;
+            if (remoteDeliver_) {
+                remote = remoteDeliver_(job.toDest, job.sealed, job.payload);
+            }
+            if (!remote.reachable) {
+                attempt.status = "failed";
+                attempt.errorCode = unreachableCode;
+                attempt.errorMessage = "recipient server could not be reached";
+            } else {
+                attempt.status = remote.delivered ? "delivered" : "failed";
+                attempt.errorCode = remote.errorCode;
+                attempt.errorMessage = remote.errorMessage;
+            }
+        }
+        const bool transient = attempt.status == "failed" && attempt.errorCode == unreachableCode;
+        if (!transient) {
+            attempt.completedAt = now;
+            setAttempt(job.attemptId, attempt);
+            return;
+        }
+        // Transient: leave the attempt "pending" and wait before the next round,
+        // wakeable immediately on shutdown.
+        std::unique_lock<std::mutex> lock(jobsMutex_);
+        if (jobsCv_.wait_for(lock, kRetryDelay, [this]() { return stopping_; })) {
+            return;
+        }
+    }
+    Attempt failed;
+    failed.status = "failed";
+    failed.errorCode = unreachableCode;
+    failed.errorMessage = "recipient server could not be reached";
+    failed.completedAt = nowSeconds();
+    setAttempt(job.attemptId, failed);
 }
 
 void HttpApi::setupRoutes()
@@ -475,54 +594,47 @@ void HttpApi::setupRoutes()
             const Bytes payload = fromBase64(body.at("payload").get<std::string>());
 
             const std::int64_t now = nowSeconds();
-            Attempt attempt;
             // Routed by destination. Local short-circuit ONLY when toDest is the
             // sender's own destination (same i2p destination): then the recipient
             // shares that destination, so a local store leaks no co-location. Any
             // other destination - including a recipient this server hosts on a
             // different destination - is federated, so delivery latency cannot
-            // distinguish a local recipient from a remote one.
+            // distinguish a local recipient from a remote one. Resolved here, on
+            // the request thread, from the authenticated caller.
             const DestinationAssignment sender
                 = options_.assignDestination ? options_.assignDestination(user) : DestinationAssignment{};
-            if (sender.servingKey && !sender.dest.empty() && toDest == sender.dest) {
-                const DeliveryEngine::Outcome outcome
-                    = engine_.deliver(sealed, payload, now, *sender.servingKey);
-                attempt.status = outcome.delivered ? "delivered" : "failed";
-                attempt.errorCode = outcome.errorCode;
-                attempt.errorMessage = outcome.errorMessage;
-            } else {
-                RemoteDeliveryResult remote;
-                if (remoteDeliver_) {
-                    remote = remoteDeliver_(toDest, sealed, payload);
-                }
-                if (!remote.reachable) {
-                    attempt.status = "failed";
-                    attempt.errorCode
-                        = std::string(toString(ErrorCode::eRecipientServerUnreachable));
-                    attempt.errorMessage = "recipient server could not be reached";
-                } else {
-                    attempt.status = remote.delivered ? "delivered" : "failed";
-                    attempt.errorCode = remote.errorCode;
-                    attempt.errorMessage = remote.errorMessage;
-                }
-            }
-            attempt.completedAt = now;
 
+            // Accept the envelope into the outbound buffer and hand it to a
+            // background worker (store-and-forward): this POST returns at once
+            // (the "grey"/at-our-server state) and federation - with its own
+            // retries for a recipient whose leaseset is still publishing - runs
+            // off the request thread. The client polls the attempt for the
+            // delivered/failed outcome instead of blocking this request on I2P.
             const std::string attemptId = toHex(randomBytes(16));
             {
                 const std::lock_guard<std::mutex> lock(attemptsMutex_);
                 // Lazy pruning keeps the in-memory map bounded; there is
-                // deliberately no persistent outbound state.
+                // deliberately no persistent outbound state. A still-pending
+                // attempt is never pruned (its delivery is in flight).
                 for (auto it = attempts_.begin(); it != attempts_.end();) {
-                    if (it->second.completedAt + options_.attemptRetentionSeconds < now) {
+                    if (it->second.status != "pending"
+                        && it->second.completedAt + options_.attemptRetentionSeconds < now) {
                         it = attempts_.erase(it);
                     } else {
                         ++it;
                     }
                 }
-                attempts_[attemptId] = attempt;
+                Attempt pending;
+                pending.status = "pending";
+                attempts_[attemptId] = pending;
             }
-            respondJson(response, {{"attemptId", attemptId}});
+            {
+                const std::lock_guard<std::mutex> lock(jobsMutex_);
+                jobs_.push_back(DeliveryJob{
+                    attemptId, toDest, sealed, payload, sender.dest, sender.servingKey});
+            }
+            jobsCv_.notify_all();
+            respondJson(response, {{"attemptId", attemptId}, {"status", "pending"}});
         }));
 
     http_->Get(R"(/v1/messaging/send/([a-f0-9]+))",

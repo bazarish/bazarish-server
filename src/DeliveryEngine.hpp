@@ -12,7 +12,12 @@ namespace bazarish::server {
 
 struct DeliveryEngineOptions {
     std::uint64_t defaultQuotaBytes = 10 * 1024 * 1024;
-    std::uint64_t contactRequestLimitBytes = 256;
+    // Cap on a tokenless contact-request payload (the delivered, CMS-sealed bytes).
+    // A real contact request carries the bootstrap (sealing prekey + dest + serving
+    // key) plus a full reply-token batch (kTokenBatchSize, 64) - about 4 KB sealed -
+    // so 256 was far too small and rejected every legitimate request. 8 KB holds it
+    // with margin; tokenless requests are additionally rate-limited and quota-bound.
+    std::uint64_t contactRequestLimitBytes = 8192;
 };
 
 // The delivery pipeline for one server: unseal the envelope, deduplicate by

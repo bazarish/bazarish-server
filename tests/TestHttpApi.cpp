@@ -362,17 +362,19 @@ int main()
 
     // A different destination (not the sender's own) federates rather than
     // delivering locally - even though no other-destination recipient exists
-    // here, so it reports unreachable (no federation transport wired in tests).
+    // here, so it stays unreachable (no federation transport wired in tests).
     // This is the timing guarantee: a cross-destination recipient is never a
-    // fast local delivery.
+    // fast local delivery. An exhausted-unreachable outcome is reported as
+    // "unconfirmed" (not "failed"): the envelope may have been stored while only
+    // its acknowledgement was lost, so a red failure would be a false negative.
     {
         const std::string remote = makeEnvelope(toBase32(Bytes(32, 0x42)) + ".b32.i2p", sealingPublic,
             {{"class", "content"}, {"mailbox", alice.fingerprint()},
                 {"token", toBase64(token2)}, {"messageId", "msg-4"}},
             payload);
         const nlohmann::json result = sendAndPoll(client, bob, "bobdev", remote);
-        CHECK(result.at("status") == "failed");
-        CHECK(result.at("error").at("code") == "RECIPIENT_SERVER_UNREACHABLE");
+        CHECK(result.at("status") == "unconfirmed");
+        CHECK(!result.contains("error"));
     }
 
     // The destination endpoint surfaces the caller's assigned destination + the

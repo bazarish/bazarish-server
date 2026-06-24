@@ -239,12 +239,18 @@ void HttpApi::runDeliveryJob(const DeliveryJob& job)
             return;
         }
     }
-    Attempt failed;
-    failed.status = "failed";
-    failed.errorCode = unreachableCode;
-    failed.errorMessage = "recipient server could not be reached";
-    failed.completedAt = nowSeconds();
-    setAttempt(job.attemptId, failed);
+    // Retries exhausted while the recipient stayed unreachable. This is NOT a
+    // delivery failure: the envelope may well have been stored on the recipient
+    // (its acknowledgement could have been lost on the return leg), so reporting
+    // "failed" here would be a false negative. Mark it "unconfirmed" - the client
+    // keeps the message grey ("at your server"); a read receipt later confirms it
+    // (green). completedAt is set so the attempt prunes normally. A true failure
+    // (token rejected, too large, refused) is terminal above and is the only path
+    // to a red "failed".
+    Attempt unconfirmed;
+    unconfirmed.status = "unconfirmed";
+    unconfirmed.completedAt = nowSeconds();
+    setAttempt(job.attemptId, unconfirmed);
 }
 
 void HttpApi::setupRoutes()

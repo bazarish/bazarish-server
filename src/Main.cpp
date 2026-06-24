@@ -42,7 +42,7 @@ void printUsage()
         "          [--privacy <minimal|middle|max>] [--pool-size <n>]\n"
         "          [--tunnel-quantity <n>]\n"
         "          [--federation-rate-limit <n>] [--service-node <url>]\n"
-        "          [--log-level <error|warn|info|debug>]\n"
+        "          [--log-level <error|warn|info|debug>] [--i2p-log]\n"
         "       bazarish-server --version\n"
         "\n"
         "The state directory holds the server keys and the content storage;\n"
@@ -141,6 +141,9 @@ int main(const int argc, const char** argv)
     std::size_t poolSize = 10;
     std::size_t federationRateLimit = 240;  // inbound deliveries per peer dest per 60s
     bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
+    // libi2pd's own logging is off by default (fresh common); --i2p-log re-enables
+    // it for debugging.
+    bool i2pLog = false;
     for (int i = 3; i < argc;) {
         if (std::strcmp(argv[i], "--listen") == 0 && i + 2 < argc) {
             host = argv[i + 1];
@@ -186,6 +189,9 @@ int main(const int argc, const char** argv)
             }
             logLevel = parsed.value();
             i += 2;
+        } else if (std::strcmp(argv[i], "--i2p-log") == 0) {
+            i2pLog = true;
+            ++i;
         } else {
             printUsage();
             return 2;
@@ -203,6 +209,10 @@ int main(const int argc, const char** argv)
 
     bazarish::log::setComponent("server-core");
     bazarish::log::setLevel(logLevel);
+    // Route libi2pd's own logs into our log only when explicitly requested.
+    if (i2pLog) {
+        bazarish::i2p::setI2pLogging(true);
+    }
 
     fs::create_directories(stateDir);
     const bazarish::Identity identity = loadOrCreateIdentity(stateDir);

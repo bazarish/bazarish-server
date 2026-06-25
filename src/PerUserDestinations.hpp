@@ -101,6 +101,10 @@ private:
         // The destination's own serving sealing key (private half held here; its
         // public half is surfaced to the user). The accept loop unseals with it.
         std::shared_ptr<Key> sealingKey;
+        // The destination's own federation signing key (per-user): it signs the
+        // delivered-acks this destination sends, so the signer is bound to the
+        // destination, never the server root identity. Stable across renewals.
+        std::shared_ptr<Key> signingKey;
         // The published destination address (master b32); set once the
         // destination builds. Guarded by mutex_.
         std::string dest;
@@ -111,7 +115,8 @@ private:
 
     // Starts the worker that builds the I2P destination and serves its accept loop.
     void bringUp(const std::string& userFp, const std::string& transientB64,
-        std::int64_t expiresUnix, const std::string& sealingKeyPem);
+        std::int64_t expiresUnix, const std::string& sealingKeyPem,
+        const std::string& signingKeyPem);
     void teardownLocked(const std::string& userFp);
     std::filesystem::path pathFor(const std::string& userFp) const;
     std::filesystem::path destsDir() const;

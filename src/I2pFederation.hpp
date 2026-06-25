@@ -5,6 +5,7 @@
 #include "Federation.hpp"
 #include "HttpApi.hpp"
 
+#include <bazarish/Crypto.hpp>
 #include <bazarish/I2p.hpp>
 
 #include <atomic>
@@ -17,9 +18,13 @@ class FederationRateLimiter;
 
 // Sends a signed delivered-ack for messageId to the sending server at toDest,
 // dialled FROM the given serving endpoint (the one that received the delivery) -
-// never a shared address. Wired once and shared by every serving accept loop.
-using AckSenderFn = std::function<void(
-    bazarish::i2p::Endpoint& from, const std::string& toDest, const std::string& messageId)>;
+// never a shared address. The ack is signed with that destination's own
+// per-destination signing key (bound to the destination, never the server root
+// identity), so two users one server hosts on different destinations share no
+// signer. Wired once and shared by every serving accept loop, which each pass
+// their own destination's key.
+using AckSenderFn = std::function<void(bazarish::i2p::Endpoint& from, const std::string& toDest,
+    const std::string& messageId, const Key& signingKey)>;
 
 // Relays a sealed envelope to toDest dialled from the given serving endpoint
 // (the sender's own destination). The recipient acks back to from's address.

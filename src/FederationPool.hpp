@@ -79,6 +79,10 @@ private:
         // The pool destination's own serving sealing key: the accept loop
         // unseals delivery envelopes addressed to it with this key.
         std::shared_ptr<Key> sealingKey;
+        // The pool destination's own federation signing key: it signs the
+        // delivered-acks this destination sends, so the signer is bound to the
+        // destination (shared by this pool's k-anonymity set), never server-wide.
+        std::shared_ptr<Key> signingKey;
         std::atomic<bool> running{true};
         std::thread acceptThread;
     };

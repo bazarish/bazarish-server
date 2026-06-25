@@ -62,12 +62,14 @@ std::filesystem::path PerUserDestinations::pathFor(const std::string& userFp) co
 }
 
 void PerUserDestinations::bringUp(const std::string& userFp, const std::string& transientB64,
-    const std::int64_t expiresUnix, const std::string& sealingKeyPem)
+    const std::int64_t expiresUnix, const std::string& sealingKeyPem,
+    const std::string& signingKeyPem)
 {
     auto dest = std::make_unique<Destination>();
     dest->transientB64 = transientB64;
     dest->expiresUnix = expiresUnix;
     dest->sealingKey = std::make_shared<Key>(Key::fromPrivatePem(sealingKeyPem));
+    dest->signingKey = std::make_shared<Key>(Key::fromPrivatePem(signingKeyPem));
     Destination* const raw = dest.get();
     // Without a router (tests / router-less mode) only the persisted/registered
     // state is kept; no destination is built, so it stays in "building".
@@ -101,9 +103,10 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
                             raw->sealingKey.get(), getCard_,
                             // Ack a stored delivery from THIS per-user dest back to
                             // the sender's serving dest.
-                            [this, endpoint, sender](const std::string& messageId) {
+                            [this, endpoint, sender, signingKey = raw->signingKey](
+                                const std::string& messageId) {
                                 if (ackSender_) {
-                                    ackSender_(*endpoint, sender, messageId);
+                                    ackSender_(*endpoint, sender, messageId, *signingKey);
                                 }
                             },
                             // A delivered-ack landing here (we sent from this dest)
@@ -147,42 +150,54 @@ void PerUserDestinations::provision(const std::string& userFp, const std::string
     if (existing != dests_.end() && existing->second->transientB64 == transientB64) {
         return;  // already serving this exact transient
     }
-    // Reuse a previously-issued serving sealing key (from the running
-    // destination, else the persisted record) so the user's contact card stays
-    // valid across renewals; mint a fresh one only for a brand-new destination.
+    // Reuse a previously-issued serving sealing key and federation signing key
+    // (from the running destination, else the persisted record) so the user's
+    // contact card and signer stay stable across renewals; mint fresh ones only
+    // for a brand-new destination.
     std::string sealingKeyPem;
+    std::string signingKeyPem;
     if (existing != dests_.end() && existing->second->sealingKey) {
         sealingKeyPem = existing->second->sealingKey->privatePem();
-    } else {
+    }
+    if (existing != dests_.end() && existing->second->signingKey) {
+        signingKeyPem = existing->second->signingKey->privatePem();
+    }
+    if (sealingKeyPem.empty() || signingKeyPem.empty()) {
         std::ifstream in(pathFor(userFp), std::ios::binary);
         const std::string text(
             (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         if (!text.empty()) {
             try {
                 const nlohmann::json record = nlohmann::json::parse(text);
-                if (record.contains("sealingKey")) {
+                if (sealingKeyPem.empty() && record.contains("sealingKey")) {
                     sealingKeyPem = record.at("sealingKey").get<std::string>();
                 }
+                if (signingKeyPem.empty() && record.contains("signingKey")) {
+                    signingKeyPem = record.at("signingKey").get<std::string>();
+                }
             } catch (const std::exception&) {
-                // Malformed record: fall through to minting a fresh key.
+                // Malformed record: fall through to minting fresh keys.
             }
         }
     }
     if (sealingKeyPem.empty()) {
         sealingKeyPem = Key::generateSealing().privatePem();
     }
+    if (signingKeyPem.empty()) {
+        signingKeyPem = Key::generateSigning().privatePem();
+    }
     // Persist first so a restart re-provisions even if the bring-up below races.
     std::error_code ec;
     std::filesystem::create_directories(destsDir(), ec);
     const nlohmann::json record = {{"transient", transientB64}, {"expiresUnix", expiresUnix},
-        {"sealingKey", sealingKeyPem}};
+        {"sealingKey", sealingKeyPem}, {"signingKey", signingKeyPem}};
     const std::string text = record.dump();
     {
         std::ofstream out(pathFor(userFp), std::ios::binary | std::ios::trunc);
         out.write(text.data(), static_cast<std::streamsize>(text.size()));
     }
     teardownLocked(userFp);
-    bringUp(userFp, transientB64, expiresUnix, sealingKeyPem);
+    bringUp(userFp, transientB64, expiresUnix, sealingKeyPem, signingKeyPem);
 }
 
 void PerUserDestinations::revoke(const std::string& userFp)
@@ -214,11 +229,16 @@ void PerUserDestinations::reloadPersisted(const std::int64_t now)
                 continue;  // the offline transient has already expired
             }
             const std::string transientB64 = record.at("transient").get<std::string>();
-            // Reuse the persisted serving key (older records may predate it).
+            // Reuse the persisted serving and signing keys (older records may
+            // predate either; mint a missing one).
             const std::string sealingKeyPem = record.contains("sealingKey")
                 ? record.at("sealingKey").get<std::string>()
                 : Key::generateSealing().privatePem();
-            bringUp(entry.path().filename().string(), transientB64, expiresUnix, sealingKeyPem);
+            const std::string signingKeyPem = record.contains("signingKey")
+                ? record.at("signingKey").get<std::string>()
+                : Key::generateSigning().privatePem();
+            bringUp(entry.path().filename().string(), transientB64, expiresUnix, sealingKeyPem,
+                signingKeyPem);
         } catch (const std::exception&) {
             // Skip a malformed record rather than fail startup.
         }

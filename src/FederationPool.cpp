@@ -109,6 +109,19 @@ void FederationPool::start()
             dest->sealingKey = std::make_shared<Key>(Key::generateSealing());
             writePrivate(sealingPath, dest->sealingKey->privatePem());
         }
+        // The pool entry's own federation signing key (persisted, bound to the
+        // dest): it signs the delivered-acks this destination sends. Like the
+        // sealing key it is per-destination, so two users hosted on different
+        // pool dests share no signer; the free users on this dest share it (the
+        // same k-anonymity set that already shares the dest and its sealing key).
+        const std::filesystem::path signingPath
+            = poolDir / ("dest-" + std::to_string(i) + ".signing.pem");
+        if (std::filesystem::exists(signingPath)) {
+            dest->signingKey = std::make_shared<Key>(Key::fromPrivatePem(readFile(signingPath)));
+        } else {
+            dest->signingKey = std::make_shared<Key>(Key::generateSigning());
+            writePrivate(signingPath, dest->signingKey->privatePem());
+        }
         // The routable address is the b33 (pool destinations are encrypted LS2).
         destinations_.push_back(dest->endpoint->routingHost());
         servingKeys_.push_back(dest->sealingKey);
@@ -128,7 +141,7 @@ void FederationPool::start()
                         // the sender's serving dest (never a shared address).
                         [this, raw, sender](const std::string& messageId) {
                             if (ackSender_) {
-                                ackSender_(*raw->endpoint, sender, messageId);
+                                ackSender_(*raw->endpoint, sender, messageId, *raw->signingKey);
                             }
                         },
                         // A delivered-ack landing on this pool dest (we were the

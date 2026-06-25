@@ -431,17 +431,20 @@ int main(const int argc, const char** argv)
 
     // Wire delivery acknowledgement (no shared address - per-user federation).
     // When a serving destination stores a federated message it sends a
-    // delivered-ack, signed with this server's identity, back to the sender's
-    // serving dest, dialled FROM the destination that received the delivery. The
+    // delivered-ack, signed with THAT destination's own per-destination signing
+    // key (passed in by the serving accept loop, never the server root identity),
+    // back to the sender's serving dest, dialled FROM the destination that
+    // received the delivery. So two users this server hosts on different
+    // destinations share no ack signer and cannot be clustered as co-located. The
     // sender receives it on its own serving accept loop and marks the matching
     // attempt delivered (amber). The signature is computed on the serving thread;
     // only the network send is detached so serving stays responsive.
     bazarish::server::AckSenderFn ackSender
-        = [&identity](bazarish::i2p::Endpoint& from, const std::string& toDest,
-              const std::string& messageId) {
+        = [](bazarish::i2p::Endpoint& from, const std::string& toDest,
+              const std::string& messageId, const bazarish::Key& signingKey) {
               const bazarish::Bytes sig = bazarish::sign(
-                  identity.classical(), bazarish::Bytes(messageId.begin(), messageId.end()));
-              const bazarish::Bytes pub = identity.classical().publicDer();
+                  signingKey, bazarish::Bytes(messageId.begin(), messageId.end()));
+              const bazarish::Bytes pub = signingKey.publicDer();
               bazarish::i2p::Endpoint* const fromPtr = &from;
               std::thread([fromPtr, toDest, messageId, sig, pub]() {
                   bazarish::server::federationSendAck(*fromPtr, toDest, messageId, pub, sig);

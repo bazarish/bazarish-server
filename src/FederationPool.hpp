@@ -3,6 +3,7 @@
 
 #include "DeliveryEngine.hpp"
 #include "Federation.hpp"
+#include "I2pFederation.hpp"  // AckSenderFn
 
 #include <bazarish/Bytes.hpp>
 #include <bazarish/I2p.hpp>
@@ -50,6 +51,11 @@ public:
     // Wires the contact-card lookup served for op "card" on every pool
     // destination's accept loop. Set before start(). Unset means CARD_UNKNOWN.
     void setGetCard(GetCardFn getCard);
+    // Wires the delivered-ack sender (used when a delivery is served on a pool
+    // destination) and the ack receiver (when a delivered-ack lands on a pool dest
+    // we sent from). Set before start().
+    void setAckSender(AckSenderFn ackSender);
+    void setOnAck(OnAckFn onAck);
 
     // The shareable destination of the pool entry assigned to a user.
     // Deterministic by fingerprint, so a user keeps the same pool destination
@@ -63,6 +69,9 @@ public:
     std::shared_ptr<Key> servingKeyFor(const std::string& userFp) const;
     // Every pool destination (for the server card / diagnostics).
     const std::vector<std::string>& destinations() const;
+    // The serving endpoint backing a pool destination (by routingHost), or null -
+    // so outbound federation can dial from the sender's own pool dest.
+    std::shared_ptr<bazarish::i2p::Endpoint> endpointForDest(const std::string& dest) const;
 
 private:
     struct Dest {
@@ -82,6 +91,8 @@ private:
     const int tunnelQuantity_;
     FederationRateLimiter* const limiter_;
     GetCardFn getCard_;
+    AckSenderFn ackSender_;
+    OnAckFn onAck_;
     std::vector<std::unique_ptr<Dest>> dests_;
     std::vector<std::string> destinations_;
     // Parallel to destinations_: the serving sealing key of each pool entry, for

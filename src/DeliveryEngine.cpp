@@ -73,6 +73,8 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
     } catch (const std::exception&) {
         return fail(ErrorCode::eDeliveryRejected, "envelope rejected");
     }
+    // Expose the parsed id so the caller can acknowledge it (even a dedup hit).
+    outcome.messageId = messageId;
 
     // Dedup before anything else: a retry of a delivered message must
     // succeed without consuming a second token.

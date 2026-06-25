@@ -165,7 +165,41 @@ void HttpApi::stopWorkers()
 void HttpApi::setAttempt(const std::string& attemptId, const Attempt& attempt)
 {
     const std::lock_guard<std::mutex> lock(attemptsMutex_);
-    attempts_[attemptId] = attempt;
+    Attempt updated = attempt;
+    // A delivered-ack may already have marked this attempt delivered; never let a
+    // later job round downgrade it. Also keep the messageId so the index prunes.
+    const auto existing = attempts_.find(attemptId);
+    if (existing != attempts_.end()) {
+        if (existing->second.status == "delivered") {
+            return;
+        }
+        if (updated.messageId.empty()) {
+            updated.messageId = existing->second.messageId;
+        }
+    }
+    attempts_[attemptId] = updated;
+}
+
+void HttpApi::markDeliveredByMessageId(const std::string& messageId)
+{
+    if (messageId.empty()) {
+        return;
+    }
+    const std::lock_guard<std::mutex> lock(attemptsMutex_);
+    const auto idx = messageIdToAttempt_.find(messageId);
+    if (idx == messageIdToAttempt_.end()) {
+        return;
+    }
+    const auto found = attempts_.find(idx->second);
+    if (found == attempts_.end()) {
+        return;
+    }
+    // Upgrade an in-flight (or given-up) attempt to delivered; never override a
+    // terminal rejection ("failed").
+    if (found->second.status == "pending" || found->second.status == "unconfirmed") {
+        found->second.status = "delivered";
+        found->second.completedAt = nowSeconds();
+    }
 }
 
 void HttpApi::deliveryWorkerLoop()
@@ -203,6 +237,16 @@ void HttpApi::runDeliveryJob(const DeliveryJob& job)
                 return;
             }
         }
+        {
+            // The recipient's signed delivered-ack may have already confirmed this
+            // send (the authoritative path); if so, stop retrying the unreliable
+            // synchronous reply.
+            const std::lock_guard<std::mutex> lock(attemptsMutex_);
+            const auto found = attempts_.find(job.attemptId);
+            if (found != attempts_.end() && found->second.status == "delivered") {
+                return;
+            }
+        }
         Attempt attempt;
         const std::int64_t now = nowSeconds();
         if (job.senderServingKey && !job.senderDest.empty() && job.toDest == job.senderDest) {
@@ -214,7 +258,7 @@ void HttpApi::runDeliveryJob(const DeliveryJob& job)
         } else {
             RemoteDeliveryResult remote;
             if (remoteDeliver_) {
-                remote = remoteDeliver_(job.toDest, job.sealed, job.payload);
+                remote = remoteDeliver_(job.senderDest, job.toDest, job.sealed, job.payload);
             }
             if (!remote.reachable) {
                 attempt.status = "failed";
@@ -598,6 +642,12 @@ void HttpApi::setupRoutes()
             validateB32I2pHost(toDest);
             const Bytes sealed = fromBase64(body.at("sealed").get<std::string>());
             const Bytes payload = fromBase64(body.at("payload").get<std::string>());
+            // The delivery messageId (also sealed inside the envelope, where only
+            // the recipient server can read it): the client passes it in the clear
+            // so we can correlate the recipient's signed delivered-ack back to this
+            // attempt. Optional for older clients (then there is no amber, only the
+            // grey/green it already had).
+            const std::string messageId = body.value("messageId", std::string());
 
             const std::int64_t now = nowSeconds();
             // Routed by destination. Local short-circuit ONLY when toDest is the
@@ -625,6 +675,9 @@ void HttpApi::setupRoutes()
                 for (auto it = attempts_.begin(); it != attempts_.end();) {
                     if (it->second.status != "pending"
                         && it->second.completedAt + options_.attemptRetentionSeconds < now) {
+                        if (!it->second.messageId.empty()) {
+                            messageIdToAttempt_.erase(it->second.messageId);
+                        }
                         it = attempts_.erase(it);
                     } else {
                         ++it;
@@ -632,7 +685,11 @@ void HttpApi::setupRoutes()
                 }
                 Attempt pending;
                 pending.status = "pending";
+                pending.messageId = messageId;
                 attempts_[attemptId] = pending;
+                if (!messageId.empty()) {
+                    messageIdToAttempt_[messageId] = attemptId;
+                }
             }
             {
                 const std::lock_guard<std::mutex> lock(jobsMutex_);

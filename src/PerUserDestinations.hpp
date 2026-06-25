@@ -3,6 +3,7 @@
 
 #include "DeliveryEngine.hpp"
 #include "Federation.hpp"
+#include "I2pFederation.hpp"  // AckSenderFn
 
 #include <bazarish/Bytes.hpp>
 #include <bazarish/I2p.hpp>
@@ -61,6 +62,13 @@ public:
     // destination's accept loop. Set before reloadPersisted/provision. Unset
     // means CARD_UNKNOWN.
     void setGetCard(GetCardFn getCard);
+    // Wires the delivered-ack sender (deliveries served here) and receiver (acks
+    // for sends originated here). Set before reloadPersisted/provision.
+    void setAckSender(AckSenderFn ackSender);
+    void setOnAck(OnAckFn onAck);
+    // The serving endpoint for a provisioned dest (by routingHost), or null - so
+    // the outbound federation path can dial from the sender's own dest.
+    std::shared_ptr<bazarish::i2p::Endpoint> endpointForDest(const std::string& dest) const;
 
     // Number of currently provisioned destinations (for tests / diagnostics).
     std::size_t size() const;
@@ -96,6 +104,9 @@ private:
         // The published destination address (master b32); set once the
         // destination builds. Guarded by mutex_.
         std::string dest;
+        // The serving endpoint, so outbound federation can dial from it. Set once
+        // the destination builds. Guarded by mutex_.
+        std::shared_ptr<bazarish::i2p::Endpoint> endpoint;
     };
 
     // Starts the worker that builds the I2P destination and serves its accept loop.
@@ -112,6 +123,8 @@ private:
     const int tunnelQuantity_;
     FederationRateLimiter* const limiter_;
     GetCardFn getCard_;
+    AckSenderFn ackSender_;
+    OnAckFn onAck_;
     mutable std::mutex mutex_;
     std::map<std::string, std::unique_ptr<Destination>> dests_;
 };

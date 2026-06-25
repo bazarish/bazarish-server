@@ -24,6 +24,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 namespace {
 
@@ -305,7 +306,8 @@ int main(const int argc, const char** argv)
             *homeEndpoint, engine, federationLimiter.get());
         federation->setGetCard(getCard);
         federation->start();
-        remoteDeliver = federation->asRemoteDeliverFn();
+        // Discovery (card/resolve) fetch can use the home endpoint; user-to-user
+        // delivery does NOT (it dials from each sender's own serving dest below).
         remoteFetch = federation->asRemoteFetchFn();
 
         // Paid per-user destinations: operate client-owned offline keys as the
@@ -329,6 +331,34 @@ int main(const int argc, const char** argv)
             bazarish::log::info("address pool up: {} destinations",
                 federationPool->destinations().size());
         }
+
+        // Outbound user-to-user federation dials the recipient FROM the sender's
+        // own serving dest (per-user dest, else pool dest) - never a shared home
+        // address - so the recipient acks back to that dest. Resolved per send from
+        // the sender's serving dest carried on the delivery job.
+        bazarish::server::PerUserDestinations* const perUser = perUserDests.get();
+        bazarish::server::FederationPool* const pool = federationPool.get();
+        remoteDeliver = [perUser, pool](const std::string& senderDest, const std::string& toDest,
+                            const bazarish::Bytes& sealed, const bazarish::Bytes& payload)
+            -> bazarish::server::RemoteDeliveryResult {
+            std::shared_ptr<bazarish::i2p::Endpoint> from;
+            if (perUser) {
+                from = perUser->endpointForDest(senderDest);
+            }
+            if (!from && pool) {
+                from = pool->endpointForDest(senderDest);
+            }
+            if (!from) {
+                // No serving endpoint for this sender (e.g. its per-user dest has
+                // not built yet): leave it for retry. No shared-address fallback.
+                bazarish::log::info(
+                    "fed-out: no serving endpoint for sender {}", senderDest.substr(0, 12));
+                bazarish::server::RemoteDeliveryResult unreachable;
+                unreachable.reachable = false;
+                return unreachable;
+            }
+            return bazarish::server::federationDeliver(*from, toDest, sealed, payload);
+        };
     }
 
     // The server card is always published: clients need the sealing key to
@@ -398,6 +428,35 @@ int main(const int argc, const char** argv)
     }
     bazarish::server::HttpApi api(
         storage, engine, httpOptions, std::move(remoteDeliver), std::move(remoteFetch));
+
+    // Wire delivery acknowledgement (no shared address - per-user federation).
+    // When a serving destination stores a federated message it sends a
+    // delivered-ack, signed with this server's identity, back to the sender's
+    // serving dest, dialled FROM the destination that received the delivery. The
+    // sender receives it on its own serving accept loop and marks the matching
+    // attempt delivered (amber). The signature is computed on the serving thread;
+    // only the network send is detached so serving stays responsive.
+    bazarish::server::AckSenderFn ackSender
+        = [&identity](bazarish::i2p::Endpoint& from, const std::string& toDest,
+              const std::string& messageId) {
+              const bazarish::Bytes sig = bazarish::sign(
+                  identity.classical(), bazarish::Bytes(messageId.begin(), messageId.end()));
+              const bazarish::Bytes pub = identity.classical().publicDer();
+              bazarish::i2p::Endpoint* const fromPtr = &from;
+              std::thread([fromPtr, toDest, messageId, sig, pub]() {
+                  bazarish::server::federationSendAck(*fromPtr, toDest, messageId, pub, sig);
+              }).detach();
+          };
+    const auto onAck
+        = [&api](const std::string& messageId) { api.markDeliveredByMessageId(messageId); };
+    if (federationPool) {
+        federationPool->setAckSender(ackSender);
+        federationPool->setOnAck(onAck);
+    }
+    if (perUserDests) {
+        perUserDests->setAckSender(ackSender);
+        perUserDests->setOnAck(onAck);
+    }
 
     bazarish::log::info("listening on {}:{} (private channel for facades)", host, port);
 

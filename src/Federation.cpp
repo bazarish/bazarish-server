@@ -2,6 +2,7 @@
 #include "Federation.hpp"
 
 #include <bazarish/Cms.hpp>
+#include <bazarish/Crypto.hpp>
 #include <bazarish/Resolve.hpp>
 
 #include <nlohmann/json.hpp>
@@ -40,6 +41,18 @@ std::string buildFederationFetchHeader(const std::string& op, const Bytes& seale
     return header.dump();
 }
 
+std::string buildFederationDeliveredAck(
+    const std::string& messageId, const Bytes& signerPublicDer, const Bytes& signature)
+{
+    const nlohmann::json header = {
+        {"op", "delivered-ack"},
+        {"messageId", messageId},
+        {"signerPub", toBase64(signerPublicDer)},
+        {"sig", toBase64(signature)},
+    };
+    return header.dump();
+}
+
 FederationFetchResult parseFederationFetchReply(const std::string& line)
 {
     const nlohmann::json reply = nlohmann::json::parse(line);
@@ -60,7 +73,8 @@ FederationFetchResult parseFederationFetchReply(const std::string& line)
 void federationServeFrame(const std::string& headerLine,
     const std::function<Bytes(std::size_t)>& readPayload,
     const std::function<void(const std::string&)>& writeReply, DeliveryEngine& engine,
-    const std::int64_t now, const Key* const sealingKey, const GetCardFn& getCard)
+    const std::int64_t now, const Key* const sealingKey, const GetCardFn& getCard,
+    const OnDeliveredFn& onDelivered, const OnAckFn& onAck)
 {
     const nlohmann::json header = nlohmann::json::parse(headerLine);
     const std::string op = header.at("op").get<std::string>();
@@ -77,8 +91,35 @@ void federationServeFrame(const std::string& headerLine,
             reply["errorCode"] = outcome.errorCode;
             reply["errorMessage"] = outcome.errorMessage;
         }
+        // The synchronous reply is best-effort (its return leg over the accepted
+        // stream is unreliable); the authoritative confirmation is the signed
+        // delivered-ack the caller sends back over a fresh outbound connection.
+        if (outcome.delivered && onDelivered) {
+            onDelivered(outcome.messageId);
+        }
         writeReply(reply.dump());
         return;
+    }
+
+    if (op == "delivered-ack") {
+        // The recipient server confirms it stored a message we sent. Verify the
+        // signature over the messageId with the included key (self-consistent);
+        // the messageId itself is the capability - only a server that unsealed our
+        // envelope could know it - so this authenticates the confirmation.
+        const std::string messageId = header.at("messageId").get<std::string>();
+        const Bytes signerPub = fromBase64(header.at("signerPub").get<std::string>());
+        const Bytes signature = fromBase64(header.at("sig").get<std::string>());
+        const Bytes signedBytes(messageId.begin(), messageId.end());
+        bool valid = false;
+        try {
+            valid = bazarish::verify(Key::fromPublicDer(signerPub), signedBytes, signature);
+        } catch (const std::exception&) {
+            valid = false;
+        }
+        if (valid && onAck) {
+            onAck(messageId);
+        }
+        return;  // no reply: the sender drains until we close
     }
 
     if (op == "card") {

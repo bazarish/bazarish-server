@@ -15,6 +15,22 @@ namespace bazarish::server {
 
 class FederationRateLimiter;
 
+// Sends a signed delivered-ack for messageId to the sending server at toDest,
+// dialled FROM the given serving endpoint (the one that received the delivery) -
+// never a shared address. Wired once and shared by every serving accept loop.
+using AckSenderFn = std::function<void(
+    bazarish::i2p::Endpoint& from, const std::string& toDest, const std::string& messageId)>;
+
+// Relays a sealed envelope to toDest dialled from the given serving endpoint
+// (the sender's own destination). The recipient acks back to from's address.
+RemoteDeliveryResult federationDeliver(bazarish::i2p::Endpoint& from, const std::string& toDest,
+    const Bytes& sealed, const Bytes& payload);
+
+// Sends an already-signed delivered-ack from the given serving endpoint to toDest
+// (one-way: write the line, drain until the receiver closes, so it flushes).
+void federationSendAck(bazarish::i2p::Endpoint& from, const std::string& toDest,
+    const std::string& messageId, const Bytes& signerPublicDer, const Bytes& signature);
+
 // The I2P federation node: an inbound accept loop that serves incoming
 // deliveries into the local DeliveryEngine, plus an outbound relay used as the
 // HttpApi RemoteDeliverFn. Routing is by destination - the outbound relay dials
@@ -35,14 +51,9 @@ public:
     // instantaneous - acceptable for a long-running daemon.
     void stop();
 
-    // Relays a sealed envelope to the recipient's I2P destination toDest; the
-    // HttpApi RemoteDeliverFn.
-    RemoteDeliveryResult deliver(
-        const std::string& toDest, const Bytes& sealed, const Bytes& payload);
-    RemoteDeliverFn asRemoteDeliverFn();
-
     // Wires the contact-card lookup served on the inbound (home) accept loop for
-    // op "card". Set before start(). Unset means CARD_UNKNOWN.
+    // op "card" - the only thing the home dest serves. Set before start(). Unset
+    // means CARD_UNKNOWN.
     void setGetCard(GetCardFn getCard);
 
     // Relays a sealed fetch (op "card" or "resolve") to a destination over I2P;

@@ -34,6 +34,10 @@ public:
         // Empty when delivered; otherwise a typed error code string.
         std::string errorCode;
         std::string errorMessage;
+        // The delivery messageId parsed from the envelope (set whenever the
+        // envelope parsed, even on a dedup hit), so the caller can acknowledge it
+        // back to the sending server.
+        std::string messageId;
     };
 
     // sealed is the CMS envelope addressed to the serving sealing key of the

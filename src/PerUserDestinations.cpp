@@ -82,9 +82,11 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
                     keys, bazarish::i2p::LeaseSetKind::eStandard, privacy_, tunnelQuantity_, true});
                 {
                     // Publish the resolved address for surfacing to the user and
-                    // same-destination local delivery matching.
+                    // same-destination local delivery matching; keep the endpoint so
+                    // outbound federation can dial from it.
                     const std::lock_guard<std::mutex> lock(mutex_);
                     raw->dest = endpoint->routingHost();
+                    raw->endpoint = endpoint;
                 }
                 bazarish::log::info("per-user i2p destination up for {}", userFp);
                 while (raw->running.load()) {
@@ -94,8 +96,23 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
                         continue;  // accept timeout / stop
                     }
                     try {
+                        const std::string sender = peer;
                         federationServeOnce(*stream, engine_, nowSeconds(), peer, limiter_,
-                            raw->sealingKey.get(), getCard_);
+                            raw->sealingKey.get(), getCard_,
+                            // Ack a stored delivery from THIS per-user dest back to
+                            // the sender's serving dest.
+                            [this, endpoint, sender](const std::string& messageId) {
+                                if (ackSender_) {
+                                    ackSender_(*endpoint, sender, messageId);
+                                }
+                            },
+                            // A delivered-ack landing here (we sent from this dest)
+                            // marks our local attempt delivered.
+                            [this](const std::string& messageId) {
+                                if (onAck_) {
+                                    onAck_(messageId);
+                                }
+                            });
                     } catch (const std::exception&) {
                         // A failed serve must not kill the loop.
                     }
@@ -211,6 +228,32 @@ void PerUserDestinations::reloadPersisted(const std::int64_t now)
 void PerUserDestinations::setGetCard(GetCardFn getCard)
 {
     getCard_ = std::move(getCard);
+}
+
+void PerUserDestinations::setAckSender(AckSenderFn ackSender)
+{
+    ackSender_ = std::move(ackSender);
+}
+
+void PerUserDestinations::setOnAck(OnAckFn onAck)
+{
+    onAck_ = std::move(onAck);
+}
+
+std::shared_ptr<bazarish::i2p::Endpoint> PerUserDestinations::endpointForDest(
+    const std::string& dest) const
+{
+    if (dest.empty()) {
+        return nullptr;
+    }
+    const std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& [user, d] : dests_) {
+        (void)user;
+        if (d->dest == dest) {
+            return d->endpoint;
+        }
+    }
+    return nullptr;
 }
 
 std::size_t PerUserDestinations::size() const

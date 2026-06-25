@@ -102,11 +102,12 @@ struct RemoteDeliveryResult {
     std::string errorMessage;
 };
 
-// Relays a sealed envelope to a destination over I2P federation (dialled
-// directly - routing is by destination, not by server fingerprint; see
-// docs-main api/InviteAnonymity.md). The default (no transport wired) reports
-// unreachable.
-using RemoteDeliverFn = std::function<RemoteDeliveryResult(
+// Relays a sealed envelope to a destination over I2P federation. Dialled from the
+// SENDER's own serving destination (senderDest) so a delivery never originates
+// from a shared address - the recipient acks back to senderDest. Routing is by
+// destination (see docs-main api/InviteAnonymity.md). The default (no transport
+// wired) reports unreachable.
+using RemoteDeliverFn = std::function<RemoteDeliveryResult(const std::string& senderDest,
     const std::string& toDest, const Bytes& sealed, const Bytes& payload)>;
 
 // Result of relaying a sealed fetch (card / resolve) to a destination.
@@ -140,12 +141,18 @@ public:
     bool listenAfterBind();
     void stop();
 
+    // Marks the send attempt for this delivery messageId "delivered" (amber), on a
+    // verified delivered-ack from the recipient server. Idempotent; a no-op for an
+    // unknown id or an already-terminal attempt. Thread-safe.
+    void markDeliveredByMessageId(const std::string& messageId);
+
 private:
     struct Attempt {
-        std::string status;  // "pending", "delivered" or "failed"
+        std::string status;  // "pending", "delivered", "failed" or "unconfirmed"
         std::string errorCode;
         std::string errorMessage;
         std::int64_t completedAt = 0;
+        std::string messageId;  // delivery id, for the messageId -> attempt index
     };
 
     // A send accepted into the outbound buffer and delivered off the request
@@ -179,6 +186,9 @@ private:
 
     std::mutex attemptsMutex_;
     std::map<std::string, Attempt> attempts_;
+    // delivery messageId -> attemptId, so an inbound delivered-ack (which carries
+    // the messageId, not our attempt id) resolves to the right attempt.
+    std::map<std::string, std::string> messageIdToAttempt_;
 
     // Background delivery executor (store-and-forward): the request thread only
     // enqueues; these workers federate with retries and record the outcome.

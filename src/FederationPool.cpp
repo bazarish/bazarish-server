@@ -121,8 +121,23 @@ void FederationPool::start()
                     continue;  // accept timeout / stop: re-check running
                 }
                 try {
+                    const std::string sender = peer;
                     federationServeOnce(*stream, engine_, nowSeconds(), peer, limiter_,
-                        raw->sealingKey.get(), getCard_);
+                        raw->sealingKey.get(), getCard_,
+                        // Ack a stored delivery from THIS pool destination back to
+                        // the sender's serving dest (never a shared address).
+                        [this, raw, sender](const std::string& messageId) {
+                            if (ackSender_) {
+                                ackSender_(*raw->endpoint, sender, messageId);
+                            }
+                        },
+                        // A delivered-ack landing on this pool dest (we were the
+                        // sender) marks our local attempt delivered.
+                        [this](const std::string& messageId) {
+                            if (onAck_) {
+                                onAck_(messageId);
+                            }
+                        });
                 } catch (const std::exception&) {
                     // A failed serve must not kill the loop.
                 }
@@ -135,6 +150,16 @@ void FederationPool::start()
 void FederationPool::setGetCard(GetCardFn getCard)
 {
     getCard_ = std::move(getCard);
+}
+
+void FederationPool::setAckSender(AckSenderFn ackSender)
+{
+    ackSender_ = std::move(ackSender);
+}
+
+void FederationPool::setOnAck(OnAckFn onAck)
+{
+    onAck_ = std::move(onAck);
 }
 
 void FederationPool::stop()
@@ -163,6 +188,17 @@ std::shared_ptr<Key> FederationPool::servingKeyFor(const std::string& userFp) co
 const std::vector<std::string>& FederationPool::destinations() const
 {
     return destinations_;
+}
+
+std::shared_ptr<bazarish::i2p::Endpoint> FederationPool::endpointForDest(
+    const std::string& dest) const
+{
+    for (std::size_t i = 0; i < destinations_.size() && i < dests_.size(); ++i) {
+        if (destinations_[i] == dest) {
+            return dests_[i]->endpoint;
+        }
+    }
+    return nullptr;
 }
 
 }  // namespace bazarish::server

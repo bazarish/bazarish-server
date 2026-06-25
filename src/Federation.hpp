@@ -42,6 +42,20 @@ struct FederationFetchResult {
     std::string errorMessage;
 };
 
+// Called on the recipient when a federated deliver stored (or deduped) a message,
+// with its messageId, so the caller can send a signed delivered-ack back to the
+// sender. Called on the sender when a verified delivered-ack arrives, to mark the
+// matching send attempt delivered.
+using OnDeliveredFn = std::function<void(const std::string& messageId)>;
+using OnAckFn = std::function<void(const std::string& messageId)>;
+
+// Builds a signed delivered-ack line: the recipient server signs the messageId
+// with its identity's classical key and includes that public key, so the sender
+// can verify the ack is from a real key that also knew the (envelope-sealed)
+// messageId. Carried back over a fresh outbound federation connection.
+std::string buildFederationDeliveredAck(
+    const std::string& messageId, const Bytes& signerPublicDer, const Bytes& signature);
+
 namespace detail {
 
 // Reads a newline-terminated header line from the stream (64 KiB guard).
@@ -83,7 +97,8 @@ FederationFetchResult parseFederationFetchReply(const std::string& line);
 void federationServeFrame(const std::string& headerLine,
     const std::function<Bytes(std::size_t)>& readPayload,
     const std::function<void(const std::string&)>& writeReply, DeliveryEngine& engine,
-    std::int64_t now, const Key* sealingKey, const GetCardFn& getCard);
+    std::int64_t now, const Key* sealingKey, const GetCardFn& getCard,
+    const OnDeliveredFn& onDelivered = {}, const OnAckFn& onAck = {});
 
 // Client side: send one deliver request and read the result.
 template <class Stream>
@@ -110,7 +125,8 @@ FederationFetchResult federationSendFetch(Stream& stream, const std::string& op,
 template <class Stream>
 void federationServeOnce(Stream& stream, DeliveryEngine& engine, const std::int64_t now,
     const std::string& peerDest = std::string(), FederationRateLimiter* const limiter = nullptr,
-    const Key* const sealingKey = nullptr, const GetCardFn& getCard = {})
+    const Key* const sealingKey = nullptr, const GetCardFn& getCard = {},
+    const OnDeliveredFn& onDelivered = {}, const OnAckFn& onAck = {})
 {
     if (limiter != nullptr && !limiter->allow(peerDest, now)) {
         return;  // over the per-peer rate limit: drop without serving
@@ -126,7 +142,7 @@ void federationServeOnce(Stream& stream, DeliveryEngine& engine, const std::int6
             return payload;
         },
         [&stream](const std::string& line) { detail::writeFederationHeaderLine(stream, line); },
-        engine, now, sealingKey, getCard);
+        engine, now, sealingKey, getCard, onDelivered, onAck);
 }
 
 }  // namespace bazarish::server

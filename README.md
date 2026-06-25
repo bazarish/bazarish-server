@@ -9,10 +9,10 @@ Access is gated to **one** Bazarish identity. There are no passwords and no
 account database: the operator pastes their own fingerprint into the config, and
 logging in is done by signing a challenge with the client.
 
-1. Read your fingerprint: `bazarish-client whoami <state>` and put it in the
+1. Read your fingerprint: `bazarish-client whoami <profile>` and put it in the
    config `admin` field.
 2. Open `/login`; the page shows a challenge.
-3. Sign it in your client: `bazarish-client sign-login <state> <challenge>`.
+3. Sign it in your client: `bazarish-client sign-login <profile> <challenge>`.
 4. Paste the resulting blob back. The panel verifies the hybrid signature
    **locally** against the configured admin fingerprint and starts a session.
 

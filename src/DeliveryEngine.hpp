@@ -11,7 +11,7 @@
 namespace bazarish::server {
 
 struct DeliveryEngineOptions {
-    std::uint64_t defaultQuotaBytes = 10 * 1024 * 1024;
+    std::uint64_t defaultQuotaBytes = 50 * 1024 * 1024;
     // Cap on a tokenless contact-request payload (the delivered, CMS-sealed bytes).
     // A real contact request carries the bootstrap (sealing prekey + dest + serving
     // key) plus a full reply-token batch (kTokenBatchSize, 64) - about 4 KB sealed -

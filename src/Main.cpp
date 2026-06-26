@@ -131,7 +131,7 @@ struct PortalConfig {
 struct PaymentsConfig {
     bazarish::service::PaymentGatewayConfig gateway{"mock", {{"autoconfirm", "true"}}};
     std::string settlementCurrency = "XMR";
-    std::uint64_t freeStorageBytes = 10 * 1024 * 1024;
+    std::uint64_t freeStorageBytes = 50 * 1024 * 1024;
     ServiceConfig i2pDest{true, "100", 30, 0};
     ServiceConfig storage{true, "100", 30, 5ULL * 1024 * 1024 * 1024};
     PortalConfig portal;

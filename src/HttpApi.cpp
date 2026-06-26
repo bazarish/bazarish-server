@@ -116,6 +116,10 @@ HttpApi::HttpApi(Storage& storage, DeliveryEngine& engine, const HttpApiOptions 
     for (int i = 0; i < kDeliveryWorkers; ++i) {
         deliveryWorkers_.emplace_back([this]() { deliveryWorkerLoop(); });
     }
+    // Mailbox TTL backstop sweep (skipped entirely when retention is disabled).
+    if (options_.mailboxRetentionSeconds > 0) {
+        janitorThread_ = std::thread([this]() { mailboxJanitorLoop(); });
+    }
 }
 
 HttpApi::~HttpApi()
@@ -160,6 +164,30 @@ void HttpApi::stopWorkers()
         }
     }
     deliveryWorkers_.clear();
+    if (janitorThread_.joinable()) {
+        janitorThread_.join();
+    }
+}
+
+void HttpApi::mailboxJanitorLoop()
+{
+    // Hourly is ample for a day-scale TTL: a reclaimed blob is freed within an
+    // hour of crossing the retention window.
+    constexpr std::chrono::seconds kSweepInterval{3600};
+    for (;;) {
+        {
+            std::unique_lock<std::mutex> lock(jobsMutex_);
+            // Sleep one interval, but return at once on shutdown (notify_all).
+            if (jobsCv_.wait_for(lock, kSweepInterval, [this]() { return stopping_; })) {
+                return;
+            }
+        }  // release jobsMutex_ before touching storage (it takes its own lock)
+        try {
+            storage_.purgeExpired(nowSeconds() - options_.mailboxRetentionSeconds);
+        } catch (const std::exception&) {
+            // Best-effort housekeeping; a sweep failure must never crash the node.
+        }
+    }
 }
 
 void HttpApi::setAttempt(const std::string& attemptId, const Attempt& attempt)

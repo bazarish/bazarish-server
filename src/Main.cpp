@@ -43,6 +43,7 @@ void printUsage()
         "          [--privacy <minimal|middle|max>] [--pool-size <n>]\n"
         "          [--tunnel-quantity <n>]\n"
         "          [--federation-rate-limit <n>] [--service-node <url>]\n"
+        "          [--mailbox-retention <days>]\n"
         "          [--log-level <error|warn|info|debug>] [--i2p-log]\n"
         "       bazarish-server --version\n"
         "\n"
@@ -57,9 +58,12 @@ void printUsage()
         "payload. --pool-size <n> sizes the free-tier address pool (default 10;\n"
         "0 disables it, falling free users back to the home destination).\n"
         "--federation-rate-limit caps inbound I2P deliveries per connecting\n"
-        "destination per 60s (default 240, 0 disables). --service-node <url>\n"
-        "is the local service node (e.g. http://127.0.0.1:PORT) used to answer\n"
-        "first-contact card fetches by fingerprint; without it card fetch is off.\n",
+        "destination per 60s (default 240, 0 disables). --mailbox-retention\n"
+        "<days> is the TTL backstop that reclaims mail never acked by all of a\n"
+        "user's devices (default 30, 0 disables); the primary cleanup is\n"
+        "delete-on-all-devices-acked. --service-node <url> is the local service\n"
+        "node (e.g. http://127.0.0.1:PORT) used to answer first-contact card\n"
+        "fetches by fingerprint; without it card fetch is off.\n",
         kVersion);
 }
 
@@ -141,6 +145,7 @@ int main(const int argc, const char** argv)
     int tunnelQuantity = bazarish::i2p::kMaxTunnelQuantity;
     std::size_t poolSize = 10;
     std::size_t federationRateLimit = 240;  // inbound deliveries per peer dest per 60s
+    std::int64_t mailboxRetentionDays = 30;  // TTL backstop for never-fully-acked mail (0 = off)
     bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
     // libi2pd's own logging is off by default (fresh common); --i2p-log re-enables
     // it for debugging.
@@ -177,6 +182,9 @@ int main(const int argc, const char** argv)
             i += 2;
         } else if (std::strcmp(argv[i], "--federation-rate-limit") == 0 && i + 1 < argc) {
             federationRateLimit = static_cast<std::size_t>(std::strtoull(argv[i + 1], nullptr, 10));
+            i += 2;
+        } else if (std::strcmp(argv[i], "--mailbox-retention") == 0 && i + 1 < argc) {
+            mailboxRetentionDays = std::atoll(argv[i + 1]);
             i += 2;
         } else if (std::strcmp(argv[i], "--service-node") == 0 && i + 1 < argc) {
             serviceNodeUrl = argv[i + 1];
@@ -375,6 +383,8 @@ int main(const int argc, const char** argv)
     bazarish::server::HttpApiOptions httpOptions;
     httpOptions.operatorFingerprints = operatorFingerprints;
     httpOptions.version = kVersion;
+    httpOptions.mailboxRetentionSeconds
+        = mailboxRetentionDays > 0 ? mailboxRetentionDays * 24 * 3600 : 0;
     // Resolve a user's assigned serving destination + key: their personal
     // destination if they delegated one, else their pool destination if the
     // pool is enabled, else the home destination. Used to short-circuit only

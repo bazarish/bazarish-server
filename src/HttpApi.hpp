@@ -45,10 +45,22 @@ struct DestinationAssignment {
 using AssignDestinationFn = std::function<DestinationAssignment(const std::string& user)>;
 
 struct HttpApiOptions {
-    // Hard cap on a single delivery envelope.
-    std::uint64_t perMessageLimitBytes = 10 * 1024 * 1024;
+    // Hard cap on a single delivery envelope. A conforming client externalizes any
+    // inner content over 512 KB to blob storage (kLargeBlobThresholdBytes), so the
+    // mailbox only ever needs to hold sub-512 KB inline content plus tiny blob
+    // pointers. This cap tracks that threshold with headroom for the sealed
+    // envelope and a first-reply bootstrap (so a legitimate near-threshold message
+    // is never rejected), while denying a hostile sender the room to stuff a
+    // recipient's small mailbox with multi-megabyte inline blobs.
+    std::uint64_t perMessageLimitBytes = 1 * 1024 * 1024;
     // How long a completed send attempt stays pollable.
     std::int64_t attemptRetentionSeconds = 600;
+    // Mailbox TTL backstop: a pending blob still un-acked by all of a user's
+    // registered devices this long after receipt is reclaimed by the janitor
+    // sweep. The primary cleanup is delete-on-all-devices-acked; this only
+    // bounds mail for a device that never returns (or a user with no registered
+    // clients). 0 disables the sweep.
+    std::int64_t mailboxRetentionSeconds = 30 * 24 * 3600;
     // Background delivery (store-and-forward) retry policy for a recipient whose
     // I2P leaseset is momentarily unpublished: how many federation rounds before
     // giving up, and the delay between them (the first round is immediate).
@@ -174,6 +186,8 @@ private:
     void runDeliveryJob(const DeliveryJob& job);
     void setAttempt(const std::string& attemptId, const Attempt& attempt);
     void stopWorkers();
+    // Periodic mailbox TTL sweep (the backstop for never-fully-acked mail).
+    void mailboxJanitorLoop();
 
     Storage& storage_;
     DeliveryEngine& engine_;
@@ -196,6 +210,8 @@ private:
     std::condition_variable jobsCv_;
     std::deque<DeliveryJob> jobs_;
     std::vector<std::thread> deliveryWorkers_;
+    // Background mailbox TTL sweep; shares stopping_/jobsCv_ for shutdown.
+    std::thread janitorThread_;
     bool stopping_ = false;
 
     auth::ReplayCache replayCache_;

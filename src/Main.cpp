@@ -29,7 +29,7 @@ void printUsage()
         "       bazarish-facade-http --version\n"
         "\n"
         "Transparent reverse proxy: /v1/messaging/* -> messaging server,\n"
-        "/v1/account/* -> service node, /v1/storage/blob -> blob store upload.\n"
+        "/v1/account/* -> service node, /v1/storage/{blob,usage} -> blob store.\n"
         "Place behind a reverse proxy that publishes it at a secret URI (or set\n"
         "--base-path).\n",
         kVersion);

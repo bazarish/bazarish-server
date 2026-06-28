@@ -73,10 +73,10 @@ Backend routeOf(const std::string& path)
     if (startsWith(path, "/v1/account/")) {
         return Backend::eAccount;
     }
-    // Only the blob upload endpoint is public. The operator quota endpoint
-    // (/v1/storage/quota) and the I2P-only download paths (/b/*) are never
-    // forwarded to the clearnet facade.
-    if (startsWith(path, "/v1/storage/blob")) {
+    // Only the user-facing blob endpoints are public: the upload and the caller's
+    // own usage query. The operator quota endpoint (/v1/storage/quota) and the
+    // I2P-only download paths (/b/*) are never forwarded to the clearnet facade.
+    if (startsWith(path, "/v1/storage/blob") || startsWith(path, "/v1/storage/usage")) {
         return Backend::eBlobStorage;
     }
     return Backend::eNone;

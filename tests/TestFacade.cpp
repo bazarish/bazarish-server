@@ -133,6 +133,16 @@ int main()
         CHECK(reply.at("body") == "ciphertext-bytes");
     }
 
+    // The caller's own blob-storage usage (GET) is forwarded to the blob backend.
+    {
+        const httplib::Result result = client.Get("/s/secret123/v1/storage/usage");
+        CHECK(result && result->status == 200);
+        const nlohmann::json reply = nlohmann::json::parse(result->body);
+        CHECK(reply.at("backend") == "blob");
+        CHECK(reply.at("method") == "GET");
+        CHECK(reply.at("path") == "/v1/storage/usage");
+    }
+
     // A large blob upload streams through (spooled, then content-provided over
     // several chunks) without the facade buffering it whole - the backend
     // receives the exact bytes.

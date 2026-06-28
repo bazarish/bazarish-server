@@ -383,6 +383,9 @@ int main(const int argc, const char** argv)
     bazarish::server::HttpApiOptions httpOptions;
     httpOptions.operatorFingerprints = operatorFingerprints;
     httpOptions.version = kVersion;
+    // Report the same default quota the delivery engine enforces, so the
+    // storage-usage endpoint matches what a user without an override actually gets.
+    httpOptions.defaultQuotaBytes = engineOptions.defaultQuotaBytes;
     httpOptions.mailboxRetentionSeconds
         = mailboxRetentionDays > 0 ? mailboxRetentionDays * 24 * 3600 : 0;
     // Resolve a user's assigned serving destination + key: their personal

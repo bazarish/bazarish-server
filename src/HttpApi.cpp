@@ -432,6 +432,19 @@ void HttpApi::setupRoutes()
                 });
         }));
 
+    // The authenticated caller's own mailbox storage: bytes currently held and the
+    // effective quota (their override, else the server default). Lets a client show
+    // "used / free / total" for its server-core mailbox in per-profile settings.
+    http_->Get("/v1/messaging/storage-usage",
+        authenticated([this](const httplib::Request&, httplib::Response& response,
+                          const std::string& user) {
+            respondJson(response,
+                {
+                    {"usedBytes", storage_.usage(user)},
+                    {"quotaBytes", storage_.userQuota(user, options_.defaultQuotaBytes)},
+                });
+        }));
+
     // --- Operator-internal: per-user storage quota ---
     //
     // Set by the operator's service node over the private channel when a user's

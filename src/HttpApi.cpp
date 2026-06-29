@@ -33,6 +33,21 @@ std::int64_t nowSeconds()
     return static_cast<std::int64_t>(std::time(nullptr));
 }
 
+// Backoff before the next transient delivery round. The first rounds retry with
+// no pause to catch a tunnel that is about to finish building, then the wait
+// grows so a longer outage is not hammered: rounds 0-2 immediate, rounds 3-5 one
+// second, then +1s per round capped at five seconds.
+std::chrono::seconds retryBackoff(int round)
+{
+    int seconds = 0;
+    if (round >= 6) {
+        seconds = std::min(5, round - 4);
+    } else if (round >= 3) {
+        seconds = 1;
+    }
+    return std::chrono::seconds(seconds);
+}
+
 // The full blob length the upstream store declares: the Content-Range total for
 // a partial (206) response, else Content-Length. 0 when neither is parseable.
 std::uint64_t blobTotalFromHead(const bazarish::server::I2pBlobReader& reader)
@@ -111,7 +126,7 @@ HttpApi::HttpApi(Storage& storage, DeliveryEngine& engine, const HttpApiOptions 
     // Background delivery workers (store-and-forward). A small fixed pool: each
     // worker may sit in a per-message retry loop for a while, so size it for the
     // expected number of concurrently-in-flight slow deliveries.
-    constexpr int kDeliveryWorkers = 4;
+    constexpr int kDeliveryWorkers = 8;
     deliveryWorkers_.reserve(kDeliveryWorkers);
     for (int i = 0; i < kDeliveryWorkers; ++i) {
         deliveryWorkers_.emplace_back([this]() { deliveryWorkerLoop(); });
@@ -208,6 +223,16 @@ void HttpApi::setAttempt(const std::string& attemptId, const Attempt& attempt)
     attempts_[attemptId] = updated;
 }
 
+void HttpApi::setAttemptPhase(const std::string& attemptId, const std::string& phase)
+{
+    const std::lock_guard<std::mutex> lock(attemptsMutex_);
+    const auto found = attempts_.find(attemptId);
+    // Annotate only a still-pending attempt; never relabel or resurrect a terminal one.
+    if (found != attempts_.end() && found->second.status == "pending") {
+        found->second.phase = phase;
+    }
+}
+
 void HttpApi::markDeliveredByMessageId(const std::string& messageId)
 {
     if (messageId.empty()) {
@@ -255,7 +280,6 @@ void HttpApi::runDeliveryJob(const DeliveryJob& job)
     // terminal. The attempt stays "pending" between rounds so a polling client
     // keeps waiting instead of seeing a spurious failure.
     const int kMaxRounds = options_.deliveryMaxRounds > 0 ? options_.deliveryMaxRounds : 1;
-    const auto kRetryDelay = std::chrono::seconds(options_.deliveryRetryDelaySeconds);
     const std::string unreachableCode
         = std::string(toString(ErrorCode::eRecipientServerUnreachable));
     for (int round = 0; round < kMaxRounds; ++round) {
@@ -286,7 +310,12 @@ void HttpApi::runDeliveryJob(const DeliveryJob& job)
         } else {
             RemoteDeliveryResult remote;
             if (remoteDeliver_) {
-                remote = remoteDeliver_(job.senderDest, job.toDest, job.sealed, job.payload);
+                // Surface each federation phase onto the attempt so a polling client
+                // sees real progress (dialing/connected/sending) while it is pending.
+                remote = remoteDeliver_(job.senderDest, job.toDest, job.sealed, job.payload,
+                    [this, &job](const std::string& phase) {
+                        setAttemptPhase(job.attemptId, phase);
+                    });
             }
             if (!remote.reachable) {
                 attempt.status = "failed";
@@ -304,10 +333,17 @@ void HttpApi::runDeliveryJob(const DeliveryJob& job)
             setAttempt(job.attemptId, attempt);
             return;
         }
-        // Transient: leave the attempt "pending" and wait before the next round,
-        // wakeable immediately on shutdown.
+        // Transient (the recipient's leaseset/tunnels were momentarily bad, or the
+        // synchronous reply's return leg dropped on a flaky path - the message may
+        // well already be stored, the dedup makes a re-delivery harmless): surface a
+        // "retrying" phase so a polling client shows real progress, then wait with a
+        // capped backoff before the next round (so the retry window spans minutes and
+        // catches the path's recovery without the client needing a manual resend).
+        setAttemptPhase(job.attemptId,
+            "retry " + std::to_string(round + 1) + "/" + std::to_string(kMaxRounds));
+        const auto backoff = retryBackoff(round);
         std::unique_lock<std::mutex> lock(jobsMutex_);
-        if (jobsCv_.wait_for(lock, kRetryDelay, [this]() { return stopping_; })) {
+        if (jobsCv_.wait_for(lock, backoff, [this]() { return stopping_; })) {
             return;
         }
     }
@@ -726,6 +762,7 @@ void HttpApi::setupRoutes()
                 }
                 Attempt pending;
                 pending.status = "pending";
+                pending.phase = "queued";  // until the delivery worker starts dialing
                 pending.messageId = messageId;
                 attempts_[attemptId] = pending;
                 if (!messageId.empty()) {
@@ -753,6 +790,9 @@ void HttpApi::setupRoutes()
                 return;
             }
             nlohmann::json result = {{"status", found->second.status}};
+            if (!found->second.phase.empty()) {
+                result["phase"] = found->second.phase;
+            }
             if (!found->second.errorCode.empty()) {
                 result["error"] = {
                     {"code", found->second.errorCode},

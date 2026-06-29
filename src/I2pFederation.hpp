@@ -15,6 +15,7 @@
 namespace bazarish::server {
 
 class FederationRateLimiter;
+class WarmDestPool;
 
 // Sends a signed delivered-ack for messageId to the sending server at toDest,
 // dialled FROM the given serving endpoint (the one that received the delivery) -
@@ -28,8 +29,10 @@ using AckSenderFn = std::function<void(bazarish::i2p::Endpoint& from, const std:
 
 // Relays a sealed envelope to toDest dialled from the given serving endpoint
 // (the sender's own destination). The recipient acks back to from's address.
+// onPhase (when set) is called with the live phase ("dialing", "connected",
+// "sending", "awaiting-ack") so the caller can surface real delivery progress.
 RemoteDeliveryResult federationDeliver(bazarish::i2p::Endpoint& from, const std::string& toDest,
-    const Bytes& sealed, const Bytes& payload);
+    const Bytes& sealed, const Bytes& payload, const FederationPhaseFn& onPhase = {});
 
 // Sends an already-signed delivered-ack from the given serving endpoint to toDest
 // (one-way: write the line, drain until the receiver closes, so it flushes).
@@ -61,6 +64,13 @@ public:
     // means CARD_UNKNOWN.
     void setGetCard(GetCardFn getCard);
 
+    // Wires a pool of warm single-use transient destinations to dial outbound
+    // fetches FROM (instead of the home dest), so a card/resolve lookup is both
+    // anonymous (a fresh one-time dest per lookup, never reused) and fast (the
+    // tunnels are pre-built). Optional: when unset, or when the pool is momentarily
+    // empty, fetches fall back to the home endpoint. Set before use.
+    void setWarmPool(WarmDestPool* pool);
+
     // Relays a sealed fetch (op "card" or "resolve") to a destination over I2P;
     // the HttpApi RemoteFetchFn (the proxy fallback for a client with no I2P transport).
     RemoteFetchResult fetchOverI2p(
@@ -74,6 +84,7 @@ private:
     DeliveryEngine& engine_;
     FederationRateLimiter* limiter_;
     GetCardFn getCard_;
+    WarmDestPool* warmPool_ = nullptr;
     std::atomic<bool> running_;
     std::thread acceptThread_;
 };

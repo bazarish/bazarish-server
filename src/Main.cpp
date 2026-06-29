@@ -2,6 +2,7 @@
 #include "DeliveryEngine.hpp"
 #include "DiskStorage.hpp"
 #include "FederationPool.hpp"
+#include "WarmDestPool.hpp"
 #include "FederationRateLimiter.hpp"
 #include "HttpApi.hpp"
 #include "I2pFederation.hpp"
@@ -144,6 +145,11 @@ int main(const int argc, const char** argv)
     // I2P ceiling. Operators on a constrained uplink can lower it.
     int tunnelQuantity = bazarish::i2p::kMaxTunnelQuantity;
     std::size_t poolSize = 10;
+    // Warm pool of single-use transient outbound dests for anonymous card/resolve
+    // fetches: target adapts between min and max with demand. 0 max disables it
+    // (fetches then dial from the home dest).
+    std::size_t warmPoolMin = 2;
+    std::size_t warmPoolMax = 10;
     std::size_t federationRateLimit = 240;  // inbound deliveries per peer dest per 60s
     std::int64_t mailboxRetentionDays = 30;  // TTL backstop for never-fully-acked mail (0 = off)
     bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
@@ -179,6 +185,9 @@ int main(const int argc, const char** argv)
             i += 2;
         } else if (std::strcmp(argv[i], "--pool-size") == 0 && i + 1 < argc) {
             poolSize = static_cast<std::size_t>(std::strtoull(argv[i + 1], nullptr, 10));
+            i += 2;
+        } else if (std::strcmp(argv[i], "--warm-pool-max") == 0 && i + 1 < argc) {
+            warmPoolMax = static_cast<std::size_t>(std::strtoull(argv[i + 1], nullptr, 10));
             i += 2;
         } else if (std::strcmp(argv[i], "--federation-rate-limit") == 0 && i + 1 < argc) {
             federationRateLimit = static_cast<std::size_t>(std::strtoull(argv[i + 1], nullptr, 10));
@@ -242,6 +251,9 @@ int main(const int argc, const char** argv)
     std::shared_ptr<bazarish::i2p::Endpoint> homeEndpoint;
     std::shared_ptr<bazarish::i2p::Endpoint> blobEndpoint;
     std::unique_ptr<bazarish::server::FederationRateLimiter> federationLimiter;
+    // Declared before `federation` so it OUTLIVES it (federation holds a raw pointer
+    // to the pool); the router, declared earlier, outlives the pool's warmer thread.
+    std::unique_ptr<bazarish::server::WarmDestPool> warmPool;
     std::unique_ptr<bazarish::server::I2pFederation> federation;
     std::unique_ptr<bazarish::server::PerUserDestinations> perUserDests;
     std::unique_ptr<bazarish::server::FederationPool> federationPool;
@@ -313,9 +325,26 @@ int main(const int argc, const char** argv)
         federation = std::make_unique<bazarish::server::I2pFederation>(
             *homeEndpoint, engine, federationLimiter.get());
         federation->setGetCard(getCard);
+        // Warm pool of single-use transient dests so a card/resolve fetch dials from
+        // a fresh one-time dest (anonymous, never reused) without the cold tunnel
+        // build. Disabled with --warm-pool-max 0 (fetches then dial from the home
+        // dest). Best-effort: an empty pool transparently falls back to the home dest.
+        if (warmPoolMax > 0) {
+            bazarish::server::WarmDestPool::Options warmOptions;
+            warmOptions.minSize = std::min(warmPoolMin, warmPoolMax);
+            warmOptions.maxSize = warmPoolMax;
+            warmOptions.privacy = privacy;
+            warmOptions.tunnelQuantity = tunnelQuantity;
+            warmPool = std::make_unique<bazarish::server::WarmDestPool>(*router, warmOptions);
+            warmPool->start();
+            federation->setWarmPool(warmPool.get());
+            bazarish::log::info("warm one-time dest pool up (target {}..{})", warmOptions.minSize,
+                warmOptions.maxSize);
+        }
         federation->start();
-        // Discovery (card/resolve) fetch can use the home endpoint; user-to-user
-        // delivery does NOT (it dials from each sender's own serving dest below).
+        // Discovery (card/resolve) fetch dials from a warm one-time dest (above) or
+        // the home endpoint; user-to-user delivery does NOT - it dials from each
+        // sender's own serving dest below.
         remoteFetch = federation->asRemoteFetchFn();
 
         // Paid per-user destinations: operate client-owned offline keys as the
@@ -347,7 +376,8 @@ int main(const int argc, const char** argv)
         bazarish::server::PerUserDestinations* const perUser = perUserDests.get();
         bazarish::server::FederationPool* const pool = federationPool.get();
         remoteDeliver = [perUser, pool](const std::string& senderDest, const std::string& toDest,
-                            const bazarish::Bytes& sealed, const bazarish::Bytes& payload)
+                            const bazarish::Bytes& sealed, const bazarish::Bytes& payload,
+                            const bazarish::server::FederationPhaseFn& onPhase)
             -> bazarish::server::RemoteDeliveryResult {
             std::shared_ptr<bazarish::i2p::Endpoint> from;
             if (perUser) {
@@ -365,7 +395,7 @@ int main(const int argc, const char** argv)
                 unreachable.reachable = false;
                 return unreachable;
             }
-            return bazarish::server::federationDeliver(*from, toDest, sealed, payload);
+            return bazarish::server::federationDeliver(*from, toDest, sealed, payload, onPhase);
         };
     }
 

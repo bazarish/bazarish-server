@@ -67,9 +67,9 @@ struct HttpApiOptions {
     std::int64_t mailboxRetentionSeconds = 30 * 24 * 3600;
     // Background delivery (store-and-forward) retry policy for a recipient whose
     // I2P leaseset is momentarily unpublished: how many federation rounds before
-    // giving up, and the delay between them (the first round is immediate).
+    // giving up. The first rounds retry immediately, then the backoff grows (see
+    // retryBackoff): rounds 0-2 immediate, 3-5 one second, then +1s capped at 5s.
     int deliveryMaxRounds = 12;
-    std::int64_t deliveryRetryDelaySeconds = 10;
     // Fingerprints of the identities authorised to call the operator-internal
     // endpoints (quota, per-user destination) and /healthz. The caller proves
     // possession by signing the request (hybrid auth); no shared secret. The
@@ -123,8 +123,13 @@ struct RemoteDeliveryResult {
 // from a shared address - the recipient acks back to senderDest. Routing is by
 // destination (see docs-main api/InviteAnonymity.md). The default (no transport
 // wired) reports unreachable.
+// onPhase, when set, is called as the relay progresses through its federation
+// phases ("dialing", "connected", "sending", "awaiting-ack") so the caller can
+// surface real, human-readable delivery status. Best-effort and may be empty.
+using FederationPhaseFn = std::function<void(const std::string& phase)>;
 using RemoteDeliverFn = std::function<RemoteDeliveryResult(const std::string& senderDest,
-    const std::string& toDest, const Bytes& sealed, const Bytes& payload)>;
+    const std::string& toDest, const Bytes& sealed, const Bytes& payload,
+    const FederationPhaseFn& onPhase)>;
 
 // Result of relaying a sealed fetch (card / resolve) to a destination.
 struct RemoteFetchResult {
@@ -165,6 +170,10 @@ public:
 private:
     struct Attempt {
         std::string status;  // "pending", "delivered", "failed" or "unconfirmed"
+        // The live federation phase while status is "pending" ("queued", "dialing",
+        // "connected", "sending", "awaiting-ack"), so a polling client can show real
+        // delivery progress instead of an opaque "pending". Empty once terminal.
+        std::string phase;
         std::string errorCode;
         std::string errorMessage;
         std::int64_t completedAt = 0;
@@ -189,6 +198,9 @@ private:
     void deliveryWorkerLoop();
     void runDeliveryJob(const DeliveryJob& job);
     void setAttempt(const std::string& attemptId, const Attempt& attempt);
+    // Updates only the live federation phase of an existing, still-pending attempt
+    // (a no-op once it is terminal). Thread-safe.
+    void setAttemptPhase(const std::string& attemptId, const std::string& phase);
     void stopWorkers();
     // Periodic mailbox TTL sweep (the backstop for never-fully-acked mail).
     void mailboxJanitorLoop();

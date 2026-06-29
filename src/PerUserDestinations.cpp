@@ -13,6 +13,7 @@
 #include <fstream>
 #include <iterator>
 #include <system_error>
+#include <thread>
 #include <utility>
 
 namespace bazarish::server {
@@ -105,9 +106,28 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
                             // the sender's serving dest.
                             [this, endpoint, sender, signingKey = raw->signingKey](
                                 const std::string& messageId) {
-                                if (ackSender_) {
-                                    ackSender_(*endpoint, sender, messageId, *signingKey);
+                                if (!ackSender_) {
+                                    return;
                                 }
+                                // Send the delivered-ack on a detached thread: it
+                                // dials a fresh outbound connection back to the
+                                // sender, which must never block this destination's
+                                // single accept loop (a slow dial would stall every
+                                // later inbound delivery). Captures own copies (the
+                                // ack function and the shared endpoint/key), so it is
+                                // safe if this destination is torn down while the ack
+                                // is still in flight.
+                                std::thread([ackSender = ackSender_, endpoint, sender,
+                                                messageId, signingKey]() {
+                                    // No accept-loop try/catch wraps a detached
+                                    // thread - an escaping exception would terminate
+                                    // the process, so contain it here (a failed ack is
+                                    // best-effort; the sender retries on its own).
+                                    try {
+                                        ackSender(*endpoint, sender, messageId, *signingKey);
+                                    } catch (const std::exception&) {
+                                    }
+                                }).detach();
                             },
                             // A delivered-ack landing here (we sent from this dest)
                             // marks our local attempt delivered.

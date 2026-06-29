@@ -30,6 +30,7 @@ add_library(bazarish_server_lib STATIC
     src/FederationPool.cpp
     src/I2pFederation.cpp
     src/PerUserDestinations.cpp
+    src/WarmDestPool.cpp
     src/HttpApi.cpp
 )
 target_include_directories(bazarish_server_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)

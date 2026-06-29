@@ -12,6 +12,7 @@
 #include <fstream>
 #include <iterator>
 #include <system_error>
+#include <thread>
 #include <utility>
 
 namespace bazarish::server {
@@ -139,10 +140,25 @@ void FederationPool::start()
                         raw->sealingKey.get(), getCard_,
                         // Ack a stored delivery from THIS pool destination back to
                         // the sender's serving dest (never a shared address).
-                        [this, raw, sender](const std::string& messageId) {
-                            if (ackSender_) {
-                                ackSender_(*raw->endpoint, sender, messageId, *raw->signingKey);
+                        [this, endpoint = raw->endpoint, sender, signingKey = raw->signingKey](
+                            const std::string& messageId) {
+                            if (!ackSender_) {
+                                return;
                             }
+                            // Detached so the fresh outbound ack dial never blocks
+                            // this pool destination's accept loop; captures own copies
+                            // (ack function + shared endpoint/key) so it stays valid
+                            // across teardown while the ack is in flight.
+                            std::thread([ackSender = ackSender_, endpoint, sender, messageId,
+                                            signingKey]() {
+                                // Contain any exception: a detached thread has no
+                                // accept-loop try/catch around it, so an escape would
+                                // terminate the process (a failed ack is best-effort).
+                                try {
+                                    ackSender(*endpoint, sender, messageId, *signingKey);
+                                } catch (const std::exception&) {
+                                }
+                            }).detach();
                         },
                         // A delivered-ack landing on this pool dest (we were the
                         // sender) marks our local attempt delivered.

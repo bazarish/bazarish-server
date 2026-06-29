@@ -3,6 +3,7 @@
 
 #include <bazarish/Cms.hpp>
 #include <bazarish/Crypto.hpp>
+#include <bazarish/Log.hpp>
 #include <bazarish/Resolve.hpp>
 
 #include <nlohmann/json.hpp>
@@ -82,22 +83,34 @@ void federationServeFrame(const std::string& headerLine,
     if (op == "deliver") {
         const Bytes sealed = fromBase64(header.at("sealed").get<std::string>());
         const std::size_t length = header.at("len").get<std::size_t>();
+        // DIAGNOSTIC (temporary): pinpoint where an inbound deliver dies - reading the
+        // payload off the (possibly flaky) stream, the engine, or writing the reply.
+        bazarish::log::warn("fed-serve: deliver in, payload {} bytes; reading...", length);
         const Bytes payload = readPayload(length);
+        bazarish::log::warn("fed-serve: payload read OK ({} bytes); engine.deliver...", payload.size());
 
         const DeliveryEngine::Outcome outcome = engine.deliver(
             sealed, payload, now, sealingKey != nullptr ? *sealingKey : engine.sealingKey());
+        bazarish::log::warn("fed-serve: engine done (delivered={}, err='{}'); writing reply",
+            outcome.delivered, outcome.errorCode);
         nlohmann::json reply = {{"delivered", outcome.delivered}};
         if (!outcome.delivered) {
             reply["errorCode"] = outcome.errorCode;
             reply["errorMessage"] = outcome.errorMessage;
         }
-        // The synchronous reply is best-effort (its return leg over the accepted
-        // stream is unreliable); the authoritative confirmation is the signed
-        // delivered-ack the caller sends back over a fresh outbound connection.
+        // Reply on the accepted stream FIRST, then trigger the delivered-ack.
+        // onDelivered sends the signed ack over a FRESH outbound connection, which on
+        // a slow path can take seconds to dial; running it before the reply would
+        // hold the reply past the sender's read timeout - the sender then reads a
+        // stream EOF and retries a message we already stored - and would stall this
+        // destination's single accept loop for every later inbound delivery. The
+        // synchronous reply stays best-effort; the signed delivered-ack the caller
+        // receives over its own dest remains the authoritative confirmation.
+        writeReply(reply.dump());
+        bazarish::log::warn("fed-serve: reply written ({})", outcome.delivered ? "delivered" : "rejected");
         if (outcome.delivered && onDelivered) {
             onDelivered(outcome.messageId);
         }
-        writeReply(reply.dump());
         return;
     }
 

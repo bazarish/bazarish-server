@@ -4,9 +4,6 @@
 #include "Federation.hpp"
 #include "WarmDestPool.hpp"
 
-#include <bazarish/Log.hpp>
-
-#include <algorithm>
 #include <array>
 #include <chrono>
 #include <ctime>
@@ -35,25 +32,10 @@ RemoteDeliveryResult federationDeliver(bazarish::i2p::Endpoint& from, const std:
     // Routing is by destination: dial the recipient's serving dest directly, FROM
     // the sender's serving endpoint. An unreachable destination (e.g. its leaseset
     // has not published yet) leaves the message on the caller for retry.
-    //
-    // DIAGNOSTIC (temporary): the delivery dials FROM the sender's serving (pool /
-    // per-user) dest, whose tunnel state differs from the home dest used for card
-    // fetch. Log the outcome so a stuck contact-request delivery is visible.
-    const auto t0 = std::chrono::steady_clock::now();
-    const auto elapsedMs = [t0]() -> long long {
-        return std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - t0)
-            .count();
-    };
-    const std::string dest12 = toDest.substr(0, std::min<std::size_t>(12, toDest.size()));
-    bazarish::log::warn("fed-deliver dialing {}...", dest12);
     phase("dialing");  // building the tunnel + dialing the recipient's leaseset
     try {
         auto stream = from.connect(toDest, std::chrono::seconds(60));
         if (!stream) {
-            bazarish::log::warn(
-                "fed-deliver {} UNREACHABLE after {} ms (connect null - sender dest no tunnels?)",
-                dest12, elapsedMs());
             result.reachable = false;
             return result;
         }
@@ -64,11 +46,7 @@ RemoteDeliveryResult federationDeliver(bazarish::i2p::Endpoint& from, const std:
         result.delivered = delivered.delivered;
         result.errorCode = delivered.errorCode;
         result.errorMessage = delivered.errorMessage;
-        bazarish::log::warn("fed-deliver {} done in {} ms (delivered={}, err='{}')", dest12,
-            elapsedMs(), delivered.delivered, delivered.errorCode);
-    } catch (const std::exception& error) {
-        bazarish::log::warn(
-            "fed-deliver {} EXCEPTION after {} ms: {}", dest12, elapsedMs(), error.what());
+    } catch (const std::exception&) {
         result.reachable = false;
     }
     return result;
@@ -165,40 +143,19 @@ RemoteFetchResult I2pFederation::fetchOverI2p(
     // pool is empty (or absent) we fall back to the standing home endpoint.
     std::shared_ptr<bazarish::i2p::Endpoint> oneTime = warmPool_ ? warmPool_->acquire() : nullptr;
     bazarish::i2p::Endpoint& dialer = oneTime ? *oneTime : endpoint_;
-    //
-    // DIAGNOSTIC (temporary): time the i2p dial to the target dest and log where a
-    // co-located loopback fetch stalls (leaseset lookup / tunnel build / connect).
-    const auto t0 = std::chrono::steady_clock::now();
-    const auto elapsedMs = [t0]() -> long long {
-        return std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - t0)
-            .count();
-    };
-    const std::string dest12 = toDest.substr(0, std::min<std::size_t>(12, toDest.size()));
-    bazarish::log::warn(
-        "fed-fetch[{}] dialing {} (from {})...", op, dest12, oneTime ? "warm one-time dest" : "home");
     try {
         auto stream = dialer.connect(toDest, std::chrono::seconds(60));
         if (!stream) {
-            bazarish::log::warn(
-                "fed-fetch[{}] {} UNREACHABLE after {} ms (connect returned null)", op, dest12,
-                elapsedMs());
             result.reachable = false;
             return result;
         }
-        bazarish::log::warn(
-            "fed-fetch[{}] {} connected in {} ms; sending fetch", op, dest12, elapsedMs());
         const FederationFetchResult fetched = federationSendFetch(*stream, op, sealed);
         result.reachable = true;
         result.ok = fetched.ok;
         result.sealed = fetched.sealed;
         result.errorCode = fetched.errorCode;
         result.errorMessage = fetched.errorMessage;
-        bazarish::log::warn("fed-fetch[{}] {} done in {} ms (ok={}, err='{}')", op, dest12,
-            elapsedMs(), fetched.ok, fetched.errorCode);
-    } catch (const std::exception& error) {
-        bazarish::log::warn(
-            "fed-fetch[{}] {} EXCEPTION after {} ms: {}", op, dest12, elapsedMs(), error.what());
+    } catch (const std::exception&) {
         result.reachable = false;
     }
     return result;

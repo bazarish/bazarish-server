@@ -3,7 +3,6 @@
 
 #include <bazarish/Cms.hpp>
 #include <bazarish/Crypto.hpp>
-#include <bazarish/Log.hpp>
 #include <bazarish/Resolve.hpp>
 
 #include <nlohmann/json.hpp>
@@ -83,16 +82,10 @@ void federationServeFrame(const std::string& headerLine,
     if (op == "deliver") {
         const Bytes sealed = fromBase64(header.at("sealed").get<std::string>());
         const std::size_t length = header.at("len").get<std::size_t>();
-        // DIAGNOSTIC (temporary): pinpoint where an inbound deliver dies - reading the
-        // payload off the (possibly flaky) stream, the engine, or writing the reply.
-        bazarish::log::warn("fed-serve: deliver in, payload {} bytes; reading...", length);
         const Bytes payload = readPayload(length);
-        bazarish::log::warn("fed-serve: payload read OK ({} bytes); engine.deliver...", payload.size());
 
         const DeliveryEngine::Outcome outcome = engine.deliver(
             sealed, payload, now, sealingKey != nullptr ? *sealingKey : engine.sealingKey());
-        bazarish::log::warn("fed-serve: engine done (delivered={}, err='{}'); writing reply",
-            outcome.delivered, outcome.errorCode);
         nlohmann::json reply = {{"delivered", outcome.delivered}};
         if (!outcome.delivered) {
             reply["errorCode"] = outcome.errorCode;
@@ -107,7 +100,6 @@ void federationServeFrame(const std::string& headerLine,
         // synchronous reply stays best-effort; the signed delivered-ack the caller
         // receives over its own dest remains the authoritative confirmation.
         writeReply(reply.dump());
-        bazarish::log::warn("fed-serve: reply written ({})", outcome.delivered ? "delivered" : "rejected");
         if (outcome.delivered && onDelivered) {
             onDelivered(outcome.messageId);
         }

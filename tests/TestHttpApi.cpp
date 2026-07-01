@@ -151,9 +151,9 @@ int main()
     DeliveryEngine engine(storage, serverFp, Key::fromPrivatePem(serverSealing.privatePem()),
         engineOptions);
     HttpApiOptions httpOptions;
-    // No retry backoff in tests: a federated (unreachable) send should reach its
-    // terminal "failed" at once instead of looping for minutes.
-    httpOptions.deliveryRetryDelaySeconds = 0;
+    // No retries in tests: a federated (unreachable) send should reach its terminal
+    // "failed" at once instead of looping for minutes.
+    httpOptions.deliveryMaxRounds = 1;
     // Routing is by destination. The tests assign every user the same
     // destination (serverDest, a valid .b32.i2p host) with the server's sealing
     // key, so a send to serverDest is a same-destination local delivery; a send

@@ -1,0 +1,12 @@
+{
+    "admin": "REPLACE_WITH_YOUR_FINGERPRINT_FROM_bazarish-client_whoami",
+    "audience": "bazarish-admin-panel",
+    "listen": {"host": "127.0.0.1", "port": 8460},
+    "services": [
+        {"name": "server-core", "kind": "server-core", "url": "http://127.0.0.1:8420"},
+        {"name": "service-node", "kind": "service-node", "url": "http://127.0.0.1:8421"},
+        {"name": "blob-storage", "kind": "blob-storage", "url": "http://127.0.0.1:8456"},
+        {"name": "facade", "kind": "facade", "url": "http://127.0.0.1:8419"},
+        {"name": "alias-resolver", "kind": "alias-resolver", "url": "http://127.0.0.1:8455"}
+    ]
+}

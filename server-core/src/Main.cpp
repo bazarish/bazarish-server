@@ -1,7 +1,6 @@
 // Bazarish project (c) 2026
 #include "DeliveryEngine.hpp"
 #include "DiskStorage.hpp"
-#include "FederationPool.hpp"
 #include "WarmDestPool.hpp"
 #include "FederationRateLimiter.hpp"
 #include "HttpApi.hpp"
@@ -41,8 +40,7 @@ void printUsage()
         "bazarish-server %s\n"
         "Usage: bazarish-server --state <directory> --i2p [--listen <host> <port>]\n"
         "          [--contact-request-limit <bytes>] [--operator-fingerprint <fp>]...\n"
-        "          [--privacy <minimal|middle|max>] [--pool-size <n>]\n"
-        "          [--tunnel-quantity <n>]\n"
+        "          [--privacy <minimal|middle|max>] [--tunnel-quantity <n>]\n"
         "          [--federation-rate-limit <n>] [--service-node <url>]\n"
         "          [--mailbox-retention <days>]\n"
         "          [--log-level <error|warn|info|debug>] [--i2p-log]\n"
@@ -56,8 +54,7 @@ void printUsage()
         "the card. A send is delivered locally when its toDest is one of this\n"
         "server's destinations, otherwise it is dialled directly over I2P.\n"
         "--contact-request-limit <bytes> caps the tokenless contact-request\n"
-        "payload. --pool-size <n> sizes the free-tier address pool (default 10;\n"
-        "0 disables it, falling free users back to the home destination).\n"
+        "payload.\n"
         "--federation-rate-limit caps inbound I2P deliveries per connecting\n"
         "destination per 60s (default 240, 0 disables). --mailbox-retention\n"
         "<days> is the TTL backstop that reclaims mail never acked by all of a\n"
@@ -144,7 +141,6 @@ int main(const int argc, const char** argv)
     // full tunnel pool (load balancing across tunnels for one address); 16 is the
     // I2P ceiling. Operators on a constrained uplink can lower it.
     int tunnelQuantity = bazarish::i2p::kMaxTunnelQuantity;
-    std::size_t poolSize = 10;
     // Warm pool of single-use transient outbound dests for anonymous card/resolve
     // fetches: target adapts between min and max with demand. 0 max disables it
     // (fetches then dial from the home dest).
@@ -182,9 +178,6 @@ int main(const int argc, const char** argv)
             i += 2;
         } else if (std::strcmp(argv[i], "--tunnel-quantity") == 0 && i + 1 < argc) {
             tunnelQuantity = std::atoi(argv[i + 1]);
-            i += 2;
-        } else if (std::strcmp(argv[i], "--pool-size") == 0 && i + 1 < argc) {
-            poolSize = static_cast<std::size_t>(std::strtoull(argv[i + 1], nullptr, 10));
             i += 2;
         } else if (std::strcmp(argv[i], "--warm-pool-max") == 0 && i + 1 < argc) {
             warmPoolMax = static_cast<std::size_t>(std::strtoull(argv[i + 1], nullptr, 10));
@@ -256,7 +249,6 @@ int main(const int argc, const char** argv)
     std::unique_ptr<bazarish::server::WarmDestPool> warmPool;
     std::unique_ptr<bazarish::server::I2pFederation> federation;
     std::unique_ptr<bazarish::server::PerUserDestinations> perUserDests;
-    std::unique_ptr<bazarish::server::FederationPool> federationPool;
     bazarish::server::RemoteDeliverFn remoteDeliver;
     bazarish::server::RemoteFetchFn remoteFetch;
     std::vector<std::string> endpoints;
@@ -300,8 +292,8 @@ int main(const int argc, const char** argv)
 
         // First-contact card fetch (op "card"): answer a peer's sealed query for
         // a local user's contact card by looking it up at the service node by
-        // fingerprint. Served on every destination's accept loop (home, pool,
-        // per-user) so a descriptor pointing at any of them resolves. Only when
+        // fingerprint. Served on the home and per-user accept loops so a
+        // descriptor pointing at either resolves. Only when
         // --service-node is set (else CARD_UNKNOWN).
         bazarish::server::GetCardFn getCard;
         if (!serviceNodeUrl.empty()) {
@@ -354,28 +346,12 @@ int main(const int argc, const char** argv)
         perUserDests->setGetCard(getCard);
         perUserDests->reloadPersisted(nowSeconds());
 
-        // Free-tier address pool: server-owned encrypted-LeaseSet (b33)
-        // destinations that free users are spread across. Optional (it builds a
-        // tunnel set per destination), enabled by --pool-size.
-        if (poolSize > 0) {
-            bazarish::log::info(
-                "starting federation address pool ({} destinations; building tunnels)...", poolSize);
-            federationPool = std::make_unique<bazarish::server::FederationPool>(
-                *router, engine, stateDir, privacy, poolSize, tunnelQuantity,
-                federationLimiter.get());
-            federationPool->setGetCard(getCard);
-            federationPool->start();
-            bazarish::log::info("address pool up: {} destinations",
-                federationPool->destinations().size());
-        }
-
         // Outbound user-to-user federation dials the recipient FROM the sender's
-        // own serving dest (per-user dest, else pool dest) - never a shared home
-        // address - so the recipient acks back to that dest. Resolved per send from
-        // the sender's serving dest carried on the delivery job.
+        // own serving destination - the server has no shared address to fall back
+        // on - so the recipient acks back to that dest. Resolved per send from the
+        // sender's serving dest carried on the delivery job.
         bazarish::server::PerUserDestinations* const perUser = perUserDests.get();
-        bazarish::server::FederationPool* const pool = federationPool.get();
-        remoteDeliver = [perUser, pool](const std::string& senderDest, const std::string& toDest,
+        remoteDeliver = [perUser](const std::string& senderDest, const std::string& toDest,
                             const bazarish::Bytes& sealed, const bazarish::Bytes& payload,
                             const bazarish::server::FederationPhaseFn& onPhase)
             -> bazarish::server::RemoteDeliveryResult {
@@ -383,12 +359,9 @@ int main(const int argc, const char** argv)
             if (perUser) {
                 from = perUser->endpointForDest(senderDest);
             }
-            if (!from && pool) {
-                from = pool->endpointForDest(senderDest);
-            }
             if (!from) {
-                // No serving endpoint for this sender (e.g. its per-user dest has
-                // not built yet): leave it for retry. No shared-address fallback.
+                // No serving endpoint for this sender (its destination has not
+                // built yet, or the account is not activated): leave it for retry.
                 bazarish::log::info(
                     "fed-out: no serving endpoint for sender {}", senderDest.substr(0, 12));
                 bazarish::server::RemoteDeliveryResult unreachable;
@@ -418,21 +391,16 @@ int main(const int argc, const char** argv)
     httpOptions.defaultQuotaBytes = engineOptions.defaultQuotaBytes;
     httpOptions.mailboxRetentionSeconds
         = mailboxRetentionDays > 0 ? mailboxRetentionDays * 24 * 3600 : 0;
-    // Resolve a user's assigned serving destination + key: their personal
-    // destination if they delegated one, else their pool destination if the
-    // pool is enabled, else the home destination. Used to short-circuit only
+    // Resolve a user's serving destination + key: their own destination, or
+    // nothing. There is deliberately no shared fallback - a user without a
+    // destination is simply not served yet, because any shared address would
+    // make every user behind it provably co-located. Used to short-circuit only
     // same-destination deliveries (a send to the sender's own destination) and
-    // to surface the destination to the user. homeEndpoint is always set (--i2p
-    // is required); homeServingKey is the same key the engine unseals with.
-    const auto homeServingKey
-        = std::make_shared<bazarish::Key>(bazarish::Key::fromPrivatePem(sealing.privatePem()));
-    const std::string homeDest = homeEndpoint->routingHost();
+    // to surface the destination to the user.
     httpOptions.assignDestination
-        = [&perUserDests, &federationPool, homeDest, homeServingKey](
-              const std::string& user) -> bazarish::server::DestinationAssignment {
-        // A user with a personal destination always resolves to it (its address
-        // may be empty until its session builds - then no local short-circuit
-        // matches and the delivery federates, which is safe).
+        = [&perUserDests](const std::string& user) -> bazarish::server::DestinationAssignment {
+        // The address may be empty until the session builds - then no local
+        // short-circuit matches and the delivery federates, which is safe.
         if (perUserDests) {
             const std::shared_ptr<bazarish::Key> key = perUserDests->servingKeyFor(user);
             if (key) {
@@ -441,11 +409,7 @@ int main(const int argc, const char** argv)
                     perUserDests->stateFor(user, now)};
             }
         }
-        if (federationPool) {
-            return {federationPool->destinationFor(user), federationPool->servingKeyFor(user),
-                "pool"};
-        }
-        return {homeDest, homeServingKey, "home"};
+        return {std::string(), nullptr, "none"};
     };
     // Proxy blob ops over I2P for clients without their own embedded router, via
     // the server's dedicated blob client endpoint (independent of federation).
@@ -495,10 +459,6 @@ int main(const int argc, const char** argv)
           };
     const auto onAck
         = [&api](const std::string& messageId) { api.markDeliveredByMessageId(messageId); };
-    if (federationPool) {
-        federationPool->setAckSender(ackSender);
-        federationPool->setOnAck(onAck);
-    }
     if (perUserDests) {
         perUserDests->setAckSender(ackSender);
         perUserDests->setOnAck(onAck);

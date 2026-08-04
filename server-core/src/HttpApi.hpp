@@ -32,10 +32,10 @@ namespace bazarish::server {
 struct DestinationAssignment {
     std::string dest;
     std::shared_ptr<Key> servingKey;
-    // The serving mode/state surfaced to the client: "home", "pool", or for a
-    // personal destination "building" / "active" / "expired" (see
-    // PerUserDestinations::stateFor). Lets the client tell an online personal
-    // destination (publish its address) from one still building or offline.
+    // The serving state surfaced to the client: "none" when the user has no
+    // destination yet, else "building" / "active" / "expired" (see
+    // PerUserDestinations::stateFor). Lets the client tell an online destination
+    // (publish its address) from one still building or offline.
     std::string state;
 };
 

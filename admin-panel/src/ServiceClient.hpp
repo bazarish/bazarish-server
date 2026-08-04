@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace bazarish {
 class Identity;
@@ -51,5 +52,25 @@ OpResult setQuota(const ServiceEntry& service, const Identity& identity, const s
 // (/v1/messaging/i2p-dest). An empty transient revokes.
 OpResult setI2pDest(const ServiceEntry& service, const Identity& identity,
     const std::string& user, const std::string& transientBase64, std::int64_t expiresUnix);
+
+// One account waiting for the operator on a moderated service node.
+struct PendingAccount {
+    std::string user;
+    std::int64_t requestedAt = 0;
+};
+
+// Accounts awaiting approval (GET /v1/account/pending on service-node), oldest
+// first. `ok` is false when the node could not be reached or refused the panel.
+struct PendingResult {
+    bool ok = false;
+    std::string error;
+    std::vector<PendingAccount> accounts;
+};
+
+PendingResult listPending(const ServiceEntry& service, const Identity& identity);
+
+// Approves a frozen account, which lets it delegate its I2P destination.
+OpResult approveAccount(
+    const ServiceEntry& service, const Identity& identity, const std::string& user);
 
 }  // namespace bazarish::admin

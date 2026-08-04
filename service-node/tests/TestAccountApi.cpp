@@ -187,20 +187,21 @@ int main()
         CHECK(status && status->status == 404);
     }
 
-    // Per-user I2P destination delegation: gated by an active i2pDest entitlement.
+    // Per-user I2P destination delegation: every account owns one, so the only
+    // gate is that this node knows the account and has approved it.
     {
         const std::string body
             = nlohmann::json{{"transient", "user-transient-b64"},
                   {"expiresUnix", now + 7 * 24 * 3600}}
                   .dump();
-        // No entitlement -> 403, nothing published.
-        const httplib::Result ungranted = client.Post("/v1/account/i2p-dest",
-            makeHeaders(alice, "POST", "/v1/account/i2p-dest", body), body, "application/json");
-        CHECK(ungranted && ungranted->status == 403);
+        // A stranger with no account here -> 403, nothing published.
+        const httplib::Result stranger = client.Post("/v1/account/i2p-dest",
+            makeHeaders(mallory, "POST", "/v1/account/i2p-dest", body), body, "application/json");
+        CHECK(stranger && stranger->status == 403);
         CHECK(pubCalls == 0);
 
-        // With an active entitlement -> 200, publishes the transient.
-        grants.grantService(alice.fingerprint(), "i2pDest", now + 30 * 24 * 3600, now);
+        // An account registered on an open node is approved on creation -> 200.
+        CHECK(!grants.peekApproval(alice.fingerprint())->pending());
         const httplib::Result ok = client.Post("/v1/account/i2p-dest",
             makeHeaders(alice, "POST", "/v1/account/i2p-dest", body), body, "application/json");
         CHECK(ok && ok->status == 200);

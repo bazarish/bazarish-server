@@ -132,6 +132,50 @@ void AccountApi::setupRoutes()
         };
     };
 
+    // Operator-only moderation surface for the admin panel, signed with the
+    // panel identity exactly like /healthz.
+    const auto operatorOnly = [this](auto handler) {
+        return [this, handler](const httplib::Request& request, httplib::Response& response) {
+            try {
+                auth::authorizeRequest(collectAuthHeaders(request), nowSeconds(), request.method,
+                    request.path, bodyBytes(request), options_.operatorFingerprints);
+            } catch (const std::exception& error) {
+                respondError(response, 403, ErrorCode::eDeliveryRejected, error.what());
+                return;
+            }
+            try {
+                handler(request, response);
+            } catch (const nlohmann::json::exception& error) {
+                respondError(response, 400, ErrorCode::eDeliveryRejected, error.what());
+            } catch (const std::invalid_argument& error) {
+                respondError(response, 400, ErrorCode::eDeliveryRejected, error.what());
+            }
+        };
+    };
+
+    http_->Get("/v1/account/pending",
+        operatorOnly([this](const httplib::Request&, httplib::Response& response) {
+            nlohmann::json users = nlohmann::json::array();
+            for (const std::string& user : grants_.pendingUsers()) {
+                const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
+                users.push_back({{"user", user},
+                    {"requestedAt", approval.has_value() ? approval->requestedAt : 0}});
+            }
+            respondJson(response, {{"pending", users}});
+        }));
+
+    http_->Post("/v1/account/approve",
+        operatorOnly([this](const httplib::Request& request, httplib::Response& response) {
+            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const std::string user = body.at("user").get<std::string>();
+            if (!grants_.peekApproval(user).has_value()) {
+                respondError(response, 404, ErrorCode::eDeliveryRejected, "no such account");
+                return;
+            }
+            grants_.approve(user, nowSeconds());
+            respondJson(response, {{"ok", true}});
+        }));
+
     // Validates and stores a subscription certificate. Shared by subscribe
     // and renew - renewal is simply a fresh certificate.
     const auto handleSubscribe
@@ -214,6 +258,16 @@ void AccountApi::setupRoutes()
               record.certificate = der;
               store_.putSubscription(record);
 
+              // On an open server the account is servable at once; on a moderated
+              // one this only starts the approval clock. Renewal keeps the
+              // original request time, so a pending account cannot outlive its
+              // deadline by renewing.
+              grants_.recordRegistration(
+                  cert.user, now, options_.registration == AccountApiOptions::Registration::eOpen);
+              const std::optional<GrantStore::Approval> approval
+                  = grants_.peekApproval(cert.user);
+              const bool pending = approval.has_value() && approval->pending();
+
               // Tell the messaging server the user's effective storage quota.
               if (options_.publishQuota) {
                   options_.publishQuota(cert.user, effectiveQuota);
@@ -225,6 +279,8 @@ void AccountApi::setupRoutes()
                       {"quotaBytes", effectiveQuota},
                       {"maxTermSeconds", options_.maxTermSeconds},
                       {"serverCard", toBase64(options_.serverCardDer)},
+                      {"approval", pending ? "pending" : "approved"},
+                      {"registrationMessage", pending ? options_.registrationMessage : std::string()},
                   });
           };
 
@@ -252,12 +308,13 @@ void AccountApi::setupRoutes()
             respondJson(response, {{"ok", true}});
         }));
 
-    // Receives a paid user's client-owned offline I2P transient and hands it to
-    // the messaging server, which operates the user's personal destination.
-    // i2pDest is a paid service: an active entitlement is required (auto-renewed
-    // from balance, with the one-step grace). An empty transient revokes the
-    // destination. The transient's validity is recorded so the status endpoint
-    // can tell the client's other devices when to issue the next one.
+    // Receives the user's client-owned offline I2P transient and hands it to the
+    // messaging server, which operates the user's own destination. Every account
+    // has one - it is the base protocol, not a purchase - but a moderated server
+    // withholds it until an operator approves the account, which is what "frozen"
+    // means: the account exists and the transient is accepted nowhere. An empty
+    // transient revokes the destination. The transient's validity is recorded so
+    // the status endpoint can tell the client's other devices when to re-issue.
     http_->Post("/v1/account/i2p-dest",
         authenticated([this](const httplib::Request& request, httplib::Response& response,
                           const std::string& user) {
@@ -267,17 +324,17 @@ void AccountApi::setupRoutes()
                 return;
             }
             const std::int64_t now = nowSeconds();
-            bool active = false;
-            if (options_.lifecycle) {
-                active = options_.lifecycle->evaluate(user, now).i2pDest.active;
-            } else {
-                const std::optional<GrantStore::ServiceGrant> entitlement
-                    = grants_.peekService(user, "i2pDest");
-                active = entitlement.has_value() && entitlement->paidThrough > now;
-            }
-            if (!active) {
+            const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
+            if (!approval.has_value()) {
                 respondError(response, 403, ErrorCode::eDeliveryRejected,
-                    "no active i2pDest entitlement — enable it on the service portal first");
+                    "no account on this server - subscribe first");
+                return;
+            }
+            if (approval->pending()) {
+                respondError(response, 403, ErrorCode::eAccountPendingApproval,
+                    options_.registrationMessage.empty()
+                        ? "account is awaiting operator approval"
+                        : options_.registrationMessage);
                 return;
             }
             const nlohmann::json body = nlohmann::json::parse(request.body);

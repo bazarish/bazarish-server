@@ -128,4 +128,53 @@ OpResult setI2pDest(const ServiceEntry& service, const Identity& identity,
         {{"user", user}, {"transient", transientBase64}, {"expiresUnix", expiresUnix}});
 }
 
+PendingResult listPending(const ServiceEntry& service, const Identity& identity)
+{
+    const std::string path = "/v1/account/pending";
+    httplib::Client client = makeClient(service.url);
+    const httplib::Result result
+        = client.Get(path.c_str(), signedHeaders(identity, "GET", path, std::string()));
+
+    PendingResult out;
+    if (!result) {
+        out.error = httplib::to_string(result.error());
+        return out;
+    }
+    if (result->status != 200) {
+        out.error = errorMessage(result);
+        return out;
+    }
+    try {
+        for (const nlohmann::json& entry : nlohmann::json::parse(result->body).at("pending")) {
+            out.accounts.push_back({entry.at("user").get<std::string>(),
+                entry.value("requestedAt", static_cast<std::int64_t>(0))});
+        }
+        out.ok = true;
+    } catch (const std::exception& error) {
+        out.error = std::string("bad pending body: ") + error.what();
+    }
+    return out;
+}
+
+OpResult approveAccount(
+    const ServiceEntry& service, const Identity& identity, const std::string& user)
+{
+    const std::string path = "/v1/account/approve";
+    httplib::Client client = makeClient(service.url);
+    const std::string bodyText = nlohmann::json{{"user", user}}.dump();
+    const httplib::Result result = client.Post(
+        path.c_str(), signedHeaders(identity, "POST", path, bodyText), bodyText,
+        "application/json");
+
+    OpResult out;
+    if (!result) {
+        out.message = httplib::to_string(result.error());
+        return out;
+    }
+    out.status = result->status;
+    out.ok = result->status == 200;
+    out.message = out.ok ? "ok" : errorMessage(result);
+    return out;
+}
+
 }  // namespace bazarish::admin

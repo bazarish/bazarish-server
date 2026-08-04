@@ -125,6 +125,17 @@ struct PortalConfig {
     std::int64_t captchaTtlSeconds = 300;
 };
 
+// Who may be served on this node. Open registration serves an account the
+// moment it is created; approval registration creates it frozen and waits for
+// the operator. `message` is what a frozen user is shown - how to reach the
+// operator to finish registration - and `ttlDays` is how long a never-approved
+// account is kept before it is deleted.
+struct RegistrationConfig {
+    bool requireApproval = false;
+    std::string message;
+    std::int64_t ttlDays = 7;
+};
+
 // The whole payments config. Its defaults are a local dev setup - an
 // auto-confirm mock gateway and a few cheap services - so the demos and a
 // no-config run work out of the box; a real deployment passes --payments-config.
@@ -135,6 +146,7 @@ struct PaymentsConfig {
     ServiceConfig i2pDest{true, "100", 30, 0};
     ServiceConfig storage{true, "100", 30, 5ULL * 1024 * 1024 * 1024};
     PortalConfig portal;
+    RegistrationConfig registration;
 };
 
 ServiceConfig parseService(const nlohmann::json& service)
@@ -192,6 +204,14 @@ PaymentsConfig loadPaymentsConfig(const fs::path& path)
             config.portal.captchaLength = captcha.value("length", 5);
             config.portal.captchaTtlSeconds = captcha.value("ttlSeconds", std::int64_t{300});
         }
+    }
+    if (doc.contains("registration")) {
+        const nlohmann::json& registration = doc.at("registration");
+        config.registration.requireApproval
+            = registration.value("requireApproval", config.registration.requireApproval);
+        config.registration.message = registration.value("message", std::string());
+        config.registration.ttlDays
+            = registration.value("ttlDays", config.registration.ttlDays);
     }
     return config;
 }
@@ -332,6 +352,10 @@ int main(const int argc, const char** argv)
     options.portalMessage = payments.portal.message;
     options.portalLinks = payments.portal.links;
     options.freeRegistrationCaptcha = payments.portal.captchaEnabled;
+    options.registration = payments.registration.requireApproval
+        ? bazarish::service::AccountApiOptions::Registration::eApproval
+        : bazarish::service::AccountApiOptions::Registration::eOpen;
+    options.registrationMessage = payments.registration.message;
     options.i2pDestService
         = {payments.i2pDest.enabled, payments.i2pDest.priceAtomic, payments.i2pDest.periodDays};
     options.storagePlan = {payments.storage.enabled, payments.storage.quotaBytes,
@@ -385,6 +409,32 @@ int main(const int argc, const char** argv)
             [portalHost, portalPort]() { portal->listen(portalHost, portalPort); });
         portalThread.detach();
         bazarish::log::info("portal on {}:{}", portalHost, portalPort);
+    }
+
+    // A moderated node accumulates accounts nobody ever approves. Sweep them so a
+    // dead registration does not sit there forever holding a fingerprint.
+    static std::thread sweepThread;
+    if (payments.registration.requireApproval && payments.registration.ttlDays > 0) {
+        const std::int64_t ttlSeconds = payments.registration.ttlDays * 24 * 3600;
+        sweepThread = std::thread([&grants, &store, ttlSeconds]() {
+            while (true) {
+                std::this_thread::sleep_for(std::chrono::hours(1));
+                const std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
+                for (const std::string& user : grants.pendingUsers()) {
+                    const std::optional<bazarish::service::GrantStore::Approval> approval
+                        = grants.peekApproval(user);
+                    if (!approval.has_value() || approval->requestedAt + ttlSeconds > now) {
+                        continue;
+                    }
+                    grants.erase(user);
+                    store.deleteSubscription(user);
+                    bazarish::log::info("swept never-approved account {}", user.substr(0, 12));
+                }
+            }
+        });
+        sweepThread.detach();
+        bazarish::log::info("registration requires approval; unapproved accounts expire in {} days",
+            payments.registration.ttlDays);
     }
 
     std::printf("bazarish-service-node %s\n", kVersion);

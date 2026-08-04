@@ -6,6 +6,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace bazarish::service {
 
@@ -72,6 +73,34 @@ public:
     // the status endpoint can report it. A no-op if i2pDest was never bought.
     void setI2pTransient(
         const std::string& user, std::int64_t transientExpires, std::int64_t updatedAt);
+
+    // Whether an account may be served. On a server with open registration every
+    // account is approved the moment it is created; on a moderated one the
+    // operator approves it by hand, and until then the account exists but its
+    // destination is never brought up.
+    struct Approval {
+        std::int64_t requestedAt = 0;
+        std::int64_t approvedAt = 0;  // 0 while pending
+
+        bool pending() const { return approvedAt == 0; }
+    };
+
+    // Records account creation. Keeps the original requestedAt on repeat calls
+    // (a renewal must not restart the approval deadline) and never downgrades an
+    // account that is already approved.
+    void recordRegistration(const std::string& user, std::int64_t now, bool approved);
+
+    std::optional<Approval> peekApproval(const std::string& user);
+
+    // Marks the account approved. A no-op if it was never registered or is
+    // already approved.
+    void approve(const std::string& user, std::int64_t now);
+
+    // Accounts still awaiting approval, oldest request first.
+    std::vector<std::string> pendingUsers();
+
+    // Drops every grant of a user (account deletion).
+    void erase(const std::string& user);
 
 private:
     std::filesystem::path grantPath(const std::string& user) const;

@@ -83,6 +83,15 @@ struct AccountApiOptions {
     // without paid services: the transient upload then falls back to a plain
     // entitlement check and the status endpoint is unavailable.
     ServiceLifecycle* lifecycle = nullptr;
+
+    // How an account becomes servable. eOpen: live the moment it is created.
+    // eApproval: the account is created but stays frozen - its destination is
+    // never brought up, so it can neither send nor receive - until an operator
+    // approves it by hand. This is moderation, not a paywall: the operator sets
+    // registrationMessage to tell the user how to reach them.
+    enum class Registration { eOpen, eApproval };
+    Registration registration = Registration::eOpen;
+    std::string registrationMessage;
 };
 
 // The /v1/account/* HTTP API: subscriptions, aliases and alias resolution.

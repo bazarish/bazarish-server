@@ -253,6 +253,32 @@ void HttpApi::registerRoutes()
             }
         }
 
+        // Accounts frozen on a moderated service node. Only rendered when a node
+        // actually has someone waiting, so an open-registration deployment never
+        // sees this section.
+        for (const ServiceEntry& service : config_.services) {
+            if (service.kind != "service-node") {
+                continue;
+            }
+            const PendingResult pending = listPending(service, identity_);
+            if (!pending.ok || pending.accounts.empty()) {
+                continue;
+            }
+            body += "<h2>Awaiting approval - " + htmlEscape(service.name) + "</h2>";
+            body += "<table><tr><th>User</th><th>Requested</th><th></th></tr>";
+            for (const PendingAccount& account : pending.accounts) {
+                body += "<tr><td><code>" + htmlEscape(account.user) + "</code></td>";
+                body += "<td>" + std::to_string(account.requestedAt) + "</td>";
+                body += "<td><form method=\"post\" action=\"/manage/approve\">";
+                body += "<input type=\"hidden\" name=\"service\" value=\""
+                    + htmlEscape(service.name) + "\">";
+                body += "<input type=\"hidden\" name=\"user\" value=\"" + htmlEscape(account.user)
+                    + "\">";
+                body += "<button>Approve</button></form></td></tr>";
+            }
+            body += "</table>";
+        }
+
         if (!quotaOptions.empty()) {
             body += "<h2>Set user quota</h2>";
             body += "<form method=\"post\" action=\"/manage/quota\">";
@@ -315,6 +341,26 @@ void HttpApi::registerRoutes()
             redirectTo(response, "/?msg=quotaok");
         } else {
             sendHtml(response, resultPage(result, "Set quota"), 502);
+        }
+    });
+
+    http_->Post("/manage/approve", [this, findService](const httplib::Request& request,
+                                       httplib::Response& response) {
+        if (!sessions_.valid(cookieValue(request, kCookieName), nowSeconds())) {
+            redirectTo(response, "/login");
+            return;
+        }
+        const ServiceEntry* const service = findService(request.get_param_value("service"));
+        if (service == nullptr || service->kind != "service-node") {
+            sendHtml(response, resultPage({false, 0, "unknown service"}, "Approve account"), 400);
+            return;
+        }
+        const OpResult result
+            = approveAccount(*service, identity_, request.get_param_value("user"));
+        if (result.ok) {
+            redirectTo(response, "/?msg=approved");
+        } else {
+            sendHtml(response, resultPage(result, "Approve account"), 502);
         }
     });
 

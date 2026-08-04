@@ -5,6 +5,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <fstream>
 #include <stdexcept>
 #include <system_error>
@@ -191,6 +192,101 @@ std::optional<GrantStore::SubscriptionGrant> GrantStore::takeSubscription(const 
         writeFileAtomic(path, body.dump());
     }
     return grant;
+}
+
+void GrantStore::recordRegistration(
+    const std::string& user, const std::int64_t now, const bool approved)
+{
+    requireUser(user);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const fs::path path = grantPath(user);
+    nlohmann::json body = fs::exists(path) ? readJsonFile(path) : nlohmann::json::object();
+    nlohmann::json& entry = body["approval"];
+    if (!entry.contains("requestedAt")) {
+        entry["requestedAt"] = now;
+    }
+    if (!entry.contains("approvedAt")) {
+        entry["approvedAt"] = 0;
+    }
+    if (approved && entry.at("approvedAt").get<std::int64_t>() == 0) {
+        entry["approvedAt"] = now;
+    }
+    writeFileAtomic(path, body.dump());
+}
+
+std::optional<GrantStore::Approval> GrantStore::peekApproval(const std::string& user)
+{
+    requireUser(user);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const fs::path path = grantPath(user);
+    if (!fs::exists(path)) {
+        return std::nullopt;
+    }
+    const nlohmann::json body = readJsonFile(path);
+    if (!body.contains("approval")) {
+        return std::nullopt;
+    }
+    const nlohmann::json& entry = body.at("approval");
+    Approval result;
+    result.requestedAt = entry.at("requestedAt").get<std::int64_t>();
+    result.approvedAt = entry.at("approvedAt").get<std::int64_t>();
+    return result;
+}
+
+void GrantStore::approve(const std::string& user, const std::int64_t now)
+{
+    requireUser(user);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const fs::path path = grantPath(user);
+    if (!fs::exists(path)) {
+        return;
+    }
+    nlohmann::json body = readJsonFile(path);
+    if (!body.contains("approval")) {
+        return;
+    }
+    nlohmann::json& entry = body.at("approval");
+    if (entry.at("approvedAt").get<std::int64_t>() != 0) {
+        return;
+    }
+    entry["approvedAt"] = now;
+    writeFileAtomic(path, body.dump());
+}
+
+std::vector<std::string> GrantStore::pendingUsers()
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<std::pair<std::int64_t, std::string>> found;
+    for (const fs::directory_entry& entry : fs::directory_iterator(root_ / "grants")) {
+        if (entry.path().extension() != ".json") {
+            continue;
+        }
+        const nlohmann::json body = readJsonFile(entry.path());
+        if (!body.contains("approval")) {
+            continue;
+        }
+        const nlohmann::json& approval = body.at("approval");
+        if (approval.at("approvedAt").get<std::int64_t>() != 0) {
+            continue;
+        }
+        found.emplace_back(
+            approval.at("requestedAt").get<std::int64_t>(), entry.path().stem().string());
+    }
+    std::sort(found.begin(), found.end());
+    std::vector<std::string> users;
+    users.reserve(found.size());
+    for (const auto& [requestedAt, user] : found) {
+        users.push_back(user);
+    }
+    return users;
+}
+
+void GrantStore::erase(const std::string& user)
+{
+    requireUser(user);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    std::error_code ignored;
+    fs::remove(grantPath(user), ignored);
 }
 
 }  // namespace bazarish::service

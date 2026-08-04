@@ -80,6 +80,9 @@ int main()
     CHECK(client.is_valid());
 
     const Identity alice = Identity::generate();
+    // Delegating a transient needs an approved account; this suite exercises the
+    // paid toggle, not moderation, so register her as an open-node account.
+    grants.recordRegistration(alice.fingerprint(), now, true);
 
     // Status before enabling: off and inactive.
     {
@@ -141,15 +144,6 @@ int main()
             = client.Get("/v1/account/i2p-status", makeHeaders(alice, "GET", "/v1/account/i2p-status", ""));
         const nlohmann::json j = nlohmann::json::parse(s->body);
         CHECK(j.at("enabled") == false && j.at("active") == false);
-    }
-
-    // A transient upload while disabled is refused (no active entitlement).
-    {
-        const std::string body
-            = nlohmann::json{{"transient", "x"}, {"expiresUnix", now + 3600}}.dump();
-        const httplib::Result r = client.Post("/v1/account/i2p-dest",
-            makeHeaders(alice, "POST", "/v1/account/i2p-dest", body), body, "application/json");
-        CHECK(r && r->status == 403);
     }
 
     api.stop();

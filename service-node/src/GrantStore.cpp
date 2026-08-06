@@ -100,24 +100,18 @@ std::optional<GrantStore::SubscriptionGrant> GrantStore::peekSubscription(const 
     return result;
 }
 
-void GrantStore::grantService(const std::string& user, const std::string& service,
-    const std::int64_t paidThrough, const std::int64_t now)
+void GrantStore::setI2pTransient(const std::string& user, const std::int64_t transientExpires,
+    const std::int64_t updatedAt)
 {
     requireUser(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     const fs::path path = grantPath(user);
     nlohmann::json body = fs::exists(path) ? readJsonFile(path) : nlohmann::json::object();
-    // Preserve the per-service fields a purchase/renewal does not set: the
-    // enabled flag (a fresh buy re-arms it) and the recorded transient validity.
-    nlohmann::json& entry = body["services"][service];
-    entry["paidThrough"] = paidThrough;
-    entry["grantedAt"] = now;
-    entry["enabled"] = true;
+    body["transient"] = {{"expires", transientExpires}, {"updatedAt", updatedAt}};
     writeFileAtomic(path, body.dump());
 }
 
-std::optional<GrantStore::ServiceGrant> GrantStore::peekService(
-    const std::string& user, const std::string& service)
+std::optional<GrantStore::Transient> GrantStore::peekTransient(const std::string& user)
 {
     requireUser(user);
     const std::lock_guard<std::mutex> lock(mutex_);
@@ -126,53 +120,14 @@ std::optional<GrantStore::ServiceGrant> GrantStore::peekService(
         return std::nullopt;
     }
     const nlohmann::json body = readJsonFile(path);
-    if (!body.contains("services") || !body.at("services").contains(service)) {
+    if (!body.contains("transient")) {
         return std::nullopt;
     }
-    const nlohmann::json& grant = body.at("services").at(service);
-    ServiceGrant result;
-    result.paidThrough = grant.at("paidThrough").get<std::int64_t>();
-    result.grantedAt = grant.at("grantedAt").get<std::int64_t>();
-    result.enabled = grant.value("enabled", true);
-    result.transientExpires = grant.value("transientExpires", std::int64_t{0});
-    result.transientUpdatedAt = grant.value("transientUpdatedAt", std::int64_t{0});
+    const nlohmann::json& entry = body.at("transient");
+    Transient result;
+    result.expires = entry.at("expires").get<std::int64_t>();
+    result.updatedAt = entry.at("updatedAt").get<std::int64_t>();
     return result;
-}
-
-void GrantStore::setServiceEnabled(
-    const std::string& user, const std::string& service, const bool enabled)
-{
-    requireUser(user);
-    const std::lock_guard<std::mutex> lock(mutex_);
-    const fs::path path = grantPath(user);
-    if (!fs::exists(path)) {
-        return;
-    }
-    nlohmann::json body = readJsonFile(path);
-    if (!body.contains("services") || !body.at("services").contains(service)) {
-        return;
-    }
-    body.at("services").at(service)["enabled"] = enabled;
-    writeFileAtomic(path, body.dump());
-}
-
-void GrantStore::setI2pTransient(
-    const std::string& user, const std::int64_t transientExpires, const std::int64_t updatedAt)
-{
-    requireUser(user);
-    const std::lock_guard<std::mutex> lock(mutex_);
-    const fs::path path = grantPath(user);
-    if (!fs::exists(path)) {
-        return;
-    }
-    nlohmann::json body = readJsonFile(path);
-    if (!body.contains("services") || !body.at("services").contains("i2pDest")) {
-        return;
-    }
-    nlohmann::json& entry = body.at("services").at("i2pDest");
-    entry["transientExpires"] = transientExpires;
-    entry["transientUpdatedAt"] = updatedAt;
-    writeFileAtomic(path, body.dump());
 }
 
 std::optional<GrantStore::SubscriptionGrant> GrantStore::takeSubscription(const std::string& user)

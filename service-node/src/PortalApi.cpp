@@ -1,7 +1,6 @@
 // Bazarish project (c) 2026
 #include "PortalApi.hpp"
 
-#include "ServiceLifecycle.hpp"
 
 #include <httplib/httplib.h>
 #include <nlohmann/json.hpp>
@@ -139,17 +138,7 @@ std::string flashBanner(const std::string& code)
 {
     std::string text;
     if (code == "registered") {
-        text = "Free subscription registered — open your client to redeem it.";
-    } else if (code == "bought") {
-        text = "Purchase complete.";
-    } else if (code == "insufficient") {
-        text = "Insufficient balance — top up first.";
-    } else if (code == "notoffered") {
-        text = "That service is not offered here.";
-    } else if (code == "i2pon") {
-        text = "Personal I2P destination on — upload a key from your client to go live.";
-    } else if (code == "i2poff") {
-        text = "Personal I2P destination off — back on the shared pool address.";
+        text = "Registered — open your client to redeem it.";
     } else {
         return {};
     }
@@ -160,63 +149,15 @@ std::string flashBanner(const std::string& code)
 
 namespace bazarish::service {
 
-PortalApi::PortalApi(PortalApiOptions options, Captcha& captcha, GrantStore& grants,
-    LedgerStore& ledger, InvoiceStore& invoices, PaymentGateway& gateway)
+PortalApi::PortalApi(PortalApiOptions options, Captcha& captcha, GrantStore& grants)
     : options_(std::move(options))
     , captcha_(captcha)
     , grants_(grants)
-    , ledger_(ledger)
-    , invoices_(invoices)
-    , gateway_(gateway)
     , login_(options_.challengeSecret, options_.audience)
     , session_(options_.sessionSecret, options_.sessionTtlSeconds)
     , http_(std::make_unique<httplib::Server>())
 {
     setupRoutes();
-}
-
-bool PortalApi::settleInvoice(
-    const std::string& invoiceId, const PaymentStatus& status, const std::int64_t now)
-{
-    if (status.state != PaymentState::eConfirmed) {
-        return false;
-    }
-    const std::optional<std::string> user = invoices_.user(invoiceId);
-    if (!user.has_value()) {
-        return false;
-    }
-    std::uint64_t amount = 0;
-    try {
-        amount = std::stoull(status.paidAmount);
-    } catch (const std::exception&) {
-        return false;
-    }
-    if (amount == 0) {
-        return false;
-    }
-    return ledger_.creditOnce(*user, amount, "topup:" + invoiceId, now);
-}
-
-PortalApi::BuyResult PortalApi::buyService(
-    const std::string& user, const std::string& service, const std::int64_t now)
-{
-    const auto offered = options_.paidServices.find(service);
-    if (offered == options_.paidServices.end()) {
-        return {BuyOutcome::eNotOffered, 0};
-    }
-    if (!ledger_.debit(user, offered->second.priceAtomic, "buy:" + service, now)) {
-        return {BuyOutcome::eInsufficient, 0};
-    }
-    // Renewal stacks onto any remaining term.
-    const std::optional<GrantStore::ServiceGrant> existing = grants_.peekService(user, service);
-    const std::int64_t base = existing.has_value() ? std::max(now, existing->paidThrough) : now;
-    const std::int64_t paidThrough = base + offered->second.termSeconds;
-    grants_.grantService(user, service, paidThrough, now);
-    // A storage purchase takes effect immediately: push the plan quota.
-    if (service == "storage" && options_.publishQuota) {
-        options_.publishQuota(user, options_.storageQuotaBytes);
-    }
-    return {BuyOutcome::eOk, paidThrough};
 }
 
 PortalApi::~PortalApi() = default;
@@ -329,169 +270,6 @@ void PortalApi::setupRoutes()
                 });
         });
 
-    // Wraps a handler so it only runs for a logged-in session, passing the user.
-    const auto withSession = [this](auto handler) {
-        return [this, handler](const httplib::Request& request, httplib::Response& response) {
-            std::string userId;
-            try {
-                userId = session_.verify(cookieValue(request, "session"), nowSeconds());
-            } catch (const std::exception&) {
-                response.status = 401;
-                respondJson(response, {{"error", "not authenticated"}});
-                return;
-            }
-            handler(request, response, userId);
-        };
-    };
-
-    // The user's prepaid balance.
-    http_->Get("/portal/balance",
-        withSession([this](const httplib::Request&, httplib::Response& response,
-                        const std::string& userId) {
-            respondJson(response,
-                {
-                    {"balanceAtomic", std::to_string(ledger_.get(userId).balanceAtomic)},
-                    {"currency", options_.settlementCurrency},
-                });
-        }));
-
-    // Top up: create a payment invoice for an atomic amount.
-    http_->Post("/portal/topup",
-        withSession([this](const httplib::Request& request, httplib::Response& response,
-                        const std::string& userId) {
-            const nlohmann::json body = nlohmann::json::parse(request.body, nullptr, false);
-            if (body.is_discarded() || !body.contains("amount")) {
-                response.status = 400;
-                respondJson(response, {{"error", "bad request"}});
-                return;
-            }
-            const Money amount{body.at("amount").get<std::string>(), options_.settlementCurrency};
-            const Invoice invoice = gateway_.createInvoice(amount, "topup:" + userId);
-            invoices_.put(invoice.id, userId);
-            respondJson(response,
-                {
-                    {"invoiceId", invoice.id},
-                    {"payTo", invoice.payTo},
-                    {"amount", invoice.amount.amount},
-                    {"currency", invoice.amount.currency},
-                });
-        }));
-
-    // Poll an invoice; credit the balance once it confirms.
-    http_->Get(R"(/portal/pay/([^/]+))",
-        withSession([this](const httplib::Request& request, httplib::Response& response,
-                        const std::string& userId) {
-            const std::string invoiceId = request.matches[1].str();
-            const PaymentStatus status = gateway_.checkStatus(invoiceId);
-            settleInvoice(invoiceId, status, nowSeconds());
-            respondJson(response,
-                {
-                    {"state", toString(status.state)},
-                    {"paidAmount", status.paidAmount},
-                    {"balanceAtomic", std::to_string(ledger_.get(userId).balanceAtomic)},
-                });
-        }));
-
-    // Submit a txid for an invoice (the pull path when a callback was missed).
-    http_->Post(R"(/portal/pay/([^/]+)/txid)",
-        withSession([this](const httplib::Request& request, httplib::Response& response,
-                        const std::string& userId) {
-            const nlohmann::json body = nlohmann::json::parse(request.body, nullptr, false);
-            if (body.is_discarded() || !body.contains("txid")) {
-                response.status = 400;
-                respondJson(response, {{"error", "bad request"}});
-                return;
-            }
-            const std::string invoiceId = request.matches[1].str();
-            const PaymentStatus status
-                = gateway_.verifyByTxid(invoiceId, body.at("txid").get<std::string>());
-            settleInvoice(invoiceId, status, nowSeconds());
-            respondJson(response,
-                {
-                    {"state", toString(status.state)},
-                    {"paidAmount", status.paidAmount},
-                    {"balanceAtomic", std::to_string(ledger_.get(userId).balanceAtomic)},
-                });
-        }));
-
-    // Gateway webhook (unauthenticated; the gateway authenticates the body's
-    // HMAC and re-verifies the amount against the wallet).
-    http_->Post(R"(/v1/pay/callback/([^/]+))",
-        [this](const httplib::Request& request, httplib::Response& response) {
-            const std::optional<PaymentStatus> status = gateway_.parseWebhook(
-                request.body, request.get_header_value("X-Bazarish-Signature"));
-            if (!status.has_value()) {
-                response.status = 400;
-                respondJson(response, {{"error", "invalid callback"}});
-                return;
-            }
-            const nlohmann::json body = nlohmann::json::parse(request.body, nullptr, false);
-            if (!body.is_discarded() && body.contains("invoiceId")) {
-                settleInvoice(body.at("invoiceId").get<std::string>(), *status, nowSeconds());
-            }
-            respondJson(response, {{"ok", true}});
-        });
-
-    // Buy (or renew) a paid service: debit the balance, extend the entitlement.
-    http_->Post("/portal/buy",
-        withSession([this](const httplib::Request& request, httplib::Response& response,
-                        const std::string& userId) {
-            const nlohmann::json body = nlohmann::json::parse(request.body, nullptr, false);
-            if (body.is_discarded() || !body.contains("service")) {
-                response.status = 400;
-                respondJson(response, {{"error", "bad request"}});
-                return;
-            }
-            const std::string service = body.at("service").get<std::string>();
-            const BuyResult result = buyService(userId, service, nowSeconds());
-            if (result.outcome == BuyOutcome::eNotOffered) {
-                response.status = 404;
-                respondJson(response, {{"error", "service not offered"}});
-                return;
-            }
-            if (result.outcome == BuyOutcome::eInsufficient) {
-                response.status = 402;
-                respondJson(response, {{"error", "insufficient balance"}});
-                return;
-            }
-            respondJson(response,
-                {
-                    {"ok", true},
-                    {"service", service},
-                    {"paidThrough", result.paidThrough},
-                    {"balanceAtomic", std::to_string(ledger_.get(userId).balanceAtomic)},
-                });
-        }));
-
-    // Turn the per-user i2p-dest option on/off (the cabinet toggle, JSON face).
-    http_->Post("/portal/i2p-dest",
-        withSession([this](const httplib::Request& request, httplib::Response& response,
-                        const std::string& userId) {
-            if (options_.lifecycle == nullptr) {
-                response.status = 404;
-                respondJson(response, {{"error", "not offered"}});
-                return;
-            }
-            const nlohmann::json body = nlohmann::json::parse(request.body, nullptr, false);
-            if (body.is_discarded() || !body.contains("enabled")) {
-                response.status = 400;
-                respondJson(response, {{"error", "bad request"}});
-                return;
-            }
-            const bool enabled = body.at("enabled").get<bool>();
-            const std::int64_t now = nowSeconds();
-            if (enabled) {
-                if (!options_.lifecycle->enableI2pDest(userId, now)) {
-                    response.status = 402;
-                    respondJson(response, {{"error", "insufficient balance"}});
-                    return;
-                }
-            } else {
-                options_.lifecycle->disableI2pDest(userId, now);
-            }
-            respondJson(response, {{"ok", true}, {"enabled", enabled}});
-        }));
-
     setupWebRoutes();
 }
 
@@ -548,7 +326,6 @@ void PortalApi::setupWebRoutes()
 
     // The cabinet: balance, subscription state and the offered services.
     const auto cabinet = [this](const std::string& userId, const std::string& msg) {
-        const std::int64_t now = nowSeconds();
         std::string body = flashBanner(msg);
         body += "<p class=\"muted\">Signed in as <code>" + htmlEscape(userId) + "</code></p>";
 
@@ -561,88 +338,24 @@ void PortalApi::setupWebRoutes()
                 + htmlEscape(options_.serverDescriptor) + "</pre>";
         }
 
-        body += "<h2>Balance</h2><p>" + std::to_string(ledger_.get(userId).balanceAtomic) + " "
-            + htmlEscape(options_.settlementCurrency)
-            + "</p><p><a href=\"/topup\">Top up</a></p>";
-
         body += "<h2>Subscription</h2>";
         const std::optional<GrantStore::SubscriptionGrant> sub = grants_.peekSubscription(userId);
-        if (sub.has_value()) {
-            body += "<p>Active (quota " + htmlEscape(bytesHuman(sub->quotaBytes)) + ").</p>";
+        const std::optional<GrantStore::Approval> approval = grants_.peekApproval(userId);
+        if (approval.has_value() && approval->pending()) {
+            body += "<p class=\"err\">Awaiting operator approval — your account exists but is "
+                    "not served yet.</p>";
+            if (!options_.registrationMessage.empty()) {
+                body += "<p>" + htmlEscape(options_.registrationMessage) + "</p>";
+            }
+        } else if (approval.has_value()) {
+            body += "<p>Active (quota " + htmlEscape(bytesHuman(options_.defaultQuotaBytes))
+                + ").</p>";
+        } else if (sub.has_value()) {
+            body += "<p>Registered (quota " + htmlEscape(bytesHuman(sub->quotaBytes))
+                + ") — open your client to redeem it.</p>";
         } else {
             body += "<p class=\"muted\">No subscription yet.</p>"
-                    "<p><a href=\"/register\">Register (free)</a></p>";
-        }
-
-        // Per-user i2p-dest: an opt-in toggle (not a one-shot buy), with the
-        // privacy trade-off spelled out. Off by default - the user already has a
-        // free, fixed pool address; turning this on serves them on their own
-        // stable destination, billed per term and auto-renewed from balance.
-        const auto i2pPlan = options_.paidServices.find("i2pDest");
-        if (options_.lifecycle != nullptr && i2pPlan != options_.paidServices.end()) {
-            const ServiceLifecycle::Snapshot snap = options_.lifecycle->evaluate(userId, now);
-            body += "<h2>Personal I2P destination</h2>"
-                    "<div class=\"svc\"><p class=\"muted\">Off by default you share a fixed "
-                    "address from the server pool. Turn this on to be served on your own stable "
-                    "destination (portable across servers, kept even if you move). The trade-off: "
-                    "your own destination is a unique, lasting address across all your contacts — "
-                    "less crowd-blending than the shared pool.</p>";
-            body += "<p>" + std::to_string(i2pPlan->second.priceAtomic) + " "
-                + htmlEscape(options_.settlementCurrency) + " / "
-                + std::to_string(i2pPlan->second.termSeconds / (24 * 3600)) + " days.</p>";
-            if (snap.i2pDest.enabled && snap.i2pDest.active) {
-                body += "<p class=\"muted\">On — active, "
-                    + std::to_string((snap.i2pDest.paidThrough - now) / (24 * 3600))
-                    + " days paid.</p>";
-            } else if (snap.i2pDest.enabled) {
-                body += "<p class=\"err\">On but unpaid — your personal destination is offline. "
-                        "Top up to restore it, or turn it off to fall back to the pool.</p>";
-            } else {
-                body += "<p class=\"muted\">Off — using the shared pool address.</p>";
-            }
-            body += "<form method=\"post\" action=\"/i2p-dest\">"
-                    "<input type=\"hidden\" name=\"enabled\" value=\""
-                + std::string(snap.i2pDest.enabled ? "false" : "true")
-                + "\"><button type=\"submit\">"
-                + std::string(snap.i2pDest.enabled ? "Turn off" : "Turn on")
-                + "</button></form></div>";
-        }
-
-        // Other paid services (e.g. storage) keep the one-shot buy/renew
-        // flow. i2pDest is handled by its toggle above.
-        bool anyOther = false;
-        for (const auto& [name, service] : options_.paidServices) {
-            if (name == "i2pDest") {
-                continue;
-            }
-            anyOther = true;
-            (void)service;
-            break;
-        }
-        if (anyOther) {
-            body += "<h2>Services</h2>";
-            for (const auto& [name, service] : options_.paidServices) {
-                if (name == "i2pDest") {
-                    continue;
-                }
-                const std::optional<GrantStore::ServiceGrant> grant
-                    = grants_.peekService(userId, name);
-                body += "<div class=\"svc\"><strong>" + htmlEscape(name) + "</strong> — "
-                    + std::to_string(service.priceAtomic) + " "
-                    + htmlEscape(options_.settlementCurrency) + " / "
-                    + std::to_string(service.termSeconds / (24 * 3600)) + " days<br>";
-                if (grant.has_value() && grant->paidThrough > now) {
-                    body += "<span class=\"muted\">active, "
-                        + std::to_string((grant->paidThrough - now) / (24 * 3600))
-                        + " days left</span> ";
-                }
-                body += "<form method=\"post\" action=\"/buy\">"
-                        "<input type=\"hidden\" name=\"service\" value=\""
-                    + htmlEscape(name)
-                    + "\"><button type=\"submit\">"
-                    + (grant.has_value() && grant->paidThrough > now ? "Renew" : "Buy")
-                    + "</button></form></div>";
-            }
+                    "<p><a href=\"/register\">Register</a></p>";
         }
 
         body += "<form method=\"post\" action=\"/logout\"><button type=\"submit\">Sign out</button></form>";
@@ -714,132 +427,6 @@ void PortalApi::setupWebRoutes()
         redirectTo(response, "/?msg=registered");
     });
 
-    http_->Get("/topup", [this, webUser](
-                             const httplib::Request& request, httplib::Response& response) {
-        if (!webUser(request).has_value()) {
-            redirectTo(response, "/login");
-            return;
-        }
-        const std::string body = "<h2>Top up</h2><form method=\"post\" action=\"/topup\">"
-                                 "<label for=\"amt\">Amount ("
-            + htmlEscape(options_.settlementCurrency)
-            + ")</label><input id=\"amt\" name=\"amount\" inputmode=\"decimal\" required>"
-              "<button type=\"submit\">Create invoice</button></form><p><a href=\"/\">Back</a></p>";
-        sendHtml(response, htmlPage("Top up", body));
-    });
-
-    http_->Post("/topup", [this, webUser](
-                              const httplib::Request& request, httplib::Response& response) {
-        const std::optional<std::string> user = webUser(request);
-        if (!user.has_value()) {
-            redirectTo(response, "/login");
-            return;
-        }
-        const std::string amount = request.get_param_value("amount");
-        if (amount.empty()) {
-            sendHtml(response,
-                htmlPage("Top up",
-                    "<p class=\"err\">Enter an amount.</p><p><a href=\"/topup\">Back</a></p>"),
-                400);
-            return;
-        }
-        const Invoice invoice
-            = gateway_.createInvoice(Money{amount, options_.settlementCurrency}, "topup:" + *user);
-        invoices_.put(invoice.id, *user);
-        const std::string body = "<h2>Invoice created</h2><p>Send <strong>"
-            + htmlEscape(invoice.amount.amount) + " " + htmlEscape(invoice.amount.currency)
-            + "</strong> to:</p><pre>" + htmlEscape(invoice.payTo)
-            + "</pre><p><a href=\"/pay/" + htmlEscape(invoice.id)
-            + "\">I've paid — check status</a></p><p><a href=\"/\">Back to portal</a></p>";
-        sendHtml(response, htmlPage("Invoice", body));
-    });
-
-    http_->Get(R"(/pay/([^/]+))", [this, webUser](
-                                      const httplib::Request& request, httplib::Response& response) {
-        const std::optional<std::string> user = webUser(request);
-        if (!user.has_value()) {
-            redirectTo(response, "/login");
-            return;
-        }
-        const std::string invoiceId = request.matches[1].str();
-        const PaymentStatus status = gateway_.checkStatus(invoiceId);
-        settleInvoice(invoiceId, status, nowSeconds());
-        const std::string body = "<h2>Payment status</h2><p>Invoice <code>"
-            + htmlEscape(invoiceId) + "</code></p><p>Status: <strong id=\"paystatus\">"
-            + htmlEscape(toString(status.state)) + "</strong></p><p>Balance: <span id=\"paybal\">"
-            + std::to_string(ledger_.get(*user).balanceAtomic) + "</span> "
-            + htmlEscape(options_.settlementCurrency) + "</p><p><a href=\"/pay/"
-            + htmlEscape(invoiceId)
-            + "\">Refresh</a></p><form method=\"post\" action=\"/pay/" + htmlEscape(invoiceId)
-            + "/txid\"><label for=\"tx\">Or submit a transaction id</label>"
-              "<input id=\"tx\" name=\"txid\" required><button type=\"submit\">Submit txid</button>"
-              "</form><p><a href=\"/\">Back to portal</a></p>"
-              // Progressive enhancement: poll the JSON status endpoint so the page
-              // reflects confirmation without a manual reload. Same-origin only (no
-              // third-party request). With JS off, the Refresh link is the fallback.
-              "<script>(function(){var s=document.getElementById('paystatus'),"
-              "b=document.getElementById('paybal');function p(){"
-              "fetch('/portal'+location.pathname,{headers:{Accept:'application/json'}})"
-              ".then(function(r){return r.json()}).then(function(j){"
-              "if(s)s.textContent=j.state;if(b)b.textContent=j.balanceAtomic;"
-              "if(j.state!=='confirmed')setTimeout(p,4000)}).catch(function(){})}"
-              "setTimeout(p,4000)})();</script>";
-        sendHtml(response, htmlPage("Payment", body));
-    });
-
-    http_->Post(R"(/pay/([^/]+)/txid)", [this, webUser](const httplib::Request& request,
-                                            httplib::Response& response) {
-        const std::optional<std::string> user = webUser(request);
-        if (!user.has_value()) {
-            redirectTo(response, "/login");
-            return;
-        }
-        const std::string invoiceId = request.matches[1].str();
-        const PaymentStatus status
-            = gateway_.verifyByTxid(invoiceId, request.get_param_value("txid"));
-        settleInvoice(invoiceId, status, nowSeconds());
-        redirectTo(response, "/pay/" + invoiceId);
-    });
-
-    http_->Post("/buy", [this, webUser](
-                            const httplib::Request& request, httplib::Response& response) {
-        const std::optional<std::string> user = webUser(request);
-        if (!user.has_value()) {
-            redirectTo(response, "/login");
-            return;
-        }
-        const BuyResult result = buyService(*user, request.get_param_value("service"), nowSeconds());
-        if (result.outcome == BuyOutcome::eNotOffered) {
-            redirectTo(response, "/?msg=notoffered");
-        } else if (result.outcome == BuyOutcome::eInsufficient) {
-            redirectTo(response, "/?msg=insufficient");
-        } else {
-            redirectTo(response, "/?msg=bought");
-        }
-    });
-
-    http_->Post("/i2p-dest", [this, webUser](
-                                 const httplib::Request& request, httplib::Response& response) {
-        const std::optional<std::string> user = webUser(request);
-        if (!user.has_value()) {
-            redirectTo(response, "/login");
-            return;
-        }
-        if (options_.lifecycle == nullptr) {
-            redirectTo(response, "/?msg=notoffered");
-            return;
-        }
-        if (request.get_param_value("enabled") == "true") {
-            if (!options_.lifecycle->enableI2pDest(*user, nowSeconds())) {
-                redirectTo(response, "/?msg=insufficient");
-                return;
-            }
-            redirectTo(response, "/?msg=i2pon");
-        } else {
-            options_.lifecycle->disableI2pDest(*user, nowSeconds());
-            redirectTo(response, "/?msg=i2poff");
-        }
-    });
 }
 
 }  // namespace bazarish::service

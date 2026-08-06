@@ -1,7 +1,6 @@
 // Bazarish project (c) 2026
 #include "AccountApi.hpp"
 
-#include "ServiceLifecycle.hpp"
 
 #include <bazarish/Auth.hpp>
 #include <bazarish/Certificates.hpp>
@@ -234,21 +233,7 @@ void AccountApi::setupRoutes()
               }
               grants_.takeSubscription(cert.user);  // consume the one-shot grant
 
-              // Catch up auto-renewals so the storage entitlement read below
-              // reflects any elapsed terms (and a lapse pushes the free quota).
-              if (options_.lifecycle) {
-                  options_.lifecycle->evaluate(cert.user, now);
-              }
-
-              // Effective quota: the paid storage plan while its entitlement is
-              // active, otherwise the grant's (free) quota.
-              std::uint64_t effectiveQuota = grant->quotaBytes;
-              const std::optional<GrantStore::ServiceGrant> storageGrant
-                  = grants_.peekService(cert.user, "storage");
-              if (storageGrant.has_value() && storageGrant->paidThrough > now
-                  && options_.storagePlan.quotaBytes > effectiveQuota) {
-                  effectiveQuota = options_.storagePlan.quotaBytes;
-              }
+              const std::uint64_t effectiveQuota = grant->quotaBytes;
 
               SubscriptionStore::Subscription record;
               record.user = cert.user;
@@ -267,11 +252,6 @@ void AccountApi::setupRoutes()
               const std::optional<GrantStore::Approval> approval
                   = grants_.peekApproval(cert.user);
               const bool pending = approval.has_value() && approval->pending();
-
-              // Tell the messaging server the user's effective storage quota.
-              if (options_.publishQuota) {
-                  options_.publishQuota(cert.user, effectiveQuota);
-              }
 
               respondJson(response,
                   {
@@ -301,10 +281,18 @@ void AccountApi::setupRoutes()
                 {{"notAfter", record->notAfter}, {"quotaBytes", record->quotaBytes}});
         }));
 
+    // Unsubscribing tears the account down, it does not merely stop renewing:
+    // the destination is revoked and the grants (including the approval) are
+    // dropped, so nothing about the account outlives it. Coming back means
+    // registering again.
     http_->Delete("/v1/account/subscription",
         authenticated([this](const httplib::Request&, httplib::Response& response,
                           const std::string& user) {
             store_.deleteSubscription(user);
+            if (options_.publishI2pTransient) {
+                options_.publishI2pTransient(user, std::string(), 0);
+            }
+            grants_.erase(user);
             respondJson(response, {{"ok", true}});
         }));
 
@@ -346,60 +334,26 @@ void AccountApi::setupRoutes()
             respondJson(response, {{"ok", true}});
         }));
 
-    // The per-user i2p-dest status the client polls: whether the option is on,
-    // whether it is paid-active, the recorded transient validity (so any device
-    // knows when to re-issue without storing it), the effective storage quota,
-    // and honest projected shutoff dates computed from the balance.
+    // What the client's devices need to keep the user's destination alive: the
+    // approval state (a frozen account has no destination) and the validity of
+    // the transient currently delegated, so any device knows when to issue the
+    // next one without holding it.
     http_->Get("/v1/account/i2p-status",
         authenticated([this](const httplib::Request&, httplib::Response& response,
                           const std::string& user) {
-            if (!options_.lifecycle) {
-                respondError(response, 503, ErrorCode::eDeliveryRejected,
-                    "per-user destinations not available");
-                return;
-            }
-            const ServiceLifecycle::Snapshot snap
-                = options_.lifecycle->evaluate(user, nowSeconds());
+            const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
+            const std::optional<GrantStore::Transient> transient = grants_.peekTransient(user);
             respondJson(response,
                 {
-                    {"enabled", snap.i2pDest.enabled},
-                    {"active", snap.i2pDest.active},
-                    {"paidThrough", snap.i2pDest.paidThrough},
-                    {"projectedShutoff", snap.i2pDest.projectedShutoff},
-                    {"transientExpires", snap.transientExpires},
-                    {"transientUpdatedAt", snap.transientUpdatedAt},
-                    {"storageQuotaBytes", snap.storageQuotaBytes},
-                    {"storageActive", snap.storage.active},
-                    {"storageProjectedShutoff", snap.storage.projectedShutoff},
-                    {"balanceAtomic", std::to_string(snap.balanceAtomic)},
-                    {"currency", options_.settlementCurrency},
+                    {"approval",
+                        !approval.has_value() ? "none"
+                                              : (approval->pending() ? "pending" : "approved")},
+                    {"registrationMessage",
+                        approval.has_value() && approval->pending() ? options_.registrationMessage
+                                                                    : std::string()},
+                    {"transientExpires", transient.has_value() ? transient->expires : 0},
+                    {"transientUpdatedAt", transient.has_value() ? transient->updatedAt : 0},
                 });
-        }));
-
-    // Turns the per-user i2p-dest option on or off. Enabling charges one term up
-    // front (or resumes if still paid); disabling stops auto-renew and drops the
-    // personal destination so the user falls back to their fixed pool address.
-    http_->Post("/v1/account/i2p-dest/setting",
-        authenticated([this](const httplib::Request& request, httplib::Response& response,
-                          const std::string& user) {
-            if (!options_.lifecycle) {
-                respondError(response, 503, ErrorCode::eDeliveryRejected,
-                    "per-user destinations not available");
-                return;
-            }
-            const nlohmann::json body = nlohmann::json::parse(request.body);
-            const bool enabled = body.at("enabled").get<bool>();
-            const std::int64_t now = nowSeconds();
-            if (enabled) {
-                if (!options_.lifecycle->enableI2pDest(user, now)) {
-                    respondError(response, 402, ErrorCode::eDeliveryRejected,
-                        "insufficient balance — top up to enable a personal destination");
-                    return;
-                }
-            } else {
-                options_.lifecycle->disableI2pDest(user, now);
-            }
-            respondJson(response, {{"ok", true}, {"enabled", enabled}});
         }));
 
     // Contact lookup by fingerprint: returns the user's subscription
@@ -426,45 +380,29 @@ void AccountApi::setupRoutes()
                 });
         });
 
-    // Onboarding discovery: where to register and what this server offers.
-    // Unauthenticated - the client shows the message and link(s); registration
-    // and paid services happen on the portal (captcha / payment), not here.
+    // Onboarding discovery: where to register and on what terms. Unauthenticated
+    // - the client shows the message and link(s); registration happens on the
+    // portal, not here. Nothing on this node is for sale, so there is no service
+    // catalogue: the only variables are whether a captcha is required and
+    // whether an operator has to approve the account.
     http_->Get("/v1/account/portal",
         [this](const httplib::Request&, httplib::Response& response) {
             nlohmann::json links = nlohmann::json::array();
             for (const std::string& link : options_.portalLinks) {
                 links.push_back(link);
             }
-            const auto serviceJson = [this](const PortalService& service) {
-                return nlohmann::json{
-                    {"enabled", service.enabled},
-                    {"priceAtomic", service.priceAtomic},
-                    {"periodDays", service.periodDays},
-                    {"currency", options_.settlementCurrency},
-                };
-            };
             respondJson(response,
                 {
                     {"message", options_.portalMessage},
                     {"links", links},
-                    {"services",
+                    {"registration",
                         {
-                            {"freeRegistration",
-                                {{"enabled", true}, {"captcha", options_.freeRegistrationCaptcha}}},
-                            {"i2pDest", serviceJson(options_.i2pDestService)},
-                            {"storage",
-                                {
-                                    {"freeQuotaBytes", options_.defaultQuotaBytes},
-                                    {"paid",
-                                        {
-                                            {"enabled", options_.storagePlan.enabled},
-                                            {"quotaBytes", options_.storagePlan.quotaBytes},
-                                            {"priceAtomic", options_.storagePlan.priceAtomic},
-                                            {"periodDays", options_.storagePlan.periodDays},
-                                            {"currency", options_.settlementCurrency},
-                                        }},
-                                }},
+                            {"captcha", options_.freeRegistrationCaptcha},
+                            {"requiresApproval",
+                                options_.registration == AccountApiOptions::Registration::eApproval},
+                            {"message", options_.registrationMessage},
                         }},
+                    {"quotaBytes", options_.defaultQuotaBytes},
                 });
         });
 }

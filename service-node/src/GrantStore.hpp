@@ -25,21 +25,12 @@ public:
         std::int64_t grantedAt = 0;
     };
 
-    // A paid service entitlement (i2pDest / storage), valid until
-    // paidThrough (unix seconds).
-    struct ServiceGrant {
-        std::int64_t paidThrough = 0;
-        std::int64_t grantedAt = 0;
-        // Whether the user wants this auto-renewing service kept on. An i2pDest
-        // stays enabled across a lapse (offline until top-up) until the user
-        // turns it off explicitly; storage flips to false when it drops to the
-        // free quota. Defaults true so a freshly bought service is on.
-        bool enabled = true;
-        // The currently provisioned i2pDest transient's validity (i2pDest only),
-        // recorded when the client uploads it so any of the user's devices can
-        // see when to issue the next one without holding the expiry itself.
-        std::int64_t transientExpires = 0;
-        std::int64_t transientUpdatedAt = 0;
+    // The validity of the offline I2P transient the user's client last delegated.
+    // Recorded so any of the user's devices can tell when to issue the next one
+    // without holding the expiry itself.
+    struct Transient {
+        std::int64_t expires = 0;
+        std::int64_t updatedAt = 0;
     };
 
     explicit GrantStore(std::filesystem::path root);
@@ -55,24 +46,10 @@ public:
     // Consumes the pending subscription grant (one-shot); nullopt if none.
     std::optional<SubscriptionGrant> takeSubscription(const std::string& user);
 
-    // Records a paid service entitlement valid until paidThrough (a purchase or
-    // renewal). Unlike a subscription grant this is not one-shot - it is the
-    // standing paid-through marker the downstream feature reads.
-    void grantService(const std::string& user, const std::string& service,
-        std::int64_t paidThrough, std::int64_t now);
-
-    // The current entitlement for a service; nullopt if never bought.
-    std::optional<ServiceGrant> peekService(const std::string& user, const std::string& service);
-
-    // Flips the auto-renew "enabled" flag of an existing service entry (the
-    // i2pDest toggle, or storage dropping to free). A no-op if the service was
-    // never bought.
-    void setServiceEnabled(const std::string& user, const std::string& service, bool enabled);
-
-    // Records the validity of the i2pDest transient the client just uploaded, so
-    // the status endpoint can report it. A no-op if i2pDest was never bought.
     void setI2pTransient(
         const std::string& user, std::int64_t transientExpires, std::int64_t updatedAt);
+
+    std::optional<Transient> peekTransient(const std::string& user);
 
     // Whether an account may be served. On a server with open registration every
     // account is approved the moment it is created; on a moderated one the

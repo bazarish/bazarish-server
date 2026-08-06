@@ -177,16 +177,6 @@ int main()
         CHECK(missing && missing->status == 404);
     }
 
-    // Unsubscribe drops the subscription.
-    {
-        const httplib::Result result = client.Delete("/v1/account/subscription",
-            makeHeaders(alice, "DELETE", "/v1/account/subscription", ""));
-        CHECK(result && result->status == 200);
-        const httplib::Result status = client.Get("/v1/account/subscription",
-            makeHeaders(alice, "GET", "/v1/account/subscription", ""));
-        CHECK(status && status->status == 404);
-    }
-
     // Per-user I2P destination delegation: every account owns one, so the only
     // gate is that this node knows the account and has approved it.
     {
@@ -219,6 +209,29 @@ int main()
         CHECK(pubCalls == 2);
         CHECK(pubTransient.empty());
         CHECK(pubExpires == 0);
+    }
+
+    // Unsubscribe tears the account down: subscription gone, destination revoked,
+    // grants dropped - so the account can no longer delegate a transient.
+    {
+        const httplib::Result result = client.Delete("/v1/account/subscription",
+            makeHeaders(alice, "DELETE", "/v1/account/subscription", ""));
+        CHECK(result && result->status == 200);
+        CHECK(pubCalls == 3);
+        CHECK(pubTransient.empty());
+        CHECK(!grants.peekApproval(alice.fingerprint()).has_value());
+
+        const httplib::Result status = client.Get("/v1/account/subscription",
+            makeHeaders(alice, "GET", "/v1/account/subscription", ""));
+        CHECK(status && status->status == 404);
+
+        const std::string body
+            = nlohmann::json{{"transient", "after-unsubscribe"}, {"expiresUnix", now + 3600}}
+                  .dump();
+        const httplib::Result orphan = client.Post("/v1/account/i2p-dest",
+            makeHeaders(alice, "POST", "/v1/account/i2p-dest", body), body, "application/json");
+        CHECK(orphan && orphan->status == 403);
+        CHECK(pubCalls == 3);
     }
 
     api.stop();

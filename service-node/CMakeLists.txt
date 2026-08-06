@@ -23,21 +23,8 @@ find_package(Threads REQUIRED)
 add_library(bazarish_service_lib STATIC
     src/SubscriptionStore.cpp
     src/AccountApi.cpp
-    src/PaymentGateway.cpp
-    src/MockPaymentGateway.cpp
-    src/MoneroPaymentGateway.cpp
-    src/Portal.cpp
-    src/LedgerStore.cpp
-    src/Hmac.cpp
-    src/LoginChallenge.cpp
-    src/Captcha.cpp
-    src/SelfHostedCaptcha.cpp
-    src/PortalSession.cpp
     src/PortalApi.cpp
     src/GrantStore.cpp
-    src/InvoiceStore.cpp
-    src/QuotaPublisher.cpp
-    src/ServiceLifecycle.cpp
     src/TransientPublisher.cpp
 )
 target_include_directories(bazarish_service_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -70,14 +57,6 @@ endfunction()
 
 bazarish_service_add_test(TestSubscriptionStore)
 bazarish_service_add_test(TestAccountApi)
-bazarish_service_add_test(TestPayments)
-bazarish_service_add_test(TestPortal)
-bazarish_service_add_test(TestLedger)
-bazarish_service_add_test(TestLoginChallenge)
-bazarish_service_add_test(TestCaptcha)
-bazarish_service_add_test(TestPortalApi)
 bazarish_service_add_test(TestGrantStore)
-bazarish_service_add_test(TestQuotaPublisher)
-bazarish_service_add_test(TestServiceLifecycle)
-bazarish_service_add_test(TestI2pDestApi)
 bazarish_service_add_test(TestModeratedRegistration)
+bazarish_service_add_test(TestPortal)

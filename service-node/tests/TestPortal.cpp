@@ -1,6 +1,6 @@
 // Bazarish project (c) 2026
 #include "AccountApi.hpp"
-#include "Portal.hpp"
+#include <bazarish/Portal.hpp>
 #include "SubscriptionStore.hpp"
 
 #include <bazarish/Bytes.hpp>
@@ -78,11 +78,10 @@ void testPortalDiscovery()
     options.serverFingerprint = "server-fp";
     options.portalMessage = "Register at the portal";
     options.portalLinks = {"https://portal.example/a", "http://abc.onion/b"};
-    options.settlementCurrency = "XMR";
     options.freeRegistrationCaptcha = true;
-    options.i2pDestService = {true, "500000000", 30};        // monthly
-    options.defaultQuotaBytes = 10 * 1024 * 1024;            // free minimum
-    options.storagePlan = {true, 5ULL * 1024 * 1024 * 1024, "300000000", 30};  // 5 GiB / month
+    options.defaultQuotaBytes = 50 * 1024 * 1024;
+    options.registration = AccountApiOptions::Registration::eApproval;
+    options.registrationMessage = "write to the operator";
 
     AccountApi api(store, grants, options);
     const int port = api.bindToAnyPort("127.0.0.1");
@@ -103,17 +102,14 @@ void testPortalDiscovery()
     const nlohmann::json body = nlohmann::json::parse(response->body);
     CHECK(body.at("message").get<std::string>() == "Register at the portal");
     CHECK(body.at("links").size() == 2);
-    const nlohmann::json& services = body.at("services");
-    CHECK(services.at("freeRegistration").at("enabled").get<bool>());
-    CHECK(services.at("freeRegistration").at("captcha").get<bool>());
-    CHECK(services.at("i2pDest").at("periodDays").get<std::int64_t>() == 30);    // monthly
-    CHECK(services.at("i2pDest").at("currency").get<std::string>() == "XMR");
-    const nlohmann::json& storage = services.at("storage");
-    CHECK(storage.at("freeQuotaBytes").get<std::uint64_t>() == 10 * 1024 * 1024);
-    CHECK(storage.at("paid").at("enabled").get<bool>());
-    CHECK(storage.at("paid").at("quotaBytes").get<std::uint64_t>() == 5ULL * 1024 * 1024 * 1024);
-    CHECK(storage.at("paid").at("priceAtomic").get<std::string>() == "300000000");
-    CHECK(storage.at("paid").at("periodDays").get<std::int64_t>() == 30);
+    // Nothing is for sale, so there is no service catalogue - only the terms of
+    // registration and the one quota everybody gets.
+    CHECK(!body.contains("services"));
+    const nlohmann::json& registration = body.at("registration");
+    CHECK(registration.at("captcha").get<bool>());
+    CHECK(registration.at("requiresApproval").get<bool>());
+    CHECK(registration.at("message").get<std::string>() == "write to the operator");
+    CHECK(body.at("quotaBytes").get<std::uint64_t>() == 50 * 1024 * 1024);
 
     api.stop();
     serverThread.join();

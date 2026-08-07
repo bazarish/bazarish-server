@@ -22,14 +22,13 @@ void printUsage()
         "Usage: bazarish-facade-http [--listen <host> <port>]\n"
         "                           [--messaging <host> <port>]\n"
         "                           [--account <host> <port>]\n"
-        "                           [--blob-storage <host> <port>]\n"
         "                           [--base-path <secret-uri-prefix>]\n"
         "                           [--operator-fingerprint <fp>]...\n"
         "                           [--log-level <error|warn|info|debug>]\n"
         "       bazarish-facade-http --version\n"
         "\n"
         "Transparent reverse proxy: /v1/messaging/* -> messaging server,\n"
-        "/v1/account/* -> service node, /v1/storage/{blob,usage} -> blob store.\n"
+        "/v1/account/* -> service node.\n"
         "Place behind a reverse proxy that publishes it at a secret URI (or set\n"
         "--base-path).\n",
         kVersion);
@@ -61,10 +60,6 @@ int main(const int argc, const char** argv)
         } else if (std::strcmp(argv[i], "--account") == 0 && i + 2 < argc) {
             options.accountHost = argv[i + 1];
             options.accountPort = std::atoi(argv[i + 2]);
-            i += 3;
-        } else if (std::strcmp(argv[i], "--blob-storage") == 0 && i + 2 < argc) {
-            options.blobStorageHost = argv[i + 1];
-            options.blobStoragePort = std::atoi(argv[i + 2]);
             i += 3;
         } else if (std::strcmp(argv[i], "--base-path") == 0 && i + 1 < argc) {
             options.basePath = argv[i + 1];

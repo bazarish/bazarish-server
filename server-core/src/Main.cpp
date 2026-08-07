@@ -242,7 +242,6 @@ int main(const int argc, const char** argv)
     // resolved from peers.json.
     std::unique_ptr<bazarish::i2p::Router> router;
     std::shared_ptr<bazarish::i2p::Endpoint> homeEndpoint;
-    std::shared_ptr<bazarish::i2p::Endpoint> blobEndpoint;
     std::unique_ptr<bazarish::server::FederationRateLimiter> federationLimiter;
     // Declared before `federation` so it OUTLIVES it (federation holds a raw pointer
     // to the pool); the router, declared earlier, outlives the pool's warmer thread.
@@ -269,12 +268,6 @@ int main(const int argc, const char** argv)
             const bazarish::Bytes blob = homeEndpoint->privateBlob();
             writePrivateFile(destPath, std::string(blob.begin(), blob.end()));
         }
-        // A separate client endpoint for proxying blob ops outbound (no inbound
-        // role); connecting out does not need a published leaseset.
-        blobEndpoint = router->createEndpoint(bazarish::i2p::EndpointConfig{
-            bazarish::i2p::Keys::generate(), bazarish::i2p::LeaseSetKind::eEncrypted, privacy,
-            bazarish::i2p::kDefaultTunnelQuantity, false});
-
         // The shareable/routable address is the b33 (encrypted LeaseSet2): peers
         // reach the encrypted leaseset only via the blinded b33.
         endpoints.push_back("i2p:" + homeEndpoint->routingHost());
@@ -415,14 +408,6 @@ int main(const int argc, const char** argv)
     // the server's dedicated blob client endpoint (independent of federation).
     // Unsend (DELETE) is a small whole-body op; downloads (GET) stream so a large
     // blob is never buffered whole here.
-    httpOptions.blobProxyFetch = [blobEndpoint](const std::string& method, const std::string& blobHost,
-                                     const std::string& blobPath, const std::string& deleteToken) {
-        return bazarish::server::fetchBlobOverI2p(*blobEndpoint, blobHost, blobPath, method, deleteToken);
-    };
-    httpOptions.blobProxyDownload = [blobEndpoint](const std::string& blobHost,
-                                        const std::string& blobPath, const std::string& range) {
-        return bazarish::server::openBlobDownload(*blobEndpoint, blobHost, blobPath, range);
-    };
     if (perUserDests) {
         httpOptions.provisionI2pDest = [&perUserDests](const std::string& user,
                                            const std::string& transientB64,

@@ -26,7 +26,6 @@ add_library(bazarish_server_lib STATIC
     src/DeliveryEngine.cpp
     src/Federation.cpp
     src/FederationRateLimiter.cpp
-    src/I2pBlobFetch.cpp
     src/I2pFederation.cpp
     src/PerUserDestinations.cpp
     src/WarmDestPool.cpp

@@ -30,7 +30,6 @@ enum class Backend {
     eNone,
     eMessaging,
     eAccount,
-    eBlobStorage,
 };
 
 bool startsWith(const std::string& text, const std::string& prefix)
@@ -73,17 +72,8 @@ Backend routeOf(const std::string& path)
     if (startsWith(path, "/v1/account/")) {
         return Backend::eAccount;
     }
-    // Only the user-facing blob endpoints are public: the upload and the caller's
-    // own usage query. The operator quota endpoint (/v1/storage/quota) and the
-    // I2P-only download paths (/b/*) are never forwarded to the clearnet facade.
-    if (startsWith(path, "/v1/storage/blob") || startsWith(path, "/v1/storage/usage")) {
-        return Backend::eBlobStorage;
-    }
     return Backend::eNone;
 }
-
-// Monotonic counter giving each streamed upload a unique spool filename.
-std::atomic<std::uint64_t> g_spoolCounter{0};
 
 struct Route {
     Backend backend = Backend::eNone;
@@ -118,10 +108,6 @@ std::optional<Route> resolveRoute(const bazarish::facade::FacadeOptions& options
     case Backend::eAccount:
         route.host = options.accountHost;
         route.port = options.accountPort;
-        break;
-    case Backend::eBlobStorage:
-        route.host = options.blobStorageHost;
-        route.port = options.blobStoragePort;
         break;
     case Backend::eNone:
         response.status = 404;
@@ -206,122 +192,6 @@ void Facade::setupRoutes()
         copyResponse(upstream, response);
     };
 
-    // PUT carries the large blob upload, so it is streamed: the body is read
-    // through a content reader and relayed without the facade ever holding the
-    // whole blob in memory. The blob upload is spooled to a temp file and then
-    // streamed on to the backend through a content provider; any other PUT
-    // (small) is buffered and forwarded like the catch-all.
-    const auto putHandler = [this](const httplib::Request& request, httplib::Response& response,
-                                const httplib::ContentReader& reader) {
-        const std::optional<Route> route = resolveRoute(options_, request, response);
-        if (!route.has_value()) {
-            return;  // 404 already set
-        }
-        httplib::Client client(route->host, route->port);
-        client.set_keep_alive(false);
-
-        // Forward the inbound headers minus the ones the client regenerates for
-        // the upstream request (host and the framing headers a content provider
-        // sets itself).
-        httplib::Headers forwardHeaders;
-        for (const auto& [key, value] : request.headers) {
-            if (key == "Host" || key == "Content-Length" || key == "Transfer-Encoding") {
-                continue;
-            }
-            forwardHeaders.emplace(key, value);
-        }
-        std::string contentType = "application/octet-stream";
-        if (request.has_header("Content-Type")) {
-            contentType = request.get_header_value("Content-Type");
-        }
-
-        if (route->backend != Backend::eBlobStorage) {
-            // Small body: buffer and forward like the catch-all.
-            std::string body;
-            reader([&body](const char* const data, const std::size_t length) {
-                body.append(data, length);
-                return true;
-            });
-            httplib::Request forwarded;
-            forwarded.method = request.method;
-            forwarded.path = route->target;
-            forwarded.headers = forwardHeaders;
-            forwarded.body = std::move(body);
-            httplib::Result upstream = client.send(forwarded);
-            copyResponse(upstream, response);
-            return;
-        }
-
-        // Spool the blob to a temp file on the facade so it is never held whole in
-        // memory, then stream it on to the backend.
-        const std::filesystem::path tempPath = std::filesystem::temp_directory_path()
-            / ("bazarish-facade-" + std::to_string(g_spoolCounter.fetch_add(1)) + ".part");
-        std::uint64_t size = 0;
-        try {
-            std::ofstream out(tempPath, std::ios::binary | std::ios::trunc);
-            if (!out) {
-                throw std::runtime_error("cannot open facade spool file");
-            }
-            reader([&out, &size](const char* const data, const std::size_t length) {
-                out.write(data, static_cast<std::streamsize>(length));
-                if (!out) {
-                    return false;
-                }
-                size += length;
-                return true;
-            });
-            out.flush();
-            if (!out) {
-                throw std::runtime_error("writing facade spool file failed");
-            }
-        } catch (const std::exception&) {
-            std::error_code ec;
-            std::filesystem::remove(tempPath, ec);
-            response.status = 502;
-            response.set_content("{\"error\":{\"code\":\"FACADE_UPSTREAM\",\"message\":"
-                                 "\"facade spool failed\"}}",
-                "application/json");
-            return;
-        }
-
-        const auto file = std::make_shared<std::ifstream>(tempPath, std::ios::binary);
-        if (!file || !*file) {
-            std::error_code ec;
-            std::filesystem::remove(tempPath, ec);
-            response.status = 502;
-            response.set_content("{\"error\":{\"code\":\"FACADE_UPSTREAM\",\"message\":"
-                                 "\"facade spool reopen failed\"}}",
-                "application/json");
-            return;
-        }
-        const httplib::ContentProvider provider
-            = [file](const std::size_t offset, const std::size_t want, httplib::DataSink& sink) {
-                  file->clear();
-                  file->seekg(static_cast<std::streamoff>(offset));
-                  std::array<char, 64 * 1024> buffer;
-                  std::size_t remaining = want;
-                  while (remaining > 0) {
-                      const std::streamsize chunk = static_cast<std::streamsize>(
-                          std::min<std::size_t>(remaining, buffer.size()));
-                      file->read(buffer.data(), chunk);
-                      const std::streamsize got = file->gcount();
-                      if (got <= 0) {
-                          break;
-                      }
-                      if (!sink.write(buffer.data(), static_cast<std::size_t>(got))) {
-                          return false;
-                      }
-                      remaining -= static_cast<std::size_t>(got);
-                  }
-                  return true;
-              };
-        httplib::Result upstream = client.Put(
-            route->target, forwardHeaders, static_cast<std::size_t>(size), provider, contentType);
-        copyResponse(upstream, response);
-        std::error_code ec;
-        std::filesystem::remove(tempPath, ec);
-    };
-
     // Authenticated liveness for the admin panel, answered locally (never
     // forwarded). Registered before the catch-all so it wins the match. Gated by
     // an operator secret, so it leaks nothing to an unauthenticated caller and
@@ -343,11 +213,13 @@ void Facade::setupRoutes()
             "application/json");
     });
 
-    // Register the catch-all for the methods the API uses; PUT is streamed.
+    // Register the catch-all for the methods the API uses. Nothing streams
+    // through the facade any more: the only large payload there ever was - a file
+    // upload - now goes directly between clients.
     http_->Get(".*", handler);
     http_->Post(".*", handler);
     http_->Delete(".*", handler);
-    http_->Put(".*", putHandler);
+    http_->Put(".*", handler);
 }
 
 }  // namespace bazarish::facade

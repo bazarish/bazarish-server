@@ -48,34 +48,6 @@ std::chrono::seconds retryBackoff(int round)
     return std::chrono::seconds(seconds);
 }
 
-// The full blob length the upstream store declares: the Content-Range total for
-// a partial (206) response, else Content-Length. 0 when neither is parseable.
-std::uint64_t blobTotalFromHead(const bazarish::server::I2pBlobReader& reader)
-{
-    const std::map<std::string, std::string>& headers = reader.headers();
-    if (reader.status() == 206) {
-        const auto range = headers.find("content-range");
-        if (range != headers.end()) {
-            const std::size_t slash = range->second.rfind('/');
-            if (slash != std::string::npos) {
-                try {
-                    return static_cast<std::uint64_t>(std::stoull(range->second.substr(slash + 1)));
-                } catch (const std::exception&) {
-                    // fall through to Content-Length
-                }
-            }
-        }
-    }
-    const auto length = headers.find("content-length");
-    if (length != headers.end()) {
-        try {
-            return static_cast<std::uint64_t>(std::stoull(length->second));
-        } catch (const std::exception&) {
-            return 0;
-        }
-    }
-    return 0;
-}
 
 Bytes bodyBytes(const httplib::Request& request)
 {
@@ -612,93 +584,6 @@ void HttpApi::setupRoutes()
             store.ackBlob(user, body.at("blobId").get<std::string>(), clientId);
             respondJson(response, {{"ok", true}});
         }));
-
-    // --- Blob proxy (for clients without their own I2P transport) ---
-
-    // Proxies a large-message blob op over I2P on the client's behalf: the client
-    // passes the blob's .b32.i2p host + path (+ method GET download / DELETE
-    // unsend, + delete-token), the server runs it over a fresh transient I2P
-    // destination and relays the result. Only .b32.i2p hosts - never an open proxy.
-    http_->Get("/v1/messaging/blob-proxy",
-        authenticated([this, requireClient](const httplib::Request& request,
-                          httplib::Response& response, const std::string& user) {
-            if (requireClient(request, response, user).empty()) {
-                return;
-            }
-            const std::string method = request.has_param("method")
-                ? request.get_param_value("method")
-                : std::string("GET");
-            if (method != "GET" && method != "DELETE") {
-                respondError(response, 400, ErrorCode::eDeliveryRejected, "unsupported proxy method");
-                return;
-            }
-            const std::string host = request.get_param_value("host");
-            const std::string path = request.get_param_value("path");
-            const std::string token = request.get_param_value("token");
-            const std::string range
-                = request.has_param("range") ? request.get_param_value("range") : std::string();
-            const std::string suffix = ".b32.i2p";
-            if (host.size() <= suffix.size()
-                || host.compare(host.size() - suffix.size(), suffix.size(), suffix) != 0) {
-                respondError(
-                    response, 400, ErrorCode::eDeliveryRejected, "host is not a .b32.i2p address");
-                return;
-            }
-            // Unsend: a small whole-body op.
-            if (method == "DELETE") {
-                if (!options_.blobProxyFetch) {
-                    respondError(response, 503, ErrorCode::eDeliveryRejected, "blob proxy disabled");
-                    return;
-                }
-                try {
-                    const BlobProxyResult fetched
-                        = options_.blobProxyFetch(method, host, path, token);
-                    if (fetched.status != 200) {
-                        respondError(response, 502, ErrorCode::eDeliveryRejected,
-                            "blob op returned status " + std::to_string(fetched.status));
-                        return;
-                    }
-                    response.set_content(std::string(fetched.body.begin(), fetched.body.end()),
-                        "application/octet-stream");
-                } catch (const std::exception& error) {
-                    respondError(response, 502, ErrorCode::eDeliveryRejected, error.what());
-                }
-                return;
-            }
-            // Download: stream the ciphertext through so the whole blob is never
-            // buffered here. The full blob length rides in X-Blob-Total (derived
-            // from the upstream Content-Length or Content-Range) so the recipient
-            // can detect a truncated transfer and resume with a Range request.
-            if (!options_.blobProxyDownload) {
-                respondError(response, 503, ErrorCode::eDeliveryRejected, "blob proxy disabled");
-                return;
-            }
-            std::shared_ptr<I2pBlobReader> reader;
-            try {
-                reader = options_.blobProxyDownload(host, path, range);
-            } catch (const std::exception& error) {
-                respondError(response, 502, ErrorCode::eDeliveryRejected, error.what());
-                return;
-            }
-            if (reader->status() != 200 && reader->status() != 206) {
-                respondError(response, 502, ErrorCode::eDeliveryRejected,
-                    "blob op returned status " + std::to_string(reader->status()));
-                return;
-            }
-            response.set_header("X-Blob-Total", std::to_string(blobTotalFromHead(*reader)));
-            response.set_chunked_content_provider("application/octet-stream",
-                [reader](std::size_t, httplib::DataSink& sink) {
-                    std::array<char, 65536> buffer{};
-                    const std::size_t got = reader->readBody(buffer.data(), buffer.size());
-                    if (got == 0) {
-                        sink.done();
-                        return true;
-                    }
-                    return sink.write(buffer.data(), got);
-                });
-        }));
-
-    // --- Sending: submit + poll ---
 
     http_->Post("/v1/messaging/send",
         authenticated([this, requireClient](const httplib::Request& request,

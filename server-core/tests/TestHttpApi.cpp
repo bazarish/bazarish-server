@@ -37,39 +37,6 @@ using namespace bazarish::server;
 
 namespace {
 
-// In-memory I2pBlobReader for the streaming blob-proxy test: serves a fixed body
-// from a fixed status + headers, handing it out in readBody() chunks like the
-// real I2P-backed reader.
-class FakeReader final : public I2pBlobReader {
-public:
-    FakeReader(int status, std::map<std::string, std::string> headers, std::string body)
-        : status_(status)
-        , headers_(std::move(headers))
-        , body_(std::move(body))
-    {
-    }
-    int status() const override { return status_; }
-    const std::map<std::string, std::string>& headers() const override { return headers_; }
-    std::size_t readBody(char* out, const std::size_t len) override
-    {
-        const std::size_t take = std::min(len, body_.size() - pos_);
-        std::memcpy(out, body_.data() + pos_, take);
-        pos_ += take;
-        return take;
-    }
-
-private:
-    int status_;
-    std::map<std::string, std::string> headers_;
-    std::string body_;
-    std::size_t pos_ = 0;
-};
-
-std::unique_ptr<I2pBlobReader> makeFakeReader(
-    int status, std::map<std::string, std::string> headers, std::string body)
-{
-    return std::make_unique<FakeReader>(status, std::move(headers), std::move(body));
-}
 
 // Signs a request with the caller identity and optionally attaches the
 // client ID header.
@@ -165,36 +132,6 @@ int main()
     };
     // Stub blob proxy: records the unsend (DELETE) op so the test can assert the
     // endpoint validated and forwarded it without a live router.
-    std::string proxiedMethod;
-    std::string proxiedHost;
-    std::string proxiedPath;
-    std::string proxiedToken;
-    httpOptions.blobProxyFetch = [&](const std::string& method, const std::string& host,
-                                     const std::string& path, const std::string& token) {
-        proxiedMethod = method;
-        proxiedHost = host;
-        proxiedPath = path;
-        proxiedToken = token;
-        const std::string body = method + "-for-" + path;
-        return BlobProxyResult{200, Bytes(body.begin(), body.end())};
-    };
-    // Stub streaming download: serves "hello-world" whole on a plain GET, and the
-    // requested tail (as a 206) when a Range is forwarded - so the test can assert
-    // the endpoint streams the body, forwards the Range and publishes X-Blob-Total.
-    std::string downHost;
-    std::string downPath;
-    std::string downRange;
-    httpOptions.blobProxyDownload = [&](const std::string& host, const std::string& path,
-                                        const std::string& range)
-        -> std::unique_ptr<I2pBlobReader> {
-        downHost = host;
-        downPath = path;
-        downRange = range;
-        if (range.empty()) {
-            return makeFakeReader(200, {{"content-length", "11"}}, "hello-world");
-        }
-        return makeFakeReader(206, {{"content-range", "bytes 6-10/11"}}, "world");
-    };
     // Operator-internal per-user destination: stub the manager so the test can
     // assert the endpoint authenticates and dispatches provision/revoke. The
     // operator is authorised by signature (its fingerprint), not a shared secret.
@@ -425,53 +362,6 @@ int main()
             makeHeaders(bob, "GET", "/v1/messaging/send/deadbeef", "", "bobdev"));
         CHECK(result && result->status == 404);
         CHECK(nlohmann::json::parse(result->body).at("error").at("code") == "ATTEMPT_UNKNOWN");
-    }
-
-    // Blob proxy: an authed client request for a .b32.i2p host streams the blob
-    // back, publishing the full length so the client can detect truncation.
-    {
-        const std::string b33
-            = "yhfjbu7hkuqyqwp3pvpuf6vk63bdlwtryjcueunavz52ai5y3yuvwdkh.b32.i2p";
-        const httplib::Result result = client.Get("/v1/messaging/blob-proxy?host=" + b33 + "&path=/b/cap1",
-            makeHeaders(alice, "GET", "/v1/messaging/blob-proxy", "", "alicedev"));
-        CHECK(result && result->status == 200);
-        CHECK(result->body == "hello-world");
-        CHECK(result->get_header_value("X-Blob-Total") == "11");
-        CHECK(downHost == b33);
-        CHECK(downPath == "/b/cap1");
-        CHECK(downRange.empty());
-
-        // A forwarded Range resumes from an offset: the upstream 206's
-        // Content-Range total still surfaces as X-Blob-Total.
-        const httplib::Result resumed = client.Get(
-            "/v1/messaging/blob-proxy?host=" + b33 + "&path=/b/cap1&range=bytes=6-",
-            makeHeaders(alice, "GET", "/v1/messaging/blob-proxy", "", "alicedev"));
-        CHECK(resumed && resumed->status == 200);
-        CHECK(resumed->body == "world");
-        CHECK(resumed->get_header_value("X-Blob-Total") == "11");
-        CHECK(downRange == "bytes=6-");
-
-        // DELETE (unsend) forwards the method and the delete-token.
-        const httplib::Result del = client.Get(
-            "/v1/messaging/blob-proxy?method=DELETE&host=" + b33 + "&path=/b/cap1&token=tok9",
-            makeHeaders(alice, "GET", "/v1/messaging/blob-proxy", "", "alicedev"));
-        CHECK(del && del->status == 200);
-        CHECK(proxiedMethod == "DELETE");
-        CHECK(proxiedToken == "tok9");
-
-        // An unsupported method is refused.
-        const httplib::Result bad = client.Get(
-            "/v1/messaging/blob-proxy?method=POST&host=" + b33 + "&path=/b/cap1",
-            makeHeaders(alice, "GET", "/v1/messaging/blob-proxy", "", "alicedev"));
-        CHECK(bad && bad->status == 400);
-    }
-
-    // A non-.b32.i2p host is refused (never an open proxy).
-    {
-        const httplib::Result result
-            = client.Get("/v1/messaging/blob-proxy?host=evil.example.com&path=/x",
-                makeHeaders(alice, "GET", "/v1/messaging/blob-proxy", "", "alicedev"));
-        CHECK(result && result->status == 400);
     }
 
     // Per-user I2P destination endpoint (operator signature): auth + dispatch.

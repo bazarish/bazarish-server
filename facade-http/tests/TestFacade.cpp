@@ -48,25 +48,19 @@ int main()
 {
     httplib::Server messaging;
     httplib::Server account;
-    httplib::Server blob;
     installBackend(messaging, "messaging");
     installBackend(account, "account");
-    installBackend(blob, "blob");
     const int messagingPort = messaging.bind_to_any_port("127.0.0.1");
     const int accountPort = account.bind_to_any_port("127.0.0.1");
-    const int blobPort = blob.bind_to_any_port("127.0.0.1");
-    CHECK(messagingPort > 0 && accountPort > 0 && blobPort > 0);
+    CHECK(messagingPort > 0 && accountPort > 0);
     std::thread messagingThread([&messaging]() { (void)messaging.listen_after_bind(); });
     std::thread accountThread([&account]() { (void)account.listen_after_bind(); });
-    std::thread blobThread([&blob]() { (void)blob.listen_after_bind(); });
 
     bazarish::facade::FacadeOptions options;
     options.messagingHost = "127.0.0.1";
     options.messagingPort = messagingPort;
     options.accountHost = "127.0.0.1";
     options.accountPort = accountPort;
-    options.blobStorageHost = "127.0.0.1";
-    options.blobStoragePort = blobPort;
     options.basePath = "/s/secret123";
     bazarish::facade::Facade facade(options);
     const int facadePort = facade.bindToAnyPort("127.0.0.1");
@@ -121,40 +115,11 @@ int main()
         CHECK(result && result->status == 404);
     }
 
-    // Blob upload (PUT) is forwarded to the blob backend.
+    // Storage paths are no longer routed anywhere: there is no blob service.
     {
         const httplib::Result result = client.Put(
             "/s/secret123/v1/storage/blob", "ciphertext-bytes", "application/octet-stream");
-        CHECK(result && result->status == 200);
-        const nlohmann::json reply = nlohmann::json::parse(result->body);
-        CHECK(reply.at("backend") == "blob");
-        CHECK(reply.at("method") == "PUT");
-        CHECK(reply.at("path") == "/v1/storage/blob");
-        CHECK(reply.at("body") == "ciphertext-bytes");
-    }
-
-    // The caller's own blob-storage usage (GET) is forwarded to the blob backend.
-    {
-        const httplib::Result result = client.Get("/s/secret123/v1/storage/usage");
-        CHECK(result && result->status == 200);
-        const nlohmann::json reply = nlohmann::json::parse(result->body);
-        CHECK(reply.at("backend") == "blob");
-        CHECK(reply.at("method") == "GET");
-        CHECK(reply.at("path") == "/v1/storage/usage");
-    }
-
-    // A large blob upload streams through (spooled, then content-provided over
-    // several chunks) without the facade buffering it whole - the backend
-    // receives the exact bytes.
-    {
-        const std::string big(200000, 'Z');
-        const httplib::Result result
-            = client.Put("/s/secret123/v1/storage/blob", big, "application/octet-stream");
-        CHECK(result && result->status == 200);
-        const nlohmann::json reply = nlohmann::json::parse(result->body);
-        CHECK(reply.at("backend") == "blob");
-        CHECK(reply.at("method") == "PUT");
-        CHECK(reply.at("body").get<std::string>() == big);
+        CHECK(result && result->status == 404);
     }
 
     // The operator quota endpoint is never exposed through the facade.
@@ -174,10 +139,8 @@ int main()
     facade.stop();
     messaging.stop();
     account.stop();
-    blob.stop();
     facadeThread.join();
     messagingThread.join();
     accountThread.join();
-    blobThread.join();
     return 0;
 }

@@ -2,7 +2,6 @@
 #pragma once
 
 #include "DeliveryEngine.hpp"
-#include "I2pBlobFetch.hpp"
 #include "Storage.hpp"
 
 #include <bazarish/Auth.hpp>
@@ -45,13 +44,12 @@ struct DestinationAssignment {
 using AssignDestinationFn = std::function<DestinationAssignment(const std::string& user)>;
 
 struct HttpApiOptions {
-    // Hard cap on a single delivery envelope. A conforming client externalizes any
-    // inner content over 512 KB to blob storage (kLargeBlobThresholdBytes), so the
-    // mailbox only ever needs to hold sub-512 KB inline content plus tiny blob
-    // pointers. This cap tracks that threshold with headroom for the sealed
-    // envelope and a first-reply bootstrap (so a legitimate near-threshold message
-    // is never rejected), while denying a hostile sender the room to stuff a
-    // recipient's small mailbox with multi-megabyte inline blobs.
+    // Hard cap on a single delivery envelope, and with it the point at which a
+    // file stops going through the mailbox: a client that gets this cap back as a
+    // typed error falls back to transferring the file directly to the recipient.
+    // Operators should size it against the quota, not against the smallest thing
+    // that works - too small a cap pushes ordinary attachments into a transfer
+    // that needs both sides online.
     std::uint64_t perMessageLimitBytes = 1 * 1024 * 1024;
     // The server's default per-user mailbox quota, reported (alongside actual usage)
     // by /v1/messaging/storage-usage when a user has no quota override. Mirrors the
@@ -78,20 +76,6 @@ struct HttpApiOptions {
     std::vector<std::string> operatorFingerprints;
     // Version string reported by /healthz.
     std::string version;
-    // Runs a small blob op over I2P for a client that has no I2P transport of its
-    // own (the proxy fallback): used for DELETE (unsend), with an optional
-    // delete-token. Empty disables proxy unsend.
-    std::function<BlobProxyResult(const std::string& method, const std::string& host,
-        const std::string& path, const std::string& deleteToken)>
-        blobProxyFetch;
-    // Streams a blob download over I2P for a client with no I2P transport of its
-    // own (proxy GET): host +
-    // path + optional Range -> a pull reader the endpoint drains into the client
-    // response a chunk at a time, so a large blob is never buffered whole on the
-    // user's own server. Empty disables proxy downloads.
-    std::function<std::unique_ptr<I2pBlobReader>(
-        const std::string& host, const std::string& path, const std::string& range)>
-        blobProxyDownload;
     // Brings up (or replaces) a paid user's personal I2P destination from a
     // client-owned offline transient; the operator-internal i2p-dest endpoint
     // calls it (same operator signature as quota). Empty disables the endpoint.

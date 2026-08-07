@@ -424,6 +424,35 @@ void HttpApi::setupRoutes()
     // key for it, so the client can fold both into its self-signed contact card
     // (see docs-main api/InviteAnonymity.md). Resolved from the authenticated
     // caller's fingerprint.
+    // Private reseed: a random slice of this server's netDb, so a client's first
+    // I2P start never reaches for a public reseed host - the most blocked and
+    // most telling part of a bootstrap. Deliberately unauthenticated (the client
+    // has nothing yet) and deliberately random per request: the server picks
+    // which routers a client learns first, so a fixed set would be an eclipse
+    // handle. Every RouterInfo carries its own signature, so this adds no trust.
+    http_->Get("/v1/messaging/reseed",
+        [this](const httplib::Request& request, httplib::Response& response) {
+            if (!options_.reseedSample) {
+                respondError(response, 503, ErrorCode::eI2pUnavailable, "no reseed available");
+                return;
+            }
+            std::size_t count = 75;
+            if (request.has_param("count")) {
+                count = std::min<std::size_t>(
+                    std::strtoull(request.get_param_value("count").c_str(), nullptr, 10), 200);
+            }
+            const std::vector<Bytes> routers = options_.reseedSample(count);
+            if (routers.empty()) {
+                respondError(response, 503, ErrorCode::eI2pUnavailable, "netdb is empty");
+                return;
+            }
+            nlohmann::json list = nlohmann::json::array();
+            for (const Bytes& router : routers) {
+                list.push_back(toBase64(router));
+            }
+            respondJson(response, {{"routers", list}});
+        });
+
     http_->Get("/v1/messaging/destination",
         authenticated([this](const httplib::Request&, httplib::Response& response,
                           const std::string& user) {

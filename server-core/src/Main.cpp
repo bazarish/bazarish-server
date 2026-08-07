@@ -390,6 +390,10 @@ int main(const int argc, const char** argv)
     // make every user behind it provably co-located. Used to short-circuit only
     // same-destination deliveries (a send to the sender's own destination) and
     // to surface the destination to the user.
+    if (router) {
+        httpOptions.reseedSample
+            = [](const std::size_t count) { return bazarish::i2p::sampleRouterInfos(count); };
+    }
     httpOptions.assignDestination
         = [&perUserDests](const std::string& user) -> bazarish::server::DestinationAssignment {
         // The address may be empty until the session builds - then no local

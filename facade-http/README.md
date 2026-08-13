@@ -28,12 +28,22 @@ ctest --test-dir build
 ## Run
 
 ```
-bazarish-facade-http [--listen <host> <port>]
+bazarish-facade-http --base-path <secret-uri-prefix> | --public
+                     [--listen <host> <port>]
+                     [--ops-listen <host> <port>]
                      [--messaging <host> <port>]
                      [--account <host> <port>]
-                     [--base-path <secret-uri-prefix>]
 ```
 
-`--base-path` is stripped before forwarding (use it when no upstream reverse
-proxy owns the secret URI). The signed canonical request path is the
-post-strip path, so signatures verify on the backend regardless.
+`--base-path` is mandatory and stripped before forwarding: the whole clearnet
+API, the unauthenticated first reseed included, is reachable only under that
+secret prefix, and clients learn it only from the facade URL in the server
+descriptor. Anything else - an unknown path, the API root, `/healthz` - is the
+same bare 404, so a scan of the host learns nothing. The signed canonical request
+path is the post-strip path, so signatures verify on the backend regardless.
+
+Pass `--public` instead only when a fronting reverse proxy already publishes this
+facade under a secret URI of its own; the facade refuses to start with neither.
+
+`--ops-listen` opens a second, private socket that serves only the
+operator-signed `/healthz` for the admin panel. It is never published to clients.

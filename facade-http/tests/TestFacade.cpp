@@ -66,6 +66,9 @@ int main()
     const int facadePort = facade.bindToAnyPort("127.0.0.1");
     CHECK(facadePort > 0);
     std::thread facadeThread([&facade]() { (void)facade.listenAfterBind(); });
+    const int opsPort = facade.bindOpsToAnyPort("127.0.0.1");
+    CHECK(opsPort > 0);
+    std::thread opsThread([&facade]() { (void)facade.listenOpsAfterBind(); });
 
     httplib::Client client("127.0.0.1", facadePort);
     CHECK(client.is_valid());
@@ -136,10 +139,43 @@ int main()
         CHECK(result && result->status == 404);
     }
 
+    // Nothing outside the secret prefix identifies the host as a facade: the
+    // reseed a client fetches before it has any transport, the API root and the
+    // operator liveness endpoint all answer the same bare 404.
+    {
+        for (const char* const path : {"/v1/messaging/reseed", "/v1/account/portal", "/healthz",
+                 "/"}) {
+            const httplib::Result result = client.Get(path);
+            CHECK(result && result->status == 404);
+            CHECK(result->body.empty());
+        }
+    }
+
+    // The reseed is reachable under the secret prefix, unauthenticated - the
+    // client has no I2P transport yet when it asks for it.
+    {
+        const httplib::Result result = client.Get("/s/secret123/v1/messaging/reseed");
+        CHECK(result && result->status == 200);
+        const nlohmann::json reply = nlohmann::json::parse(result->body);
+        CHECK(reply.at("backend") == "messaging");
+        CHECK(reply.at("path") == "/v1/messaging/reseed");
+    }
+
+    // The ops socket serves /healthz, and only to an operator-signed caller.
+    {
+        httplib::Client ops("127.0.0.1", opsPort);
+        const httplib::Result unauthenticated = ops.Get("/healthz");
+        CHECK(unauthenticated && unauthenticated->status == 403);
+        // The proxy routes are not on this socket.
+        const httplib::Result proxied = ops.Get("/s/secret123/v1/messaging/send");
+        CHECK(proxied && proxied->status == 404);
+    }
+
     facade.stop();
     messaging.stop();
     account.stop();
     facadeThread.join();
+    opsThread.join();
     messagingThread.join();
     accountThread.join();
     return 0;

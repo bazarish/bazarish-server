@@ -141,9 +141,11 @@ void copyResponse(const httplib::Result& upstream, httplib::Response& response)
 Facade::Facade(FacadeOptions options)
     : options_(std::move(options))
     , http_(std::make_unique<httplib::Server>())
+    , ops_(std::make_unique<httplib::Server>())
     , startedAt_(nowSeconds())
 {
     setupRoutes();
+    setupOpsRoutes();
 }
 
 Facade::~Facade() = default;
@@ -163,9 +165,25 @@ bool Facade::listenAfterBind()
     return http_->listen_after_bind();
 }
 
+bool Facade::bindOps(const std::string& host, const int port)
+{
+    return ops_->bind_to_port(host, port);
+}
+
+int Facade::bindOpsToAnyPort(const std::string& host)
+{
+    return ops_->bind_to_any_port(host);
+}
+
+bool Facade::listenOpsAfterBind()
+{
+    return ops_->listen_after_bind();
+}
+
 void Facade::stop()
 {
     http_->stop();
+    ops_->stop();
 }
 
 void Facade::setupRoutes()
@@ -192,11 +210,21 @@ void Facade::setupRoutes()
         copyResponse(upstream, response);
     };
 
-    // Authenticated liveness for the admin panel, answered locally (never
-    // forwarded). Registered before the catch-all so it wins the match. Gated by
-    // an operator secret, so it leaks nothing to an unauthenticated caller and
-    // ignores the secret base path (it lives on the private ops socket).
-    http_->Get("/healthz", [this](const httplib::Request& request, httplib::Response& response) {
+    // Register the catch-all for the methods the API uses. Nothing streams
+    // through the facade any more: the only large payload there ever was - a file
+    // upload - now goes directly between clients.
+    http_->Get(".*", handler);
+    http_->Post(".*", handler);
+    http_->Delete(".*", handler);
+    http_->Put(".*", handler);
+}
+
+void Facade::setupOpsRoutes()
+{
+    // Operator-signed liveness for the admin panel, answered locally and served
+    // on the ops socket only: on the public one it would identify the host as a
+    // facade to anyone who does not know the secret base path.
+    ops_->Get("/healthz", [this](const httplib::Request& request, httplib::Response& response) {
         try {
             bazarish::auth::authorizeRequest(collectAuthHeaders(request), nowSeconds(),
                 request.method, request.path, bazarish::Bytes(),
@@ -212,14 +240,6 @@ void Facade::setupRoutes()
             health::reportJson("facade", options_.version, startedAt_, nowSeconds()),
             "application/json");
     });
-
-    // Register the catch-all for the methods the API uses. Nothing streams
-    // through the facade any more: the only large payload there ever was - a file
-    // upload - now goes directly between clients.
-    http_->Get(".*", handler);
-    http_->Post(".*", handler);
-    http_->Delete(".*", handler);
-    http_->Put(".*", handler);
 }
 
 }  // namespace bazarish::facade

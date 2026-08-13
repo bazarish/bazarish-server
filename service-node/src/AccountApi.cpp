@@ -214,26 +214,35 @@ void AccountApi::setupRoutes()
                   return;
               }
 
-              // Registration is authorised on the service portal (captcha for
-              // free, payment for paid), which records a pending grant. The
-              // Client redeems it here with its user-signed certificate; the
-              // grant supplies the quota and bounds the term. No grant -> the
-              // user must register on the portal first.
+              // Registration is authorised on the service portal, which records a
+              // pending grant. The Client redeems it here with its user-signed
+              // certificate; the grant supplies the quota and bounds the term.
+              // Without a grant the only certificate accepted is a re-issue of
+              // one already held: the user publishes its routing this way once
+              // its destination exists (the destination can only be delegated
+              // after the account exists, so the first certificate never carries
+              // it) or once an operator approves a moderated account. A re-issue
+              // grants nothing - same term, same quota - so it consumes no grant.
               const std::optional<GrantStore::SubscriptionGrant> grant
                   = grants_.peekSubscription(cert.user);
-              if (!grant.has_value()) {
+              const std::optional<SubscriptionStore::Subscription> held
+                  = store_.getSubscription(cert.user);
+              std::uint64_t effectiveQuota = 0;
+              if (grant.has_value()) {
+                  if (cert.notAfter - cert.issuedAt > grant->termSeconds) {
+                      respondError(response, 400, ErrorCode::eSubscriptionTermTooLong,
+                          "requested term exceeds the granted term");
+                      return;
+                  }
+                  grants_.takeSubscription(cert.user);  // consume the one-shot grant
+                  effectiveQuota = grant->quotaBytes;
+              } else if (held.has_value() && cert.notAfter <= held->notAfter) {
+                  effectiveQuota = held->quotaBytes;
+              } else {
                   respondError(response, 403, ErrorCode::eDeliveryRejected,
                       "no pending subscription grant — register on the service portal first");
                   return;
               }
-              if (cert.notAfter - cert.issuedAt > grant->termSeconds) {
-                  respondError(response, 400, ErrorCode::eSubscriptionTermTooLong,
-                      "requested term exceeds the granted term");
-                  return;
-              }
-              grants_.takeSubscription(cert.user);  // consume the one-shot grant
-
-              const std::uint64_t effectiveQuota = grant->quotaBytes;
 
               SubscriptionStore::Subscription record;
               record.user = cert.user;

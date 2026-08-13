@@ -177,6 +177,42 @@ int main()
         CHECK(missing && missing->status == 404);
     }
 
+    // Re-publishing the card inside the term already held needs no grant: the
+    // destination can only be delegated once the account exists, so the first
+    // certificate never carries routing and the client republishes right after.
+    {
+        const Key sealing = Key::generateSealing();
+        const std::string dest
+            = "dlkbeyqjykssca6o7qlbwgq4fr2hry7kw2ursn2sh3lt3acox6gq.b32.i2p";
+        const Bytes servingKey = Key::generateSealing().publicDer();
+        CHECK(!grants.peekSubscription(alice.fingerprint()).has_value());
+        const Bytes cert = SubscriptionCertificate::issue(alice, serverFp, now,
+            now + 3 * 24 * 3600, sealing.publicDer(), dest, servingKey);
+        const std::string body = nlohmann::json{{"cert", toBase64(cert)}}.dump();
+        const httplib::Result result = client.Post("/v1/account/renew",
+            makeHeaders(alice, "POST", "/v1/account/renew", body), body, "application/json");
+        CHECK(result && result->status == 200);
+        CHECK(nlohmann::json::parse(result->body).at("quotaBytes") == options.defaultQuotaBytes);
+
+        // The published card is the one a contact now gets, routing included.
+        const httplib::Result looked
+            = client.Get("/v1/account/contact?user=" + alice.fingerprint());
+        CHECK(looked && looked->status == 200);
+        const SubscriptionCertificate card = SubscriptionCertificate::verify(fromBase64(
+            nlohmann::json::parse(looked->body).at("subscriptionCert").get<std::string>()));
+        CHECK(card.dest == dest);
+        CHECK(card.servingSealingKeyDer == servingKey);
+
+        // Extending the term is a new subscription, so that still needs a grant.
+        const Bytes longer
+            = SubscriptionCertificate::issue(alice, serverFp, now, now + 4 * 24 * 3600);
+        const std::string longerBody = nlohmann::json{{"cert", toBase64(longer)}}.dump();
+        const httplib::Result refused = client.Post("/v1/account/renew",
+            makeHeaders(alice, "POST", "/v1/account/renew", longerBody), longerBody,
+            "application/json");
+        CHECK(refused && refused->status == 403);
+    }
+
     // Per-user I2P destination delegation: every account owns one, so the only
     // gate is that this node knows the account and has approved it.
     {

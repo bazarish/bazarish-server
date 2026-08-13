@@ -43,11 +43,15 @@ void printUsage()
         "         [--config <path>]\n"
         "         [--messaging <host> <port>]\n"
         "         [--operator-fingerprint <fp>]... [--log-level <error|warn|info|debug>]\n"
+        "       bazarish-service-node --state <dir> --fingerprint\n"
         "       bazarish-service-node --version\n"
         "\n"
         "The server card (produced by bazarish-server --i2p) binds this\n"
         "service node to its messaging server and is returned to clients on\n"
-        "subscribe.\n",
+        "subscribe.\n"
+        "--fingerprint prints this node's operator fingerprint (creating its\n"
+        "identity if needed) and exits, so the messaging server can be started\n"
+        "with --operator-fingerprint before this node runs.\n",
         kVersion);
 }
 
@@ -175,6 +179,15 @@ int main(const int argc, const char** argv)
 {
     if (argc == 2 && std::strcmp(argv[1], "--version") == 0) {
         std::printf("bazarish-service-node %s\n", kVersion);
+        return 0;
+    }
+    // The messaging server must authorise this node's operator fingerprint, but
+    // this node cannot start before that server has written its card. This mode
+    // breaks the cycle: it materialises the identity and prints the fingerprint,
+    // so the server can be started with it already configured.
+    if (argc == 4 && std::strcmp(argv[1], "--state") == 0
+        && std::strcmp(argv[3], "--fingerprint") == 0) {
+        std::printf("%s\n", loadOrCreateIdentity(fs::path(argv[2])).fingerprint().c_str());
         return 0;
     }
     if (argc < 5 || std::strcmp(argv[1], "--state") != 0

@@ -28,6 +28,13 @@ namespace {
 using bazarish::Bytes;
 using bazarish::ErrorCode;
 
+// How many RouterInfos a private reseed hands out when the client asks for no
+// particular number, and the most it will ever hand out. Large enough that a
+// fresh router has a real slice of the netDb to start from, bounded so one
+// caller cannot pull the whole thing.
+constexpr std::size_t kReseedRoutersDefault = 75;
+constexpr std::size_t kReseedRoutersMax = 200;
+
 std::int64_t nowSeconds()
 {
     return static_cast<std::int64_t>(std::time(nullptr));
@@ -420,10 +427,6 @@ void HttpApi::setupRoutes()
             respondJson(response, {{"ok", true}});
         }));
 
-    // The caller's assigned serving destination + the public serving sealing
-    // key for it, so the client can fold both into its self-signed contact card
-    // (see docs-main api/InviteAnonymity.md). Resolved from the authenticated
-    // caller's fingerprint.
     // Private reseed: a random slice of this server's netDb, so a client's first
     // I2P start never reaches for a public reseed host - the most blocked and
     // most telling part of a bootstrap. Deliberately unauthenticated (the client
@@ -436,10 +439,11 @@ void HttpApi::setupRoutes()
                 respondError(response, 503, ErrorCode::eI2pUnavailable, "no reseed available");
                 return;
             }
-            std::size_t count = 75;
+            std::size_t count = kReseedRoutersDefault;
             if (request.has_param("count")) {
                 count = std::min<std::size_t>(
-                    std::strtoull(request.get_param_value("count").c_str(), nullptr, 10), 200);
+                    std::strtoull(request.get_param_value("count").c_str(), nullptr, 10),
+                    kReseedRoutersMax);
             }
             const std::vector<Bytes> routers = options_.reseedSample(count);
             if (routers.empty()) {
@@ -453,6 +457,10 @@ void HttpApi::setupRoutes()
             respondJson(response, {{"routers", list}});
         });
 
+    // The caller's assigned serving destination + the public serving sealing
+    // key for it, so the client can fold both into its self-signed contact card
+    // (see docs-main api/InviteAnonymity.md). Resolved from the authenticated
+    // caller's fingerprint.
     http_->Get("/v1/messaging/destination",
         authenticated([this](const httplib::Request&, httplib::Response& response,
                           const std::string& user) {

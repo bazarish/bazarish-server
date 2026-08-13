@@ -130,6 +130,20 @@ int main()
     httpOptions.assignDestination = [serverDest, serverServingKey](const std::string&) {
         return DestinationAssignment{serverDest, serverServingKey, "home"};
     };
+    // Private reseed: the sampler stands in for the running router's netDb and
+    // records what was asked of it.
+    std::size_t reseedAsked = 0;
+    std::size_t reseedAvailable = 3;
+    httpOptions.reseedSample = [&](const std::size_t count) {
+        reseedAsked = count;
+        std::vector<Bytes> routers;
+        for (std::size_t i = 0; i < std::min(count, reseedAvailable); ++i) {
+            const std::string router = "routerinfo-" + std::to_string(i);
+            routers.emplace_back(router.begin(), router.end());
+        }
+        return routers;
+    };
+
     // Stub blob proxy: records the unsend (DELETE) op so the test can assert the
     // endpoint validated and forwarded it without a live router.
     // Operator-internal per-user destination: stub the manager so the test can
@@ -392,6 +406,31 @@ int main()
             revokeBody, "application/json");
         CHECK(revoked && revoked->status == 200);
         CHECK(revokedUser == "alicefp");
+    }
+
+    // Private reseed: unauthenticated on purpose (the client has no transport
+    // yet), random slice per call, and bounded so one caller cannot pull the
+    // whole netDb.
+    {
+        const httplib::Result result = client.Get("/v1/messaging/reseed");
+        CHECK(result && result->status == 200);
+        const nlohmann::json body = nlohmann::json::parse(result->body);
+        CHECK(body.at("routers").size() == 3);
+        const Bytes first = fromBase64(body.at("routers")[0].get<std::string>());
+        CHECK(std::string(first.begin(), first.end()) == "routerinfo-0");
+        CHECK(reseedAsked == 75);  // the default sample
+
+        // An oversized ask is clamped, not honoured.
+        const httplib::Result capped = client.Get("/v1/messaging/reseed?count=100000");
+        CHECK(capped && capped->status == 200);
+        CHECK(reseedAsked == 200);
+
+        // An empty netDb is an explicit typed error, never an empty success.
+        reseedAvailable = 0;
+        const httplib::Result empty = client.Get("/v1/messaging/reseed");
+        CHECK(empty && empty->status == 503);
+        CHECK(nlohmann::json::parse(empty->body).at("error").at("code") == "I2P_UNAVAILABLE");
+        reseedAvailable = 3;
     }
 
     // /healthz: operator-signed liveness with memory info; unsigned is rejected.

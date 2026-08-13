@@ -238,19 +238,18 @@ void HttpApi::registerRoutes()
         body += renderRows();
         body += "</tbody></table><p class=\"muted\">Live - refreshes every 5s.</p>";
 
-        // Management: a quota form (server-core + blob-storage) and an I2P-dest
-        // form (server-core), built from the configured services.
+        // Management: a quota form and an I2P-dest form, both server-core, built
+        // from the configured services.
         std::string quotaOptions;
         std::string i2pOptions;
         for (const ServiceEntry& service : config_.services) {
+            if (service.kind != "server-core") {
+                continue;
+            }
             const std::string option = "<option value=\"" + htmlEscape(service.name) + "\">"
                 + htmlEscape(service.name) + "</option>";
-            if (service.kind == "server-core" || service.kind == "blob-storage") {
-                quotaOptions += option;
-            }
-            if (service.kind == "server-core") {
-                i2pOptions += option;
-            }
+            quotaOptions += option;
+            i2pOptions += option;
         }
 
         // Accounts frozen on a moderated service node. Only rendered when a node
@@ -328,8 +327,7 @@ void HttpApi::registerRoutes()
             return;
         }
         const ServiceEntry* const service = findService(request.get_param_value("service"));
-        if (service == nullptr
-            || (service->kind != "server-core" && service->kind != "blob-storage")) {
+        if (service == nullptr || service->kind != "server-core") {
             sendHtml(response, resultPage({false, 0, "unknown service"}, "Set quota"), 400);
             return;
         }

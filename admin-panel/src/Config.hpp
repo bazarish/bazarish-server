@@ -12,7 +12,7 @@ namespace bazarish::admin {
 // shared secret travels in the config.
 struct ServiceEntry {
     std::string name;
-    std::string kind;  // server-core | service-node | blob-storage | facade | alias-resolver
+    std::string kind;  // server-core | service-node | facade | alias-resolver
     std::string url;   // e.g. http://127.0.0.1:8420
 };
 

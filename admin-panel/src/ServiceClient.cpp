@@ -116,9 +116,8 @@ HealthResult probeHealth(const ServiceEntry& service, const Identity& identity)
 OpResult setQuota(const ServiceEntry& service, const Identity& identity, const std::string& user,
     const std::uint64_t quotaBytes)
 {
-    const std::string path
-        = service.kind == "blob-storage" ? "/v1/storage/quota" : "/v1/messaging/quota";
-    return putJson(service, identity, path, {{"user", user}, {"quotaBytes", quotaBytes}});
+    return putJson(service, identity, "/v1/messaging/quota",
+        {{"user", user}, {"quotaBytes", quotaBytes}});
 }
 
 OpResult setI2pDest(const ServiceEntry& service, const Identity& identity,

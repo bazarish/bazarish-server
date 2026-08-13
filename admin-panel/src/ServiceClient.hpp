@@ -42,9 +42,8 @@ struct OpResult {
 // dashboard.
 HealthResult probeHealth(const ServiceEntry& service, const Identity& identity);
 
-// Sets a user's storage quota via the service's operator endpoint. The path is
-// chosen by kind: blob-storage uses /v1/storage/quota, server-core uses
-// /v1/messaging/quota.
+// Sets a user's mailbox quota via the operator endpoint of a server-core
+// (/v1/messaging/quota).
 OpResult setQuota(const ServiceEntry& service, const Identity& identity, const std::string& user,
     std::uint64_t quotaBytes);
 

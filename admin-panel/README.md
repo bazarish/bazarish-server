@@ -1,7 +1,7 @@
 # bazarish-admin-panel
 
 A single web interface to monitor and manage the Bazarish fleet (server-core,
-service-node, blob-storage, facade-http, alias-resolver).
+service-node, facade-http, alias-resolver).
 
 ## Authentication
 
@@ -30,14 +30,13 @@ at panel startup) as an `--operator-fingerprint`. There is no shared secret.
 
 ```
 bazarish-server      ... --operator-fingerprint <panel-fp> --operator-fingerprint <service-node-fp>
-bazarish-blob-storage ... --operator-fingerprint <panel-fp> --operator-fingerprint <service-node-fp>
 bazarish-service-node ... --operator-fingerprint <panel-fp>
-bazarish-facade-http  ... --operator-fingerprint <panel-fp>
+bazarish-facade-http  ... --operator-fingerprint <panel-fp> --ops-listen 127.0.0.1 8429
 bazarish-alias-resolver ... --operator-fingerprint <panel-fp>
 ```
 
-(The service node also signs its own quota/transient pushes, so the storage
-backends authorise both the panel and the service node.)
+(The service node also signs its own quota/transient pushes, so server-core
+authorises both the panel and the service node.)
 
 ## Status and management
 
@@ -45,12 +44,15 @@ backends authorise both the panel and the service node.)
   `GET /healthz` (service name, version, uptime, current and peak RAM) and shows
   it live, with latency.
 - **Management:** the panel drives the operator endpoints the services already
-  expose - set a user's storage quota (server-core, blob-storage) and
-  provision/revoke a user's personal I2P destination (server-core).
+  expose - set a user's mailbox quota and provision/revoke a user's personal
+  I2P destination (both server-core).
 
 The panel is a co-located operations tool. It reaches services on their private
 listen addresses; `/healthz` and the operator endpoints are not exposed through
-the facade or over I2P.
+the facade or over I2P. The facade's own `/healthz` is on the private socket it
+opens with `--ops-listen`, never on its client-facing one - there it would answer
+a caller who does not know the secret base path - so the panel is configured with
+that ops address, not with the published facade URL.
 
 ## Configuration
 

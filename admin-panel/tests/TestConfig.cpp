@@ -39,7 +39,7 @@ int main()
         "listen": {"host": "0.0.0.0", "port": 9000},
         "services": [
             {"name": "core", "kind": "server-core", "url": "http://127.0.0.1:8420"},
-            {"name": "blobs", "kind": "blob-storage", "url": "http://127.0.0.1:8456"}
+            {"name": "facade", "kind": "facade", "url": "http://127.0.0.1:8429"}
         ]
     })";
     const Config config = Config::fromJson(text);
@@ -50,7 +50,7 @@ int main()
     CHECK(config.services[0].name == "core");
     CHECK(config.services[0].kind == "server-core");
     CHECK(config.services[0].url == "http://127.0.0.1:8420");
-    CHECK(config.services[1].kind == "blob-storage");
+    CHECK(config.services[1].kind == "facade");
 
     // Defaults applied when optional fields are omitted.
     const Config minimal = Config::fromJson(R"({"admin": "fp"})");

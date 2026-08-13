@@ -11,7 +11,7 @@ namespace bazarish::admin {
 namespace {
 
 const char* const kKnownKinds[]
-    = {"server-core", "service-node", "blob-storage", "facade", "alias-resolver"};
+    = {"server-core", "service-node", "facade", "alias-resolver"};
 
 bool isKnownKind(const std::string& kind)
 {

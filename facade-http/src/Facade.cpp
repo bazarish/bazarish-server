@@ -155,6 +155,11 @@ bool Facade::listen(const std::string& host, const int port)
     return http_->listen(host, port);
 }
 
+bool Facade::bind(const std::string& host, const int port)
+{
+    return http_->bind_to_port(host, port);
+}
+
 int Facade::bindToAnyPort(const std::string& host)
 {
     return http_->bind_to_any_port(host);

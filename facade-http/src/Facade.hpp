@@ -46,6 +46,7 @@ public:
     ~Facade();
 
     bool listen(const std::string& host, int port);
+    bool bind(const std::string& host, int port);
     int bindToAnyPort(const std::string& host);
     bool listenAfterBind();
 

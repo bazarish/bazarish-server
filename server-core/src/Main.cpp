@@ -237,42 +237,25 @@ int main(const int argc, const char** argv)
     std::printf("server fingerprint: %s\n", identity.fingerprint().c_str());
     std::fflush(stdout);
 
-    // Optional I2P federation: an embedded router, a persistent home destination,
-    // a published server card and the inbound accept loop, plus outbound relay
-    // resolved from peers.json.
+    // I2P: an embedded router, a published server card, and the destinations the
+    // users own. The server keeps NO destination of its own - inbound federation
+    // arrives on each user's destination and outbound discovery dials from
+    // one-time transients, so there is no shared address to attribute or block.
     std::unique_ptr<bazarish::i2p::Router> router;
-    std::shared_ptr<bazarish::i2p::Endpoint> homeEndpoint;
     std::unique_ptr<bazarish::server::FederationRateLimiter> federationLimiter;
     // Declared before `federation` so it OUTLIVES it (federation holds a raw pointer
     // to the pool); the router, declared earlier, outlives the pool's warmer thread.
     std::unique_ptr<bazarish::server::WarmDestPool> warmPool;
-    std::unique_ptr<bazarish::server::I2pFederation> federation;
+    std::unique_ptr<bazarish::server::I2pFetch> discovery;
     std::unique_ptr<bazarish::server::PerUserDestinations> perUserDests;
     bazarish::server::RemoteDeliverFn remoteDeliver;
     bazarish::server::RemoteFetchFn remoteFetch;
     std::vector<std::string> endpoints;
     if (enableI2p) {
-        const fs::path destPath = stateDir / "i2p-dest.key";
-        bazarish::log::info("starting embedded I2P router + federation (building tunnels)...");
+        bazarish::log::info("starting embedded I2P router (building tunnels)...");
         // The embedded router (server role: relays transit). State under <state>/i2p.
         router = std::make_unique<bazarish::i2p::Router>(
             bazarish::i2p::RouterConfig{stateDir / "i2p", bazarish::i2p::Role::eServer});
-        const std::string rawHome = fs::exists(destPath) ? readFileText(destPath) : std::string();
-        bazarish::i2p::Keys homeKeys = rawHome.empty()
-            ? bazarish::i2p::Keys::generate()
-            : bazarish::i2p::Keys::fromBlob(bazarish::Bytes(rawHome.begin(), rawHome.end()));
-        // Encrypted LeaseSet2 (server-owned): the shareable address is the blinded b33.
-        homeEndpoint = router->createEndpoint(bazarish::i2p::EndpointConfig{
-            homeKeys, bazarish::i2p::LeaseSetKind::eEncrypted, privacy, tunnelQuantity, true});
-        if (!fs::exists(destPath)) {
-            const bazarish::Bytes blob = homeEndpoint->privateBlob();
-            writePrivateFile(destPath, std::string(blob.begin(), blob.end()));
-        }
-        // The shareable/routable address is the b33 (encrypted LeaseSet2): peers
-        // reach the encrypted leaseset only via the blinded b33.
-        endpoints.push_back("i2p:" + homeEndpoint->routingHost());
-        std::printf("i2p destination: %s\n", homeEndpoint->routingHost().c_str());
-        std::fflush(stdout);
 
         // Inbound federation accountability is per-connecting-destination: one
         // limiter, shared across every accept loop (home destination, address
@@ -307,13 +290,11 @@ int main(const int argc, const char** argv)
             };
         }
 
-        federation = std::make_unique<bazarish::server::I2pFederation>(
-            *homeEndpoint, engine, federationLimiter.get());
-        federation->setGetCard(getCard);
-        // Warm pool of single-use transient dests so a card/resolve fetch dials from
-        // a fresh one-time dest (anonymous, never reused) without the cold tunnel
-        // build. Disabled with --warm-pool-max 0 (fetches then dial from the home
-        // dest). Best-effort: an empty pool transparently falls back to the home dest.
+
+        // Warm pool of single-use transient dests: a card/resolve fetch always
+        // dials from a fresh one-time dest (anonymous, never reused), and the pool
+        // just hides the tunnel build. With --warm-pool-max 0 each fetch builds
+        // its own and waits for it.
         if (warmPoolMax > 0) {
             bazarish::server::WarmDestPool::Options warmOptions;
             warmOptions.minSize = std::min(warmPoolMin, warmPoolMax);
@@ -322,18 +303,17 @@ int main(const int argc, const char** argv)
             warmOptions.tunnelQuantity = tunnelQuantity;
             warmPool = std::make_unique<bazarish::server::WarmDestPool>(*router, warmOptions);
             warmPool->start();
-            federation->setWarmPool(warmPool.get());
             bazarish::log::info("warm one-time dest pool up (target {}..{})", warmOptions.minSize,
                 warmOptions.maxSize);
         }
-        federation->start();
-        // Discovery (card/resolve) fetch dials from a warm one-time dest (above) or
-        // the home endpoint; user-to-user delivery does NOT - it dials from each
-        // sender's own serving dest below.
-        remoteFetch = federation->asRemoteFetchFn();
+        // Discovery (card/resolve) dials from a one-time dest; user-to-user
+        // delivery dials from each sender's own serving dest (below). Neither
+        // uses a shared server address, because there is none.
+        discovery = std::make_unique<bazarish::server::I2pFetch>(*router, warmPool.get());
+        remoteFetch = discovery->asRemoteFetchFn();
 
-        // Paid per-user destinations: operate client-owned offline keys as the
-        // user's personal federation destination. Restore any persisted ones.
+        // The destinations the users own: client-owned offline keys operated as
+        // each user's federation destination. Restore any persisted ones.
         perUserDests = std::make_unique<bazarish::server::PerUserDestinations>(
             router.get(), engine, stateDir, privacy, tunnelQuantity, federationLimiter.get());
         perUserDests->setGetCard(getCard);
@@ -365,9 +345,11 @@ int main(const int argc, const char** argv)
         };
     }
 
-    // The server card is always published: clients need the sealing key to
-    // seal delivery envelopes and the service node is bound to it. The endpoint
-    // list carries the home I2P destination (delivery is routed by destination).
+    // The server card is always published: clients need the sealing key to seal
+    // delivery envelopes and the service node is bound to it. It carries NO
+    // transport endpoint: the server has no address of its own to advertise -
+    // users are reached at their own destinations, and the way in for clients is
+    // the facade, whose addresses live in the server descriptor.
     const bazarish::Bytes card = bazarish::ServerCard::issue(
         identity, endpoints, bazarish::Key::fromPublicDer(sealing.publicDer()), nowSeconds());
     {

@@ -13,10 +13,11 @@ namespace bazarish::server {
 
 namespace {
 
-std::int64_t nowSeconds()
-{
-    return static_cast<std::int64_t>(std::time(nullptr));
-}
+// How long a freshly built one-time destination may take to publish before a
+// discovery fetch gives up (the warm pool normally hides this entirely).
+constexpr int kOneTimeDestReadySeconds = 120;
+// How long to wait for the target destination to answer a dial.
+constexpr int kFetchDialSeconds = 60;
 
 }  // namespace
 
@@ -71,64 +72,13 @@ void federationSendAck(bazarish::i2p::Endpoint& from, const std::string& toDest,
     }
 }
 
-I2pFederation::I2pFederation(
-    bazarish::i2p::Endpoint& endpoint, DeliveryEngine& engine, FederationRateLimiter* const limiter)
-    : endpoint_(endpoint)
-    , engine_(engine)
-    , limiter_(limiter)
-    , running_(false)
+I2pFetch::I2pFetch(bazarish::i2p::Router& router, WarmDestPool* pool)
+    : router_(router)
+    , warmPool_(pool)
 {
 }
 
-I2pFederation::~I2pFederation()
-{
-    stop();
-    if (acceptThread_.joinable()) {
-        acceptThread_.join();
-    }
-}
-
-void I2pFederation::start()
-{
-    running_ = true;
-    acceptThread_ = std::thread([this]() { acceptLoop(); });
-}
-
-void I2pFederation::stop()
-{
-    running_ = false;
-}
-
-void I2pFederation::acceptLoop()
-{
-    while (running_) {
-        std::string peer;
-        auto stream = endpoint_.accept(peer, std::chrono::seconds(30));
-        if (!stream) {
-            continue;  // accept timeout / stop: re-check running
-        }
-        try {
-            // The home endpoint serves discovery (op "card") only - never user
-            // deliveries or acks, which live entirely on per-user serving dests.
-            federationServeOnce(*stream, engine_, nowSeconds(), peer, limiter_, nullptr, getCard_);
-        } catch (const std::exception&) {
-            // A failed serve (peer reset, malformed request) must not take the
-            // loop down; the next inbound connection gets a fresh accept.
-        }
-    }
-}
-
-void I2pFederation::setGetCard(GetCardFn getCard)
-{
-    getCard_ = std::move(getCard);
-}
-
-void I2pFederation::setWarmPool(WarmDestPool* pool)
-{
-    warmPool_ = pool;
-}
-
-RemoteFetchResult I2pFederation::fetchOverI2p(
+RemoteFetchResult I2pFetch::fetchOverI2p(
     const std::string& toDest, const std::string& op, const Bytes& sealed)
 {
     RemoteFetchResult result;
@@ -136,15 +86,26 @@ RemoteFetchResult I2pFederation::fetchOverI2p(
     // sealed fetch. An unreachable destination leaves the lookup to the caller
     // (the client retries, like a first delivery).
     //
-    // Dial FROM a warm single-use transient dest when the pool has one, so the
-    // lookup is anonymous (a fresh one-time dest per fetch, never reused, dropped
-    // right after) and fast (its tunnels are already built). The dest lives only for
-    // this call - it is released when `oneTime` goes out of scope below. When the
-    // pool is empty (or absent) we fall back to the standing home endpoint.
+    // Always from a single-use transient destination - the server has no address
+    // of its own to dial from. A warm one costs nothing; without one, build it
+    // here and pay the tunnel wait the pool exists to avoid.
     std::shared_ptr<bazarish::i2p::Endpoint> oneTime = warmPool_ ? warmPool_->acquire() : nullptr;
-    bazarish::i2p::Endpoint& dialer = oneTime ? *oneTime : endpoint_;
+    if (!oneTime) {
+        try {
+            oneTime = router_.createEndpoint(bazarish::i2p::EndpointConfig{
+                bazarish::i2p::Keys::generate(), bazarish::i2p::LeaseSetKind::eEncrypted,
+                bazarish::i2p::Privacy::eMax, bazarish::i2p::kDefaultTunnelQuantity, false});
+            if (!oneTime->waitReady(std::chrono::seconds(kOneTimeDestReadySeconds))) {
+                result.reachable = false;
+                return result;
+            }
+        } catch (const std::exception&) {
+            result.reachable = false;
+            return result;
+        }
+    }
     try {
-        auto stream = dialer.connect(toDest, std::chrono::seconds(60));
+        auto stream = oneTime->connect(toDest, std::chrono::seconds(kFetchDialSeconds));
         if (!stream) {
             result.reachable = false;
             return result;
@@ -161,7 +122,7 @@ RemoteFetchResult I2pFederation::fetchOverI2p(
     return result;
 }
 
-RemoteFetchFn I2pFederation::asRemoteFetchFn()
+RemoteFetchFn I2pFetch::asRemoteFetchFn()
 {
     return [this](const std::string& toDest, const std::string& op, const Bytes& sealed) {
         return fetchOverI2p(toDest, op, sealed);

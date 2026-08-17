@@ -39,54 +39,31 @@ RemoteDeliveryResult federationDeliver(bazarish::i2p::Endpoint& from, const std:
 void federationSendAck(bazarish::i2p::Endpoint& from, const std::string& toDest,
     const std::string& messageId, const Bytes& signerPublicDer, const Bytes& signature);
 
-// The I2P federation node: an inbound accept loop that serves incoming
-// deliveries into the local DeliveryEngine, plus an outbound relay used as the
-// HttpApi RemoteDeliverFn. Routing is by destination - the outbound relay dials
-// the recipient's I2P destination directly (see docs-main api/InviteAnonymity.md).
-class I2pFederation {
+// Outbound discovery over I2P. A server has no federation address of its own -
+// user-to-user delivery runs on the users' own destinations, and its only public
+// I2P addresses are the facade's, for clients. So a card/resolve lookup dials
+// from a warm SINGLE-USE transient destination: fresh per lookup, never reused,
+// dropped right after, and unattributable to the server or to any of its users.
+class I2pFetch {
 public:
-    I2pFederation(bazarish::i2p::Endpoint& endpoint, DeliveryEngine& engine,
-        FederationRateLimiter* limiter = nullptr);
-    ~I2pFederation();
+    // The pool is optional: without one (or when it is momentarily empty) a
+    // one-time destination is built on demand, which only costs the cold tunnel
+    // build the pool exists to hide.
+    I2pFetch(bazarish::i2p::Router& router, WarmDestPool* pool = nullptr);
 
-    I2pFederation(const I2pFederation&) = delete;
-    I2pFederation& operator=(const I2pFederation&) = delete;
-
-    // Starts the inbound accept loop on a background thread.
-    void start();
-    // Signals the loop to stop. A blocking accept only returns on the next
-    // inbound connection or the accept timeout, so shutdown is not
-    // instantaneous - acceptable for a long-running daemon.
-    void stop();
-
-    // Wires the contact-card lookup served on the inbound (home) accept loop for
-    // op "card" - the only thing the home dest serves. Set before start(). Unset
-    // means CARD_UNKNOWN.
-    void setGetCard(GetCardFn getCard);
-
-    // Wires a pool of warm single-use transient destinations to dial outbound
-    // fetches FROM (instead of the home dest), so a card/resolve lookup is both
-    // anonymous (a fresh one-time dest per lookup, never reused) and fast (the
-    // tunnels are pre-built). Optional: when unset, or when the pool is momentarily
-    // empty, fetches fall back to the home endpoint. Set before use.
-    void setWarmPool(WarmDestPool* pool);
+    I2pFetch(const I2pFetch&) = delete;
+    I2pFetch& operator=(const I2pFetch&) = delete;
 
     // Relays a sealed fetch (op "card" or "resolve") to a destination over I2P;
-    // the HttpApi RemoteFetchFn (the proxy fallback for a client with no I2P transport).
+    // the HttpApi RemoteFetchFn (the proxy fallback for a client with no I2P
+    // transport of its own).
     RemoteFetchResult fetchOverI2p(
         const std::string& toDest, const std::string& op, const Bytes& sealed);
     RemoteFetchFn asRemoteFetchFn();
 
 private:
-    void acceptLoop();
-
-    bazarish::i2p::Endpoint& endpoint_;
-    DeliveryEngine& engine_;
-    FederationRateLimiter* limiter_;
-    GetCardFn getCard_;
-    WarmDestPool* warmPool_ = nullptr;
-    std::atomic<bool> running_;
-    std::thread acceptThread_;
+    bazarish::i2p::Router& router_;
+    WarmDestPool* warmPool_;
 };
 
 }  // namespace bazarish::server

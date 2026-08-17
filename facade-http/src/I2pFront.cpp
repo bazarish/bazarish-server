@@ -9,6 +9,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
+#include <atomic>
 #include <array>
 #include <chrono>
 #include <exception>
@@ -25,6 +27,12 @@ namespace {
 constexpr int kAcceptTimeoutSeconds = 30;
 // Pump buffer. Requests are small; a response may be a large streamed body.
 constexpr std::size_t kPumpBufferBytes = 32 * 1024;
+// How long to wait for a destination's leaseset to publish before saying so.
+constexpr int kReadyWaitSeconds = 300;
+// How long a finished reply may wait for the client to read it before the stream
+// is torn down anyway, and how often that is checked.
+constexpr int kDrainMillis = 60000;
+constexpr int kDrainPollMillis = 50;
 
 std::string readFileText(const std::filesystem::path& path)
 {
@@ -66,13 +74,17 @@ int connectLocal(const std::string& host, const int port)
 // so a streamed response is relayed as it arrives rather than after the request.
 void relay(std::unique_ptr<bazarish::i2p::Stream> stream, const int fd)
 {
-    std::thread inbound([&stream, fd]() {
+    std::size_t fromClient = 0;
+    std::size_t toClient = 0;
+    std::atomic<bool> clientClosed{false};
+    std::thread inbound([&stream, fd, &fromClient, &clientClosed]() {
         std::array<char, kPumpBufferBytes> buffer{};
         while (true) {
             const std::size_t read = stream->readSome(buffer.data(), buffer.size());
             if (read == 0) {
                 break;
             }
+            fromClient += read;
             std::size_t written = 0;
             while (written < read) {
                 const ssize_t n = ::write(fd, buffer.data() + written, read - written);
@@ -84,6 +96,7 @@ void relay(std::unique_ptr<bazarish::i2p::Stream> stream, const int fd)
             }
         }
         // The client is done asking: tell the listener so it can answer and close.
+        clientClosed = true;
         ::shutdown(fd, SHUT_WR);
     });
 
@@ -94,15 +107,36 @@ void relay(std::unique_ptr<bazarish::i2p::Stream> stream, const int fd)
             break;
         }
         try {
+            if (toClient == 0) {
+                // The first bytes back are the status line: log them so a framing
+                // complaint from the client can be checked against what was sent.
+                const std::size_t head = std::min<std::size_t>(static_cast<std::size_t>(n), 48);
+                std::string preview(buffer.data(), head);
+                for (char& c : preview) {
+                    if (c == '\r' || c == '\n') { c = '|'; }
+                }
+                bazarish::log::debug("i2p relay: first reply bytes: {}", preview);
+            }
             stream->writeAll(buffer.data(), static_cast<std::size_t>(n));
-        } catch (const std::exception&) {
-            break;  // peer gone
+            toClient += static_cast<std::size_t>(n);
+        } catch (const std::exception& error) {
+            bazarish::log::debug("i2p relay: write to client failed: {}", error.what());
+            break;
         }
+    }
+    // The backend is done, but the reply may still be queued in the stream. Give
+    // the client its chance to read it: wait until it closes its side (which it
+    // does right after reading a Connection: close reply), and only then tear the
+    // stream down. Closing straight after the last write truncates the reply -
+    // the client then sees an empty stream and calls the response malformed.
+    for (int waited = 0; !clientClosed && waited < kDrainMillis; waited += kDrainPollMillis) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(kDrainPollMillis));
     }
     stream->close();
     ::shutdown(fd, SHUT_RD);
     inbound.join();
     ::close(fd);
+    bazarish::log::debug("i2p relay done: {} bytes in, {} bytes out", fromClient, toClient);
 }
 
 }  // namespace
@@ -142,6 +176,17 @@ std::vector<std::string> I2pFront::start()
             writePrivateFile(keyPath, std::string(blob.begin(), blob.end()));
         }
         hosts.push_back(endpoint->routingHost());
+        // Publishing the leaseset takes a while after the address is known, and
+        // until it does a client's dial simply fails. Say when each one is
+        // actually reachable rather than leaving the log claiming it is up.
+        const std::string host = endpoint->routingHost();
+        std::thread([endpoint, host]() {
+            if (endpoint->waitReady(std::chrono::seconds(kReadyWaitSeconds))) {
+                bazarish::log::info("i2p facade ready: {}", host);
+            } else {
+                bazarish::log::warn("i2p facade not ready after {}s: {}", kReadyWaitSeconds, host);
+            }
+        }).detach();
         endpoints_.push_back(std::move(endpoint));
     }
 

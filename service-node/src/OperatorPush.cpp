@@ -2,6 +2,7 @@
 #include "OperatorPush.hpp"
 
 #include <bazarish/Auth.hpp>
+#include <bazarish/Log.hpp>
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Crypto.hpp>
 
@@ -72,9 +73,20 @@ bool OperatorPush::put(const std::string& path, const std::string& bodyText) con
             Bytes(bodyText.begin(), bodyText.end()));
         const httplib::Headers headers(signature.begin(), signature.end());
         const httplib::Result response = client.Put(path, headers, bodyText, "application/json");
-        return response && response->status == 200;
-    } catch (const std::exception&) {
-        return false;  // best effort
+        if (!response) {
+            bazarish::log::warn("operator push to {}{} did not connect: {}", baseUrl_, path,
+                httplib::to_string(response.error()));
+            return false;
+        }
+        if (response->status != 200) {
+            bazarish::log::warn("operator push to {}{} refused with {}: {}", baseUrl_, path,
+                response->status, response->body);
+            return false;
+        }
+        return true;
+    } catch (const std::exception& error) {
+        bazarish::log::warn("operator push to {}{} failed: {}", baseUrl_, path, error.what());
+        return false;
     }
 }
 

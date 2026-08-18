@@ -251,6 +251,11 @@ void AccountApi::setupRoutes()
               record.quotaBytes = effectiveQuota;
               record.certificate = der;
               store_.putSubscription(record);
+              // The granted quota is this node's to set: push it so the messaging
+              // server serves the number the portal promised, not its own default.
+              if (options_.publishQuota) {
+                  options_.publishQuota(cert.user, effectiveQuota);
+              }
 
               // On an open server the account is servable at once; on a moderated
               // one this only starts the approval clock. Renewal keeps the

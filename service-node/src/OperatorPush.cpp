@@ -1,5 +1,5 @@
 // Bazarish project (c) 2026
-#include "TransientPublisher.hpp"
+#include "OperatorPush.hpp"
 
 #include <bazarish/Auth.hpp>
 #include <bazarish/Bytes.hpp>
@@ -15,6 +15,9 @@
 namespace bazarish::service {
 
 namespace {
+
+constexpr int kConnectTimeoutSeconds = 5;
+constexpr int kReadTimeoutSeconds = 10;
 
 struct HostPort {
     std::string host;
@@ -45,16 +48,16 @@ HostPort parseUrl(const std::string& url)
 
 }  // namespace
 
-TransientPublisher::TransientPublisher(
-    std::string baseUrl, const Identity& signer, std::string endpointPath)
+OperatorPush::OperatorPush(std::string baseUrl, const Identity& signer, std::string destPath,
+    std::string quotaPath)
     : baseUrl_(std::move(baseUrl))
     , signer_(signer)
-    , endpointPath_(std::move(endpointPath))
+    , destPath_(std::move(destPath))
+    , quotaPath_(std::move(quotaPath))
 {
 }
 
-bool TransientPublisher::publish(const std::string& user, const std::string& transientB64,
-    const std::int64_t expiresUnix) const
+bool OperatorPush::put(const std::string& path, const std::string& bodyText) const
 {
     if (baseUrl_.empty()) {
         return false;  // not configured
@@ -62,24 +65,34 @@ bool TransientPublisher::publish(const std::string& user, const std::string& tra
     try {
         const HostPort hostPort = parseUrl(baseUrl_);
         httplib::Client client(hostPort.host, hostPort.port);
-        client.set_connection_timeout(5, 0);
-        client.set_read_timeout(10, 0);
-        nlohmann::json body = {{"user", user}};
-        if (!transientB64.empty()) {
-            body["transient"] = transientB64;
-            body["expiresUnix"] = expiresUnix;
-        }
-        const std::string bodyText = body.dump();
+        client.set_connection_timeout(kConnectTimeoutSeconds, 0);
+        client.set_read_timeout(kReadTimeoutSeconds, 0);
         const auth::Headers signature = auth::signRequest(signer_,
-            static_cast<std::int64_t>(std::time(nullptr)), "PUT", endpointPath_,
+            static_cast<std::int64_t>(std::time(nullptr)), "PUT", path,
             Bytes(bodyText.begin(), bodyText.end()));
         const httplib::Headers headers(signature.begin(), signature.end());
-        const httplib::Result response
-            = client.Put(endpointPath_, headers, bodyText, "application/json");
+        const httplib::Result response = client.Put(path, headers, bodyText, "application/json");
         return response && response->status == 200;
     } catch (const std::exception&) {
         return false;  // best effort
     }
+}
+
+bool OperatorPush::publishQuota(const std::string& user, const std::uint64_t quotaBytes) const
+{
+    const nlohmann::json body = {{"user", user}, {"quotaBytes", quotaBytes}};
+    return put(quotaPath_, body.dump());
+}
+
+bool OperatorPush::publish(const std::string& user, const std::string& transientB64,
+    const std::int64_t expiresUnix) const
+{
+    nlohmann::json body = {{"user", user}};
+    if (!transientB64.empty()) {
+        body["transient"] = transientB64;
+        body["expiresUnix"] = expiresUnix;
+    }
+    return put(destPath_, body.dump());
 }
 
 }  // namespace bazarish::service

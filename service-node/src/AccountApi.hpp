@@ -49,6 +49,12 @@ struct AccountApiOptions {
         std::int64_t expiresUnix)>
         publishI2pTransient;
 
+    // Pushes the quota a subscription grants to the messaging server, which
+    // stores the mail and would otherwise answer the user with its own default.
+    // Empty = no push (tests, or a deployment where the two are configured by
+    // hand to the same number).
+    std::function<void(const std::string& user, std::uint64_t quotaBytes)> publishQuota;
+
     // How an account becomes servable. eOpen: live the moment it is created.
     // eApproval: the account is created but stays frozen - its destination is
     // never brought up, so it can neither send nor receive - until an operator

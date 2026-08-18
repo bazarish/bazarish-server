@@ -74,6 +74,16 @@ int main()
         pubExpires = expiresUnix;
         ++pubCalls;
     };
+    // Capture quota pushes: the granted quota must reach the messaging server,
+    // else it would answer the user with its own unrelated default.
+    std::string quotaUser;
+    std::uint64_t quotaPushed = 0;
+    int quotaCalls = 0;
+    options.publishQuota = [&](const std::string& user, const std::uint64_t quotaBytes) {
+        quotaUser = user;
+        quotaPushed = quotaBytes;
+        ++quotaCalls;
+    };
     AccountApi api(store, grants, options);
 
     const int port = api.bindToAnyPort("127.0.0.1");
@@ -101,6 +111,10 @@ int main()
         CHECK(reply.at("quotaBytes") == options.defaultQuotaBytes);
         CHECK(reply.at("notAfter") == now + 3 * 24 * 3600);
         CHECK(fromBase64(reply.at("serverCard").get<std::string>()) == cardDer);
+        // The grant's quota was pushed to the messaging server for this user.
+        CHECK(quotaCalls == 1);
+        CHECK(quotaUser == alice.fingerprint());
+        CHECK(quotaPushed == options.defaultQuotaBytes);
     }
 
     // A certificate signed by someone else but naming alice fails the

@@ -2,7 +2,7 @@
 #include "AccountApi.hpp"
 #include "GrantStore.hpp"
 #include "PortalApi.hpp"
-#include "TransientPublisher.hpp"
+#include "OperatorPush.hpp"
 #include <bazarish/SelfHostedCaptcha.hpp>
 #include "SubscriptionStore.hpp"
 
@@ -262,13 +262,14 @@ int main(const int argc, const char** argv)
     std::printf("service-node operator fingerprint: %s\n", nodeIdentity.fingerprint().c_str());
     bazarish::service::SubscriptionStore store(stateDir / "store");
     bazarish::service::GrantStore grants(stateDir / "store");
-    // The quota is the same for everyone and configured on the messaging server
-    // itself, so nothing is pushed there; the private channel carries only the
-    // user's delegated transient.
+    // The private channel carries what this node owns and the messaging server
+    // must obey: the user's delegated transient and the quota their subscription
+    // granted (else the messaging server would answer with its own default and
+    // the user would see a different number than the portal promised).
     const std::string messagingUrl = messagingPort > 0
         ? "http://" + messagingHost + ":" + std::to_string(messagingPort)
         : std::string();
-    const bazarish::service::TransientPublisher transientPub(messagingUrl, nodeIdentity);
+    const bazarish::service::OperatorPush operatorPush(messagingUrl, nodeIdentity);
 
     bazarish::service::AccountApiOptions options;
     options.serverFingerprint = card.server;
@@ -283,10 +284,14 @@ int main(const int argc, const char** argv)
         ? bazarish::service::AccountApiOptions::Registration::eApproval
         : bazarish::service::AccountApiOptions::Registration::eOpen;
     options.registrationMessage = nodeConfig.registration.message;
-    options.publishI2pTransient = [&transientPub](const std::string& user,
+    options.publishI2pTransient = [&operatorPush](const std::string& user,
                                       const std::string& transientB64,
                                       const std::int64_t expiresUnix) {
-        transientPub.publish(user, transientB64, expiresUnix);
+        operatorPush.publish(user, transientB64, expiresUnix);
+    };
+    options.publishQuota = [&operatorPush](const std::string& user,
+                               const std::uint64_t quotaBytes) {
+        operatorPush.publishQuota(user, quotaBytes);
     };
     bazarish::service::AccountApi api(store, grants, options);
 

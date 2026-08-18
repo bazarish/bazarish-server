@@ -19,6 +19,12 @@
 namespace bazarish::server {
 
 namespace {
+// How long a fresh destination is given to get its LeaseSet published before the
+// wait is called off. Not a deadline for the router: it keeps retrying on its own
+// (i2pd re-publishes on a 1.8 s confirmation timer and re-verifies every 100 s),
+// this only bounds how long the bring-up thread waits before saying so.
+constexpr int kPublishWaitSeconds = 180;
+
 
 std::int64_t nowSeconds()
 {
@@ -91,7 +97,18 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
                     raw->dest = endpoint->routingHost();
                     raw->endpoint = endpoint;
                 }
-                bazarish::log::info("per-user i2p destination up for {}", userFp);
+                // The endpoint exists at once; being reachable means its LeaseSet is
+                // published, which needs tunnels and a floodfill that answers. Say
+                // which of the two has happened, and never the second for the first.
+                if (endpoint->waitReady(std::chrono::seconds(kPublishWaitSeconds))) {
+                    bazarish::log::info("per-user i2p destination published for {}",
+                        bazarish::log::redact(userFp));
+                } else {
+                    bazarish::log::warn(
+                        "per-user i2p destination for {} not published after {} s; the router "
+                        "keeps retrying, the account is unreachable until it succeeds",
+                        bazarish::log::redact(userFp), kPublishWaitSeconds);
+                }
                 while (raw->running.load()) {
                     std::string peer;
                     auto stream = endpoint->accept(peer, std::chrono::seconds(30));
@@ -365,7 +382,13 @@ std::string PerUserDestinations::stateFor(const std::string& userFp, const std::
     if (it->second->expiresUnix != 0 && now >= it->second->expiresUnix) {
         return "expired";
     }
-    return it->second->dest.empty() ? "building" : "active";
+    if (it->second->dest.empty()) {
+        return "building";
+    }
+    // "active" means reachable, so it follows the LeaseSet, not the object: an
+    // endpoint whose publish has not landed yet is still building.
+    const std::shared_ptr<bazarish::i2p::Endpoint> endpoint = it->second->endpoint;
+    return (endpoint && endpoint->ready()) ? "active" : "building";
 }
 
 }  // namespace bazarish::server

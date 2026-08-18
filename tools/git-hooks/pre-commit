@@ -1,0 +1,11 @@
+#!/bin/sh
+# Bazarish project (c) 2026
+# Hiding an error is a defect here, so a commit that adds one is refused.
+# Enable once per clone:  git config core.hooksPath tools/git-hooks
+set -e
+audit=common/tools/audit-error-hiding.py
+if [ ! -f "$audit" ]; then
+    echo "pre-commit: $audit missing (is the common submodule checked out?)" >&2
+    exit 1
+fi
+python3 "$audit" $(git rev-parse --show-toplevel >/dev/null && echo .)

@@ -4,6 +4,8 @@
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Log.hpp>
 
+#include <stdexcept>
+
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -45,10 +47,20 @@ void writePrivateFile(const std::filesystem::path& path, const std::string& text
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     out.write(text.data(), static_cast<std::streamsize>(text.size()));
     out.close();
+    if (!out) {
+        // This is the destination's private key: a half-written one costs the
+        // address on the next start, so it is a hard failure, not a warning.
+        throw std::runtime_error("cannot write " + path.string());
+    }
     std::error_code ec;
     std::filesystem::permissions(path,
         std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
         std::filesystem::perm_options::replace, ec);
+    if (ec) {
+        // Refusing to run is better than serving from a key file others can read.
+        throw std::runtime_error(
+            "cannot restrict permissions on " + path.string() + ": " + ec.message());
+    }
 }
 
 // A connected socket to the facade's own listener, or -1.

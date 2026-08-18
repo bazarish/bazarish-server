@@ -125,7 +125,9 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
                                     // best-effort; the sender retries on its own).
                                     try {
                                         ackSender(*endpoint, sender, messageId, *signingKey);
-                                    } catch (const std::exception&) {
+                                    } catch (const std::exception& error) {
+                                        bazarish::log::warn(
+                                            "ack to sender failed: {}", error.what());
                                     }
                                 }).detach();
                             },
@@ -136,13 +138,17 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
                                     onAck_(messageId);
                                 }
                             });
-                    } catch (const std::exception&) {
+                    } catch (const std::exception& error) {
                         // A failed serve must not kill the loop.
+                        bazarish::log::warn("serving a user's destination failed: {}",
+                            error.what());
                     }
                 }
-            } catch (const std::exception&) {
-                // Bad/expired transient: the destination stays down until the
-                // next provision.
+            } catch (const std::exception& error) {
+                // Bad/expired transient: the destination stays down until the next
+                // provision, and the user cannot be reached until then.
+                bazarish::log::warn("destination for {} is down: {}",
+                    bazarish::log::redact(userFp), error.what());
             }
         });
     }
@@ -195,8 +201,11 @@ void PerUserDestinations::provision(const std::string& userFp, const std::string
                 if (signingKeyPem.empty() && record.contains("signingKey")) {
                     signingKeyPem = record.at("signingKey").get<std::string>();
                 }
-            } catch (const std::exception&) {
-                // Malformed record: fall through to minting fresh keys.
+            } catch (const std::exception& error) {
+                // Malformed record: fall through to minting fresh keys. That changes
+                // the user's serving key, so it must not happen quietly.
+                bazarish::log::warn("destination record for {} unreadable, minting fresh keys: {}",
+                    bazarish::log::redact(userFp), error.what());
             }
         }
     }
@@ -215,6 +224,13 @@ void PerUserDestinations::provision(const std::string& userFp, const std::string
     {
         std::ofstream out(pathFor(userFp), std::ios::binary | std::ios::trunc);
         out.write(text.data(), static_cast<std::streamsize>(text.size()));
+        out.close();
+        if (!out) {
+            // This record is the destination: unwritten, the address is up now and
+            // gone at the next start, with the user unreachable and nothing said.
+            throw std::runtime_error("cannot persist the destination record for "
+                + bazarish::log::redact(userFp));
+        }
     }
     teardownLocked(userFp);
     bringUp(userFp, transientB64, expiresUnix, sealingKeyPem, signingKeyPem);
@@ -225,6 +241,12 @@ void PerUserDestinations::revoke(const std::string& userFp)
     const std::lock_guard<std::mutex> lock(mutex_);
     std::error_code ec;
     std::filesystem::remove(pathFor(userFp), ec);
+    if (ec) {
+        // The record outliving the revoke means the destination comes back at the
+        // next start: a revoke that did not stick must not look like one that did.
+        bazarish::log::warn("revoked destination record for {} not removed: {}",
+            bazarish::log::redact(userFp), ec.message());
+    }
     teardownLocked(userFp);
 }
 
@@ -235,7 +257,15 @@ void PerUserDestinations::reloadPersisted(const std::int64_t now)
     if (!std::filesystem::exists(destsDir(), ec)) {
         return;
     }
-    for (const auto& entry : std::filesystem::directory_iterator(destsDir(), ec)) {
+    // An unreadable directory would otherwise mean "no destinations to bring up",
+    // which is indistinguishable from a node that has none.
+    std::filesystem::directory_iterator dests(destsDir(), ec);
+    if (ec) {
+        bazarish::log::warn("no destinations reloaded, {} unreadable: {}", destsDir().string(),
+            ec.message());
+        return;
+    }
+    for (const auto& entry : dests) {
         if (!entry.is_regular_file()) {
             continue;
         }
@@ -259,8 +289,11 @@ void PerUserDestinations::reloadPersisted(const std::int64_t now)
                 : Key::generateSigning().privatePem();
             bringUp(entry.path().filename().string(), transientB64, expiresUnix, sealingKeyPem,
                 signingKeyPem);
-        } catch (const std::exception&) {
-            // Skip a malformed record rather than fail startup.
+        } catch (const std::exception& error) {
+            // Skip a malformed record rather than fail startup - that user's
+            // destination stays down, which the operator has to be able to see.
+            bazarish::log::warn("destination record {} skipped at start: {}",
+                entry.path().filename().string(), error.what());
         }
     }
 }

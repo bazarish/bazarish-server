@@ -69,7 +69,10 @@ int main()
     options.registrationMessage = "write to admin@example.i2p to finish registration";
     int pubCalls = 0;
     options.publishI2pTransient = [&pubCalls](const std::string&, const std::string&,
-                                      std::int64_t) { ++pubCalls; };
+                                      std::int64_t) {
+        ++pubCalls;
+        return true;
+    };
     AccountApi api(store, grants, options);
 
     const int port = api.bindToAnyPort("127.0.0.1");

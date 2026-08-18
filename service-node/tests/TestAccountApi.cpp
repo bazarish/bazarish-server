@@ -67,12 +67,15 @@ int main()
     std::string pubTransient;
     std::int64_t pubExpires = -1;
     int pubCalls = 0;
+    // The messaging server's answer, so the refusal path can be exercised too.
+    bool pubAccepts = true;
     options.publishI2pTransient = [&](const std::string& user, const std::string& transientB64,
                                       const std::int64_t expiresUnix) {
         pubUser = user;
         pubTransient = transientB64;
         pubExpires = expiresUnix;
         ++pubCalls;
+        return pubAccepts;
     };
     // Capture quota pushes: the granted quota must reach the messaging server,
     // else it would answer the user with its own unrelated default.
@@ -250,13 +253,29 @@ int main()
         CHECK(pubTransient == "user-transient-b64");
         CHECK(pubExpires == now + 7 * 24 * 3600);
 
+        // A messaging server that does not take the delegation must not leave the
+        // node claiming one is held: the client is told, and the status stays put.
+        {
+            pubAccepts = false;
+            const httplib::Result refused = client.Post("/v1/account/i2p-dest",
+                makeHeaders(alice, "POST", "/v1/account/i2p-dest", body), body,
+                "application/json");
+            CHECK(refused && refused->status == 503);
+            const httplib::Result status = client.Get("/v1/account/i2p-status",
+                makeHeaders(alice, "GET", "/v1/account/i2p-status", {}));
+            CHECK(status && status->status == 200);
+            const nlohmann::json reply = nlohmann::json::parse(status->body);
+            CHECK(reply.at("transientExpires") == now + 7 * 24 * 3600);  // the one that did land
+            pubAccepts = true;
+        }
+
         // An empty transient revokes (published with empty transient, expiry 0).
         const std::string revokeBody = nlohmann::json::object().dump();
         const httplib::Result revoked = client.Post("/v1/account/i2p-dest",
             makeHeaders(alice, "POST", "/v1/account/i2p-dest", revokeBody), revokeBody,
             "application/json");
         CHECK(revoked && revoked->status == 200);
-        CHECK(pubCalls == 2);
+        CHECK(pubCalls == 3);  // delegate, the refused attempt above, revoke
         CHECK(pubTransient.empty());
         CHECK(pubExpires == 0);
     }
@@ -267,7 +286,7 @@ int main()
         const httplib::Result result = client.Delete("/v1/account/subscription",
             makeHeaders(alice, "DELETE", "/v1/account/subscription", ""));
         CHECK(result && result->status == 200);
-        CHECK(pubCalls == 3);
+        CHECK(pubCalls == 4);  // + the revoke unsubscribe performs
         CHECK(pubTransient.empty());
         CHECK(!grants.peekApproval(alice.fingerprint()).has_value());
 
@@ -281,7 +300,7 @@ int main()
         const httplib::Result orphan = client.Post("/v1/account/i2p-dest",
             makeHeaders(alice, "POST", "/v1/account/i2p-dest", body), body, "application/json");
         CHECK(orphan && orphan->status == 403);
-        CHECK(pubCalls == 3);
+        CHECK(pubCalls == 4);  // refused before reaching the publisher
     }
 
     api.stop();

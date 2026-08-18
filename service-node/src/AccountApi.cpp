@@ -343,7 +343,14 @@ void AccountApi::setupRoutes()
             const std::string transient = body.value("transient", std::string());
             const std::int64_t expiresUnix
                 = transient.empty() ? 0 : body.at("expiresUnix").get<std::int64_t>();
-            options_.publishI2pTransient(user, transient, expiresUnix);
+            if (!options_.publishI2pTransient(user, transient, expiresUnix)) {
+                // Recording it here would make i2p-status report a destination the
+                // messaging server never raised: published to the user, dark to
+                // everyone else.
+                respondError(response, 503, ErrorCode::eDeliveryRejected,
+                    "the messaging server did not accept the delegation");
+                return;
+            }
             grants_.setI2pTransient(user, expiresUnix, now);
             respondJson(response, {{"ok", true}});
         }));

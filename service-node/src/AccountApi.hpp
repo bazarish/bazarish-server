@@ -45,7 +45,9 @@ struct AccountApiOptions {
     // Pushes the user's offline I2P transient (or, with an empty transient, a
     // revoke) to the messaging server's per-user-destination endpoint. Empty =
     // no push (e.g. tests, or a deployment without per-user destinations).
-    std::function<void(const std::string& user, const std::string& transientB64,
+    // Returns whether the messaging server took it: a delegation that did not
+    // arrive leaves the destination unserved, so it must not be recorded as held.
+    std::function<bool(const std::string& user, const std::string& transientB64,
         std::int64_t expiresUnix)>
         publishI2pTransient;
 

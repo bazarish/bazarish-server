@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #include "I2pFederation.hpp"
 
+#include <bazarish/Log.hpp>
+
 #include "Federation.hpp"
 #include "WarmDestPool.hpp"
 
@@ -68,7 +70,10 @@ void federationSendAck(bazarish::i2p::Endpoint& from, const std::string& toDest,
         std::array<char, 64> buffer;
         while (stream->readSome(buffer.data(), buffer.size()) > 0) {
         }
-    } catch (const std::exception&) {
+    } catch (const std::exception& error) {
+        // The sender falls back to its own retry; losing the ack silently would
+        // leave a delivery looking undelivered with nothing to explain it.
+        bazarish::log::warn("delivered-ack not sent: {}", error.what());
     }
 }
 

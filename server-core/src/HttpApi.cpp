@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #include "HttpApi.hpp"
 
+#include <bazarish/Log.hpp>
 #include <bazarish/Auth.hpp>
 #include <bazarish/Crypto.hpp>
 #include <bazarish/Errors.hpp>
@@ -178,8 +179,10 @@ void HttpApi::mailboxJanitorLoop()
         }  // release jobsMutex_ before touching storage (it takes its own lock)
         try {
             storage_.purgeExpired(nowSeconds() - options_.mailboxRetentionSeconds);
-        } catch (const std::exception&) {
-            // Best-effort housekeeping; a sweep failure must never crash the node.
+        } catch (const std::exception& error) {
+            // Best-effort housekeeping; a sweep failure must never crash the node -
+            // but a sweep that never succeeds fills the disk, so it is reported.
+            bazarish::log::warn("mailbox sweep failed: {}", error.what());
         }
     }
 }

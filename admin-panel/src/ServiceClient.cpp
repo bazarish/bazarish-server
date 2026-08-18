@@ -52,7 +52,8 @@ std::string errorMessage(const httplib::Result& result)
             return body.at("error").at("message").get<std::string>();
         }
     } catch (const std::exception&) {
-        // Not an envelope; fall through.
+        // Not an error envelope: the HTTP status below is the whole answer, so
+        // nothing is lost - the parse failure IS the information.
     }
     return "HTTP " + std::to_string(result->status);
 }

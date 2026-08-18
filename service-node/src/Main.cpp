@@ -287,11 +287,16 @@ int main(const int argc, const char** argv)
     options.publishI2pTransient = [&operatorPush](const std::string& user,
                                       const std::string& transientB64,
                                       const std::int64_t expiresUnix) {
-        operatorPush.publish(user, transientB64, expiresUnix);
+        return operatorPush.publish(user, transientB64, expiresUnix);
     };
     options.publishQuota = [&operatorPush](const std::string& user,
                                const std::uint64_t quotaBytes) {
-        operatorPush.publishQuota(user, quotaBytes);
+        if (!operatorPush.publishQuota(user, quotaBytes)) {
+            // Not fatal to the subscription - but the user would then be served the
+            // messaging server's own default and see a figure nobody promised them.
+            bazarish::log::warn("quota not pushed for {}: the messaging server refused it",
+                bazarish::log::redact(user));
+        }
     };
     bazarish::service::AccountApi api(store, grants, options);
 

@@ -24,6 +24,12 @@ namespace {
 // (i2pd re-publishes on a 1.8 s confirmation timer and re-verifies every 100 s),
 // this only bounds how long the bring-up thread waits before saying so.
 constexpr int kPublishWaitSeconds = 180;
+// The wait is taken in short steps so a teardown that arrives meanwhile is seen
+// at once: the operator push that triggers it has a client waiting on the answer.
+constexpr int kPublishPollSeconds = 1;
+// Likewise for the accept loop: this is how long a stopping destination can keep
+// its caller waiting, not how long it waits for a peer.
+constexpr int kAcceptTimeoutSeconds = 2;
 
 
 std::int64_t nowSeconds()
@@ -100,7 +106,18 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
                 // The endpoint exists at once; being reachable means its LeaseSet is
                 // published, which needs tunnels and a floodfill that answers. Say
                 // which of the two has happened, and never the second for the first.
-                if (endpoint->waitReady(std::chrono::seconds(kPublishWaitSeconds))) {
+                bool published = false;
+                for (int waited = 0; waited < kPublishWaitSeconds && raw->running.load();
+                     waited += kPublishPollSeconds) {
+                    published = endpoint->waitReady(std::chrono::seconds(kPublishPollSeconds));
+                    if (published) {
+                        break;
+                    }
+                }
+                if (!raw->running.load()) {
+                    return;  // torn down while its LeaseSet was still publishing
+                }
+                if (published) {
                     bazarish::log::info("per-user i2p destination published for {}",
                         bazarish::log::redact(userFp));
                 } else {
@@ -111,7 +128,7 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
                 }
                 while (raw->running.load()) {
                     std::string peer;
-                    auto stream = endpoint->accept(peer, std::chrono::seconds(30));
+                    auto stream = endpoint->accept(peer, std::chrono::seconds(kAcceptTimeoutSeconds));
                     if (!stream) {
                         continue;  // accept timeout / stop
                     }

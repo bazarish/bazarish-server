@@ -9,7 +9,9 @@
 #include <httplib/httplib.h>
 #include <nlohmann/json.hpp>
 
+#include <chrono>
 #include <ctime>
+#include <thread>
 #include <exception>
 #include <utility>
 
@@ -18,7 +20,14 @@ namespace bazarish::service {
 namespace {
 
 constexpr int kConnectTimeoutSeconds = 5;
-constexpr int kReadTimeoutSeconds = 10;
+constexpr int kReadTimeoutSeconds = 30;
+// The messaging server is the operator's own, one hop away: a push that does not
+// land is almost always it being momentarily busy (bringing another destination
+// up, say), not a refusal. Retry before handing the user an error they can do
+// nothing about; a real refusal (4xx) is final and is not retried.
+constexpr int kPushAttempts = 3;
+constexpr int kRetryDelaySeconds = 1;
+constexpr int kFirstServerErrorStatus = 500;
 
 struct HostPort {
     std::string host;
@@ -63,31 +72,40 @@ bool OperatorPush::put(const std::string& path, const std::string& bodyText) con
     if (baseUrl_.empty()) {
         return false;  // not configured
     }
-    try {
-        const HostPort hostPort = parseUrl(baseUrl_);
-        httplib::Client client(hostPort.host, hostPort.port);
-        client.set_connection_timeout(kConnectTimeoutSeconds, 0);
-        client.set_read_timeout(kReadTimeoutSeconds, 0);
-        const auth::Headers signature = auth::signRequest(signer_,
-            static_cast<std::int64_t>(std::time(nullptr)), "PUT", path,
-            Bytes(bodyText.begin(), bodyText.end()));
-        const httplib::Headers headers(signature.begin(), signature.end());
-        const httplib::Result response = client.Put(path, headers, bodyText, "application/json");
-        if (!response) {
-            bazarish::log::warn("operator push to {}{} did not connect: {}", baseUrl_, path,
-                httplib::to_string(response.error()));
-            return false;
+    for (int attempt = 1; attempt <= kPushAttempts; ++attempt) {
+        try {
+            const HostPort hostPort = parseUrl(baseUrl_);
+            httplib::Client client(hostPort.host, hostPort.port);
+            client.set_connection_timeout(kConnectTimeoutSeconds, 0);
+            client.set_read_timeout(kReadTimeoutSeconds, 0);
+            // Signed per attempt: the signature covers a timestamp.
+            const auth::Headers signature = auth::signRequest(signer_,
+                static_cast<std::int64_t>(std::time(nullptr)), "PUT", path,
+                Bytes(bodyText.begin(), bodyText.end()));
+            const httplib::Headers headers(signature.begin(), signature.end());
+            const httplib::Result response
+                = client.Put(path, headers, bodyText, "application/json");
+            if (response && response->status == 200) {
+                return true;
+            }
+            if (response && response->status < kFirstServerErrorStatus) {
+                bazarish::log::warn("operator push to {}{} refused with {}: {}", baseUrl_, path,
+                    response->status, response->body);
+                return false;  // a refusal, not a hiccup: retrying changes nothing
+            }
+            bazarish::log::warn("operator push to {}{} did not land (attempt {}/{}): {}", baseUrl_,
+                path, attempt, kPushAttempts,
+                response ? std::to_string(response->status)
+                         : httplib::to_string(response.error()));
+        } catch (const std::exception& error) {
+            bazarish::log::warn("operator push to {}{} failed (attempt {}/{}): {}", baseUrl_, path,
+                attempt, kPushAttempts, error.what());
         }
-        if (response->status != 200) {
-            bazarish::log::warn("operator push to {}{} refused with {}: {}", baseUrl_, path,
-                response->status, response->body);
-            return false;
+        if (attempt < kPushAttempts) {
+            std::this_thread::sleep_for(std::chrono::seconds(kRetryDelaySeconds));
         }
-        return true;
-    } catch (const std::exception& error) {
-        bazarish::log::warn("operator push to {}{} failed: {}", baseUrl_, path, error.what());
-        return false;
     }
+    return false;
 }
 
 bool OperatorPush::publishQuota(const std::string& user, const std::uint64_t quotaBytes) const

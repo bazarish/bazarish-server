@@ -8,7 +8,7 @@ namespace bazarish::server {
 
 namespace {
 constexpr std::int64_t kSweepIntervalSeconds = 300;
-constexpr std::size_t kSessionIdBytes = 16;
+constexpr std::size_t kSessionIdChars = 32;
 // How far ahead handles are accepted. A client runs two connections at once, so
 // requests arrive out of order; this is the width of that reordering, not a
 // replay window (the sequence check below is what stops replays).
@@ -18,7 +18,10 @@ constexpr std::uint64_t kHandleWindow = 64;
 std::string SessionStore::open(const std::string& user, const Bytes& secret, const std::int64_t now,
     std::int64_t* const outExpiresUnix)
 {
-    const std::string id = toHex(randomBytes(kSessionIdBytes));
+    // Derived from the secret, not drawn at random: it fixes the MAC key together
+    // with the secret, and both sides have to arrive at the same one without it
+    // ever travelling.
+    const std::string id = toHex(sha256(secret)).substr(0, kSessionIdChars);
     // A random lifetime inside the window: a fixed one would have every client
     // renew on the same schedule, and the point of a short-lived key is that a
     // leaked one is worth little.

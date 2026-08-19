@@ -2,13 +2,12 @@
 #pragma once
 
 #include <cstdint>
+#include <bazarish/HttpServer.hpp>
+#include <condition_variable>
+#include <mutex>
 #include <memory>
 #include <string>
 #include <vector>
-
-namespace httplib {
-class Server;
-}
 
 namespace bazarish::facade {
 
@@ -48,10 +47,12 @@ public:
     bool listen(const std::string& host, int port);
     bool bind(const std::string& host, int port);
     int bindToAnyPort(const std::string& host);
+    int bindToAnyPort(const std::string& host, int port);
     bool listenAfterBind();
 
     bool bindOps(const std::string& host, int port);
     int bindOpsToAnyPort(const std::string& host);
+    int bindOpsToAnyPort(const std::string& host, int port);
     bool listenOpsAfterBind();
 
     void stop();
@@ -61,8 +62,12 @@ private:
     void setupOpsRoutes();
 
     const FacadeOptions options_;
-    std::unique_ptr<httplib::Server> http_;
-    std::unique_ptr<httplib::Server> ops_;
+    std::unique_ptr<bazarish::http::Server> http_;
+    std::unique_ptr<bazarish::http::Server> ops_;
+    // listenAfterBind parks the caller's thread here until stop().
+    std::mutex stopMutex_;
+    std::condition_variable stopCv_;
+    bool stopping_ = false;
     std::int64_t startedAt_ = 0;
 };
 

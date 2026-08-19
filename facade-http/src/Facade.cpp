@@ -5,7 +5,12 @@
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Health.hpp>
 
-#include <httplib/httplib.h>
+#include <bazarish/HttpClient.hpp>
+#include <bazarish/Log.hpp>
+#include <bazarish/HttpServer.hpp>
+
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
 
 #include <algorithm>
 #include <array>
@@ -24,6 +29,11 @@
 namespace bazarish::facade {
 
 namespace {
+
+// How long the facade waits on a backend. Longer than the event face's own cap,
+// so a held request is answered by the backend rather than cut short here.
+constexpr int kUpstreamTimeoutSeconds = 60;
+
 
 // Backends a request can be routed to.
 enum class Backend {
@@ -46,13 +56,13 @@ std::int64_t nowSeconds()
 
 // Collects the four request-auth headers from a request into the map the auth
 // primitives expect.
-bazarish::auth::Headers collectAuthHeaders(const httplib::Request& request)
+bazarish::auth::Headers collectAuthHeaders(const bazarish::http::Request& request)
 {
     bazarish::auth::Headers headers;
     for (const char* const name : {bazarish::auth::kHeaderKeys, bazarish::auth::kHeaderTimestamp,
              bazarish::auth::kHeaderSignatureClassical, bazarish::auth::kHeaderSignaturePq}) {
-        if (request.has_header(name)) {
-            headers[name] = request.get_header_value(name);
+        if (request.hasHeader(name)) {
+            headers[name] = request.header(name);
         }
     }
     return headers;
@@ -85,13 +95,12 @@ struct Route {
 // Resolves the backend and stripped target for a request. Returns nullopt and
 // sets a 404 on the response when the base path is wrong or the path is not one
 // the facade forwards.
-std::optional<Route> resolveRoute(const bazarish::facade::FacadeOptions& options,
-    const httplib::Request& request, httplib::Response& response)
+std::optional<Route> resolveRoute(
+    const bazarish::facade::FacadeOptions& options, const bazarish::http::Request& request)
 {
     std::string target = request.target;
     if (!options.basePath.empty()) {
         if (!startsWith(target, options.basePath)) {
-            response.status = 404;
             return std::nullopt;
         }
         target = target.substr(options.basePath.size());
@@ -110,118 +119,167 @@ std::optional<Route> resolveRoute(const bazarish::facade::FacadeOptions& options
         route.port = options.accountPort;
         break;
     case Backend::eNone:
-        response.status = 404;
         return std::nullopt;
     }
     return route;
 }
 
-// Copies the response from a backend result onto the client response.
-void copyResponse(const httplib::Result& upstream, httplib::Response& response)
+// The 404 every refusal looks like: bare, with no body and no content type. An
+// unknown base path and an unroutable path answer identically, and neither says
+// what is behind them - an error envelope with our own code would.
+bazarish::http::Response notFound()
 {
-    if (!upstream) {
-        // Backend unreachable: the facade is a dumb pipe, so this is a
-        // gateway failure, not a protocol error.
-        response.status = 502;
-        response.set_content("{\"error\":{\"code\":\"FACADE_UPSTREAM\",\"message\":"
-                             "\"backend unreachable\"}}",
-            "application/json");
-        return;
-    }
-    response.status = upstream->status;
-    std::string contentType = "application/octet-stream";
-    if (upstream->has_header("Content-Type")) {
-        contentType = upstream->get_header_value("Content-Type");
-    }
-    response.set_content(upstream->body, contentType);
+    return {404, "", {}, ""};
+}
+
+bazarish::http::Response gatewayFailure()
+{
+    // The facade is a dumb pipe: a backend that did not answer is a gateway
+    // failure, not a protocol error of the caller's.
+    return {502, "application/json", {},
+        R"({"error":{"code":"FACADE_UPSTREAM","message":"backend unreachable"}})"};
 }
 
 }  // namespace
 
 Facade::Facade(FacadeOptions options)
     : options_(std::move(options))
-    , http_(std::make_unique<httplib::Server>())
-    , ops_(std::make_unique<httplib::Server>())
     , startedAt_(nowSeconds())
 {
-    setupRoutes();
-    setupOpsRoutes();
 }
 
-Facade::~Facade() = default;
+Facade::~Facade()
+{
+    stop();
+}
 
 bool Facade::listen(const std::string& host, const int port)
 {
-    return http_->listen(host, port);
+    return bind(host, port) && listenAfterBind();
 }
 
 bool Facade::bind(const std::string& host, const int port)
 {
-    return http_->bind_to_port(host, port);
+    return bindToAnyPort(host, port) > 0;
 }
 
 int Facade::bindToAnyPort(const std::string& host)
 {
-    return http_->bind_to_any_port(host);
+    return bindToAnyPort(host, 0);
+}
+
+int Facade::bindToAnyPort(const std::string& host, const int port)
+{
+    bazarish::http::Server::Options options;
+    options.host = host;
+    options.port = port;
+    // A forwarded long poll is held here as well, so the front has to be able to
+    // wait without spending a thread on each client.
+    options.readTimeout = std::chrono::seconds(kUpstreamTimeoutSeconds + 30);
+    http_ = std::make_unique<bazarish::http::Server>(options);
+    setupRoutes();
+    try {
+        return http_->start();
+    } catch (const std::exception& error) {
+        bazarish::log::error("facade cannot listen on {}:{}: {}", host, port, error.what());
+        return 0;
+    }
 }
 
 bool Facade::listenAfterBind()
 {
-    return http_->listen_after_bind();
+    std::unique_lock<std::mutex> lock(stopMutex_);
+    stopCv_.wait(lock, [this]() { return stopping_; });
+    return true;
 }
 
 bool Facade::bindOps(const std::string& host, const int port)
 {
-    return ops_->bind_to_port(host, port);
+    return bindOpsToAnyPort(host, port) > 0;
 }
 
 int Facade::bindOpsToAnyPort(const std::string& host)
 {
-    return ops_->bind_to_any_port(host);
+    return bindOpsToAnyPort(host, 0);
+}
+
+int Facade::bindOpsToAnyPort(const std::string& host, const int port)
+{
+    bazarish::http::Server::Options options;
+    options.host = host;
+    options.port = port;
+    options.threads = 1;  // one operator poller, not a crowd
+    ops_ = std::make_unique<bazarish::http::Server>(options);
+    setupOpsRoutes();
+    try {
+        return ops_->start();
+    } catch (const std::exception& error) {
+        bazarish::log::error("facade ops cannot listen on {}:{}: {}", host, port, error.what());
+        return 0;
+    }
 }
 
 bool Facade::listenOpsAfterBind()
 {
-    return ops_->listen_after_bind();
+    std::unique_lock<std::mutex> lock(stopMutex_);
+    stopCv_.wait(lock, [this]() { return stopping_; });
+    return true;
 }
 
 void Facade::stop()
 {
-    http_->stop();
-    ops_->stop();
+    {
+        const std::lock_guard<std::mutex> lock(stopMutex_);
+        stopping_ = true;
+    }
+    stopCv_.notify_all();
+    if (http_) {
+        http_->stop();
+    }
+    if (ops_) {
+        ops_->stop();
+    }
 }
 
 void Facade::setupRoutes()
 {
     // Buffered catch-all for the methods whose bodies are small (or empty):
     // strip the secret base path, route by prefix and relay verbatim.
-    const auto handler = [this](const httplib::Request& request, httplib::Response& response) {
-        const std::optional<Route> route = resolveRoute(options_, request, response);
+    const auto handler = [this](const bazarish::http::Request& request,
+                             bazarish::http::Responder respond)
+        -> std::optional<bazarish::http::Response> {
+        const std::optional<Route> route = resolveRoute(options_, request);
         if (!route.has_value()) {
-            return;  // 404 already set
+            return notFound();
         }
-        httplib::Client client(route->host, route->port);
-        client.set_keep_alive(false);
-
-        httplib::Request forwarded;
+        bazarish::http::ClientRequest forwarded;
         forwarded.method = request.method;
-        forwarded.path = route->target;
+        forwarded.target = route->target;
         forwarded.headers = request.headers;
         forwarded.body = request.body;
-        // Drop the inbound Host header; the client sets its own.
-        forwarded.headers.erase("Host");
+        forwarded.headers.erase("host");  // the client sets its own
 
-        httplib::Result upstream = client.send(forwarded);
-        copyResponse(upstream, response);
+        // Forwarded on the front's own loop: a backend that holds the request
+        // open (the event face does, by design) holds a coroutine here, not a
+        // thread, so one waiting client costs what one timer costs.
+        boost::asio::co_spawn(
+            http_->executor(),
+            [executor = http_->executor(), host = route->host, port = route->port,
+                forwarded = std::move(forwarded), respond]() -> boost::asio::awaitable<void> {
+                const bazarish::http::Response upstream = co_await bazarish::http::fetch(
+                    executor, host, port, forwarded, std::chrono::seconds(kUpstreamTimeoutSeconds));
+                respond(upstream.status == 0 ? gatewayFailure() : upstream);
+            },
+            boost::asio::detached);
+        return std::nullopt;  // answered when the backend does
     };
 
     // Register the catch-all for the methods the API uses. Nothing streams
     // through the facade any more: the only large payload there ever was - a file
     // upload - now goes directly between clients.
-    http_->Get(".*", handler);
-    http_->Post(".*", handler);
-    http_->Delete(".*", handler);
-    http_->Put(".*", handler);
+    for (const char* const method : {"GET", "POST", "PUT", "DELETE"}) {
+        http_->routeAsync(method, "(.*)", handler);
+    }
 }
 
 void Facade::setupOpsRoutes()
@@ -229,22 +287,19 @@ void Facade::setupOpsRoutes()
     // Operator-signed liveness for the admin panel, answered locally and served
     // on the ops socket only: on the public one it would identify the host as a
     // facade to anyone who does not know the secret base path.
-    ops_->Get("/healthz", [this](const httplib::Request& request, httplib::Response& response) {
-        try {
-            bazarish::auth::authorizeRequest(collectAuthHeaders(request), nowSeconds(),
-                request.method, request.path, bazarish::Bytes(),
-                options_.operatorFingerprints);
-        } catch (const std::exception&) {
-            response.status = 403;
-            response.set_content(
-                "{\"error\":{\"message\":\"operator authentication required\"}}",
-                "application/json");
-            return;
-        }
-        response.set_content(
-            health::reportJson("facade", options_.version, startedAt_, nowSeconds()),
-            "application/json");
-    });
+    ops_->get("/healthz",
+        [this](const bazarish::http::Request& request) -> bazarish::http::Response {
+            try {
+                bazarish::auth::authorizeRequest(collectAuthHeaders(request), nowSeconds(),
+                    request.method, request.path, bazarish::Bytes(), options_.operatorFingerprints);
+            } catch (const std::exception& error) {
+                bazarish::log::debug("ops healthz refused: {}", error.what());
+                return {403, "application/json", {},
+                    R"({"error":{"message":"operator authentication required"}})"};
+            }
+            return {200, "application/json", {},
+                health::reportJson("facade", options_.version, startedAt_, nowSeconds())};
+        });
 }
 
 }  // namespace bazarish::facade

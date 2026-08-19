@@ -6,6 +6,7 @@
 
 #include <bazarish/Auth.hpp>
 #include <bazarish/Bytes.hpp>
+#include <bazarish/HttpServer.hpp>
 
 #include <condition_variable>
 #include <cstdint>
@@ -18,16 +19,14 @@
 #include <thread>
 #include <vector>
 
-namespace httplib {
-class Server;
-}
-
 namespace bazarish::server {
 
 // A user's assigned serving destination and its serving sealing key (private
 // half held by this server). Used both to surface the destination to the user
 // and to decide same-destination local delivery. An empty dest / null key means
 // the user has no assigned destination yet.
+class EventGate;
+
 struct DestinationAssignment {
     std::string dest;
     std::shared_ptr<Key> servingKey;
@@ -97,6 +96,9 @@ struct HttpApiOptions {
     // client has no I2P yet, and every RouterInfo authenticates itself. Empty
     // disables the endpoint.
     std::function<std::vector<Bytes>(std::size_t count)> reseedSample;
+    // Longest a client may ask to be held on the event face. Anything longer is
+    // clamped: an idle I2P stream that lives too long is torn down under us.
+    int maxEventWaitSeconds = 30;
 };
 
 // Result of relaying a sealed envelope to another destination (federation).
@@ -144,10 +146,15 @@ class HttpApi {
 public:
     HttpApi(Storage& storage, DeliveryEngine& engine, HttpApiOptions options,
         RemoteDeliverFn remoteDeliver = {}, RemoteFetchFn remoteFetch = {});
+    // What a waiting client is parked on. Without it the event route is not
+    // registered at all and clients fall back to polling.
+    void setEventGate(EventGate* gate) { eventGate_ = gate; }
     ~HttpApi();
 
     bool listen(const std::string& host, int port);
     int bindToAnyPort(const std::string& host);
+    // Binds a specific port (0 = any) and returns the one bound, 0 on failure.
+    int bindToAnyPort(const std::string& host, int port);
     bool listenAfterBind();
     void stop();
 
@@ -200,7 +207,8 @@ private:
     RemoteDeliverFn remoteDeliver_;
     RemoteFetchFn remoteFetch_;
 
-    std::unique_ptr<httplib::Server> http_;
+    std::unique_ptr<bazarish::http::Server> http_;
+    EventGate* eventGate_ = nullptr;
     std::int64_t startedAt_ = 0;
 
     std::mutex attemptsMutex_;

@@ -4,7 +4,6 @@
 #include "WarmDestPool.hpp"
 #include "FederationRateLimiter.hpp"
 #include "EventGate.hpp"
-#include "EventServer.hpp"
 #include "HttpApi.hpp"
 #include "I2pFederation.hpp"
 #include "PerUserDestinations.hpp"
@@ -413,16 +412,9 @@ int main(const int argc, const char** argv)
     bazarish::server::HttpApi api(
         storage, engine, httpOptions, std::move(remoteDeliver), std::move(remoteFetch));
 
-    // The long-poll face, on its own asio loop: waiting costs a timer, not a
-    // thread, so hundreds of clients can keep a request open. Bound next to the
-    // ordinary API and reached through the same facade.
-    bazarish::server::EventServer::Options eventOptions;
-    eventOptions.host = host;
-    eventOptions.port = port > 0 ? port + 1 : 0;
-    bazarish::server::EventServer events(storage, eventGate, eventOptions);
-    const int eventPort = events.start();
-    std::printf("server-core: event face on %s:%d\n", host.c_str(), eventPort);
-    std::fflush(stdout);
+    // The long-poll face is a route on the same server now, so there is one port,
+    // one parser and one set of limits.
+    api.setEventGate(&eventGate);
 
     // Wire delivery acknowledgement (no shared address - per-user federation).
     // When a serving destination stores a federated message it sends a

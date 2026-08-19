@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #include "HttpApi.hpp"
 
+#include "EventGate.hpp"
+
 #include <bazarish/Log.hpp>
 #include <bazarish/Auth.hpp>
 #include <bazarish/Crypto.hpp>
@@ -8,7 +10,7 @@
 #include <bazarish/Health.hpp>
 #include <bazarish/I2pAddress.hpp>
 
-#include <httplib/httplib.h>
+#include <bazarish/HttpServer.hpp>
 #include <nlohmann/json.hpp>
 
 #include <array>
@@ -57,32 +59,30 @@ std::chrono::seconds retryBackoff(int round)
 }
 
 
-Bytes bodyBytes(const httplib::Request& request)
+Bytes bodyBytes(const bazarish::http::Request& request)
 {
     return Bytes(request.body.begin(), request.body.end());
 }
 
-void respondError(httplib::Response& response, const int status, const ErrorCode code,
-    const std::string& message)
+bazarish::http::Response errorResponse(
+    const int status, const ErrorCode code, const std::string& message)
 {
-    response.status = status;
-    response.set_content(
-        bazarish::makeErrorEnvelope(code, message).dump(), "application/json");
+    return {status, "application/json", {}, bazarish::makeErrorEnvelope(code, message).dump()};
 }
 
-void respondJson(httplib::Response& response, const nlohmann::json& body)
+bazarish::http::Response jsonResponse(const nlohmann::json& body)
 {
-    response.set_content(body.dump(), "application/json");
+    return {200, "application/json", {}, body.dump()};
 }
 
-bazarish::auth::Headers collectAuthHeaders(const httplib::Request& request)
+bazarish::auth::Headers collectAuthHeaders(const bazarish::http::Request& request)
 {
     bazarish::auth::Headers headers;
     for (const char* const name : {bazarish::auth::kHeaderKeys,
              bazarish::auth::kHeaderTimestamp, bazarish::auth::kHeaderSignatureClassical,
              bazarish::auth::kHeaderSignaturePq}) {
-        if (request.has_header(name)) {
-            headers[name] = request.get_header_value(name);
+        if (request.hasHeader(name)) {
+            headers[name] = request.header(name);
         }
     }
     return headers;
@@ -99,10 +99,8 @@ HttpApi::HttpApi(Storage& storage, DeliveryEngine& engine, const HttpApiOptions 
     , options_(options)
     , remoteDeliver_(std::move(remoteDeliver))
     , remoteFetch_(std::move(remoteFetch))
-    , http_(std::make_unique<httplib::Server>())
     , startedAt_(nowSeconds())
 {
-    setupRoutes();
     // Background delivery workers (store-and-forward). A small fixed pool: each
     // worker may sit in a per-message retry loop for a while, so size it for the
     // expected number of concurrently-in-flight slow deliveries.
@@ -124,22 +122,46 @@ HttpApi::~HttpApi()
 
 bool HttpApi::listen(const std::string& host, const int port)
 {
-    return http_->listen(host, port);
+    if (bindToAnyPort(host, port) <= 0) {
+        return false;
+    }
+    return listenAfterBind();
 }
 
 int HttpApi::bindToAnyPort(const std::string& host)
 {
-    return http_->bind_to_any_port(host);
+    return bindToAnyPort(host, 0);
+}
+
+int HttpApi::bindToAnyPort(const std::string& host, const int port)
+{
+    bazarish::http::Server::Options options;
+    options.host = host;
+    options.port = port;
+    http_ = std::make_unique<bazarish::http::Server>(options);
+    setupRoutes();
+    try {
+        return http_->start();
+    } catch (const std::exception& error) {
+        bazarish::log::error("cannot listen on {}:{}: {}", host, port, error.what());
+        return 0;
+    }
 }
 
 bool HttpApi::listenAfterBind()
 {
-    return http_->listen_after_bind();
+    // The engine serves on its own threads; this call is what keeps the caller's
+    // thread (a main()) parked until stop().
+    std::unique_lock<std::mutex> lock(jobsMutex_);
+    jobsCv_.wait(lock, [this]() { return stopping_; });
+    return true;
 }
 
 void HttpApi::stop()
 {
-    http_->stop();
+    if (http_) {
+        http_->stop();
+    }
     stopWorkers();
 }
 
@@ -350,49 +372,49 @@ void HttpApi::setupRoutes()
     // operator (the service node for quota/transient pushes, the admin panel for
     // management and health). No shared secret. Responds 403 and returns false on
     // any failure.
-    const auto operatorAuthorized
-        = [this](const httplib::Request& request, httplib::Response& response) -> bool {
+    // Nothing when the caller is an authorised operator; otherwise the refusal to
+    // send back, so a handler can return it unchanged.
+    const auto operatorRejection
+        = [this](const bazarish::http::Request& request) -> std::optional<bazarish::http::Response> {
         try {
             auth::authorizeRequest(collectAuthHeaders(request), nowSeconds(), request.method,
                 request.path, bodyBytes(request), options_.operatorFingerprints);
-            return true;
+            return std::nullopt;
         } catch (const std::exception& error) {
-            respondError(response, 403, ErrorCode::eDeliveryRejected, error.what());
-            return false;
+            return errorResponse(403, ErrorCode::eDeliveryRejected, error.what());
         }
     };
 
     // Authenticated liveness for the admin panel: service name, version, uptime
     // and resident memory. Operator-only (signed), so it leaks nothing to an
     // unauthenticated caller.
-    http_->Get("/healthz",
-        [this, operatorAuthorized](const httplib::Request& request, httplib::Response& response) {
-            if (!operatorAuthorized(request, response)) {
-                return;
+    http_->get("/healthz",
+        [this, operatorRejection](const bazarish::http::Request& request) -> bazarish::http::Response {
+            if (const std::optional<bazarish::http::Response> refused = operatorRejection(request);
+                refused.has_value()) {
+                return *refused;
             }
-            response.set_content(
-                health::reportJson("server-core", options_.version, startedAt_, nowSeconds()),
-                "application/json");
+            return {200, "application/json", {},
+                health::reportJson("server-core", options_.version, startedAt_, nowSeconds())};
         });
 
     // Wraps a handler with request authentication and uniform error
     // mapping. The handler receives the verified caller fingerprint.
     const auto authenticated = [this](auto handler) {
-        return [this, handler](const httplib::Request& request, httplib::Response& response) {
+        return [this, handler](const bazarish::http::Request& request) -> bazarish::http::Response {
             std::string user;
             try {
                 user = auth::verifyRequest(collectAuthHeaders(request), nowSeconds(),
                     request.method, request.path, bodyBytes(request), replayCache_);
             } catch (const std::exception& error) {
-                respondError(response, 401, ErrorCode::eDeliveryRejected, error.what());
-                return;
+                return errorResponse(401, ErrorCode::eDeliveryRejected, error.what());
             }
             try {
-                handler(request, response, user);
+                return handler(request, user);
             } catch (const nlohmann::json::exception& error) {
-                respondError(response, 400, ErrorCode::eDeliveryRejected, error.what());
+                return errorResponse(400, ErrorCode::eDeliveryRejected, error.what());
             } catch (const std::invalid_argument& error) {
-                respondError(response, 400, ErrorCode::eDeliveryRejected, error.what());
+                return errorResponse(400, ErrorCode::eDeliveryRejected, error.what());
             }
         };
     };
@@ -401,33 +423,96 @@ void HttpApi::setupRoutes()
 
     // Returns the registered client ID of the request or reports
     // CLIENT_UNREGISTERED. Registration itself is the only exception.
-    const auto requireClient = [&store](const httplib::Request& request,
-                                   httplib::Response& response,
-                                   const std::string& user) -> std::string {
-        const std::string clientId = request.get_header_value("X-Bazarish-Client");
+    const auto requireClient
+        = [&store](const bazarish::http::Request& request, const std::string& user) -> std::string {
+        const std::string clientId = request.header("X-Bazarish-Client");
         if (clientId.empty() || !store.isClientRegistered(user, clientId)) {
-            respondError(response, 403, ErrorCode::eClientUnregistered,
-                "client ID is not registered for this user");
-            return {};
+            return {};  // the caller answers CLIENT_UNREGISTERED
         }
         return clientId;
     };
+    const auto clientUnregistered = []() {
+        return errorResponse(
+            403, ErrorCode::eClientUnregistered, "client ID is not registered for this user");
+    };
+
+    // The long-poll face, on the same engine: a request with nothing to report is
+    // parked on the gate instead of answered empty, so a client learns about a
+    // message when it arrives rather than on its next tick. Registered only when
+    // there is a gate to park on.
+    if (eventGate_ != nullptr) {
+        EventGate* const gate = eventGate_;
+        const int maxWait = options_.maxEventWaitSeconds;
+        http_->getAsync("/v1/messaging/events",
+            [this, &store, requireClient, clientUnregistered, gate, maxWait](
+                const bazarish::http::Request& request,
+                bazarish::http::Responder respond) -> std::optional<bazarish::http::Response> {
+                std::string user;
+                try {
+                    user = auth::verifyRequest(collectAuthHeaders(request), nowSeconds(),
+                        request.method, request.target, bodyBytes(request), replayCache_);
+                } catch (const std::exception& error) {
+                    return errorResponse(401, ErrorCode::eDeliveryRejected, error.what());
+                }
+                // Same client identity as every other route: the header, not a
+                // query parameter the caller has to remember to add.
+                const std::string clientId = requireClient(request, user);
+                if (clientId.empty()) {
+                    return clientUnregistered();
+                }
+                const auto pending = [&store, user, clientId]() {
+                    nlohmann::json items = nlohmann::json::array();
+                    for (const Storage::PendingEntry& entry : store.listPending(user, clientId)) {
+                        items.push_back({{"id", entry.blobId}, {"class", entry.deliveryClass}});
+                    }
+                    return items;
+                };
+                nlohmann::json items = pending();
+                if (!items.empty()) {
+                    return jsonResponse({{"pending", items}});
+                }
+                int wait = maxWait;
+                const std::string asked = request.query("wait");
+                if (!asked.empty()) {
+                    try {
+                        wait = std::min(std::stoi(asked), maxWait);
+                    } catch (const std::exception& error) {
+                        bazarish::log::debug("bad wait '{}': {}", asked, error.what());
+                    }
+                }
+                gate->wait(http_->executor(), user, std::chrono::seconds(wait),
+                    [&store, user, clientId, respond]() {
+                        nlohmann::json items = nlohmann::json::array();
+                        try {
+                            for (const Storage::PendingEntry& entry :
+                                store.listPending(user, clientId)) {
+                                items.push_back(
+                                    {{"id", entry.blobId}, {"class", entry.deliveryClass}});
+                            }
+                        } catch (const std::exception& error) {
+                            bazarish::log::warn("event face: {}", error.what());
+                        }
+                        respond(jsonResponse({{"pending", items}}));
+                    });
+                return std::nullopt;  // answered from the gate
+            });
+    }
 
     // --- Client registry ---
 
-    http_->Post("/v1/messaging/clients",
-        authenticated([&store](const httplib::Request& request, httplib::Response& response,
-                          const std::string& user) {
+    http_->post("/v1/messaging/clients",
+        authenticated([&store](const bazarish::http::Request& request,
+                          const std::string& user) -> bazarish::http::Response {
             const nlohmann::json body = nlohmann::json::parse(request.body);
             store.registerClient(user, body.at("clientId").get<std::string>());
-            respondJson(response, {{"ok", true}});
+            return jsonResponse({{"ok", true}});
         }));
 
-    http_->Delete(R"(/v1/messaging/clients/([a-z0-9_-]+))",
-        authenticated([&store](const httplib::Request& request, httplib::Response& response,
-                          const std::string& user) {
-            store.unregisterClient(user, request.matches[1].str());
-            respondJson(response, {{"ok", true}});
+    http_->del(R"(/v1/messaging/clients/([a-z0-9_-]+))",
+        authenticated([&store](const bazarish::http::Request& request,
+                          const std::string& user) -> bazarish::http::Response {
+            store.unregisterClient(user, request.captures.at(0));
+            return jsonResponse({{"ok", true}});
         }));
 
     // Private reseed: a random slice of this server's netDb, so a client's first
@@ -436,42 +521,39 @@ void HttpApi::setupRoutes()
     // has nothing yet) and deliberately random per request: the server picks
     // which routers a client learns first, so a fixed set would be an eclipse
     // handle. Every RouterInfo carries its own signature, so this adds no trust.
-    http_->Get("/v1/messaging/reseed",
-        [this](const httplib::Request& request, httplib::Response& response) {
+    http_->get("/v1/messaging/reseed",
+        [this](const bazarish::http::Request& request) -> bazarish::http::Response {
             if (!options_.reseedSample) {
-                respondError(response, 503, ErrorCode::eI2pUnavailable, "no reseed available");
-                return;
+                return errorResponse(503, ErrorCode::eI2pUnavailable, "no reseed available");
             }
             std::size_t count = kReseedRoutersDefault;
-            if (request.has_param("count")) {
+            if (!request.query("count").empty()) {
                 count = std::min<std::size_t>(
-                    std::strtoull(request.get_param_value("count").c_str(), nullptr, 10),
+                    std::strtoull(request.query("count").c_str(), nullptr, 10),
                     kReseedRoutersMax);
             }
             const std::vector<Bytes> routers = options_.reseedSample(count);
             if (routers.empty()) {
-                respondError(response, 503, ErrorCode::eI2pUnavailable, "netdb is empty");
-                return;
+                return errorResponse(503, ErrorCode::eI2pUnavailable, "netdb is empty");
             }
             nlohmann::json list = nlohmann::json::array();
             for (const Bytes& router : routers) {
                 list.push_back(toBase64(router));
             }
-            respondJson(response, {{"routers", list}});
+            return jsonResponse({{"routers", list}});
         });
 
     // The caller's assigned serving destination + the public serving sealing
     // key for it, so the client can fold both into its self-signed contact card
     // (see docs-main api/InviteAnonymity.md). Resolved from the authenticated
     // caller's fingerprint.
-    http_->Get("/v1/messaging/destination",
-        authenticated([this](const httplib::Request&, httplib::Response& response,
-                          const std::string& user) {
+    http_->get("/v1/messaging/destination",
+        authenticated([this](const bazarish::http::Request&, const std::string& user)
+                          -> bazarish::http::Response {
             const DestinationAssignment assigned = options_.assignDestination
                 ? options_.assignDestination(user)
                 : DestinationAssignment{};
-            respondJson(response,
-                {
+            return jsonResponse({
                     {"dest", assigned.dest},
                     {"servingKey", assigned.servingKey
                             ? toBase64(assigned.servingKey->publicDer())
@@ -483,11 +565,10 @@ void HttpApi::setupRoutes()
     // The authenticated caller's own mailbox storage: bytes currently held and the
     // effective quota (their override, else the server default). Lets a client show
     // "used / free / total" for its server-core mailbox in per-profile settings.
-    http_->Get("/v1/messaging/storage-usage",
-        authenticated([this](const httplib::Request&, httplib::Response& response,
-                          const std::string& user) {
-            respondJson(response,
-                {
+    http_->get("/v1/messaging/storage-usage",
+        authenticated([this](const bazarish::http::Request&, const std::string& user)
+                          -> bazarish::http::Response {
+            return jsonResponse({
                     {"usedBytes", storage_.usage(user)},
                     {"quotaBytes", storage_.userQuota(user, options_.defaultQuotaBytes)},
                 });
@@ -498,19 +579,20 @@ void HttpApi::setupRoutes()
     // Set by the operator's service node over the private channel when a user's
     // storage plan changes. Authorised by an operator signature, not by user auth
     // (the user must not set their own quota).
-    http_->Put("/v1/messaging/quota",
-        [&store, operatorAuthorized](
-            const httplib::Request& request, httplib::Response& response) {
-            if (!operatorAuthorized(request, response)) {
-                return;
+    http_->put("/v1/messaging/quota",
+        [&store, operatorRejection](
+            const bazarish::http::Request& request) -> bazarish::http::Response {
+            if (const std::optional<bazarish::http::Response> refused = operatorRejection(request);
+                refused.has_value()) {
+                return *refused;
             }
             try {
                 const nlohmann::json body = nlohmann::json::parse(request.body);
                 store.setUserQuota(body.at("user").get<std::string>(),
                     body.at("quotaBytes").get<std::uint64_t>());
-                respondJson(response, {{"ok", true}});
+                return jsonResponse({{"ok", true}});
             } catch (const std::exception& error) {
-                respondError(response, 400, ErrorCode::eDeliveryRejected, error.what());
+                return errorResponse(400, ErrorCode::eDeliveryRejected, error.what());
             }
         });
 
@@ -519,15 +601,15 @@ void HttpApi::setupRoutes()
     // client-owned offline transient so this server can operate the user's
     // personal destination. Same operator signature as quota. A request without a
     // transient revokes the destination.
-    http_->Put("/v1/messaging/i2p-dest",
-        [this, operatorAuthorized](const httplib::Request& request, httplib::Response& response) {
-            if (!operatorAuthorized(request, response)) {
-                return;
+    http_->put("/v1/messaging/i2p-dest",
+        [this, operatorRejection](const bazarish::http::Request& request) -> bazarish::http::Response {
+            if (const std::optional<bazarish::http::Response> refused = operatorRejection(request);
+                refused.has_value()) {
+                return *refused;
             }
             if (!options_.provisionI2pDest || !options_.revokeI2pDest) {
-                respondError(response, 503, ErrorCode::eDeliveryRejected,
+                return errorResponse(503, ErrorCode::eDeliveryRejected,
                     "per-user destinations not available");
-                return;
             }
             try {
                 const nlohmann::json body = nlohmann::json::parse(request.body);
@@ -539,19 +621,19 @@ void HttpApi::setupRoutes()
                     options_.provisionI2pDest(user, transient,
                         body.at("expiresUnix").get<std::int64_t>());
                 }
-                respondJson(response, {{"ok", true}});
+                return jsonResponse({{"ok", true}});
             } catch (const std::exception& error) {
-                respondError(response, 400, ErrorCode::eDeliveryRejected, error.what());
+                return errorResponse(400, ErrorCode::eDeliveryRejected, error.what());
             }
         });
 
     // --- Token hashes ---
 
-    http_->Post("/v1/messaging/tokens",
-        authenticated([&store, requireClient](const httplib::Request& request,
-                          httplib::Response& response, const std::string& user) {
-            if (requireClient(request, response, user).empty()) {
-                return;
+    http_->post("/v1/messaging/tokens",
+        authenticated([&store, requireClient, clientUnregistered](const bazarish::http::Request& request,
+                          const std::string& user) -> bazarish::http::Response {
+            if (requireClient(request, user).empty()) {
+                return clientUnregistered();
             }
             const nlohmann::json body = nlohmann::json::parse(request.body);
             std::vector<Bytes> hashes;
@@ -563,14 +645,14 @@ void HttpApi::setupRoutes()
                 hashes.push_back(std::move(hash));
             }
             store.registerTokenHashes(user, hashes);
-            respondJson(response, {{"ok", true}});
+            return jsonResponse({{"ok", true}});
         }));
 
-    http_->Delete("/v1/messaging/tokens",
-        authenticated([&store, requireClient](const httplib::Request& request,
-                          httplib::Response& response, const std::string& user) {
-            if (requireClient(request, response, user).empty()) {
-                return;
+    http_->del("/v1/messaging/tokens",
+        authenticated([&store, requireClient, clientUnregistered](const bazarish::http::Request& request,
+                          const std::string& user) -> bazarish::http::Response {
+            if (requireClient(request, user).empty()) {
+                return clientUnregistered();
             }
             const nlohmann::json body = nlohmann::json::parse(request.body);
             std::vector<Bytes> hashes;
@@ -578,64 +660,61 @@ void HttpApi::setupRoutes()
                 hashes.push_back(fromBase64(entry.get<std::string>()));
             }
             store.deleteTokenHashes(user, hashes);
-            respondJson(response, {{"ok", true}});
+            return jsonResponse({{"ok", true}});
         }));
 
     // --- Pending content ---
 
-    http_->Get("/v1/messaging/pending",
-        authenticated([&store, requireClient](const httplib::Request& request,
-                          httplib::Response& response, const std::string& user) {
-            const std::string clientId = requireClient(request, response, user);
+    http_->get("/v1/messaging/pending",
+        authenticated([&store, requireClient, clientUnregistered](const bazarish::http::Request& request,
+                          const std::string& user) -> bazarish::http::Response {
+            const std::string clientId = requireClient(request, user);
             if (clientId.empty()) {
-                return;
+                return clientUnregistered();
             }
             nlohmann::json pending = nlohmann::json::array();
             for (const Storage::PendingEntry& entry : store.listPending(user, clientId)) {
                 pending.push_back({{"id", entry.blobId}, {"class", entry.deliveryClass}});
             }
-            respondJson(response, {{"pending", pending}});
+            return jsonResponse({{"pending", pending}});
         }));
 
-    http_->Get(R"(/v1/messaging/pending/([a-z0-9_-]+))",
-        authenticated([&store, requireClient](const httplib::Request& request,
-                          httplib::Response& response, const std::string& user) {
-            if (requireClient(request, response, user).empty()) {
-                return;
+    http_->get(R"(/v1/messaging/pending/([a-z0-9_-]+))",
+        authenticated([&store, requireClient, clientUnregistered](const bazarish::http::Request& request,
+                          const std::string& user) -> bazarish::http::Response {
+            if (requireClient(request, user).empty()) {
+                return clientUnregistered();
             }
-            const std::string blobId = request.matches[1].str();
+            const std::string blobId = request.captures.at(0);
             if (!store.hasBlob(user, blobId)) {
-                respondError(response, 404, ErrorCode::eDeliveryRejected, "no such blob");
-                return;
+                return errorResponse(404, ErrorCode::eDeliveryRejected, "no such blob");
             }
             const Bytes data = store.getBlob(user, blobId);
-            response.set_content(
-                std::string(data.begin(), data.end()), "application/octet-stream");
+            return {200, "application/octet-stream", {}, std::string(data.begin(), data.end())};
         }));
 
-    http_->Post("/v1/messaging/ack",
-        authenticated([&store, requireClient](const httplib::Request& request,
-                          httplib::Response& response, const std::string& user) {
-            const std::string clientId = requireClient(request, response, user);
+    http_->post("/v1/messaging/ack",
+        authenticated([&store, requireClient, clientUnregistered](const bazarish::http::Request& request,
+                          const std::string& user) -> bazarish::http::Response {
+            const std::string clientId = requireClient(request, user);
             if (clientId.empty()) {
-                return;
+                return clientUnregistered();
             }
             const nlohmann::json body = nlohmann::json::parse(request.body);
             store.ackBlob(user, body.at("blobId").get<std::string>(), clientId);
-            respondJson(response, {{"ok", true}});
+            return jsonResponse({{"ok", true}});
         }));
 
-    http_->Post("/v1/messaging/send",
-        authenticated([this, requireClient](const httplib::Request& request,
-                          httplib::Response& response, const std::string& user) {
-            if (requireClient(request, response, user).empty()) {
-                return;
+    http_->post("/v1/messaging/send",
+        authenticated([this, requireClient, clientUnregistered](const bazarish::http::Request& request,
+                          const std::string& user) -> bazarish::http::Response {
+            if (requireClient(request, user).empty()) {
+                return clientUnregistered();
             }
             if (request.body.size() > options_.perMessageLimitBytes) {
-                respondError(response, 413, ErrorCode::eQuotaExceeded,
+                return errorResponse(413, ErrorCode::eQuotaExceeded,
                     "envelope exceeds the per-message limit of "
                         + std::to_string(options_.perMessageLimitBytes) + " bytes");
-                return;
             }
             const nlohmann::json body = nlohmann::json::parse(request.body);
             const std::string toDest = body.at("toDest").get<std::string>();
@@ -700,19 +779,18 @@ void HttpApi::setupRoutes()
                     attemptId, toDest, sealed, payload, sender.dest, sender.servingKey});
             }
             jobsCv_.notify_all();
-            respondJson(response, {{"attemptId", attemptId}, {"status", "pending"}});
+            return jsonResponse({{"attemptId", attemptId}, {"status", "pending"}});
         }));
 
-    http_->Get(R"(/v1/messaging/send/([a-f0-9]+))",
-        authenticated([this](const httplib::Request& request, httplib::Response& response,
-                          const std::string& user) {
+    http_->get(R"(/v1/messaging/send/([a-f0-9]+))",
+        authenticated([this](const bazarish::http::Request& request,
+                          const std::string& user) -> bazarish::http::Response {
             (void)user;
             const std::lock_guard<std::mutex> lock(attemptsMutex_);
-            const auto found = attempts_.find(request.matches[1].str());
+            const auto found = attempts_.find(request.captures.at(0));
             if (found == attempts_.end()) {
-                respondError(response, 404, ErrorCode::eAttemptUnknown,
+                return errorResponse(404, ErrorCode::eAttemptUnknown,
                     "attempt is not known (expired or server restarted)");
-                return;
             }
             nlohmann::json result = {{"status", found->second.status}};
             if (!found->second.phase.empty()) {
@@ -724,7 +802,7 @@ void HttpApi::setupRoutes()
                     {"message", found->second.errorMessage},
                 };
             }
-            respondJson(response, result);
+            return jsonResponse(result);
         }));
 
     // First-contact discovery proxy (fallback for a client without its own I2P transport):
@@ -732,29 +810,25 @@ void HttpApi::setupRoutes()
     // central resolver) to toDest over I2P and return the sealed response. The
     // server moves opaque bytes - the client sealed the query and verifies the
     // response (see docs-main api/FederatedResolve.md).
-    http_->Post("/v1/messaging/fetch",
-        authenticated([this](const httplib::Request& request, httplib::Response& response,
-                          const std::string& user) {
+    http_->post("/v1/messaging/fetch",
+        authenticated([this](const bazarish::http::Request& request,
+                          const std::string& user) -> bazarish::http::Response {
             (void)user;
             const nlohmann::json body = nlohmann::json::parse(request.body);
             const std::string toDest = body.at("toDest").get<std::string>();
             validateB32I2pHost(toDest);
             const std::string op = body.at("op").get<std::string>();
             if (op != "card" && op != "resolve") {
-                respondError(response, 400, ErrorCode::eDeliveryRejected, "unsupported fetch op");
-                return;
+                return errorResponse(400, ErrorCode::eDeliveryRejected, "unsupported fetch op");
             }
             const Bytes sealed = fromBase64(body.at("sealed").get<std::string>());
             if (!remoteFetch_) {
-                respondError(
-                    response, 400, ErrorCode::eDeliveryRejected, "no federation transport");
-                return;
+                return errorResponse(400, ErrorCode::eDeliveryRejected, "no federation transport");
             }
             const RemoteFetchResult result = remoteFetch_(toDest, op, sealed);
             if (!result.reachable) {
-                respondError(response, 400, ErrorCode::eRecipientServerUnreachable,
+                return errorResponse(400, ErrorCode::eRecipientServerUnreachable,
                     "destination could not be reached");
-                return;
             }
             nlohmann::json reply = {{"ok", result.ok}};
             if (result.ok) {
@@ -762,7 +836,7 @@ void HttpApi::setupRoutes()
             } else if (!result.errorCode.empty()) {
                 reply["errorCode"] = result.errorCode;
             }
-            respondJson(response, reply);
+            return jsonResponse(reply);
         }));
 }
 

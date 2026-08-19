@@ -80,9 +80,13 @@ bazarish::http::Response jsonResponse(const nlohmann::json& body)
 bazarish::auth::Headers collectAuthHeaders(const bazarish::http::Request& request)
 {
     bazarish::auth::Headers headers;
+    // Both schemes: the signature headers a request may present, and the session
+    // headers it may present instead. Collecting only the first set made every
+    // session-authenticated request look unsigned.
     for (const char* const name : {bazarish::auth::kHeaderKeys,
              bazarish::auth::kHeaderTimestamp, bazarish::auth::kHeaderSignatureClassical,
-             bazarish::auth::kHeaderSignaturePq}) {
+             bazarish::auth::kHeaderSignaturePq, bazarish::auth::kHeaderSession,
+             bazarish::auth::kHeaderSeq, bazarish::auth::kHeaderMac}) {
         if (request.hasHeader(name)) {
             headers[name] = request.header(name);
         }

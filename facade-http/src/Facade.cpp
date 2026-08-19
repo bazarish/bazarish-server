@@ -257,7 +257,12 @@ void Facade::setupRoutes()
         forwarded.target = route->target;
         forwarded.headers = request.headers;
         forwarded.body = request.body;
-        forwarded.headers.erase("host");  // the client sets its own
+        // Hop-by-hop headers belong to the connection we received on, not to the
+        // one we are about to open, and the client below frames the body itself.
+        for (const char* const hop : {"host", "connection", "keep-alive", "proxy-connection",
+                 "transfer-encoding", "content-length", "upgrade", "te", "trailer"}) {
+            forwarded.headers.erase(hop);
+        }
 
         // Forwarded on the front's own loop: a backend that holds the request
         // open (the event face does, by design) holds a coroutine here, not a

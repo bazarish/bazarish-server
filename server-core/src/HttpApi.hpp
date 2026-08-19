@@ -193,6 +193,11 @@ private:
     };
 
     void setupRoutes();
+    // Verifies a request under either scheme - a session MAC or the hybrid
+    // signature - and fills the caller's fingerprint. Returns the refusal to send
+    // back, or nothing when the caller is who they say they are.
+    std::optional<bazarish::http::Response> authenticateRequest(
+        const bazarish::http::Request& request, std::string* outUser);
     void deliveryWorkerLoop();
     void runDeliveryJob(const DeliveryJob& job);
     void setAttempt(const std::string& attemptId, const Attempt& attempt);

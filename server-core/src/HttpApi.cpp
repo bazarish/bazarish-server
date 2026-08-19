@@ -371,6 +371,42 @@ void HttpApi::runDeliveryJob(const DeliveryJob& job)
     setAttempt(job.attemptId, unconfirmed);
 }
 
+std::optional<bazarish::http::Response> HttpApi::authenticateRequest(
+    const bazarish::http::Request& request, std::string* const outUser)
+{
+    const auth::Headers authHeaders = collectAuthHeaders(request);
+    if (auth::hasSessionHeaders(authHeaders)) {
+        // A session MAC. Every refusal here is typed eSessionInvalid, so a client
+        // can tell "open a new session" from "your identity is wrong" and never
+        // retries the second in a loop. The handle differs per request: what
+        // arrives identifies the session only to the server holding its secret.
+        const std::string handle = authHeaders.at(auth::kHeaderSession);
+        const std::optional<SessionStore::Session> session
+            = sessions_.findByHandle(handle, nowSeconds());
+        if (!session.has_value()) {
+            return errorResponse(401, ErrorCode::eSessionInvalid, "unknown or expired session");
+        }
+        try {
+            const std::uint64_t seq = auth::verifyMac(authHeaders, session->key, nowSeconds(),
+                request.method, request.path, bodyBytes(request));
+            if (!sessions_.acceptSeq(handle, seq, nowSeconds())) {
+                return errorResponse(401, ErrorCode::eSessionInvalid, "sequence replayed");
+            }
+        } catch (const std::exception& error) {
+            return errorResponse(401, ErrorCode::eSessionInvalid, error.what());
+        }
+        *outUser = session->user;
+        return std::nullopt;
+    }
+    try {
+        *outUser = auth::verifyRequest(authHeaders, nowSeconds(), request.method, request.path,
+            bodyBytes(request), replayCache_);
+    } catch (const std::exception& error) {
+        return errorResponse(401, ErrorCode::eDeliveryRejected, error.what());
+    }
+    return std::nullopt;
+}
+
 void HttpApi::setupRoutes()
 {
     // Authorizes an operator-internal request by hybrid signature: the caller
@@ -409,36 +445,10 @@ void HttpApi::setupRoutes()
     const auto authenticated = [this](auto handler) {
         return [this, handler](const bazarish::http::Request& request) -> bazarish::http::Response {
             std::string user;
-            const auth::Headers authHeaders = collectAuthHeaders(request);
-            if (auth::hasSessionHeaders(authHeaders)) {
-                // A session MAC. Every refusal here is typed eSessionInvalid, so a
-                // client can tell "open a new session" from "your identity is
-                // wrong" and never retries the second in a loop.
-                // A different handle each request: what arrives identifies the
-                // session only to the server that holds its secret.
-                const std::string handle = authHeaders.at(auth::kHeaderSession);
-                const std::optional<SessionStore::Session> session
-                    = sessions_.findByHandle(handle, nowSeconds());
-                if (!session.has_value()) {
-                    return errorResponse(401, ErrorCode::eSessionInvalid, "unknown or expired session");
-                }
-                try {
-                    const std::uint64_t seq = auth::verifyMac(authHeaders, session->key,
-                        nowSeconds(), request.method, request.path, bodyBytes(request));
-                    if (!sessions_.acceptSeq(handle, seq, nowSeconds())) {
-                        return errorResponse(401, ErrorCode::eSessionInvalid, "sequence replayed");
-                    }
-                } catch (const std::exception& error) {
-                    return errorResponse(401, ErrorCode::eSessionInvalid, error.what());
-                }
-                user = session->user;
-            } else {
-                try {
-                    user = auth::verifyRequest(collectAuthHeaders(request), nowSeconds(),
-                        request.method, request.path, bodyBytes(request), replayCache_);
-                } catch (const std::exception& error) {
-                    return errorResponse(401, ErrorCode::eDeliveryRejected, error.what());
-                }
+            if (const std::optional<bazarish::http::Response> refused
+                = authenticateRequest(request, &user);
+                refused.has_value()) {
+                return *refused;
             }
             try {
                 return handler(request, user);
@@ -449,6 +459,8 @@ void HttpApi::setupRoutes()
             }
         };
     };
+
+    // Left unused below; kept as the single place both schemes are decided.
 
     Storage& store = storage_;
 
@@ -478,14 +490,13 @@ void HttpApi::setupRoutes()
             [this, &store, requireClient, clientUnregistered, gate, maxWait](
                 const bazarish::http::Request& request,
                 bazarish::http::Responder respond) -> std::optional<bazarish::http::Response> {
+                // The same two schemes every other route accepts; this one is
+                // registered outside the wrapper because it may answer later.
                 std::string user;
-                try {
-                    // Signed over the path, like every other route: the wait is a
-                    // query parameter and carries nothing worth binding.
-                    user = auth::verifyRequest(collectAuthHeaders(request), nowSeconds(),
-                        request.method, request.path, bodyBytes(request), replayCache_);
-                } catch (const std::exception& error) {
-                    return errorResponse(401, ErrorCode::eDeliveryRejected, error.what());
+                const std::optional<bazarish::http::Response> refused
+                    = authenticateRequest(request, &user);
+                if (refused.has_value()) {
+                    return *refused;
                 }
                 // Same client identity as every other route: the header, not a
                 // query parameter the caller has to remember to add.

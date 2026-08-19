@@ -119,6 +119,9 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
     // Record the admitted messageId so a later replay (after this blob is acked
     // and swept) is recognised by the hasSeen check above and refused.
     storage_.markSeen(mailbox, messageId, now);
+    if (options_.onDelivered) {
+        options_.onDelivered(mailbox);  // wake whoever is holding a request open
+    }
     return delivered();
 }
 

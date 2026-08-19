@@ -29,6 +29,8 @@ add_library(bazarish_server_lib STATIC
     src/I2pFederation.cpp
     src/PerUserDestinations.cpp
     src/WarmDestPool.cpp
+    src/EventGate.cpp
+    src/EventServer.cpp
     src/HttpApi.cpp
 )
 target_include_directories(bazarish_server_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -49,6 +51,7 @@ function(bazarish_server_add_test name)
 endfunction()
 
 bazarish_server_add_test(TestDiskStorage)
+bazarish_server_add_test(TestEventGate)
 bazarish_server_add_test(TestHttpApi)
 bazarish_server_add_test(TestFederation)
 bazarish_server_add_test(TestFederationRateLimiter)

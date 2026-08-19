@@ -6,6 +6,7 @@
 #include <bazarish/Crypto.hpp>
 
 #include <cstdint>
+#include <functional>
 #include <string>
 
 namespace bazarish::server {
@@ -18,6 +19,11 @@ struct DeliveryEngineOptions {
     // batch, ~8 KB sealed with the hybrid PQ keys. Sized to fit that with headroom;
     // tokenless deliveries remain rate-limited and quota-bound.
     std::uint64_t contactRequestLimitBytes = 16 * 1024;
+    // Called with the recipient's fingerprint the moment a delivery lands, so a
+    // client holding a long-poll open is answered instead of waiting out its
+    // timeout. Empty when nobody is listening (tests, or a node without the
+    // event face).
+    std::function<void(const std::string& user)> onDelivered;
 };
 
 // The delivery pipeline for one server: unseal the envelope, deduplicate by

@@ -31,6 +31,7 @@ add_library(bazarish_server_lib STATIC
     src/WarmDestPool.cpp
     src/EventGate.cpp
     src/HttpApi.cpp
+    src/SessionStore.cpp
 )
 target_include_directories(bazarish_server_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(bazarish_server_lib PUBLIC Bazarish::Common Threads::Threads)

@@ -3,6 +3,8 @@
 
 #include "EventGate.hpp"
 
+#include <bazarish/Cms.hpp>
+
 #include <bazarish/Log.hpp>
 #include <bazarish/Auth.hpp>
 #include <bazarish/Crypto.hpp>
@@ -403,11 +405,34 @@ void HttpApi::setupRoutes()
     const auto authenticated = [this](auto handler) {
         return [this, handler](const bazarish::http::Request& request) -> bazarish::http::Response {
             std::string user;
-            try {
-                user = auth::verifyRequest(collectAuthHeaders(request), nowSeconds(),
-                    request.method, request.path, bodyBytes(request), replayCache_);
-            } catch (const std::exception& error) {
-                return errorResponse(401, ErrorCode::eDeliveryRejected, error.what());
+            const auth::Headers authHeaders = collectAuthHeaders(request);
+            if (auth::hasSessionHeaders(authHeaders)) {
+                // A session MAC. Every refusal here is typed eSessionInvalid, so a
+                // client can tell "open a new session" from "your identity is
+                // wrong" and never retries the second in a loop.
+                const std::string id = authHeaders.at(auth::kHeaderSession);
+                const std::optional<SessionStore::Session> session
+                    = sessions_.find(id, nowSeconds());
+                if (!session.has_value()) {
+                    return errorResponse(401, ErrorCode::eSessionInvalid, "unknown or expired session");
+                }
+                try {
+                    const std::uint64_t seq = auth::verifyMac(authHeaders, session->key,
+                        nowSeconds(), request.method, request.path, bodyBytes(request));
+                    if (!sessions_.acceptSeq(id, seq, nowSeconds())) {
+                        return errorResponse(401, ErrorCode::eSessionInvalid, "sequence replayed");
+                    }
+                } catch (const std::exception& error) {
+                    return errorResponse(401, ErrorCode::eSessionInvalid, error.what());
+                }
+                user = session->user;
+            } else {
+                try {
+                    user = auth::verifyRequest(collectAuthHeaders(request), nowSeconds(),
+                        request.method, request.path, bodyBytes(request), replayCache_);
+                } catch (const std::exception& error) {
+                    return errorResponse(401, ErrorCode::eDeliveryRejected, error.what());
+                }
             }
             try {
                 return handler(request, user);
@@ -499,6 +524,38 @@ void HttpApi::setupRoutes()
                 return std::nullopt;  // answered from the gate
             });
     }
+
+    // A client opens a session with one hybrid signature and authenticates every
+    // later request with a MAC: ~150 bytes instead of ~8.3 KB, an HMAC instead of
+    // an ML-DSA verification, and nothing the server could show a third party as
+    // proof this user made this request.
+    //
+    // The secret is sealed to the serving sealing key of the caller's own
+    // destination - this server holds its private half, so no key has to be
+    // distributed for this, and the facade in between sees a sealed blob.
+    http_->post("/v1/auth/session",
+        authenticated([this](const bazarish::http::Request& request,
+                          const std::string& user) -> bazarish::http::Response {
+            if (!options_.assignDestination) {
+                return errorResponse(
+                    503, ErrorCode::eDeliveryRejected, "sessions are not available here");
+            }
+            const DestinationAssignment assigned = options_.assignDestination(user);
+            if (!assigned.servingKey) {
+                // Nothing to seal to yet: the account has no destination, so it
+                // keeps signing every request until it publishes one.
+                return errorResponse(409, ErrorCode::eDeliveryRejected,
+                    "no serving key yet: publish your destination first");
+            }
+            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const Bytes secret
+                = cms::unseal(fromBase64(body.at("sealed").get<std::string>()), *assigned.servingKey);
+            std::int64_t expiresUnix = 0;
+            const std::string id = sessions_.open(user, secret, nowSeconds(), &expiresUnix);
+            // The client is told when it lapses so it can renew before it does,
+            // rather than learning from a refusal mid-request.
+            return jsonResponse({{"session", id}, {"expiresUnix", expiresUnix}});
+        }));
 
     // --- Client registry ---
 

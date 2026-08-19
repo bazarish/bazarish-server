@@ -8,6 +8,8 @@
 #include <bazarish/Bytes.hpp>
 #include <bazarish/HttpServer.hpp>
 
+#include "SessionStore.hpp"
+
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -209,6 +211,9 @@ private:
 
     std::unique_ptr<bazarish::http::Server> http_;
     EventGate* eventGate_ = nullptr;
+    // Sessions clients authenticate with once they have opened one; the hybrid
+    // signature stays the way in, and the way back when a session lapses.
+    SessionStore sessions_;
     std::int64_t startedAt_ = 0;
 
     std::mutex attemptsMutex_;

@@ -449,8 +449,10 @@ void HttpApi::setupRoutes()
                 bazarish::http::Responder respond) -> std::optional<bazarish::http::Response> {
                 std::string user;
                 try {
+                    // Signed over the path, like every other route: the wait is a
+                    // query parameter and carries nothing worth binding.
                     user = auth::verifyRequest(collectAuthHeaders(request), nowSeconds(),
-                        request.method, request.target, bodyBytes(request), replayCache_);
+                        request.method, request.path, bodyBytes(request), replayCache_);
                 } catch (const std::exception& error) {
                     return errorResponse(401, ErrorCode::eDeliveryRejected, error.what());
                 }

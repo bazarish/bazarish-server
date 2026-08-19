@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #include "SubscriptionStore.hpp"
 
+#include <bazarish/Log.hpp>
+
 #include <bazarish/Address.hpp>
 
 #include <nlohmann/json.hpp>
@@ -91,6 +93,38 @@ std::optional<SubscriptionStore::Subscription> SubscriptionStore::getSubscriptio
     subscription.quotaBytes = body.at("quotaBytes").get<std::uint64_t>();
     subscription.certificate = fromBase64(body.at("cert").get<std::string>());
     return subscription;
+}
+
+std::vector<SubscriptionStore::Subscription> SubscriptionStore::allSubscriptions() const
+{
+    std::vector<Subscription> out;
+    const std::lock_guard<std::mutex> lock(mutex_);
+    std::error_code ec;
+    std::filesystem::directory_iterator entries(root_ / "subscriptions", ec);
+    if (ec) {
+        return out;  // none stored yet: not an error
+    }
+    for (const auto& entry : entries) {
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+        try {
+            std::ifstream in(entry.path(), std::ios::binary);
+            const std::string text(
+                (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            const nlohmann::json record = nlohmann::json::parse(text);
+            Subscription subscription;
+            subscription.user = record.at("user").get<std::string>();
+            subscription.issuedAt = record.at("issuedAt").get<std::int64_t>();
+            subscription.notAfter = record.at("notAfter").get<std::int64_t>();
+            subscription.quotaBytes = record.at("quotaBytes").get<std::uint64_t>();
+            out.push_back(std::move(subscription));
+        } catch (const std::exception& error) {
+            bazarish::log::warn("subscription record {} unreadable: {}",
+                entry.path().filename().string(), error.what());
+        }
+    }
+    return out;
 }
 
 void SubscriptionStore::deleteSubscription(const std::string& user)

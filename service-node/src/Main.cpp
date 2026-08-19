@@ -298,6 +298,18 @@ int main(const int argc, const char** argv)
                 bazarish::log::redact(user));
         }
     };
+    // Quotas the messaging server may have missed: an account that subscribed
+    // before this node started pushing them would be served the messaging
+    // server's own default until its next renewal, and the user would see a
+    // figure nobody promised. Pushing them at start costs one request each.
+    for (const bazarish::service::SubscriptionStore::Subscription& subscription :
+        store.allSubscriptions()) {
+        if (!operatorPush.publishQuota(subscription.user, subscription.quotaBytes)) {
+            bazarish::log::warn("quota for {} not reconciled at start",
+                bazarish::log::redact(subscription.user));
+        }
+    }
+
     bazarish::service::AccountApi api(store, grants, options);
 
     // The browser-facing portal (sign-in-with-key, captcha registration, ...),

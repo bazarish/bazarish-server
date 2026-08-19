@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <mutex>
 #include <optional>
+#include <vector>
 #include <string>
 
 namespace bazarish::service {
@@ -32,13 +33,16 @@ public:
 
     void putSubscription(const Subscription& subscription);
     std::optional<Subscription> getSubscription(const std::string& user);
+    // Every subscription on file, for the reconciliation this node owes the
+    // messaging server at start (quotas it may have missed).
+    std::vector<Subscription> allSubscriptions() const;
     void deleteSubscription(const std::string& user);
 
 private:
     std::filesystem::path subscriptionPath(const std::string& user) const;
 
     std::filesystem::path root_;
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
 };
 
 }  // namespace bazarish::service

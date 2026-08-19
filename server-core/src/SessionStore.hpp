@@ -17,32 +17,42 @@ namespace bazarish::server {
 class SessionStore {
 public:
     struct Session {
+        std::string id;
         std::string user;
         Bytes key;
+        Bytes secret;  // the handles are derived from it
         std::int64_t expiresUnix = 0;
         std::uint64_t lastSeq = 0;
     };
 
     // Issues a session for `user` from the secret the client sealed to us,
-    // expiring at a random point inside the configured window. Returns the id.
+    // expiring at a random point inside the configured window. Returns the id,
+    // which stays here: what travels is a different handle per request.
     std::string open(const std::string& user, const Bytes& secret, std::int64_t now,
         std::int64_t* outExpiresUnix);
 
-    // The session, if it exists and has not expired. Expired ones are dropped as
-    // they are looked up, so an idle server does not keep them forever.
-    std::optional<Session> find(const std::string& id, std::int64_t now);
+    // The session a request handle belongs to, if any is still live. Expired
+    // sessions are dropped as they are looked up.
+    std::optional<Session> findByHandle(const std::string& handle, std::int64_t now);
 
     // Records that this session used `seq`, rejecting anything not strictly
-    // higher than what it used before - that is the replay check, and it costs
-    // one integer per session rather than a hash per request.
-    bool acceptSeq(const std::string& id, std::uint64_t seq, std::int64_t now);
+    // higher than it used before - the replay check, one integer per session
+    // rather than a hash per request - and re-indexes the handles it will accept
+    // next.
+    bool acceptSeq(const std::string& handle, std::uint64_t seq, std::int64_t now);
 
     void drop(const std::string& id);
     std::size_t size() const;
 
 private:
+    // Handles a session will accept next, so requests that overtake each other
+    // still land: a client keeps two connections and they do not take turns.
+    void indexHandlesLocked(const Session& session);
+    void forgetHandlesLocked(const Session& session);
+
     mutable std::mutex mutex_;
-    std::map<std::string, Session> sessions_;
+    std::map<std::string, Session> sessions_;      // id -> session
+    std::map<std::string, std::string> handles_;   // handle -> id
     std::int64_t lastSweep_ = 0;
 };
 

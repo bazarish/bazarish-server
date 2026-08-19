@@ -414,16 +414,18 @@ void HttpApi::setupRoutes()
                 // A session MAC. Every refusal here is typed eSessionInvalid, so a
                 // client can tell "open a new session" from "your identity is
                 // wrong" and never retries the second in a loop.
-                const std::string id = authHeaders.at(auth::kHeaderSession);
+                // A different handle each request: what arrives identifies the
+                // session only to the server that holds its secret.
+                const std::string handle = authHeaders.at(auth::kHeaderSession);
                 const std::optional<SessionStore::Session> session
-                    = sessions_.find(id, nowSeconds());
+                    = sessions_.findByHandle(handle, nowSeconds());
                 if (!session.has_value()) {
                     return errorResponse(401, ErrorCode::eSessionInvalid, "unknown or expired session");
                 }
                 try {
                     const std::uint64_t seq = auth::verifyMac(authHeaders, session->key,
                         nowSeconds(), request.method, request.path, bodyBytes(request));
-                    if (!sessions_.acceptSeq(id, seq, nowSeconds())) {
+                    if (!sessions_.acceptSeq(handle, seq, nowSeconds())) {
                         return errorResponse(401, ErrorCode::eSessionInvalid, "sequence replayed");
                     }
                 } catch (const std::exception& error) {
@@ -552,13 +554,22 @@ void HttpApi::setupRoutes()
                     "no serving key yet: publish your destination first");
             }
             const nlohmann::json body = nlohmann::json::parse(request.body);
-            const Bytes secret
+            const Bytes opened
                 = cms::unseal(fromBase64(body.at("sealed").get<std::string>()), *assigned.servingKey);
+            const nlohmann::json inner = nlohmann::json::parse(opened.begin(), opened.end());
+            const Bytes secret = fromBase64(inner.at("secret").get<std::string>());
+            const Key replyKey
+                = Key::fromPublicDer(fromBase64(inner.at("replyKey").get<std::string>()));
             std::int64_t expiresUnix = 0;
-            const std::string id = sessions_.open(user, secret, nowSeconds(), &expiresUnix);
-            // The client is told when it lapses so it can renew before it does,
-            // rather than learning from a refusal mid-request.
-            return jsonResponse({{"session", id}, {"expiresUnix", expiresUnix}});
+            sessions_.open(user, secret, nowSeconds(), &expiresUnix);
+            // Sealed to the one-time key that came inside the request, so the
+            // facade carries an opaque blob in this direction too. The client is
+            // told when the session lapses, so it renews ahead of time rather
+            // than learning it from a refused request.
+            const nlohmann::json answer = {{"expiresUnix", expiresUnix}};
+            const std::string answerText = answer.dump();
+            return jsonResponse({{"sealed",
+                toBase64(cms::seal(Bytes(answerText.begin(), answerText.end()), replyKey))}});
         }));
 
     // --- Client registry ---

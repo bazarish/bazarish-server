@@ -9,6 +9,10 @@ namespace bazarish::server {
 namespace {
 constexpr std::int64_t kSweepIntervalSeconds = 300;
 constexpr std::size_t kSessionIdBytes = 16;
+// How far ahead handles are accepted. A client runs two connections at once, so
+// requests arrive out of order; this is the width of that reordering, not a
+// replay window (the sequence check below is what stops replays).
+constexpr std::uint64_t kHandleWindow = 64;
 }  // namespace
 
 std::string SessionStore::open(const std::string& user, const Bytes& secret, const std::int64_t now,
@@ -24,12 +28,15 @@ std::string SessionStore::open(const std::string& user, const Bytes& secret, con
         = span > 0 ? static_cast<std::int64_t>(randomBytes(2)[0] << 8 | randomBytes(1)[0]) % span
                    : 0;
     Session session;
+    session.id = id;
     session.user = user;
     session.key = auth::deriveSessionKey(secret, id);
+    session.secret = secret;
     session.expiresUnix = now + auth::kSessionMinLifetimeSeconds + jitter;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
         sessions_[id] = session;
+        indexHandlesLocked(session);
     }
     if (outExpiresUnix != nullptr) {
         *outExpiresUnix = session.expiresUnix;
@@ -37,44 +44,84 @@ std::string SessionStore::open(const std::string& user, const Bytes& secret, con
     return id;
 }
 
-std::optional<SessionStore::Session> SessionStore::find(
-    const std::string& id, const std::int64_t now)
+void SessionStore::indexHandlesLocked(const Session& session)
+{
+    for (std::uint64_t seq = session.lastSeq + 1; seq <= session.lastSeq + kHandleWindow; ++seq) {
+        handles_[auth::sessionHandle(session.secret, seq)] = session.id;
+    }
+}
+
+void SessionStore::forgetHandlesLocked(const Session& session)
+{
+    for (std::uint64_t seq = session.lastSeq + 1; seq <= session.lastSeq + kHandleWindow; ++seq) {
+        handles_.erase(auth::sessionHandle(session.secret, seq));
+    }
+}
+
+std::optional<SessionStore::Session> SessionStore::findByHandle(
+    const std::string& handle, const std::int64_t now)
 {
     const std::lock_guard<std::mutex> lock(mutex_);
     if (now - lastSweep_ > kSweepIntervalSeconds) {
         lastSweep_ = now;
-        std::erase_if(sessions_,
-            [now](const auto& entry) { return entry.second.expiresUnix <= now; });
+        for (auto it = sessions_.begin(); it != sessions_.end();) {
+            if (it->second.expiresUnix <= now) {
+                forgetHandlesLocked(it->second);
+                it = sessions_.erase(it);
+            } else {
+                ++it;
+            }
+        }
     }
-    const auto found = sessions_.find(id);
+    const auto handle_ = handles_.find(handle);
+    if (handle_ == handles_.end()) {
+        return std::nullopt;
+    }
+    const auto found = sessions_.find(handle_->second);
     if (found == sessions_.end()) {
+        handles_.erase(handle_);
         return std::nullopt;
     }
     if (found->second.expiresUnix <= now) {
+        forgetHandlesLocked(found->second);
         sessions_.erase(found);
         return std::nullopt;
     }
     return found->second;
 }
 
-bool SessionStore::acceptSeq(const std::string& id, const std::uint64_t seq, const std::int64_t now)
+bool SessionStore::acceptSeq(
+    const std::string& handle, const std::uint64_t seq, const std::int64_t now)
 {
     const std::lock_guard<std::mutex> lock(mutex_);
-    const auto found = sessions_.find(id);
+    const auto handle_ = handles_.find(handle);
+    if (handle_ == handles_.end()) {
+        return false;
+    }
+    const auto found = sessions_.find(handle_->second);
     if (found == sessions_.end() || found->second.expiresUnix <= now) {
         return false;
     }
     if (seq <= found->second.lastSeq) {
-        return false;  // replayed or reordered: neither is acceptable
+        return false;  // replayed: this sequence has already been spent
     }
+    // Retire the handles up to here and index the next window, so the set the
+    // server accepts moves with the client.
+    forgetHandlesLocked(found->second);
     found->second.lastSeq = seq;
+    indexHandlesLocked(found->second);
     return true;
 }
 
 void SessionStore::drop(const std::string& id)
 {
     const std::lock_guard<std::mutex> lock(mutex_);
-    sessions_.erase(id);
+    const auto found = sessions_.find(id);
+    if (found == sessions_.end()) {
+        return;
+    }
+    forgetHandlesLocked(found->second);
+    sessions_.erase(found);
 }
 
 std::size_t SessionStore::size() const

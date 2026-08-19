@@ -79,6 +79,11 @@ Backend routeOf(const std::string& path)
     if (startsWith(path, "/v1/messaging/")) {
         return Backend::eMessaging;
     }
+    // Session issue lives with the messaging server, because the key a session
+    // secret is sealed to is the one that server holds.
+    if (startsWith(path, "/v1/auth/")) {
+        return Backend::eMessaging;
+    }
     if (startsWith(path, "/v1/account/")) {
         return Backend::eAccount;
     }

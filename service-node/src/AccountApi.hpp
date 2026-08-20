@@ -7,13 +7,15 @@
 #include <bazarish/Auth.hpp>
 #include <bazarish/Bytes.hpp>
 
+#include <condition_variable>
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
-namespace httplib {
+namespace bazarish::http {
 class Server;
 }
 
@@ -81,13 +83,20 @@ public:
     void stop();
 
 private:
+    // Binds on a chosen port (0 lets the kernel pick) and starts serving.
+    int bindToAnyPort(const std::string& host, int port);
     void setupRoutes();
 
     SubscriptionStore& store_;
     GrantStore& grants_;
     const AccountApiOptions options_;
-    std::unique_ptr<httplib::Server> http_;
+    std::unique_ptr<bazarish::http::Server> http_;
     std::int64_t startedAt_ = 0;
+
+    // listenAfterBind() parks the caller's thread here until stop() releases it.
+    std::mutex stopMutex_;
+    std::condition_variable stopCv_;
+    bool stopping_ = false;
 
     auth::ReplayCache replayCache_;
 };

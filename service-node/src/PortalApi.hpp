@@ -7,11 +7,13 @@
 #include <bazarish/LoginChallenge.hpp>
 #include <bazarish/PortalSession.hpp>
 
+#include <condition_variable>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 
-namespace httplib {
+namespace bazarish::http {
 class Server;
 }
 
@@ -60,6 +62,8 @@ public:
     void stop();
 
 private:
+    // Binds on a chosen port (0 lets the kernel pick) and starts serving.
+    int bindToAnyPort(const std::string& host, int port);
     void setupRoutes();
     // Registers the browser-facing HTML routes on the same server.
     void setupWebRoutes();
@@ -69,7 +73,12 @@ private:
     GrantStore& grants_;
     LoginChallenge login_;
     PortalSession session_;
-    std::unique_ptr<httplib::Server> http_;
+    std::unique_ptr<bazarish::http::Server> http_;
+
+    // listenAfterBind() parks the caller's thread here until stop() releases it.
+    std::mutex stopMutex_;
+    std::condition_variable stopCv_;
+    bool stopping_ = false;
 };
 
 }  // namespace bazarish::service

@@ -1,13 +1,13 @@
 // Bazarish project (c) 2026
 #include "AccountApi.hpp"
 
-
 #include <bazarish/Auth.hpp>
 #include <bazarish/Certificates.hpp>
 #include <bazarish/Errors.hpp>
 #include <bazarish/Health.hpp>
+#include <bazarish/HttpServer.hpp>
+#include <bazarish/Log.hpp>
 
-#include <httplib/httplib.h>
 #include <nlohmann/json.hpp>
 
 #include <ctime>
@@ -19,37 +19,52 @@ namespace {
 using bazarish::Bytes;
 using bazarish::ErrorCode;
 
+namespace http = bazarish::http;
+
 std::int64_t nowSeconds()
 {
     return static_cast<std::int64_t>(std::time(nullptr));
 }
 
-Bytes bodyBytes(const httplib::Request& request)
+// The routes are written as "fill in the response"; the engine hands one back.
+using Filler = std::function<void(const http::Request&, http::Response&)>;
+
+http::Handler filled(Filler handler)
+{
+    return [handler = std::move(handler)](const http::Request& request) {
+        http::Response response;
+        handler(request, response);
+        return response;
+    };
+}
+
+Bytes bodyBytes(const http::Request& request)
 {
     return Bytes(request.body.begin(), request.body.end());
 }
 
-void respondError(httplib::Response& response, const int status, const ErrorCode code,
+void respondError(http::Response& response, const int status, const ErrorCode code,
     const std::string& message)
 {
     response.status = status;
-    response.set_content(
-        bazarish::makeErrorEnvelope(code, message).dump(), "application/json");
+    response.contentType = "application/json";
+    response.body = bazarish::makeErrorEnvelope(code, message).dump();
 }
 
-void respondJson(httplib::Response& response, const nlohmann::json& body)
+void respondJson(http::Response& response, const nlohmann::json& body)
 {
-    response.set_content(body.dump(), "application/json");
+    response.contentType = "application/json";
+    response.body = body.dump();
 }
 
-bazarish::auth::Headers collectAuthHeaders(const httplib::Request& request)
+bazarish::auth::Headers collectAuthHeaders(const http::Request& request)
 {
     bazarish::auth::Headers headers;
     for (const char* const name : {bazarish::auth::kHeaderKeys,
              bazarish::auth::kHeaderTimestamp, bazarish::auth::kHeaderSignatureClassical,
              bazarish::auth::kHeaderSignaturePq}) {
-        if (request.has_header(name)) {
-            headers[name] = request.get_header_value(name);
+        if (request.hasHeader(name)) {
+            headers[name] = request.header(name);
         }
     }
     return headers;
@@ -64,32 +79,59 @@ AccountApi::AccountApi(
     : store_(store)
     , grants_(grants)
     , options_(options)
-    , http_(std::make_unique<httplib::Server>())
     , startedAt_(nowSeconds())
 {
-    setupRoutes();
 }
 
 AccountApi::~AccountApi() = default;
 
 bool AccountApi::listen(const std::string& host, const int port)
 {
-    return http_->listen(host, port);
+    if (bindToAnyPort(host, port) <= 0) {
+        return false;
+    }
+    return listenAfterBind();
 }
 
 int AccountApi::bindToAnyPort(const std::string& host)
 {
-    return http_->bind_to_any_port(host);
+    return bindToAnyPort(host, 0);  // 0: the kernel picks the port
+}
+
+int AccountApi::bindToAnyPort(const std::string& host, const int port)
+{
+    http::Server::Options options;
+    options.host = host;
+    options.port = port;
+    http_ = std::make_unique<http::Server>(options);
+    setupRoutes();
+    try {
+        return http_->start();
+    } catch (const std::exception& error) {
+        bazarish::log::error("cannot listen on {}:{}: {}", host, port, error.what());
+        return 0;
+    }
 }
 
 bool AccountApi::listenAfterBind()
 {
-    return http_->listen_after_bind();
+    // The engine serves on its own threads; this call is what keeps the caller's
+    // thread (a main()) parked until stop().
+    std::unique_lock<std::mutex> lock(stopMutex_);
+    stopCv_.wait(lock, [this]() { return stopping_; });
+    return true;
 }
 
 void AccountApi::stop()
 {
-    http_->stop();
+    if (http_) {
+        http_->stop();
+    }
+    {
+        const std::lock_guard<std::mutex> lock(stopMutex_);
+        stopping_ = true;
+    }
+    stopCv_.notify_all();
 }
 
 void AccountApi::setupRoutes()
@@ -97,7 +139,7 @@ void AccountApi::setupRoutes()
     // Authenticated liveness for the admin panel: service name, version, uptime
     // and resident memory. Operator-only (signed), so it leaks nothing to an
     // unauthenticated caller.
-    http_->Get("/healthz", [this](const httplib::Request& request, httplib::Response& response) {
+    http_->get("/healthz", filled([this](const http::Request& request, http::Response& response) {
         try {
             auth::authorizeRequest(collectAuthHeaders(request), nowSeconds(), request.method,
                 request.path, Bytes(request.body.begin(), request.body.end()),
@@ -106,13 +148,13 @@ void AccountApi::setupRoutes()
             respondError(response, 403, ErrorCode::eDeliveryRejected, error.what());
             return;
         }
-        response.set_content(
-            health::reportJson("service-node", options_.version, startedAt_, nowSeconds()),
-            "application/json");
-    });
+        response.contentType = "application/json";
+        response.body
+            = health::reportJson("service-node", options_.version, startedAt_, nowSeconds());
+    }));
 
     const auto authenticated = [this](auto handler) {
-        return [this, handler](const httplib::Request& request, httplib::Response& response) {
+        return [this, handler](const http::Request& request, http::Response& response) {
             std::string user;
             try {
                 user = auth::verifyRequest(collectAuthHeaders(request), nowSeconds(),
@@ -134,7 +176,7 @@ void AccountApi::setupRoutes()
     // Operator-only moderation surface for the admin panel, signed with the
     // panel identity exactly like /healthz.
     const auto operatorOnly = [this](auto handler) {
-        return [this, handler](const httplib::Request& request, httplib::Response& response) {
+        return [this, handler](const http::Request& request, http::Response& response) {
             try {
                 auth::authorizeRequest(collectAuthHeaders(request), nowSeconds(), request.method,
                     request.path, bodyBytes(request), options_.operatorFingerprints);
@@ -152,8 +194,8 @@ void AccountApi::setupRoutes()
         };
     };
 
-    http_->Get("/v1/account/pending",
-        operatorOnly([this](const httplib::Request&, httplib::Response& response) {
+    http_->get("/v1/account/pending",
+        filled(operatorOnly([this](const http::Request&, http::Response& response) {
             nlohmann::json users = nlohmann::json::array();
             for (const std::string& user : grants_.pendingUsers()) {
                 const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
@@ -161,10 +203,10 @@ void AccountApi::setupRoutes()
                     {"requestedAt", approval.has_value() ? approval->requestedAt : 0}});
             }
             respondJson(response, {{"pending", users}});
-        }));
+        })));
 
-    http_->Post("/v1/account/approve",
-        operatorOnly([this](const httplib::Request& request, httplib::Response& response) {
+    http_->post("/v1/account/approve",
+        filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = nlohmann::json::parse(request.body);
             const std::string user = body.at("user").get<std::string>();
             if (!grants_.peekApproval(user).has_value()) {
@@ -173,12 +215,12 @@ void AccountApi::setupRoutes()
             }
             grants_.approve(user, nowSeconds());
             respondJson(response, {{"ok", true}});
-        }));
+        })));
 
     // Validates and stores a subscription certificate. Shared by subscribe
     // and renew - renewal is simply a fresh certificate.
     const auto handleSubscribe
-        = [this](const httplib::Request& request, httplib::Response& response,
+        = [this](const http::Request& request, http::Response& response,
               const std::string& user) {
               const nlohmann::json body = nlohmann::json::parse(request.body);
               const Bytes der = fromBase64(body.at("cert").get<std::string>());
@@ -274,15 +316,16 @@ void AccountApi::setupRoutes()
                       {"maxTermSeconds", options_.maxTermSeconds},
                       {"serverCard", toBase64(options_.serverCardDer)},
                       {"approval", pending ? "pending" : "approved"},
-                      {"registrationMessage", pending ? options_.registrationMessage : std::string()},
+                      {"registrationMessage",
+                          pending ? options_.registrationMessage : std::string()},
                   });
           };
 
-    http_->Post("/v1/account/subscribe", authenticated(handleSubscribe));
-    http_->Post("/v1/account/renew", authenticated(handleSubscribe));
+    http_->post("/v1/account/subscribe", filled(authenticated(handleSubscribe)));
+    http_->post("/v1/account/renew", filled(authenticated(handleSubscribe)));
 
-    http_->Get("/v1/account/subscription",
-        authenticated([this](const httplib::Request&, httplib::Response& response,
+    http_->get("/v1/account/subscription",
+        filled(authenticated([this](const http::Request&, http::Response& response,
                           const std::string& user) {
             const std::optional<SubscriptionStore::Subscription> record
                 = store_.getSubscription(user);
@@ -293,14 +336,14 @@ void AccountApi::setupRoutes()
             }
             respondJson(response,
                 {{"notAfter", record->notAfter}, {"quotaBytes", record->quotaBytes}});
-        }));
+        })));
 
     // Unsubscribing tears the account down, it does not merely stop renewing:
     // the destination is revoked and the grants (including the approval) are
     // dropped, so nothing about the account outlives it. Coming back means
     // registering again.
-    http_->Delete("/v1/account/subscription",
-        authenticated([this](const httplib::Request&, httplib::Response& response,
+    http_->del("/v1/account/subscription",
+        filled(authenticated([this](const http::Request&, http::Response& response,
                           const std::string& user) {
             store_.deleteSubscription(user);
             if (options_.publishI2pTransient) {
@@ -308,7 +351,7 @@ void AccountApi::setupRoutes()
             }
             grants_.erase(user);
             respondJson(response, {{"ok", true}});
-        }));
+        })));
 
     // Receives the user's client-owned offline I2P transient and hands it to the
     // messaging server, which operates the user's own destination. Every account
@@ -317,8 +360,8 @@ void AccountApi::setupRoutes()
     // means: the account exists and the transient is accepted nowhere. An empty
     // transient revokes the destination. The transient's validity is recorded so
     // the status endpoint can tell the client's other devices when to re-issue.
-    http_->Post("/v1/account/i2p-dest",
-        authenticated([this](const httplib::Request& request, httplib::Response& response,
+    http_->post("/v1/account/i2p-dest",
+        filled(authenticated([this](const http::Request& request, http::Response& response,
                           const std::string& user) {
             if (!options_.publishI2pTransient) {
                 respondError(response, 503, ErrorCode::eDeliveryRejected,
@@ -353,14 +396,14 @@ void AccountApi::setupRoutes()
             }
             grants_.setI2pTransient(user, expiresUnix, now);
             respondJson(response, {{"ok", true}});
-        }));
+        })));
 
     // What the client's devices need to keep the user's destination alive: the
     // approval state (a frozen account has no destination) and the validity of
     // the transient currently delegated, so any device knows when to issue the
     // next one without holding it.
-    http_->Get("/v1/account/i2p-status",
-        authenticated([this](const httplib::Request&, httplib::Response& response,
+    http_->get("/v1/account/i2p-status",
+        filled(authenticated([this](const http::Request&, http::Response& response,
                           const std::string& user) {
             const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
             const std::optional<GrantStore::Transient> transient = grants_.peekTransient(user);
@@ -375,7 +418,7 @@ void AccountApi::setupRoutes()
                     {"transientExpires", transient.has_value() ? transient->expires : 0},
                     {"transientUpdatedAt", transient.has_value() ? transient->updatedAt : 0},
                 });
-        }));
+        })));
 
     // Contact lookup by fingerprint: returns the user's subscription
     // certificate, which carries the serving server and the sealing prekey a
@@ -383,9 +426,9 @@ void AccountApi::setupRoutes()
     // alias resolution this is unauthenticated (a user must be reachable to
     // be messaged); a sealed-relay variant that hides the lookup from the
     // requester's own server is future federation work.
-    http_->Get("/v1/account/contact",
-        [this](const httplib::Request& request, httplib::Response& response) {
-            const std::string user = request.get_param_value("user");
+    http_->get("/v1/account/contact",
+        filled([this](const http::Request& request, http::Response& response) {
+            const std::string user = request.query("user");
             const std::optional<SubscriptionStore::Subscription> subscription
                 = store_.getSubscription(user);
             if (!subscription.has_value()) {
@@ -399,15 +442,14 @@ void AccountApi::setupRoutes()
                     {"subscriptionCert", toBase64(subscription->certificate)},
                     {"serverCard", toBase64(options_.serverCardDer)},
                 });
-        });
+        }));
 
     // Onboarding discovery: where to register and on what terms. Unauthenticated
     // - the client shows the message and link(s); registration happens on the
     // portal, not here. Nothing on this node is for sale, so there is no service
     // catalogue: the only variables are whether a captcha is required and
     // whether an operator has to approve the account.
-    http_->Get("/v1/account/portal",
-        [this](const httplib::Request&, httplib::Response& response) {
+    http_->get("/v1/account/portal", filled([this](const http::Request&, http::Response& response) {
             nlohmann::json links = nlohmann::json::array();
             for (const std::string& link : options_.portalLinks) {
                 links.push_back(link);
@@ -420,12 +462,13 @@ void AccountApi::setupRoutes()
                         {
                             {"captcha", options_.freeRegistrationCaptcha},
                             {"requiresApproval",
-                                options_.registration == AccountApiOptions::Registration::eApproval},
+                                options_.registration
+                                    == AccountApiOptions::Registration::eApproval},
                             {"message", options_.registrationMessage},
                         }},
                     {"quotaBytes", options_.defaultQuotaBytes},
                 });
-        });
+        }));
 }
 
 }  // namespace bazarish::service

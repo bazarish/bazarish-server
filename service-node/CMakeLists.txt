@@ -30,16 +30,9 @@ add_library(bazarish_service_lib STATIC
 target_include_directories(bazarish_service_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(bazarish_service_lib PUBLIC Bazarish::Common Threads::Threads)
 target_compile_options(bazarish_service_lib PRIVATE -Wall -Wextra -Werror)
-# Payment backends use httplib's HTTP client with digest auth (monero-wallet-rpc)
-# and TLS (future hosted gateways). Define the macro PUBLIC and link OpenSSL::SSL
-# so every service-side target that includes httplib agrees (no header-only ODR
-# mismatch). OpenSSL::Crypto already comes transitively via common.
+# The HTTPS leg of common's HTTP client (hosted payment gateways) needs the TLS
+# library; OpenSSL::Crypto already comes transitively via common.
 find_package(OpenSSL 3.0 REQUIRED)
-# The portal's sign-in form POSTs a hybrid (post-quantum) signed login blob,
-# which is larger than httplib's 8 KiB default urlencoded-form cap. Raise it
-# (PUBLIC, so every httplib TU agrees) to admit the blob; still a sane bound.
-target_compile_definitions(bazarish_service_lib PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT
-    CPPHTTPLIB_FORM_URL_ENCODED_PAYLOAD_MAX_LENGTH=1048576)
 target_link_libraries(bazarish_service_lib PUBLIC OpenSSL::SSL)
 
 add_executable(bazarish-service-node src/Main.cpp)

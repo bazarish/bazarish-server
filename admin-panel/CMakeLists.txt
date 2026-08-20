@@ -31,10 +31,6 @@ add_library(bazarish_admin_lib STATIC
 )
 target_include_directories(bazarish_admin_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(bazarish_admin_lib PUBLIC Bazarish::Common Threads::Threads)
-# The hybrid post-quantum login blob is larger than httplib's default 8 KiB
-# urlencoded-form limit, so raise the cap wherever httplib parses a form.
-target_compile_definitions(bazarish_admin_lib PUBLIC
-    CPPHTTPLIB_FORM_URL_ENCODED_PAYLOAD_MAX_LENGTH=1048576)
 target_compile_options(bazarish_admin_lib PRIVATE -Wall -Wextra -Werror)
 
 add_executable(bazarish-admin-panel src/Main.cpp)

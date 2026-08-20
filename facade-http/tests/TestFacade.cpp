@@ -1,12 +1,14 @@
 // Bazarish project (c) 2026
 #include "Facade.hpp"
 
-#include <httplib/httplib.h>
+#include <bazarish/HttpClient.hpp>
+#include <bazarish/HttpServer.hpp>
 #include <nlohmann/json.hpp>
 
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <map>
 #include <thread>
 
 #define CHECK(condition)                                                            \
@@ -20,41 +22,67 @@
 
 namespace {
 
+namespace http = bazarish::http;
+
+using Headers = std::map<std::string, std::string>;
+
+// One request against a server under test. A transport failure comes back as
+// status 0, so a check on the status covers "nothing answered" too.
+http::ClientResponse call(const int port, const std::string& method, const std::string& path,
+    const Headers& headers = {}, const std::string& body = {})
+{
+    http::ClientRequest request;
+    request.method = method;
+    request.target = path;
+    request.headers = headers;
+    request.body = body;
+    if (!body.empty()) {
+        request.contentType = "application/json";
+    }
+    return http::request("127.0.0.1", port, request, {});
+}
+
 // Installs echo handlers that report which backend handled the request and
 // what it saw, so the test can assert the facade routed and relayed
-// transparently. (httplib::Server is non-copyable, so configure in place.)
-void installBackend(httplib::Server& server, const std::string& name)
+// transparently. (The server is non-copyable, so configure in place.)
+void installBackend(http::Server& server, const std::string& name)
 {
-    const auto echo = [name](const httplib::Request& request, httplib::Response& response) {
-        nlohmann::json body = {
+    const http::Handler echo = [name](const http::Request& request) {
+        http::Response response;
+        response.body = nlohmann::json{
             {"backend", name},
             {"method", request.method},
             {"path", request.path},
             {"body", request.body},
-            {"clientHeader", request.get_header_value("X-Bazarish-Client")},
-            {"alias", request.get_param_value("alias")},
-        };
-        response.set_content(body.dump(), "application/json");
+            {"clientHeader", request.header("X-Bazarish-Client")},
+            {"alias", request.query("alias")},
+        }.dump();
+        return response;
     };
-    server.Get(".*", echo);
-    server.Post(".*", echo);
-    server.Delete(".*", echo);
-    server.Put(".*", echo);
+    // A capture group makes the pattern a regex route, so it matches every path.
+    for (const char* const method : {"GET", "POST", "PUT", "DELETE"}) {
+        server.route(method, "(.*)", echo);
+    }
+}
+
+http::Server::Options backendOptions()
+{
+    http::Server::Options options;
+    options.port = 0;  // the kernel picks one
+    return options;
 }
 
 }  // namespace
 
 int main()
 {
-    httplib::Server messaging;
-    httplib::Server account;
+    http::Server messaging(backendOptions());
+    http::Server account(backendOptions());
     installBackend(messaging, "messaging");
     installBackend(account, "account");
-    const int messagingPort = messaging.bind_to_any_port("127.0.0.1");
-    const int accountPort = account.bind_to_any_port("127.0.0.1");
+    const int messagingPort = messaging.start();
+    const int accountPort = account.start();
     CHECK(messagingPort > 0 && accountPort > 0);
-    std::thread messagingThread([&messaging]() { (void)messaging.listen_after_bind(); });
-    std::thread accountThread([&account]() { (void)account.listen_after_bind(); });
 
     bazarish::facade::FacadeOptions options;
     options.messagingHost = "127.0.0.1";
@@ -70,16 +98,14 @@ int main()
     CHECK(opsPort > 0);
     std::thread opsThread([&facade]() { (void)facade.listenOpsAfterBind(); });
 
-    httplib::Client client("127.0.0.1", facadePort);
-    CHECK(client.is_valid());
 
     // Messaging route: body, method, client header and stripped path relayed.
     {
-        httplib::Headers headers = {{"X-Bazarish-Client", "dev1"}};
-        const httplib::Result result = client.Post("/s/secret123/v1/messaging/send", headers,
-            "envelope-bytes", "application/json");
-        CHECK(result && result->status == 200);
-        const nlohmann::json reply = nlohmann::json::parse(result->body);
+        const Headers headers = {{"X-Bazarish-Client", "dev1"}};
+        const http::ClientResponse result = call(facadePort, "POST", "/s/secret123/v1/messaging/send", headers,
+            "envelope-bytes");
+        CHECK(result.status == 200);
+        const nlohmann::json reply = nlohmann::json::parse(result.body);
         CHECK(reply.at("backend") == "messaging");
         CHECK(reply.at("method") == "POST");
         CHECK(reply.at("path") == "/v1/messaging/send");
@@ -89,10 +115,10 @@ int main()
 
     // Account route, with a preserved query string.
     {
-        const httplib::Result result
-            = client.Get("/s/secret123/v1/account/resolve?alias=alice");
-        CHECK(result && result->status == 200);
-        const nlohmann::json reply = nlohmann::json::parse(result->body);
+        const http::ClientResponse result
+            = call(facadePort, "GET", "/s/secret123/v1/account/resolve?alias=alice");
+        CHECK(result.status == 200);
+        const nlohmann::json reply = nlohmann::json::parse(result.body);
         CHECK(reply.at("backend") == "account");
         CHECK(reply.at("path") == "/v1/account/resolve");
         CHECK(reply.at("alias") == "alice");
@@ -100,43 +126,43 @@ int main()
 
     // DELETE is relayed too.
     {
-        const httplib::Result result
-            = client.Delete("/s/secret123/v1/account/alias", "{}", "application/json");
-        CHECK(result && result->status == 200);
-        CHECK(nlohmann::json::parse(result->body).at("method") == "DELETE");
+        const http::ClientResponse result
+            = call(facadePort, "DELETE", "/s/secret123/v1/account/alias", {}, "{}");
+        CHECK(result.status == 200);
+        CHECK(nlohmann::json::parse(result.body).at("method") == "DELETE");
     }
 
     // Wrong secret base path: rejected, never forwarded.
     {
-        const httplib::Result result = client.Get("/s/wrong/v1/account/resolve?alias=alice");
-        CHECK(result && result->status == 404);
+        const http::ClientResponse result = call(facadePort, "GET", "/s/wrong/v1/account/resolve?alias=alice");
+        CHECK(result.status == 404);
     }
 
     // Correct base path but an unknown route: rejected.
     {
-        const httplib::Result result = client.Get("/s/secret123/v1/other/thing");
-        CHECK(result && result->status == 404);
+        const http::ClientResponse result = call(facadePort, "GET", "/s/secret123/v1/other/thing");
+        CHECK(result.status == 404);
     }
 
     // Storage paths are no longer routed anywhere: there is no blob service.
     {
-        const httplib::Result result = client.Put(
-            "/s/secret123/v1/storage/blob", "ciphertext-bytes", "application/octet-stream");
-        CHECK(result && result->status == 404);
+        const http::ClientResponse result
+            = call(facadePort, "PUT", "/s/secret123/v1/storage/blob", {}, "ciphertext-bytes");
+        CHECK(result.status == 404);
     }
 
     // The operator quota endpoint is never exposed through the facade.
     {
-        const httplib::Result result = client.Put(
-            "/s/secret123/v1/storage/quota", "{}", "application/json");
-        CHECK(result && result->status == 404);
+        const http::ClientResponse result
+            = call(facadePort, "PUT", "/s/secret123/v1/storage/quota", {}, "{}");
+        CHECK(result.status == 404);
     }
 
     // The I2P-only download path (/b/*) is never exposed through the facade
     // (a clearnet download would leak the fetcher's IP).
     {
-        const httplib::Result result = client.Get("/s/secret123/b/somecapability");
-        CHECK(result && result->status == 404);
+        const http::ClientResponse result = call(facadePort, "GET", "/s/secret123/b/somecapability");
+        CHECK(result.status == 404);
     }
 
     // Nothing outside the secret prefix identifies the host as a facade: the
@@ -145,30 +171,29 @@ int main()
     {
         for (const char* const path : {"/v1/messaging/reseed", "/v1/account/portal", "/healthz",
                  "/"}) {
-            const httplib::Result result = client.Get(path);
-            CHECK(result && result->status == 404);
-            CHECK(result->body.empty());
+            const http::ClientResponse result = call(facadePort, "GET", path);
+            CHECK(result.status == 404);
+            CHECK(result.body.empty());
         }
     }
 
     // The reseed is reachable under the secret prefix, unauthenticated - the
     // client has no I2P transport yet when it asks for it.
     {
-        const httplib::Result result = client.Get("/s/secret123/v1/messaging/reseed");
-        CHECK(result && result->status == 200);
-        const nlohmann::json reply = nlohmann::json::parse(result->body);
+        const http::ClientResponse result = call(facadePort, "GET", "/s/secret123/v1/messaging/reseed");
+        CHECK(result.status == 200);
+        const nlohmann::json reply = nlohmann::json::parse(result.body);
         CHECK(reply.at("backend") == "messaging");
         CHECK(reply.at("path") == "/v1/messaging/reseed");
     }
 
     // The ops socket serves /healthz, and only to an operator-signed caller.
     {
-        httplib::Client ops("127.0.0.1", opsPort);
-        const httplib::Result unauthenticated = ops.Get("/healthz");
-        CHECK(unauthenticated && unauthenticated->status == 403);
+        const http::ClientResponse unauthenticated = call(opsPort, "GET", "/healthz");
+        CHECK(unauthenticated.status == 403);
         // The proxy routes are not on this socket.
-        const httplib::Result proxied = ops.Get("/s/secret123/v1/messaging/send");
-        CHECK(proxied && proxied->status == 404);
+        const http::ClientResponse proxied = call(opsPort, "GET", "/s/secret123/v1/messaging/send");
+        CHECK(proxied.status == 404);
     }
 
     facade.stop();
@@ -176,7 +201,5 @@ int main()
     account.stop();
     facadeThread.join();
     opsThread.join();
-    messagingThread.join();
-    accountThread.join();
     return 0;
 }

@@ -5,10 +5,11 @@
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Crypto.hpp>
 
-#include <httplib/httplib.h>
+#include <bazarish/HttpClient.hpp>
 #include <nlohmann/json.hpp>
 
 #include <chrono>
+#include <map>
 #include <ctime>
 
 namespace bazarish::admin {
@@ -20,34 +21,74 @@ std::int64_t nowSeconds()
     return static_cast<std::int64_t>(std::time(nullptr));
 }
 
-httplib::Client makeClient(const std::string& url)
+// The panel and the services it manages sit on the same machine, so a request
+// that takes this long is a service that is down, not a busy one.
+constexpr int kConnectTimeoutSeconds = 2;
+constexpr int kExchangeTimeoutSeconds = 3;
+// The port a service URL means when it names none.
+constexpr int kDefaultHttpPort = 80;
+
+// Where a service URL points: the client takes a host and a port, not a URL.
+struct Address {
+    std::string host;
+    int port = kDefaultHttpPort;
+};
+
+Address parseUrl(const std::string& url)
 {
-    httplib::Client client(url);
-    client.set_connection_timeout(2, 0);
-    client.set_read_timeout(3, 0);
-    client.set_write_timeout(3, 0);
-    return client;
+    std::string rest = url;
+    if (const std::string scheme = "http://"; rest.rfind(scheme, 0) == 0) {
+        rest = rest.substr(scheme.size());
+    }
+    if (const auto slash = rest.find('/'); slash != std::string::npos) {
+        rest = rest.substr(0, slash);
+    }
+    Address address;
+    if (const auto colon = rest.find(':'); colon == std::string::npos) {
+        address.host = rest;
+    } else {
+        address.host = rest.substr(0, colon);
+        address.port = std::stoi(rest.substr(colon + 1));
+    }
+    return address;
 }
 
-// Signs (method, path, body) with the panel identity and returns the request-auth
-// headers as httplib headers.
-httplib::Headers signedHeaders(const Identity& identity, const std::string& method,
-    const std::string& path, const std::string& body)
+bazarish::http::ClientOptions clientOptions()
+{
+    bazarish::http::ClientOptions options;
+    options.connectTimeout = std::chrono::seconds(kConnectTimeoutSeconds);
+    options.readTimeout = std::chrono::seconds(kExchangeTimeoutSeconds);
+    options.writeTimeout = std::chrono::seconds(kExchangeTimeoutSeconds);
+    return options;
+}
+
+// One signed request to a service, whatever the method.
+bazarish::http::ClientResponse call(const ServiceEntry& service, const Identity& identity,
+    const std::string& method, const std::string& path, const std::string& body)
 {
     const auth::Headers signature = auth::signRequest(
         identity, nowSeconds(), method, path, Bytes(body.begin(), body.end()));
-    return httplib::Headers(signature.begin(), signature.end());
+    bazarish::http::ClientRequest out;
+    out.method = method;
+    out.target = path;
+    out.headers = std::map<std::string, std::string>(signature.begin(), signature.end());
+    out.body = body;
+    if (!body.empty()) {
+        out.contentType = "application/json";
+    }
+    const Address address = parseUrl(service.url);
+    return bazarish::http::request(address.host, address.port, out, clientOptions());
 }
 
 // Pulls a human message out of an error envelope body, falling back to the
 // status line.
-std::string errorMessage(const httplib::Result& result)
+std::string errorMessage(const bazarish::http::ClientResponse& result)
 {
-    if (!result) {
-        return httplib::to_string(result.error());
+    if (result.status == 0) {
+        return result.error;
     }
     try {
-        const nlohmann::json body = nlohmann::json::parse(result->body);
+        const nlohmann::json body = nlohmann::json::parse(result.body);
         if (body.contains("error") && body.at("error").contains("message")) {
             return body.at("error").at("message").get<std::string>();
         }
@@ -55,25 +96,22 @@ std::string errorMessage(const httplib::Result& result)
         // Not an error envelope: the HTTP status below is the whole answer, so
         // nothing is lost - the parse failure IS the information.
     }
-    return "HTTP " + std::to_string(result->status);
+    return "HTTP " + std::to_string(result.status);
 }
 
 OpResult putJson(const ServiceEntry& service, const Identity& identity, const std::string& path,
     const nlohmann::json& body)
 {
-    httplib::Client client = makeClient(service.url);
-    const std::string bodyText = body.dump();
-    const httplib::Result result
-        = client.Put(path.c_str(), signedHeaders(identity, "PUT", path, bodyText), bodyText,
-            "application/json");
+    const bazarish::http::ClientResponse result
+        = call(service, identity, "PUT", path, body.dump());
 
     OpResult out;
-    if (!result) {
-        out.message = httplib::to_string(result.error());
+    if (result.status == 0) {
+        out.message = result.error;
         return out;
     }
-    out.status = result->status;
-    out.ok = result->status == 200;
+    out.status = result.status;
+    out.ok = result.status == 200;
     out.message = out.ok ? "ok" : errorMessage(result);
     return out;
 }
@@ -83,26 +121,25 @@ OpResult putJson(const ServiceEntry& service, const Identity& identity, const st
 HealthResult probeHealth(const ServiceEntry& service, const Identity& identity)
 {
     HealthResult out;
-    httplib::Client client = makeClient(service.url);
 
     const auto start = std::chrono::steady_clock::now();
-    const httplib::Result result
-        = client.Get("/healthz", signedHeaders(identity, "GET", "/healthz", std::string()));
+    const bazarish::http::ClientResponse result
+        = call(service, identity, "GET", "/healthz", std::string());
     const auto end = std::chrono::steady_clock::now();
     out.latencyMs
         = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
 
-    if (!result) {
-        out.error = httplib::to_string(result.error());
+    if (result.status == 0) {
+        out.error = result.error;
         return out;
     }
-    out.status = result->status;
-    if (result->status != 200) {
+    out.status = result.status;
+    if (result.status != 200) {
         out.error = errorMessage(result);
         return out;
     }
     try {
-        const nlohmann::json body = nlohmann::json::parse(result->body);
+        const nlohmann::json body = nlohmann::json::parse(result.body);
         out.version = body.value("version", std::string());
         out.uptime = body.value("uptime", static_cast<std::int64_t>(0));
         out.ramBytes = body.value("ramBytes", static_cast<std::uint64_t>(0));
@@ -131,21 +168,20 @@ OpResult setI2pDest(const ServiceEntry& service, const Identity& identity,
 PendingResult listPending(const ServiceEntry& service, const Identity& identity)
 {
     const std::string path = "/v1/account/pending";
-    httplib::Client client = makeClient(service.url);
-    const httplib::Result result
-        = client.Get(path.c_str(), signedHeaders(identity, "GET", path, std::string()));
+    const bazarish::http::ClientResponse result
+        = call(service, identity, "GET", path, std::string());
 
     PendingResult out;
-    if (!result) {
-        out.error = httplib::to_string(result.error());
+    if (result.status == 0) {
+        out.error = result.error;
         return out;
     }
-    if (result->status != 200) {
+    if (result.status != 200) {
         out.error = errorMessage(result);
         return out;
     }
     try {
-        for (const nlohmann::json& entry : nlohmann::json::parse(result->body).at("pending")) {
+        for (const nlohmann::json& entry : nlohmann::json::parse(result.body).at("pending")) {
             out.accounts.push_back({entry.at("user").get<std::string>(),
                 entry.value("requestedAt", static_cast<std::int64_t>(0))});
         }
@@ -160,19 +196,16 @@ OpResult approveAccount(
     const ServiceEntry& service, const Identity& identity, const std::string& user)
 {
     const std::string path = "/v1/account/approve";
-    httplib::Client client = makeClient(service.url);
-    const std::string bodyText = nlohmann::json{{"user", user}}.dump();
-    const httplib::Result result = client.Post(
-        path.c_str(), signedHeaders(identity, "POST", path, bodyText), bodyText,
-        "application/json");
+    const bazarish::http::ClientResponse result
+        = call(service, identity, "POST", path, nlohmann::json{{"user", user}}.dump());
 
     OpResult out;
-    if (!result) {
-        out.message = httplib::to_string(result.error());
+    if (result.status == 0) {
+        out.message = result.error;
         return out;
     }
-    out.status = result->status;
-    out.ok = result->status == 200;
+    out.status = result.status;
+    out.ok = result.status == 200;
     out.message = out.ok ? "ok" : errorMessage(result);
     return out;
 }

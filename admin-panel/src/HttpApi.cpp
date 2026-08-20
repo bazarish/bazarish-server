@@ -4,7 +4,10 @@
 #include "Html.hpp"
 #include "ServiceClient.hpp"
 
-#include <httplib/httplib.h>
+#include <bazarish/HttpServer.hpp>
+#include <bazarish/Log.hpp>
+
+#include <functional>
 
 #include <chrono>
 #include <cstdint>
@@ -28,9 +31,23 @@ std::int64_t nowSeconds()
         .count();
 }
 
-std::string cookieValue(const httplib::Request& request, const std::string& name)
+namespace http = bazarish::http;
+
+// The routes are written as "fill in the response"; the engine hands one back.
+using Filler = std::function<void(const http::Request&, http::Response&)>;
+
+http::Handler filled(Filler handler)
 {
-    const std::string cookies = request.get_header_value("Cookie");
+    return [handler = std::move(handler)](const http::Request& request) {
+        http::Response response;
+        handler(request, response);
+        return response;
+    };
+}
+
+std::string cookieValue(const http::Request& request, const std::string& name)
+{
+    const std::string cookies = request.header("Cookie");
     const std::string key = name + "=";
     const auto pos = cookies.find(key);
     if (pos == std::string::npos) {
@@ -41,16 +58,17 @@ std::string cookieValue(const httplib::Request& request, const std::string& name
     return cookies.substr(start, end == std::string::npos ? std::string::npos : end - start);
 }
 
-void sendHtml(httplib::Response& response, const std::string& html, const int status = 200)
+void sendHtml(http::Response& response, const std::string& html, const int status = 200)
 {
     response.status = status;
-    response.set_content(html, "text/html; charset=utf-8");
+    response.contentType = "text/html; charset=utf-8";
+    response.body = html;
 }
 
-void redirectTo(httplib::Response& response, const std::string& location)
+void redirectTo(http::Response& response, const std::string& location)
 {
     response.status = 303;
-    response.set_header("Location", location);
+    response.headers["Location"] = location;
 }
 
 std::string humanizeUptime(std::int64_t seconds)
@@ -138,9 +156,7 @@ HttpApi::HttpApi(Config config, const Identity& identity, HttpApiOptions options
     , options_(std::move(options))
     , auth_(config_.audience, config_.admin)
     , sessions_(options_.sessionTtlSeconds)
-    , http_(std::make_unique<httplib::Server>())
 {
-    registerRoutes();
 }
 
 HttpApi::~HttpApi() = default;
@@ -166,30 +182,30 @@ void HttpApi::registerRoutes()
         return htmlPage("Sign in", body);
     };
 
-    http_->Get("/login", [loginPage](const httplib::Request&, httplib::Response& response) {
+    http_->get("/login", filled([loginPage](const http::Request&, http::Response& response) {
         sendHtml(response, loginPage(std::string()));
-    });
+    }));
 
-    http_->Post("/login", [this, loginPage](
-                              const httplib::Request& request, httplib::Response& response) {
+    http_->post("/login", filled([this, loginPage](
+                              const http::Request& request, http::Response& response) {
         try {
-            auth_.login(request.get_param_value("challenge"), request.get_param_value("blob"),
+            auth_.login(request.query("challenge"), request.query("blob"),
                 nowSeconds());
             const std::string token = sessions_.create(nowSeconds());
-            response.set_header("Set-Cookie",
-                std::string(kCookieName) + "=" + token + "; HttpOnly; SameSite=Strict; Path=/");
+            response.headers["Set-Cookie"]
+                = std::string(kCookieName) + "=" + token + "; HttpOnly; SameSite=Strict; Path=/";
             redirectTo(response, "/");
         } catch (const std::exception& error) {
             sendHtml(response, loginPage(error.what()), 401);
         }
-    });
+    }));
 
-    http_->Post("/logout", [this](const httplib::Request& request, httplib::Response& response) {
+    http_->post("/logout", filled([this](const http::Request& request, http::Response& response) {
         sessions_.destroy(cookieValue(request, kCookieName));
-        response.set_header("Set-Cookie",
-            std::string(kCookieName) + "=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
+        response.headers["Set-Cookie"]
+            = std::string(kCookieName) + "=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0";
         redirectTo(response, "/login?msg=loggedout");
-    });
+    }));
 
     // Probes every service concurrently (one slow/down service cannot stall the
     // dashboard) and returns the status table body rows. Shared by the full page
@@ -213,23 +229,24 @@ void HttpApi::registerRoutes()
 
     // The status table rows alone, for the in-page poller. Session-guarded like
     // the dashboard; a 401 tells the page to bounce to the sign-in screen.
-    http_->Get("/api/status", [this, renderRows](
-                                  const httplib::Request& request, httplib::Response& response) {
+    http_->get("/api/status", filled([this, renderRows](
+                                  const http::Request& request, http::Response& response) {
         if (!sessions_.valid(cookieValue(request, kCookieName), nowSeconds())) {
             response.status = 401;
             return;
         }
-        response.set_content(renderRows(), "text/html; charset=utf-8");
-    });
+        response.contentType = "text/html; charset=utf-8";
+        response.body = renderRows();
+    }));
 
-    http_->Get("/", [this, renderRows](
-                        const httplib::Request& request, httplib::Response& response) {
+    http_->get("/", filled([this, renderRows](
+                        const http::Request& request, http::Response& response) {
         if (!sessions_.valid(cookieValue(request, kCookieName), nowSeconds())) {
             redirectTo(response, "/login");
             return;
         }
 
-        std::string body = flashBanner(request.get_param_value("msg"));
+        std::string body = flashBanner(request.query("msg"));
         body += "<form method=\"post\" action=\"/logout\" style=\"float:right\">"
                 "<button>Sign out</button></form>";
         body += "<h2>Services</h2><table><thead><tr><th>Service</th><th>Status</th>"
@@ -309,7 +326,7 @@ void HttpApi::registerRoutes()
                 ".catch(function(){});},5000);</script>";
 
         sendHtml(response, htmlPage("Dashboard", body, /*wide=*/true));
-    });
+    }));
 
     const auto findService = [this](const std::string& name) -> const ServiceEntry* {
         for (const ServiceEntry& service : config_.services) {
@@ -320,96 +337,128 @@ void HttpApi::registerRoutes()
         return nullptr;
     };
 
-    http_->Post("/manage/quota", [this, findService](const httplib::Request& request,
-                                     httplib::Response& response) {
+    http_->post("/manage/quota", filled([this, findService](const http::Request& request,
+                                     http::Response& response) {
         if (!sessions_.valid(cookieValue(request, kCookieName), nowSeconds())) {
             redirectTo(response, "/login");
             return;
         }
-        const ServiceEntry* const service = findService(request.get_param_value("service"));
+        const ServiceEntry* const service = findService(request.query("service"));
         if (service == nullptr || service->kind != "server-core") {
             sendHtml(response, resultPage({false, 0, "unknown service"}, "Set quota"), 400);
             return;
         }
         const std::uint64_t quotaBytes
-            = std::strtoull(request.get_param_value("quotaBytes").c_str(), nullptr, 10);
+            = std::strtoull(request.query("quotaBytes").c_str(), nullptr, 10);
         const OpResult result
-            = setQuota(*service, identity_, request.get_param_value("user"), quotaBytes);
+            = setQuota(*service, identity_, request.query("user"), quotaBytes);
         if (result.ok) {
             redirectTo(response, "/?msg=quotaok");
         } else {
             sendHtml(response, resultPage(result, "Set quota"), 502);
         }
-    });
+    }));
 
-    http_->Post("/manage/approve", [this, findService](const httplib::Request& request,
-                                       httplib::Response& response) {
+    http_->post("/manage/approve", filled([this, findService](const http::Request& request,
+                                       http::Response& response) {
         if (!sessions_.valid(cookieValue(request, kCookieName), nowSeconds())) {
             redirectTo(response, "/login");
             return;
         }
-        const ServiceEntry* const service = findService(request.get_param_value("service"));
+        const ServiceEntry* const service = findService(request.query("service"));
         if (service == nullptr || service->kind != "service-node") {
             sendHtml(response, resultPage({false, 0, "unknown service"}, "Approve account"), 400);
             return;
         }
         const OpResult result
-            = approveAccount(*service, identity_, request.get_param_value("user"));
+            = approveAccount(*service, identity_, request.query("user"));
         if (result.ok) {
             redirectTo(response, "/?msg=approved");
         } else {
             sendHtml(response, resultPage(result, "Approve account"), 502);
         }
-    });
+    }));
 
-    http_->Post("/manage/i2p-dest", [this, findService](const httplib::Request& request,
-                                        httplib::Response& response) {
+    http_->post("/manage/i2p-dest", filled([this, findService](const http::Request& request,
+                                        http::Response& response) {
         if (!sessions_.valid(cookieValue(request, kCookieName), nowSeconds())) {
             redirectTo(response, "/login");
             return;
         }
-        const ServiceEntry* const service = findService(request.get_param_value("service"));
+        const ServiceEntry* const service = findService(request.query("service"));
         if (service == nullptr || service->kind != "server-core") {
             sendHtml(response, resultPage({false, 0, "unknown service"}, "Set I2P dest"), 400);
             return;
         }
-        const std::string transient = request.get_param_value("transient");
-        const std::string expiresParam = request.get_param_value("expiresUnix");
+        const std::string transient = request.query("transient");
+        const std::string expiresParam = request.query("expiresUnix");
         const std::int64_t expiresUnix
             = expiresParam.empty() ? 0 : std::strtoll(expiresParam.c_str(), nullptr, 10);
         const OpResult result = setI2pDest(
-            *service, identity_, request.get_param_value("user"), transient, expiresUnix);
+            *service, identity_, request.query("user"), transient, expiresUnix);
         if (result.ok) {
             redirectTo(response, "/?msg=i2pok");
         } else {
             sendHtml(response, resultPage(result, "Set I2P dest"), 502);
         }
-    });
+    }));
 }
 
 bool HttpApi::listen(const std::string& host, const int port)
 {
-    return http_->listen(host, port);
+    if (bindToAnyPort(host, port) <= 0) {
+        return false;
+    }
+    return listenAfterBind();
 }
 
 int HttpApi::bindToAnyPort(const std::string& host)
 {
-    return http_->bind_to_any_port(host);
+    return bindToAnyPort(host, 0);  // 0: the kernel picks the port
+}
+
+int HttpApi::bindToAnyPort(const std::string& host, const int port)
+{
+    http::Server::Options options;
+    options.host = host;
+    options.port = port;
+    http_ = std::make_unique<http::Server>(options);
+    registerRoutes();
+    try {
+        const int bound = http_->start();
+        running_ = bound > 0;
+        return bound;
+    } catch (const std::exception& error) {
+        bazarish::log::error("cannot listen on {}:{}: {}", host, port, error.what());
+        return 0;
+    }
 }
 
 bool HttpApi::listenAfterBind()
 {
-    return http_->listen_after_bind();
+    // The engine serves on its own threads; this call is what keeps the caller's
+    // thread (a main()) parked until stop().
+    std::unique_lock<std::mutex> lock(stopMutex_);
+    stopCv_.wait(lock, [this]() { return stopping_; });
+    return true;
 }
 
 bool HttpApi::isRunning() const
 {
-    return http_->is_running();
+    return running_;
 }
 
 void HttpApi::stop()
 {
-    http_->stop();
+    if (http_) {
+        http_->stop();
+    }
+    running_ = false;
+    {
+        const std::lock_guard<std::mutex> lock(stopMutex_);
+        stopping_ = true;
+    }
+    stopCv_.notify_all();
 }
 
 }  // namespace bazarish::admin

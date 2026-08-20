@@ -2,7 +2,10 @@
 #include "PortalApi.hpp"
 
 
-#include <httplib/httplib.h>
+#include <bazarish/HttpServer.hpp>
+#include <bazarish/Log.hpp>
+
+#include <functional>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -22,15 +25,30 @@ std::int64_t nowSeconds()
     return static_cast<std::int64_t>(std::time(nullptr));
 }
 
-void respondJson(httplib::Response& response, const nlohmann::json& body)
+namespace http = bazarish::http;
+
+// The routes are written as "fill in the response"; the engine hands one back.
+using Filler = std::function<void(const http::Request&, http::Response&)>;
+
+http::Handler filled(Filler handler)
 {
-    response.set_content(body.dump(), "application/json");
+    return [handler = std::move(handler)](const http::Request& request) {
+        http::Response response;
+        handler(request, response);
+        return response;
+    };
+}
+
+void respondJson(http::Response& response, const nlohmann::json& body)
+{
+    response.contentType = "application/json";
+    response.body = body.dump();
 }
 
 // Reads one cookie value from the request's Cookie header.
-std::string cookieValue(const httplib::Request& request, const std::string& name)
+std::string cookieValue(const http::Request& request, const std::string& name)
 {
-    const std::string cookies = request.get_header_value("Cookie");
+    const std::string cookies = request.header("Cookie");
     const std::string key = name + "=";
     const auto pos = cookies.find(key);
     if (pos == std::string::npos) {
@@ -106,16 +124,17 @@ std::string htmlPage(const std::string& title, const std::string& body)
         + body + "</main></body></html>";
 }
 
-void sendHtml(httplib::Response& response, const std::string& html, const int status = 200)
+void sendHtml(http::Response& response, const std::string& html, const int status = 200)
 {
     response.status = status;
-    response.set_content(html, "text/html; charset=utf-8");
+    response.contentType = "text/html; charset=utf-8";
+    response.body = html;
 }
 
-void redirectTo(httplib::Response& response, const std::string& location)
+void redirectTo(http::Response& response, const std::string& location)
 {
     response.status = 303;
-    response.set_header("Location", location);
+    response.headers["Location"] = location;
 }
 
 // A human-readable byte size for the free quota (powers of 1024).
@@ -155,43 +174,70 @@ PortalApi::PortalApi(PortalApiOptions options, Captcha& captcha, GrantStore& gra
     , grants_(grants)
     , login_(options_.challengeSecret, options_.audience)
     , session_(options_.sessionSecret, options_.sessionTtlSeconds)
-    , http_(std::make_unique<httplib::Server>())
 {
-    setupRoutes();
 }
 
 PortalApi::~PortalApi() = default;
 
 bool PortalApi::listen(const std::string& host, const int port)
 {
-    return http_->listen(host, port);
+    if (bindToAnyPort(host, port) <= 0) {
+        return false;
+    }
+    return listenAfterBind();
 }
 
 int PortalApi::bindToAnyPort(const std::string& host)
 {
-    return http_->bind_to_any_port(host);
+    return bindToAnyPort(host, 0);  // 0: the kernel picks the port
+}
+
+int PortalApi::bindToAnyPort(const std::string& host, const int port)
+{
+    http::Server::Options options;
+    options.host = host;
+    options.port = port;
+    http_ = std::make_unique<http::Server>(options);
+    setupRoutes();
+    try {
+        return http_->start();
+    } catch (const std::exception& error) {
+        bazarish::log::error("cannot listen on {}:{}: {}", host, port, error.what());
+        return 0;
+    }
 }
 
 bool PortalApi::listenAfterBind()
 {
-    return http_->listen_after_bind();
+    // The engine serves on its own threads; this call is what keeps the caller's
+    // thread (a main()) parked until stop().
+    std::unique_lock<std::mutex> lock(stopMutex_);
+    stopCv_.wait(lock, [this]() { return stopping_; });
+    return true;
 }
 
 void PortalApi::stop()
 {
-    http_->stop();
+    if (http_) {
+        http_->stop();
+    }
+    {
+        const std::lock_guard<std::mutex> lock(stopMutex_);
+        stopping_ = true;
+    }
+    stopCv_.notify_all();
 }
 
 void PortalApi::setupRoutes()
 {
     // Issue a fresh login challenge for the user to sign with their Client.
-    http_->Get("/portal/login", [this](const httplib::Request&, httplib::Response& response) {
+    http_->get("/portal/login", filled([this](const http::Request&, http::Response& response) {
         respondJson(response, {{"challenge", login_.issue(nowSeconds())}});
-    });
+    }));
 
     // Verify the signed challenge and start a session.
-    http_->Post("/portal/login", [this](const httplib::Request& request,
-                                      httplib::Response& response) {
+    http_->post("/portal/login", filled([this](const http::Request& request,
+                                      http::Response& response) {
         const nlohmann::json body = nlohmann::json::parse(request.body, nullptr, false);
         if (body.is_discarded() || !body.contains("challenge") || !body.contains("blob")) {
             response.status = 400;
@@ -202,17 +248,17 @@ void PortalApi::setupRoutes()
             const std::string userId = login_.verify(body.at("challenge").get<std::string>(),
                 body.at("blob").get<std::string>(), nowSeconds());
             const std::string token = session_.issue(userId, nowSeconds());
-            response.set_header(
-                "Set-Cookie", "session=" + token + "; HttpOnly; SameSite=Strict; Path=/");
+            response.headers["Set-Cookie"]
+                = "session=" + token + "; HttpOnly; SameSite=Strict; Path=/";
             respondJson(response, {{"ok", true}, {"userId", userId}});
         } catch (const std::exception&) {
             response.status = 401;
             respondJson(response, {{"error", "login failed"}});
         }
-    });
+    }));
 
     // The logged-in user, from the session cookie.
-    http_->Get("/portal/me", [this](const httplib::Request& request, httplib::Response& response) {
+    http_->get("/portal/me", filled([this](const http::Request& request, http::Response& response) {
         try {
             const std::string userId = session_.verify(cookieValue(request, "session"), nowSeconds());
             respondJson(response, {{"userId", userId}});
@@ -220,10 +266,10 @@ void PortalApi::setupRoutes()
             response.status = 401;
             respondJson(response, {{"error", "not authenticated"}});
         }
-    });
+    }));
 
     // A captcha to present before free registration.
-    http_->Get("/portal/captcha", [this](const httplib::Request&, httplib::Response& response) {
+    http_->get("/portal/captcha", filled([this](const http::Request&, http::Response& response) {
         const CaptchaChallenge challenge = captcha_.issue(nowSeconds());
         respondJson(response,
             {
@@ -231,12 +277,12 @@ void PortalApi::setupRoutes()
                 {"contentType", challenge.contentType},
                 {"body", challenge.body},
             });
-    });
+    }));
 
     // Free registration: a logged-in user passes the captcha; the node records a
     // pending subscription grant the Client then redeems with its signed cert.
-    http_->Post(
-        "/portal/register", [this](const httplib::Request& request, httplib::Response& response) {
+    http_->post(
+        "/portal/register", filled([this](const http::Request& request, http::Response& response) {
             std::string userId;
             try {
                 userId = session_.verify(cookieValue(request, "session"), nowSeconds());
@@ -268,7 +314,7 @@ void PortalApi::setupRoutes()
                     {"quotaBytes", options_.defaultQuotaBytes},
                     {"termSeconds", options_.freeSubscriptionTermSeconds},
                 });
-        });
+        }));
 
     setupWebRoutes();
 }
@@ -276,7 +322,7 @@ void PortalApi::setupRoutes()
 void PortalApi::setupWebRoutes()
 {
     // The logged-in user from the session cookie, or nullopt.
-    const auto webUser = [this](const httplib::Request& request) -> std::optional<std::string> {
+    const auto webUser = [this](const http::Request& request) -> std::optional<std::string> {
         try {
             return session_.verify(cookieValue(request, "session"), nowSeconds());
         } catch (const std::exception&) {
@@ -363,27 +409,27 @@ void PortalApi::setupWebRoutes()
     };
 
     // Home: the cabinet when logged in, otherwise the login page.
-    http_->Get("/", [webUser, loginPage, cabinet](
-                        const httplib::Request& request, httplib::Response& response) {
+    http_->get("/", filled([webUser, loginPage, cabinet](
+                        const http::Request& request, http::Response& response) {
         const std::optional<std::string> user = webUser(request);
         if (!user.has_value()) {
             sendHtml(response, loginPage());
             return;
         }
-        sendHtml(response, cabinet(*user, request.get_param_value("msg")));
-    });
+        sendHtml(response, cabinet(*user, request.query("msg")));
+    }));
 
-    http_->Get("/login", [loginPage](const httplib::Request&, httplib::Response& response) {
+    http_->get("/login", filled([loginPage](const http::Request&, http::Response& response) {
         sendHtml(response, loginPage());
-    });
+    }));
 
-    http_->Post("/login", [this](const httplib::Request& request, httplib::Response& response) {
+    http_->post("/login", filled([this](const http::Request& request, http::Response& response) {
         try {
-            const std::string userId = login_.verify(request.get_param_value("challenge"),
-                request.get_param_value("blob"), nowSeconds());
+            const std::string userId = login_.verify(request.param("challenge"),
+                request.param("blob"), nowSeconds());
             const std::string token = session_.issue(userId, nowSeconds());
-            response.set_header(
-                "Set-Cookie", "session=" + token + "; HttpOnly; SameSite=Strict; Path=/");
+            response.headers["Set-Cookie"]
+                = "session=" + token + "; HttpOnly; SameSite=Strict; Path=/";
             redirectTo(response, "/");
         } catch (const std::exception&) {
             sendHtml(response,
@@ -392,40 +438,39 @@ void PortalApi::setupWebRoutes()
                     "expired.</p><p><a href=\"/login\">Try again</a></p>"),
                 401);
         }
-    });
+    }));
 
-    http_->Post("/logout", [](const httplib::Request&, httplib::Response& response) {
-        response.set_header(
-            "Set-Cookie", "session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
+    http_->post("/logout", filled([](const http::Request&, http::Response& response) {
+        response.headers["Set-Cookie"] = "session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0";
         redirectTo(response, "/login");
-    });
+    }));
 
-    http_->Get("/register", [webUser, registerPage](
-                                const httplib::Request& request, httplib::Response& response) {
+    http_->get("/register", filled([webUser, registerPage](
+                                const http::Request& request, http::Response& response) {
         if (!webUser(request).has_value()) {
             redirectTo(response, "/login");
             return;
         }
         sendHtml(response, registerPage(std::string()));
-    });
+    }));
 
-    http_->Post("/register", [this, webUser, registerPage](
-                                 const httplib::Request& request, httplib::Response& response) {
+    http_->post("/register", filled([this, webUser, registerPage](
+                                 const http::Request& request, http::Response& response) {
         const std::optional<std::string> user = webUser(request);
         if (!user.has_value()) {
             redirectTo(response, "/login");
             return;
         }
         if (options_.requireCaptcha
-            && !captcha_.verify(request.get_param_value("captchaId"),
-                request.get_param_value("captchaAnswer"), nowSeconds())) {
+            && !captcha_.verify(request.param("captchaId"),
+                request.param("captchaAnswer"), nowSeconds())) {
             sendHtml(response, registerPage("Captcha failed — try again."), 403);
             return;
         }
         grants_.grantSubscription(*user, options_.defaultQuotaBytes,
             options_.freeSubscriptionTermSeconds, nowSeconds());
         redirectTo(response, "/?msg=registered");
-    });
+    }));
 
 }
 

@@ -7,13 +7,14 @@
 #include <bazarish/Certificates.hpp>
 #include <bazarish/Crypto.hpp>
 
-#include <httplib/httplib.h>
+#include <bazarish/HttpClient.hpp>
 #include <nlohmann/json.hpp>
 
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
+#include <map>
 #include <thread>
 
 #define CHECK(condition)                                                            \
@@ -30,13 +31,33 @@ using namespace bazarish::service;
 
 namespace {
 
-httplib::Headers makeHeaders(const Identity& identity, const std::string& method,
+namespace http = bazarish::http;
+
+using Headers = std::map<std::string, std::string>;
+
+// One request against the API under test. A transport failure comes back as
+// status 0, so a check on the status covers "nothing answered" too.
+http::ClientResponse call(const int port, const std::string& method, const std::string& path,
+    const Headers& headers = {}, const std::string& body = {})
+{
+    http::ClientRequest request;
+    request.method = method;
+    request.target = path;
+    request.headers = headers;
+    request.body = body;
+    if (!body.empty()) {
+        request.contentType = "application/json";
+    }
+    return http::request("127.0.0.1", port, request, {});
+}
+
+Headers makeHeaders(const Identity& identity, const std::string& method,
     const std::string& path, const std::string& body)
 {
     const auth::Headers signed_ = auth::signRequest(identity,
         static_cast<std::int64_t>(std::time(nullptr)), method, path,
         Bytes(body.begin(), body.end()));
-    return httplib::Headers(signed_.begin(), signed_.end());
+    return Headers(signed_.begin(), signed_.end());
 }
 
 }  // namespace
@@ -78,8 +99,6 @@ int main()
     const int port = api.bindToAnyPort("127.0.0.1");
     CHECK(port > 0);
     std::thread serverThread([&api]() { (void)api.listenAfterBind(); });
-    httplib::Client client("127.0.0.1", port);
-    CHECK(client.is_valid());
 
     const std::string transientBody
         = nlohmann::json{{"transient", "t-b64"}, {"expiresUnix", now + 7 * 24 * 3600}}.dump();
@@ -91,10 +110,10 @@ int main()
         const Bytes cert
             = SubscriptionCertificate::issue(alice, serverFp, now, now + 3 * 24 * 3600);
         const std::string body = nlohmann::json{{"cert", toBase64(cert)}}.dump();
-        const httplib::Result result = client.Post("/v1/account/subscribe",
-            makeHeaders(alice, "POST", "/v1/account/subscribe", body), body, "application/json");
-        CHECK(result && result->status == 200);
-        const nlohmann::json reply = nlohmann::json::parse(result->body);
+        const http::ClientResponse result = call(port, "POST", "/v1/account/subscribe",
+            makeHeaders(alice, "POST", "/v1/account/subscribe", body), body);
+        CHECK(result.status == 200);
+        const nlohmann::json reply = nlohmann::json::parse(result.body);
         CHECK(reply.at("approval") == "pending");
         CHECK(reply.at("registrationMessage") == options.registrationMessage);
     }
@@ -102,11 +121,10 @@ int main()
     // Frozen means the destination is never brought up: the transient is refused
     // with a typed error carrying the operator's instructions.
     {
-        const httplib::Result result = client.Post("/v1/account/i2p-dest",
-            makeHeaders(alice, "POST", "/v1/account/i2p-dest", transientBody), transientBody,
-            "application/json");
-        CHECK(result && result->status == 403);
-        const nlohmann::json error = nlohmann::json::parse(result->body).at("error");
+        const http::ClientResponse result = call(port, "POST", "/v1/account/i2p-dest",
+            makeHeaders(alice, "POST", "/v1/account/i2p-dest", transientBody), transientBody);
+        CHECK(result.status == 403);
+        const nlohmann::json error = nlohmann::json::parse(result.body).at("error");
         CHECK(error.at("code") == "ACCOUNT_PENDING_APPROVAL");
         CHECK(error.at("message") == options.registrationMessage);
         CHECK(pubCalls == 0);
@@ -114,10 +132,9 @@ int main()
 
     // The operator sees the account waiting.
     {
-        const httplib::Result result = client.Get(
-            "/v1/account/pending", makeHeaders(panel, "GET", "/v1/account/pending", ""));
-        CHECK(result && result->status == 200);
-        const nlohmann::json pending = nlohmann::json::parse(result->body).at("pending");
+        const http::ClientResponse result = call(port, "GET", "/v1/account/pending", makeHeaders(panel, "GET", "/v1/account/pending", ""));
+        CHECK(result.status == 200);
+        const nlohmann::json pending = nlohmann::json::parse(result.body).at("pending");
         CHECK(pending.size() == 1);
         CHECK(pending.at(0).at("user") == alice.fingerprint());
     }
@@ -125,27 +142,25 @@ int main()
     // Approval is operator-only.
     {
         const std::string body = nlohmann::json{{"user", alice.fingerprint()}}.dump();
-        const httplib::Result forged = client.Post("/v1/account/approve",
-            makeHeaders(alice, "POST", "/v1/account/approve", body), body, "application/json");
-        CHECK(forged && forged->status == 403);
+        const http::ClientResponse forged = call(port, "POST", "/v1/account/approve",
+            makeHeaders(alice, "POST", "/v1/account/approve", body), body);
+        CHECK(forged.status == 403);
         CHECK(grants.peekApproval(alice.fingerprint())->pending());
 
-        const httplib::Result result = client.Post("/v1/account/approve",
-            makeHeaders(panel, "POST", "/v1/account/approve", body), body, "application/json");
-        CHECK(result && result->status == 200);
+        const http::ClientResponse result = call(port, "POST", "/v1/account/approve",
+            makeHeaders(panel, "POST", "/v1/account/approve", body), body);
+        CHECK(result.status == 200);
     }
 
     // Once approved the account is served like any other.
     {
-        const httplib::Result result = client.Post("/v1/account/i2p-dest",
-            makeHeaders(alice, "POST", "/v1/account/i2p-dest", transientBody), transientBody,
-            "application/json");
-        CHECK(result && result->status == 200);
+        const http::ClientResponse result = call(port, "POST", "/v1/account/i2p-dest",
+            makeHeaders(alice, "POST", "/v1/account/i2p-dest", transientBody), transientBody);
+        CHECK(result.status == 200);
         CHECK(pubCalls == 1);
 
-        const httplib::Result pending = client.Get(
-            "/v1/account/pending", makeHeaders(panel, "GET", "/v1/account/pending", ""));
-        CHECK(nlohmann::json::parse(pending->body).at("pending").empty());
+        const http::ClientResponse pending = call(port, "GET", "/v1/account/pending", makeHeaders(panel, "GET", "/v1/account/pending", ""));
+        CHECK(nlohmann::json::parse(pending.body).at("pending").empty());
     }
 
     api.stop();

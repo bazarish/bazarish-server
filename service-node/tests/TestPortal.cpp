@@ -6,7 +6,7 @@
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Crypto.hpp>
 
-#include <httplib/httplib.h>
+#include <bazarish/HttpClient.hpp>
 #include <nlohmann/json.hpp>
 
 #include <chrono>
@@ -15,6 +15,7 @@
 #include <exception>
 #include <filesystem>
 #include <string>
+#include <map>
 #include <thread>
 
 #define CHECK(condition)                                                            \
@@ -44,6 +45,27 @@ using namespace bazarish;
 using namespace bazarish::service;
 
 namespace {
+
+namespace http = bazarish::http;
+
+using Headers = std::map<std::string, std::string>;
+
+// One request against the API under test. A transport failure comes back as
+// status 0, so a check on the status covers "nothing answered" too.
+http::ClientResponse call(const int port, const std::string& method, const std::string& path,
+    const Headers& headers = {}, const std::string& body = {})
+{
+    http::ClientRequest request;
+    request.method = method;
+    request.target = path;
+    request.headers = headers;
+    request.body = body;
+    if (!body.empty()) {
+        request.contentType = "application/json";
+    }
+    return http::request("127.0.0.1", port, request, {});
+}
+
 
 std::int64_t now()
 {
@@ -87,19 +109,17 @@ void testPortalDiscovery()
     const int port = api.bindToAnyPort("127.0.0.1");
     std::thread serverThread([&api]() { (void)api.listenAfterBind(); });
 
-    httplib::Client client("127.0.0.1", port);
-    httplib::Result response;
+    http::ClientResponse response;
     for (int attempt = 0; attempt < 200; ++attempt) {
-        response = client.Get("/v1/account/portal");
-        if (response) {
+        response = call(port, "GET", "/v1/account/portal");
+        if (response.status != 0) {
             break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-    CHECK(response);
-    CHECK(response->status == 200);
+    CHECK(response.status == 200);
 
-    const nlohmann::json body = nlohmann::json::parse(response->body);
+    const nlohmann::json body = nlohmann::json::parse(response.body);
     CHECK(body.at("message").get<std::string>() == "Register at the portal");
     CHECK(body.at("links").size() == 2);
     // Nothing is for sale, so there is no service catalogue - only the terms of

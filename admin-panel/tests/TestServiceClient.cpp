@@ -6,7 +6,7 @@
 #include <bazarish/Crypto.hpp>
 #include <bazarish/Health.hpp>
 
-#include <httplib/httplib.h>
+#include <bazarish/HttpServer.hpp>
 #include <nlohmann/json.hpp>
 
 #include <chrono>
@@ -30,18 +30,20 @@ using namespace bazarish::admin;
 
 namespace {
 
+namespace http = bazarish::http;
+
 std::int64_t nowSeconds()
 {
     return static_cast<std::int64_t>(std::time(nullptr));
 }
 
-auth::Headers collectAuthHeaders(const httplib::Request& request)
+auth::Headers collectAuthHeaders(const http::Request& request)
 {
     auth::Headers headers;
     for (const char* const name : {auth::kHeaderKeys, auth::kHeaderTimestamp,
              auth::kHeaderSignatureClassical, auth::kHeaderSignaturePq}) {
-        if (request.has_header(name)) {
-            headers[name] = request.get_header_value(name);
+        if (request.hasHeader(name)) {
+            headers[name] = request.header(name);
         }
     }
     return headers;
@@ -57,8 +59,10 @@ int main()
     std::string quotaUser;
     std::uint64_t quotaBytes = 0;
 
-    httplib::Server service;
-    const auto authorize = [&panel](const httplib::Request& request) -> bool {
+    http::Server::Options options;
+    options.port = 0;  // the kernel picks one
+    http::Server service(options);
+    const auto authorize = [&panel](const http::Request& request) -> bool {
         try {
             auth::authorizeRequest(collectAuthHeaders(request), nowSeconds(), request.method,
                 request.path, Bytes(request.body.begin(), request.body.end()),
@@ -68,34 +72,34 @@ int main()
             return false;
         }
     };
-    service.Get("/healthz", [&](const httplib::Request& request, httplib::Response& response) {
+    const auto refusal = []() {
+        http::Response response;
+        response.status = 403;
+        response.body = "{\"error\":{\"message\":\"denied\"}}";
+        return response;
+    };
+    service.get("/healthz", [&](const http::Request& request) {
         if (!authorize(request)) {
-            response.status = 403;
-            response.set_content("{\"error\":{\"message\":\"denied\"}}", "application/json");
-            return;
+            return refusal();
         }
-        response.set_content(
-            health::reportJson("server-core", "9.9.9", 1000, 1000 + 42), "application/json");
+        http::Response response;
+        response.body = health::reportJson("server-core", "9.9.9", 1000, 1000 + 42);
+        return response;
     });
-    service.Put("/v1/messaging/quota",
-        [&](const httplib::Request& request, httplib::Response& response) {
-            if (!authorize(request)) {
-                response.status = 403;
-                response.set_content("{\"error\":{\"message\":\"denied\"}}", "application/json");
-                return;
-            }
-            const nlohmann::json body = nlohmann::json::parse(request.body);
-            quotaUser = body.at("user").get<std::string>();
-            quotaBytes = body.at("quotaBytes").get<std::uint64_t>();
-            response.set_content("{\"ok\":true}", "application/json");
-        });
+    service.put("/v1/messaging/quota", [&](const http::Request& request) {
+        if (!authorize(request)) {
+            return refusal();
+        }
+        const nlohmann::json body = nlohmann::json::parse(request.body);
+        quotaUser = body.at("user").get<std::string>();
+        quotaBytes = body.at("quotaBytes").get<std::uint64_t>();
+        http::Response response;
+        response.body = "{\"ok\":true}";
+        return response;
+    });
 
-    const int port = service.bind_to_any_port("127.0.0.1");
+    const int port = service.start();
     CHECK(port > 0);
-    std::thread serverThread([&service]() { (void)service.listen_after_bind(); });
-    while (!service.is_running()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
 
     ServiceEntry entry;
     entry.name = "core";
@@ -128,7 +132,6 @@ int main()
     CHECK(quotaDenied.status == 403);
 
     service.stop();
-    serverThread.join();
     std::printf("TestServiceClient: all checks passed\n");
     return 0;
 }

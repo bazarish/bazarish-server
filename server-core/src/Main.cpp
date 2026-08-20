@@ -13,7 +13,7 @@
 #include <bazarish/I2p.hpp>
 #include <bazarish/Log.hpp>
 
-#include <httplib/httplib.h>
+#include <bazarish/HttpClient.hpp>
 #include <nlohmann/json.hpp>
 
 #include <ctime>
@@ -34,6 +34,38 @@ namespace fs = std::filesystem;
 constexpr const char* kVersion = "0.0.2";
 constexpr const char* kDefaultHost = "127.0.0.1";
 constexpr int kDefaultPort = 8420;
+// The service node is one hop away on the operator's own machine, so a lookup
+// that takes longer than this is a node that is down, not a slow one.
+constexpr int kServiceNodeTimeoutSeconds = 5;
+// The port a service-node URL means when it names none.
+constexpr int kDefaultHttpPort = 80;
+
+// Where a --service-node URL points. The HTTP client takes a host and a port,
+// not a URL, and the scheme is always plain http here (the node listens on
+// loopback).
+struct ServiceNodeAddress {
+    std::string host;
+    int port = kDefaultHttpPort;
+};
+
+ServiceNodeAddress parseServiceNodeUrl(const std::string& url)
+{
+    std::string rest = url;
+    if (const std::string scheme = "http://"; rest.rfind(scheme, 0) == 0) {
+        rest = rest.substr(scheme.size());
+    }
+    if (const auto slash = rest.find('/'); slash != std::string::npos) {
+        rest = rest.substr(0, slash);
+    }
+    ServiceNodeAddress address;
+    if (const auto colon = rest.find(':'); colon == std::string::npos) {
+        address.host = rest;
+    } else {
+        address.host = rest.substr(0, colon);
+        address.port = std::stoi(rest.substr(colon + 1));
+    }
+    return address;
+}
 
 void printUsage()
 {
@@ -279,15 +311,20 @@ int main(const int argc, const char** argv)
         bazarish::server::GetCardFn getCard;
         if (!serviceNodeUrl.empty()) {
             getCard = [serviceNodeUrl](const std::string& fp) -> std::optional<bazarish::Bytes> {
-                httplib::Client client(serviceNodeUrl);
-                client.set_connection_timeout(5);
-                client.set_read_timeout(5);
-                const httplib::Result res = client.Get("/v1/account/contact?user=" + fp);
-                if (!res || res->status != 200) {
+                const ServiceNodeAddress node = parseServiceNodeUrl(serviceNodeUrl);
+                bazarish::http::ClientRequest lookup;
+                lookup.method = "GET";
+                lookup.target = "/v1/account/contact?user=" + fp;
+                bazarish::http::ClientOptions options;
+                options.connectTimeout = std::chrono::seconds(kServiceNodeTimeoutSeconds);
+                options.readTimeout = std::chrono::seconds(kServiceNodeTimeoutSeconds);
+                const bazarish::http::ClientResponse res
+                    = bazarish::http::request(node.host, node.port, lookup, options);
+                if (res.status != 200) {
                     return std::nullopt;
                 }
                 try {
-                    const nlohmann::json body = nlohmann::json::parse(res->body);
+                    const nlohmann::json body = nlohmann::json::parse(res.body);
                     return bazarish::fromBase64(body.at("subscriptionCert").get<std::string>());
                 } catch (const std::exception&) {
                     return std::nullopt;

@@ -8,13 +8,14 @@
 #include <bazarish/Cms.hpp>
 #include <bazarish/Crypto.hpp>
 
-#include <httplib/httplib.h>
+#include <bazarish/HttpClient.hpp>
 #include <nlohmann/json.hpp>
 
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
+#include <map>
 #include <thread>
 
 #define CHECK(condition)                                                            \
@@ -31,13 +32,33 @@ using namespace bazarish::service;
 
 namespace {
 
-httplib::Headers makeHeaders(const Identity& identity, const std::string& method,
+namespace http = bazarish::http;
+
+using Headers = std::map<std::string, std::string>;
+
+// One request against the API under test. A transport failure comes back as
+// status 0, so a check on the status covers "nothing answered" too.
+http::ClientResponse call(const int port, const std::string& method, const std::string& path,
+    const Headers& headers = {}, const std::string& body = {})
+{
+    http::ClientRequest request;
+    request.method = method;
+    request.target = path;
+    request.headers = headers;
+    request.body = body;
+    if (!body.empty()) {
+        request.contentType = "application/json";
+    }
+    return http::request("127.0.0.1", port, request, {});
+}
+
+Headers makeHeaders(const Identity& identity, const std::string& method,
     const std::string& path, const std::string& body)
 {
     const auth::Headers signed_ = auth::signRequest(identity,
         static_cast<std::int64_t>(std::time(nullptr)), method, path,
         Bytes(body.begin(), body.end()));
-    return httplib::Headers(signed_.begin(), signed_.end());
+    return Headers(signed_.begin(), signed_.end());
 }
 
 }  // namespace
@@ -92,8 +113,6 @@ int main()
     const int port = api.bindToAnyPort("127.0.0.1");
     CHECK(port > 0);
     std::thread serverThread([&api]() { (void)api.listenAfterBind(); });
-    httplib::Client client("127.0.0.1", port);
-    CHECK(client.is_valid());
 
     const Identity alice = Identity::generate();
     const Identity mallory = Identity::generate();
@@ -106,11 +125,10 @@ int main()
         const Bytes cert
             = SubscriptionCertificate::issue(alice, serverFp, now, now + 3 * 24 * 3600);
         const std::string body = nlohmann::json{{"cert", toBase64(cert)}}.dump();
-        const httplib::Result result = client.Post("/v1/account/subscribe",
-            makeHeaders(alice, "POST", "/v1/account/subscribe", body), body,
-            "application/json");
-        CHECK(result && result->status == 200);
-        const nlohmann::json reply = nlohmann::json::parse(result->body);
+        const http::ClientResponse result = call(port, "POST", "/v1/account/subscribe",
+            makeHeaders(alice, "POST", "/v1/account/subscribe", body), body);
+        CHECK(result.status == 200);
+        const nlohmann::json reply = nlohmann::json::parse(result.body);
         CHECK(reply.at("quotaBytes") == options.defaultQuotaBytes);
         CHECK(reply.at("notAfter") == now + 3 * 24 * 3600);
         CHECK(fromBase64(reply.at("serverCard").get<std::string>()) == cardDer);
@@ -128,10 +146,9 @@ int main()
             {"server", serverFp}, {"issuedAt", now}, {"notAfter", now + 3600}};
         const Bytes forged = cms::signJsonHybrid(forgedBody, mallory);
         const std::string body = nlohmann::json{{"cert", toBase64(forged)}}.dump();
-        const httplib::Result result = client.Post("/v1/account/subscribe",
-            makeHeaders(mallory, "POST", "/v1/account/subscribe", body), body,
-            "application/json");
-        CHECK(result && result->status == 400);
+        const http::ClientResponse result = call(port, "POST", "/v1/account/subscribe",
+            makeHeaders(mallory, "POST", "/v1/account/subscribe", body), body);
+        CHECK(result.status == 400);
     }
 
     // A certificate for a different server is rejected.
@@ -139,10 +156,9 @@ int main()
         const Bytes cert = SubscriptionCertificate::issue(
             alice, Identity::generate().fingerprint(), now, now + 3600);
         const std::string body = nlohmann::json{{"cert", toBase64(cert)}}.dump();
-        const httplib::Result result = client.Post("/v1/account/subscribe",
-            makeHeaders(alice, "POST", "/v1/account/subscribe", body), body,
-            "application/json");
-        CHECK(result && result->status == 400);
+        const http::ClientResponse result = call(port, "POST", "/v1/account/subscribe",
+            makeHeaders(alice, "POST", "/v1/account/subscribe", body), body);
+        CHECK(result.status == 400);
     }
 
     // A term longer than the maximum is rejected.
@@ -150,20 +166,19 @@ int main()
         const Bytes cert = SubscriptionCertificate::issue(
             alice, serverFp, now, now + 30 * 24 * 3600);
         const std::string body = nlohmann::json{{"cert", toBase64(cert)}}.dump();
-        const httplib::Result result = client.Post("/v1/account/subscribe",
-            makeHeaders(alice, "POST", "/v1/account/subscribe", body), body,
-            "application/json");
-        CHECK(result && result->status == 400);
-        CHECK(nlohmann::json::parse(result->body).at("error").at("code")
+        const http::ClientResponse result = call(port, "POST", "/v1/account/subscribe",
+            makeHeaders(alice, "POST", "/v1/account/subscribe", body), body);
+        CHECK(result.status == 400);
+        CHECK(nlohmann::json::parse(result.body).at("error").at("code")
             == "SUBSCRIPTION_TERM_TOO_LONG");
     }
 
     // Subscription status reflects the active subscription.
     {
-        const httplib::Result result = client.Get("/v1/account/subscription",
+        const http::ClientResponse result = call(port, "GET", "/v1/account/subscription",
             makeHeaders(alice, "GET", "/v1/account/subscription", ""));
-        CHECK(result && result->status == 200);
-        CHECK(nlohmann::json::parse(result->body).at("notAfter") == now + 3 * 24 * 3600);
+        CHECK(result.status == 200);
+        CHECK(nlohmann::json::parse(result.body).at("notAfter") == now + 3 * 24 * 3600);
     }
 
     // Contact lookup by fingerprint returns the subscription certificate
@@ -177,21 +192,21 @@ int main()
         const Bytes cert = SubscriptionCertificate::issue(
             alice, serverFp, now, now + 3 * 24 * 3600, aliceSealing.publicDer());
         const std::string body = nlohmann::json{{"cert", toBase64(cert)}}.dump();
-        const httplib::Result renewed = client.Post("/v1/account/renew",
-            makeHeaders(alice, "POST", "/v1/account/renew", body), body, "application/json");
-        CHECK(renewed && renewed->status == 200);
+        const http::ClientResponse renewed = call(port, "POST", "/v1/account/renew",
+            makeHeaders(alice, "POST", "/v1/account/renew", body), body);
+        CHECK(renewed.status == 200);
 
-        const httplib::Result result
-            = client.Get("/v1/account/contact?user=" + alice.fingerprint());
-        CHECK(result && result->status == 200);
+        const http::ClientResponse result
+            = call(port, "GET", "/v1/account/contact?user=" + alice.fingerprint());
+        CHECK(result.status == 200);
         const SubscriptionCertificate looked = SubscriptionCertificate::verify(fromBase64(
-            nlohmann::json::parse(result->body).at("subscriptionCert").get<std::string>()));
+            nlohmann::json::parse(result.body).at("subscriptionCert").get<std::string>()));
         CHECK(looked.user == alice.fingerprint());
         CHECK(looked.sealingPublicKeyDer == aliceSealing.publicDer());
 
-        const httplib::Result missing
-            = client.Get("/v1/account/contact?user=" + mallory.fingerprint());
-        CHECK(missing && missing->status == 404);
+        const http::ClientResponse missing
+            = call(port, "GET", "/v1/account/contact?user=" + mallory.fingerprint());
+        CHECK(missing.status == 404);
     }
 
     // Re-publishing the card inside the term already held needs no grant: the
@@ -206,17 +221,17 @@ int main()
         const Bytes cert = SubscriptionCertificate::issue(alice, serverFp, now,
             now + 3 * 24 * 3600, sealing.publicDer(), dest, servingKey);
         const std::string body = nlohmann::json{{"cert", toBase64(cert)}}.dump();
-        const httplib::Result result = client.Post("/v1/account/renew",
-            makeHeaders(alice, "POST", "/v1/account/renew", body), body, "application/json");
-        CHECK(result && result->status == 200);
-        CHECK(nlohmann::json::parse(result->body).at("quotaBytes") == options.defaultQuotaBytes);
+        const http::ClientResponse result = call(port, "POST", "/v1/account/renew",
+            makeHeaders(alice, "POST", "/v1/account/renew", body), body);
+        CHECK(result.status == 200);
+        CHECK(nlohmann::json::parse(result.body).at("quotaBytes") == options.defaultQuotaBytes);
 
         // The published card is the one a contact now gets, routing included.
-        const httplib::Result looked
-            = client.Get("/v1/account/contact?user=" + alice.fingerprint());
-        CHECK(looked && looked->status == 200);
+        const http::ClientResponse looked
+            = call(port, "GET", "/v1/account/contact?user=" + alice.fingerprint());
+        CHECK(looked.status == 200);
         const SubscriptionCertificate card = SubscriptionCertificate::verify(fromBase64(
-            nlohmann::json::parse(looked->body).at("subscriptionCert").get<std::string>()));
+            nlohmann::json::parse(looked.body).at("subscriptionCert").get<std::string>()));
         CHECK(card.dest == dest);
         CHECK(card.servingSealingKeyDer == servingKey);
 
@@ -224,10 +239,9 @@ int main()
         const Bytes longer
             = SubscriptionCertificate::issue(alice, serverFp, now, now + 4 * 24 * 3600);
         const std::string longerBody = nlohmann::json{{"cert", toBase64(longer)}}.dump();
-        const httplib::Result refused = client.Post("/v1/account/renew",
-            makeHeaders(alice, "POST", "/v1/account/renew", longerBody), longerBody,
-            "application/json");
-        CHECK(refused && refused->status == 403);
+        const http::ClientResponse refused = call(port, "POST", "/v1/account/renew",
+            makeHeaders(alice, "POST", "/v1/account/renew", longerBody), longerBody);
+        CHECK(refused.status == 403);
     }
 
     // Per-user I2P destination delegation: every account owns one, so the only
@@ -238,16 +252,16 @@ int main()
                   {"expiresUnix", now + 7 * 24 * 3600}}
                   .dump();
         // A stranger with no account here -> 403, nothing published.
-        const httplib::Result stranger = client.Post("/v1/account/i2p-dest",
-            makeHeaders(mallory, "POST", "/v1/account/i2p-dest", body), body, "application/json");
-        CHECK(stranger && stranger->status == 403);
+        const http::ClientResponse stranger = call(port, "POST", "/v1/account/i2p-dest",
+            makeHeaders(mallory, "POST", "/v1/account/i2p-dest", body), body);
+        CHECK(stranger.status == 403);
         CHECK(pubCalls == 0);
 
         // An account registered on an open node is approved on creation -> 200.
         CHECK(!grants.peekApproval(alice.fingerprint())->pending());
-        const httplib::Result ok = client.Post("/v1/account/i2p-dest",
-            makeHeaders(alice, "POST", "/v1/account/i2p-dest", body), body, "application/json");
-        CHECK(ok && ok->status == 200);
+        const http::ClientResponse ok = call(port, "POST", "/v1/account/i2p-dest",
+            makeHeaders(alice, "POST", "/v1/account/i2p-dest", body), body);
+        CHECK(ok.status == 200);
         CHECK(pubCalls == 1);
         CHECK(pubUser == alice.fingerprint());
         CHECK(pubTransient == "user-transient-b64");
@@ -257,24 +271,22 @@ int main()
         // node claiming one is held: the client is told, and the status stays put.
         {
             pubAccepts = false;
-            const httplib::Result refused = client.Post("/v1/account/i2p-dest",
-                makeHeaders(alice, "POST", "/v1/account/i2p-dest", body), body,
-                "application/json");
-            CHECK(refused && refused->status == 503);
-            const httplib::Result status = client.Get("/v1/account/i2p-status",
+            const http::ClientResponse refused = call(port, "POST", "/v1/account/i2p-dest",
+                makeHeaders(alice, "POST", "/v1/account/i2p-dest", body), body);
+            CHECK(refused.status == 503);
+            const http::ClientResponse status = call(port, "GET", "/v1/account/i2p-status",
                 makeHeaders(alice, "GET", "/v1/account/i2p-status", {}));
-            CHECK(status && status->status == 200);
-            const nlohmann::json reply = nlohmann::json::parse(status->body);
+            CHECK(status.status == 200);
+            const nlohmann::json reply = nlohmann::json::parse(status.body);
             CHECK(reply.at("transientExpires") == now + 7 * 24 * 3600);  // the one that did land
             pubAccepts = true;
         }
 
         // An empty transient revokes (published with empty transient, expiry 0).
         const std::string revokeBody = nlohmann::json::object().dump();
-        const httplib::Result revoked = client.Post("/v1/account/i2p-dest",
-            makeHeaders(alice, "POST", "/v1/account/i2p-dest", revokeBody), revokeBody,
-            "application/json");
-        CHECK(revoked && revoked->status == 200);
+        const http::ClientResponse revoked = call(port, "POST", "/v1/account/i2p-dest",
+            makeHeaders(alice, "POST", "/v1/account/i2p-dest", revokeBody), revokeBody);
+        CHECK(revoked.status == 200);
         CHECK(pubCalls == 3);  // delegate, the refused attempt above, revoke
         CHECK(pubTransient.empty());
         CHECK(pubExpires == 0);
@@ -283,23 +295,23 @@ int main()
     // Unsubscribe tears the account down: subscription gone, destination revoked,
     // grants dropped - so the account can no longer delegate a transient.
     {
-        const httplib::Result result = client.Delete("/v1/account/subscription",
+        const http::ClientResponse result = call(port, "DELETE", "/v1/account/subscription",
             makeHeaders(alice, "DELETE", "/v1/account/subscription", ""));
-        CHECK(result && result->status == 200);
+        CHECK(result.status == 200);
         CHECK(pubCalls == 4);  // + the revoke unsubscribe performs
         CHECK(pubTransient.empty());
         CHECK(!grants.peekApproval(alice.fingerprint()).has_value());
 
-        const httplib::Result status = client.Get("/v1/account/subscription",
+        const http::ClientResponse status = call(port, "GET", "/v1/account/subscription",
             makeHeaders(alice, "GET", "/v1/account/subscription", ""));
-        CHECK(status && status->status == 404);
+        CHECK(status.status == 404);
 
         const std::string body
             = nlohmann::json{{"transient", "after-unsubscribe"}, {"expiresUnix", now + 3600}}
                   .dump();
-        const httplib::Result orphan = client.Post("/v1/account/i2p-dest",
-            makeHeaders(alice, "POST", "/v1/account/i2p-dest", body), body, "application/json");
-        CHECK(orphan && orphan->status == 403);
+        const http::ClientResponse orphan = call(port, "POST", "/v1/account/i2p-dest",
+            makeHeaders(alice, "POST", "/v1/account/i2p-dest", body), body);
+        CHECK(orphan.status == 403);
         CHECK(pubCalls == 4);  // refused before reaching the publisher
     }
 

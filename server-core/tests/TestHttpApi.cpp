@@ -8,7 +8,7 @@
 #include <bazarish/Cms.hpp>
 #include <bazarish/Tokens.hpp>
 
-#include <httplib/httplib.h>
+#include <bazarish/HttpClient.hpp>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -37,16 +37,35 @@ using namespace bazarish::server;
 
 namespace {
 
+namespace http = bazarish::http;
+
+using Headers = std::map<std::string, std::string>;
+
+// One request against the API under test. A transport failure comes back as
+// status 0, so a check on the status covers "nothing answered" too.
+http::ClientResponse call(const int port, const std::string& method, const std::string& path,
+    const Headers& headers = {}, const std::string& body = {})
+{
+    http::ClientRequest request;
+    request.method = method;
+    request.target = path;
+    request.headers = headers;
+    request.body = body;
+    if (!body.empty()) {
+        request.contentType = "application/json";
+    }
+    return http::request("127.0.0.1", port, request, {});
+}
 
 // Signs a request with the caller identity and optionally attaches the
 // client ID header.
-httplib::Headers makeHeaders(const Identity& identity, const std::string& method,
+Headers makeHeaders(const Identity& identity, const std::string& method,
     const std::string& path, const std::string& body, const std::string& clientId)
 {
     const auth::Headers signed_ = auth::signRequest(identity,
         static_cast<std::int64_t>(std::time(nullptr)), method, path,
         Bytes(body.begin(), body.end()));
-    httplib::Headers headers(signed_.begin(), signed_.end());
+    Headers headers(signed_.begin(), signed_.end());
     if (!clientId.empty()) {
         headers.emplace("X-Bazarish-Client", clientId);
     }
@@ -68,25 +87,24 @@ std::string makeEnvelope(const std::string& toDest, const Key& serverSealingPubl
 }
 
 // Submits a send request and polls the attempt to completion.
-nlohmann::json sendAndPoll(httplib::Client& client, const Identity& sender,
+nlohmann::json sendAndPoll(const int port, const Identity& sender,
     const std::string& clientId, const std::string& envelope)
 {
-    const httplib::Result posted = client.Post("/v1/messaging/send",
-        makeHeaders(sender, "POST", "/v1/messaging/send", envelope, clientId), envelope,
-        "application/json");
-    CHECK(posted && posted->status == 200);
+    const http::ClientResponse posted = call(port, "POST", "/v1/messaging/send",
+        makeHeaders(sender, "POST", "/v1/messaging/send", envelope, clientId), envelope);
+    CHECK(posted.status == 200);
     const std::string attemptId
-        = nlohmann::json::parse(posted->body).at("attemptId").get<std::string>();
+        = nlohmann::json::parse(posted.body).at("attemptId").get<std::string>();
 
     // Delivery now runs on a background worker (store-and-forward), so the
     // attempt starts "pending"; poll until it reaches a terminal state.
     const std::string pollPath = "/v1/messaging/send/" + attemptId;
     nlohmann::json body;
     for (int i = 0; i < 200; ++i) {
-        const httplib::Result polled
-            = client.Get(pollPath, makeHeaders(sender, "GET", pollPath, "", clientId));
-        CHECK(polled && polled->status == 200);
-        body = nlohmann::json::parse(polled->body);
+        const http::ClientResponse polled
+            = call(port, "GET", pollPath, makeHeaders(sender, "GET", pollPath, "", clientId));
+        CHECK(polled.status == 200);
+        body = nlohmann::json::parse(polled.body);
         if (body.at("status") != "pending") {
             return body;
         }
@@ -183,17 +201,15 @@ int main()
     const int port = api.bindToAnyPort("127.0.0.1");
     CHECK(port > 0);
     std::thread serverThread([&api]() { (void)api.listenAfterBind(); });
-    httplib::Client client("127.0.0.1", port);
-    CHECK(client.is_valid());
 
     const Identity alice = Identity::generate();
     const Identity bob = Identity::generate();
 
     // Unauthenticated requests are rejected.
     {
-        const httplib::Result result
-            = client.Post("/v1/messaging/clients", "{}", "application/json");
-        CHECK(result && result->status == 401);
+        const http::ClientResponse result
+            = call(port, "POST", "/v1/messaging/clients", {}, "{}");
+        CHECK(result.status == 401);
     }
 
     // Client registration for both users.
@@ -201,20 +217,18 @@ int main()
         {std::pair<const Identity&, const char*>{alice, "alicedev"},
             std::pair<const Identity&, const char*>{bob, "bobdev"}}) {
         const std::string body = nlohmann::json{{"clientId", clientId}}.dump();
-        const httplib::Result result = client.Post("/v1/messaging/clients",
-            makeHeaders(identity, "POST", "/v1/messaging/clients", body, ""), body,
-            "application/json");
-        CHECK(result && result->status == 200);
+        const http::ClientResponse result = call(port, "POST", "/v1/messaging/clients",
+            makeHeaders(identity, "POST", "/v1/messaging/clients", body, ""), body);
+        CHECK(result.status == 200);
     }
 
     // Messaging endpoints demand a registered client ID.
     {
         const std::string body = nlohmann::json{{"hashes", nlohmann::json::array()}}.dump();
-        const httplib::Result result = client.Post("/v1/messaging/tokens",
-            makeHeaders(alice, "POST", "/v1/messaging/tokens", body, "unknowndev"), body,
-            "application/json");
-        CHECK(result && result->status == 403);
-        CHECK(nlohmann::json::parse(result->body).at("error").at("code")
+        const http::ClientResponse result = call(port, "POST", "/v1/messaging/tokens",
+            makeHeaders(alice, "POST", "/v1/messaging/tokens", body, "unknowndev"), body);
+        CHECK(result.status == 403);
+        CHECK(nlohmann::json::parse(result.body).at("error").at("code")
             == "CLIENT_UNREGISTERED");
     }
 
@@ -226,10 +240,9 @@ int main()
             {"hashes",
                 {toBase64(deliveryTokenHash(token1)), toBase64(deliveryTokenHash(token2))}},
         }.dump();
-        const httplib::Result result = client.Post("/v1/messaging/tokens",
-            makeHeaders(alice, "POST", "/v1/messaging/tokens", body, "alicedev"), body,
-            "application/json");
-        CHECK(result && result->status == 200);
+        const http::ClientResponse result = call(port, "POST", "/v1/messaging/tokens",
+            makeHeaders(alice, "POST", "/v1/messaging/tokens", body, "alicedev"), body);
+        CHECK(result.status == 200);
     }
     CHECK(storage.tokenHashCount(alice.fingerprint()) == 2);
 
@@ -239,33 +252,32 @@ int main()
         {{"class", "content"}, {"mailbox", alice.fingerprint()}, {"token", toBase64(token1)},
             {"messageId", "msg-1"}},
         payload);
-    CHECK(sendAndPoll(client, bob, "bobdev", envelope).at("status") == "delivered");
+    CHECK(sendAndPoll(port, bob, "bobdev", envelope).at("status") == "delivered");
     CHECK(storage.tokenHashCount(alice.fingerprint()) == 1);
 
     // An identical retry is deduplicated and consumes no second token.
-    CHECK(sendAndPoll(client, bob, "bobdev", envelope).at("status") == "delivered");
+    CHECK(sendAndPoll(port, bob, "bobdev", envelope).at("status") == "delivered");
     CHECK(storage.tokenHashCount(alice.fingerprint()) == 1);
 
     // Alice sees the message, fetches it and acks it away.
     {
-        const httplib::Result pending = client.Get("/v1/messaging/pending",
+        const http::ClientResponse pending = call(port, "GET", "/v1/messaging/pending",
             makeHeaders(alice, "GET", "/v1/messaging/pending", "", "alicedev"));
-        CHECK(pending && pending->status == 200);
-        const nlohmann::json list = nlohmann::json::parse(pending->body).at("pending");
+        CHECK(pending.status == 200);
+        const nlohmann::json list = nlohmann::json::parse(pending.body).at("pending");
         CHECK(list.size() == 1);
         CHECK(list[0].at("id") == "msg-1");
         CHECK(list[0].at("class") == "content");
 
-        const httplib::Result blob = client.Get("/v1/messaging/pending/msg-1",
+        const http::ClientResponse blob = call(port, "GET", "/v1/messaging/pending/msg-1",
             makeHeaders(alice, "GET", "/v1/messaging/pending/msg-1", "", "alicedev"));
-        CHECK(blob && blob->status == 200);
-        CHECK(Bytes(blob->body.begin(), blob->body.end()) == payload);
+        CHECK(blob.status == 200);
+        CHECK(Bytes(blob.body.begin(), blob.body.end()) == payload);
 
         const std::string ackBody = nlohmann::json{{"blobId", "msg-1"}}.dump();
-        const httplib::Result acked = client.Post("/v1/messaging/ack",
-            makeHeaders(alice, "POST", "/v1/messaging/ack", ackBody, "alicedev"), ackBody,
-            "application/json");
-        CHECK(acked && acked->status == 200);
+        const http::ClientResponse acked = call(port, "POST", "/v1/messaging/ack",
+            makeHeaders(alice, "POST", "/v1/messaging/ack", ackBody, "alicedev"), ackBody);
+        CHECK(acked.status == 200);
         // Alice's only client acked: deleted immediately.
         CHECK(storage.usage(alice.fingerprint()) == 0);
     }
@@ -276,7 +288,7 @@ int main()
             {{"class", "content"}, {"mailbox", alice.fingerprint()},
                 {"token", toBase64(generateDeliveryToken())}, {"messageId", "msg-2"}},
             payload);
-        const nlohmann::json result = sendAndPoll(client, bob, "bobdev", bad);
+        const nlohmann::json result = sendAndPoll(port, bob, "bobdev", bad);
         CHECK(result.at("status") == "failed");
         CHECK(result.at("error").at("code") == "DELIVERY_REJECTED");
     }
@@ -287,13 +299,13 @@ int main()
             {{"class", "contact"}, {"mailbox", alice.fingerprint()},
                 {"messageId", "req-1"}},
             Bytes(200, 0x55));
-        CHECK(sendAndPoll(client, bob, "bobdev", request).at("status") == "delivered");
+        CHECK(sendAndPoll(port, bob, "bobdev", request).at("status") == "delivered");
 
         const std::string oversized = makeEnvelope(serverDest, sealingPublic,
             {{"class", "contact"}, {"mailbox", alice.fingerprint()},
                 {"messageId", "req-2"}},
             Bytes(300, 0x55));
-        const nlohmann::json result = sendAndPoll(client, bob, "bobdev", oversized);
+        const nlohmann::json result = sendAndPoll(port, bob, "bobdev", oversized);
         CHECK(result.at("status") == "failed");
         CHECK(result.at("error").at("code") == "CONTACT_REQUEST_TOO_LARGE");
     }
@@ -305,7 +317,7 @@ int main()
             {{"class", "content"}, {"mailbox", alice.fingerprint()},
                 {"token", toBase64(token2)}, {"messageId", "msg-3"}},
             Bytes(2000, 0x77));
-        const nlohmann::json result = sendAndPoll(client, bob, "bobdev", big);
+        const nlohmann::json result = sendAndPoll(port, bob, "bobdev", big);
         CHECK(result.at("status") == "failed");
         CHECK(result.at("error").at("code") == "STORAGE_FULL");
         CHECK(storage.tokenHashCount(alice.fingerprint()) == 1);
@@ -323,7 +335,7 @@ int main()
             {{"class", "content"}, {"mailbox", alice.fingerprint()},
                 {"token", toBase64(token2)}, {"messageId", "msg-4"}},
             payload);
-        const nlohmann::json result = sendAndPoll(client, bob, "bobdev", remote);
+        const nlohmann::json result = sendAndPoll(port, bob, "bobdev", remote);
         CHECK(result.at("status") == "unconfirmed");
         CHECK(!result.contains("error"));
     }
@@ -331,10 +343,10 @@ int main()
     // The destination endpoint surfaces the caller's assigned destination + the
     // public serving sealing key (the test assignment: serverDest + server key).
     {
-        const httplib::Result result = client.Get("/v1/messaging/destination",
+        const http::ClientResponse result = call(port, "GET", "/v1/messaging/destination",
             makeHeaders(bob, "GET", "/v1/messaging/destination", "", "bobdev"));
-        CHECK(result && result->status == 200);
-        const nlohmann::json body = nlohmann::json::parse(result->body);
+        CHECK(result.status == 200);
+        const nlohmann::json body = nlohmann::json::parse(result.body);
         CHECK(body.at("dest").get<std::string>() == serverDest);
         CHECK(body.at("servingKey").get<std::string>() == toBase64(serverServingKey->publicDer()));
         CHECK(body.at("state").get<std::string>() == "home");
@@ -347,11 +359,10 @@ int main()
             = nlohmann::json(
                   {{"toDest", serverDest}, {"op", "card"}, {"sealed", toBase64(Bytes{1, 2, 3})}})
                   .dump();
-        const httplib::Result result = client.Post("/v1/messaging/fetch",
-            makeHeaders(bob, "POST", "/v1/messaging/fetch", body, "bobdev"), body,
-            "application/json");
-        CHECK(result && result->status == 200);
-        const nlohmann::json reply = nlohmann::json::parse(result->body);
+        const http::ClientResponse result = call(port, "POST", "/v1/messaging/fetch",
+            makeHeaders(bob, "POST", "/v1/messaging/fetch", body, "bobdev"), body);
+        CHECK(result.status == 200);
+        const nlohmann::json reply = nlohmann::json::parse(result.body);
         CHECK(reply.at("ok").get<bool>());
         CHECK(fromBase64(reply.at("sealed").get<std::string>()) == (Bytes{0xAB, 0xCD}));
         CHECK(relayedOp == "card");
@@ -364,18 +375,17 @@ int main()
             = nlohmann::json(
                   {{"toDest", "stats.i2p"}, {"op", "card"}, {"sealed", toBase64(Bytes{1})}})
                   .dump();
-        const httplib::Result result = client.Post("/v1/messaging/fetch",
-            makeHeaders(bob, "POST", "/v1/messaging/fetch", body, "bobdev"), body,
-            "application/json");
-        CHECK(result && result->status == 400);
+        const http::ClientResponse result = call(port, "POST", "/v1/messaging/fetch",
+            makeHeaders(bob, "POST", "/v1/messaging/fetch", body, "bobdev"), body);
+        CHECK(result.status == 400);
     }
 
     // Unknown attempt IDs are reported as such.
     {
-        const httplib::Result result = client.Get("/v1/messaging/send/deadbeef",
+        const http::ClientResponse result = call(port, "GET", "/v1/messaging/send/deadbeef",
             makeHeaders(bob, "GET", "/v1/messaging/send/deadbeef", "", "bobdev"));
-        CHECK(result && result->status == 404);
-        CHECK(nlohmann::json::parse(result->body).at("error").at("code") == "ATTEMPT_UNKNOWN");
+        CHECK(result.status == 404);
+        CHECK(nlohmann::json::parse(result.body).at("error").at("code") == "ATTEMPT_UNKNOWN");
     }
 
     // Per-user I2P destination endpoint (operator signature): auth + dispatch.
@@ -384,27 +394,25 @@ int main()
             {"user", "alicefp"}, {"transient", "tb64"}, {"expiresUnix", 1780001234}}
                                      .dump();
         // No signature, then a signature from an unauthorised identity -> 403.
-        const httplib::Result noAuth
-            = client.Put("/v1/messaging/i2p-dest", body, "application/json");
-        CHECK(noAuth && noAuth->status == 403);
-        const httplib::Result badAuth = client.Put("/v1/messaging/i2p-dest",
-            makeHeaders(Identity::generate(), "PUT", "/v1/messaging/i2p-dest", body, ""), body,
-            "application/json");
-        CHECK(badAuth && badAuth->status == 403);
+        const http::ClientResponse noAuth
+            = call(port, "PUT", "/v1/messaging/i2p-dest", {}, body);
+        CHECK(noAuth.status == 403);
+        const http::ClientResponse badAuth = call(port, "PUT", "/v1/messaging/i2p-dest",
+            makeHeaders(Identity::generate(), "PUT", "/v1/messaging/i2p-dest", body, ""), body);
+        CHECK(badAuth.status == 403);
         // The authorised operator's signature with a transient provisions.
-        const httplib::Result ok = client.Put("/v1/messaging/i2p-dest",
-            makeHeaders(operatorIdentity, "PUT", "/v1/messaging/i2p-dest", body, ""), body,
-            "application/json");
-        CHECK(ok && ok->status == 200);
+        const http::ClientResponse ok = call(port, "PUT", "/v1/messaging/i2p-dest",
+            makeHeaders(operatorIdentity, "PUT", "/v1/messaging/i2p-dest", body, ""), body);
+        CHECK(ok.status == 200);
         CHECK(provisionedUser == "alicefp");
         CHECK(provisionedTransient == "tb64");
         CHECK(provisionedExpires == 1780001234);
         // The authorised operator's signature without a transient revokes.
         const std::string revokeBody = nlohmann::json{{"user", "alicefp"}}.dump();
-        const httplib::Result revoked = client.Put("/v1/messaging/i2p-dest",
+        const http::ClientResponse revoked = call(port, "PUT", "/v1/messaging/i2p-dest",
             makeHeaders(operatorIdentity, "PUT", "/v1/messaging/i2p-dest", revokeBody, ""),
-            revokeBody, "application/json");
-        CHECK(revoked && revoked->status == 200);
+            revokeBody);
+        CHECK(revoked.status == 200);
         CHECK(revokedUser == "alicefp");
     }
 
@@ -412,35 +420,35 @@ int main()
     // yet), random slice per call, and bounded so one caller cannot pull the
     // whole netDb.
     {
-        const httplib::Result result = client.Get("/v1/messaging/reseed");
-        CHECK(result && result->status == 200);
-        const nlohmann::json body = nlohmann::json::parse(result->body);
+        const http::ClientResponse result = call(port, "GET", "/v1/messaging/reseed");
+        CHECK(result.status == 200);
+        const nlohmann::json body = nlohmann::json::parse(result.body);
         CHECK(body.at("routers").size() == 3);
         const Bytes first = fromBase64(body.at("routers")[0].get<std::string>());
         CHECK(std::string(first.begin(), first.end()) == "routerinfo-0");
         CHECK(reseedAsked == 75);  // the default sample
 
         // An oversized ask is clamped, not honoured.
-        const httplib::Result capped = client.Get("/v1/messaging/reseed?count=100000");
-        CHECK(capped && capped->status == 200);
+        const http::ClientResponse capped = call(port, "GET", "/v1/messaging/reseed?count=100000");
+        CHECK(capped.status == 200);
         CHECK(reseedAsked == 200);
 
         // An empty netDb is an explicit typed error, never an empty success.
         reseedAvailable = 0;
-        const httplib::Result empty = client.Get("/v1/messaging/reseed");
-        CHECK(empty && empty->status == 503);
-        CHECK(nlohmann::json::parse(empty->body).at("error").at("code") == "I2P_UNAVAILABLE");
+        const http::ClientResponse empty = call(port, "GET", "/v1/messaging/reseed");
+        CHECK(empty.status == 503);
+        CHECK(nlohmann::json::parse(empty.body).at("error").at("code") == "I2P_UNAVAILABLE");
         reseedAvailable = 3;
     }
 
     // /healthz: operator-signed liveness with memory info; unsigned is rejected.
     {
-        const httplib::Result unauth = client.Get("/healthz");
-        CHECK(unauth && unauth->status == 403);
-        const httplib::Result ok = client.Get(
+        const http::ClientResponse unauth = call(port, "GET", "/healthz");
+        CHECK(unauth.status == 403);
+        const http::ClientResponse ok = call(port, "GET", 
             "/healthz", makeHeaders(operatorIdentity, "GET", "/healthz", "", ""));
-        CHECK(ok && ok->status == 200);
-        const nlohmann::json health = nlohmann::json::parse(ok->body);
+        CHECK(ok.status == 200);
+        const nlohmann::json health = nlohmann::json::parse(ok.body);
         CHECK(health.at("service").get<std::string>() == "server-core");
         CHECK(health.contains("ramBytes"));
         CHECK(health.contains("ramPeakBytes"));

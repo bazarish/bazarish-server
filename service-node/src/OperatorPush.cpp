@@ -6,10 +6,11 @@
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Crypto.hpp>
 
-#include <httplib/httplib.h>
+#include <bazarish/HttpClient.hpp>
 #include <nlohmann/json.hpp>
 
 #include <chrono>
+#include <map>
 #include <ctime>
 #include <thread>
 #include <exception>
@@ -75,28 +76,32 @@ bool OperatorPush::put(const std::string& path, const std::string& bodyText) con
     for (int attempt = 1; attempt <= kPushAttempts; ++attempt) {
         try {
             const HostPort hostPort = parseUrl(baseUrl_);
-            httplib::Client client(hostPort.host, hostPort.port);
-            client.set_connection_timeout(kConnectTimeoutSeconds, 0);
-            client.set_read_timeout(kReadTimeoutSeconds, 0);
             // Signed per attempt: the signature covers a timestamp.
             const auth::Headers signature = auth::signRequest(signer_,
                 static_cast<std::int64_t>(std::time(nullptr)), "PUT", path,
                 Bytes(bodyText.begin(), bodyText.end()));
-            const httplib::Headers headers(signature.begin(), signature.end());
-            const httplib::Result response
-                = client.Put(path, headers, bodyText, "application/json");
-            if (response && response->status == 200) {
+            bazarish::http::ClientRequest push;
+            push.method = "PUT";
+            push.target = path;
+            push.headers = std::map<std::string, std::string>(signature.begin(), signature.end());
+            push.body = bodyText;
+            push.contentType = "application/json";
+            bazarish::http::ClientOptions options;
+            options.connectTimeout = std::chrono::seconds(kConnectTimeoutSeconds);
+            options.readTimeout = std::chrono::seconds(kReadTimeoutSeconds);
+            const bazarish::http::ClientResponse response
+                = bazarish::http::request(hostPort.host, hostPort.port, push, options);
+            if (response.status == 200) {
                 return true;
             }
-            if (response && response->status < kFirstServerErrorStatus) {
+            if (response.status > 0 && response.status < kFirstServerErrorStatus) {
                 bazarish::log::warn("operator push to {}{} refused with {}: {}", baseUrl_, path,
-                    response->status, response->body);
+                    response.status, response.body);
                 return false;  // a refusal, not a hiccup: retrying changes nothing
             }
             bazarish::log::warn("operator push to {}{} did not land (attempt {}/{}): {}", baseUrl_,
                 path, attempt, kPushAttempts,
-                response ? std::to_string(response->status)
-                         : httplib::to_string(response.error()));
+                response.status > 0 ? std::to_string(response.status) : response.error);
         } catch (const std::exception& error) {
             bazarish::log::warn("operator push to {}{} failed (attempt {}/{}): {}", baseUrl_, path,
                 attempt, kPushAttempts, error.what());

@@ -189,7 +189,7 @@ void HttpApi::registerRoutes()
     http_->post("/login", filled([this, loginPage](
                               const http::Request& request, http::Response& response) {
         try {
-            auth_.login(request.query("challenge"), request.query("blob"),
+            auth_.login(request.param("challenge"), request.param("blob"),
                 nowSeconds());
             const std::string token = sessions_.create(nowSeconds());
             response.headers["Set-Cookie"]
@@ -343,15 +343,15 @@ void HttpApi::registerRoutes()
             redirectTo(response, "/login");
             return;
         }
-        const ServiceEntry* const service = findService(request.query("service"));
+        const ServiceEntry* const service = findService(request.param("service"));
         if (service == nullptr || service->kind != "server-core") {
             sendHtml(response, resultPage({false, 0, "unknown service"}, "Set quota"), 400);
             return;
         }
         const std::uint64_t quotaBytes
-            = std::strtoull(request.query("quotaBytes").c_str(), nullptr, 10);
+            = std::strtoull(request.param("quotaBytes").c_str(), nullptr, 10);
         const OpResult result
-            = setQuota(*service, identity_, request.query("user"), quotaBytes);
+            = setQuota(*service, identity_, request.param("user"), quotaBytes);
         if (result.ok) {
             redirectTo(response, "/?msg=quotaok");
         } else {
@@ -365,13 +365,13 @@ void HttpApi::registerRoutes()
             redirectTo(response, "/login");
             return;
         }
-        const ServiceEntry* const service = findService(request.query("service"));
+        const ServiceEntry* const service = findService(request.param("service"));
         if (service == nullptr || service->kind != "service-node") {
             sendHtml(response, resultPage({false, 0, "unknown service"}, "Approve account"), 400);
             return;
         }
         const OpResult result
-            = approveAccount(*service, identity_, request.query("user"));
+            = approveAccount(*service, identity_, request.param("user"));
         if (result.ok) {
             redirectTo(response, "/?msg=approved");
         } else {
@@ -385,17 +385,17 @@ void HttpApi::registerRoutes()
             redirectTo(response, "/login");
             return;
         }
-        const ServiceEntry* const service = findService(request.query("service"));
+        const ServiceEntry* const service = findService(request.param("service"));
         if (service == nullptr || service->kind != "server-core") {
             sendHtml(response, resultPage({false, 0, "unknown service"}, "Set I2P dest"), 400);
             return;
         }
-        const std::string transient = request.query("transient");
-        const std::string expiresParam = request.query("expiresUnix");
+        const std::string transient = request.param("transient");
+        const std::string expiresParam = request.param("expiresUnix");
         const std::int64_t expiresUnix
             = expiresParam.empty() ? 0 : std::strtoll(expiresParam.c_str(), nullptr, 10);
         const OpResult result = setI2pDest(
-            *service, identity_, request.query("user"), transient, expiresUnix);
+            *service, identity_, request.param("user"), transient, expiresUnix);
         if (result.ok) {
             redirectTo(response, "/?msg=i2pok");
         } else {

@@ -49,7 +49,12 @@ RemoteDeliveryResult federationDeliver(bazarish::i2p::Endpoint& from, const std:
         result.delivered = delivered.delivered;
         result.errorCode = delivered.errorCode;
         result.errorMessage = delivered.errorMessage;
-    } catch (const std::exception&) {
+    } catch (const std::exception& error) {
+        // Unreachable is the outcome either way, but which failure it was decides
+        // whether an operator should be looking at the netDb, the tunnels or the
+        // far side - so it is said out loud rather than folded into a flag.
+        bazarish::log::warn("federation delivery to {} failed: {}",
+            bazarish::log::redact(toDest), error.what());
         result.reachable = false;
     }
     return result;

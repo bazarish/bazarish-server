@@ -27,6 +27,9 @@ RemoteDeliveryResult federationDeliver(bazarish::i2p::Endpoint& from, const std:
     const Bytes& sealed, const Bytes& payload, const FederationPhaseFn& onPhase)
 {
     RemoteDeliveryResult result;
+    // How long a dial to a recipient's destination is given before the round is
+    // called unreachable and the attempt backs off to try again.
+    constexpr int kDialSeconds = 60;
     const auto phase = [&onPhase](const char* p) {
         if (onPhase) {
             onPhase(p);
@@ -37,8 +40,14 @@ RemoteDeliveryResult federationDeliver(bazarish::i2p::Endpoint& from, const std:
     // has not published yet) leaves the message on the caller for retry.
     phase("dialing");  // building the tunnel + dialing the recipient's leaseset
     try {
-        auto stream = from.connect(toDest, std::chrono::seconds(60));
+        auto stream = from.connect(toDest, std::chrono::seconds(kDialSeconds));
         if (!stream) {
+            // The commonest delivery failure there is, and it used to leave no
+            // trace at all: the dial simply returned nothing and the attempt went
+            // quiet until it gave up. Whether a destination answers is the first
+            // thing anyone asks when a message does not arrive.
+            bazarish::log::warn("federation: no answer from {} within {}s",
+                bazarish::log::redact(toDest), kDialSeconds);
             result.reachable = false;
             return result;
         }
@@ -47,6 +56,10 @@ RemoteDeliveryResult federationDeliver(bazarish::i2p::Endpoint& from, const std:
         phase("awaiting-ack");
         result.reachable = true;
         result.delivered = delivered.delivered;
+        if (!delivered.delivered) {
+            bazarish::log::warn("federation: {} refused the envelope: {} {}",
+                bazarish::log::redact(toDest), delivered.errorCode, delivered.errorMessage);
+        }
         result.errorCode = delivered.errorCode;
         result.errorMessage = delivered.errorMessage;
     } catch (const std::exception& error) {

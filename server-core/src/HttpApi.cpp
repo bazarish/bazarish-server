@@ -616,6 +616,24 @@ void HttpApi::setupRoutes()
             return jsonResponse({{"ok", true}});
         }));
 
+    // The user's own devices. A message is deleted only once every registered
+    // device has acked it, so a device nobody uses any more holds mail for the
+    // whole retention window: the list is what makes that visible, and the
+    // delete below is what ends it.
+    http_->get("/v1/messaging/clients",
+        authenticated([&store](const bazarish::http::Request& request,
+                          const std::string& user) -> bazarish::http::Response {
+            const auto header = request.headers.find("x-bazarish-client");
+            const std::string caller
+                = header != request.headers.end() ? header->second : std::string();
+            nlohmann::json clients = nlohmann::json::array();
+            for (const std::string& clientId : store.listClients(user)) {
+                clients.push_back(
+                    {{"clientId", clientId}, {"current", clientId == caller}});
+            }
+            return jsonResponse({{"clients", clients}});
+        }));
+
     http_->del(R"(/v1/messaging/clients/([a-z0-9_-]+))",
         authenticated([&store](const bazarish::http::Request& request,
                           const std::string& user) -> bazarish::http::Response {

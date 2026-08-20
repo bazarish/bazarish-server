@@ -215,22 +215,41 @@ void HttpApi::mailboxJanitorLoop()
     }
 }
 
+void HttpApi::wakeUser(const std::string& user)
+{
+    if (eventGate_ != nullptr && !user.empty()) {
+        eventGate_->notify(user);
+    }
+}
+
 void HttpApi::setAttempt(const std::string& attemptId, const Attempt& attempt)
 {
-    const std::lock_guard<std::mutex> lock(attemptsMutex_);
-    Attempt updated = attempt;
-    // A delivered-ack may already have marked this attempt delivered; never let a
-    // later job round downgrade it. Also keep the messageId so the index prunes.
-    const auto existing = attempts_.find(attemptId);
-    if (existing != attempts_.end()) {
-        if (existing->second.status == "delivered") {
-            return;
+    std::string settledFor;
+    {
+        const std::lock_guard<std::mutex> lock(attemptsMutex_);
+        Attempt updated = attempt;
+        // A delivered-ack may already have marked this attempt delivered; never let
+        // a later job round downgrade it. Also keep the messageId so the index
+        // prunes, and the sender, so the wake below knows whom to wake.
+        const auto existing = attempts_.find(attemptId);
+        if (existing != attempts_.end()) {
+            if (existing->second.status == "delivered") {
+                return;
+            }
+            if (updated.messageId.empty()) {
+                updated.messageId = existing->second.messageId;
+            }
+            if (updated.user.empty()) {
+                updated.user = existing->second.user;
+            }
         }
-        if (updated.messageId.empty()) {
-            updated.messageId = existing->second.messageId;
-        }
+        settledFor = updated.user;
+        attempts_[attemptId] = updated;
     }
-    attempts_[attemptId] = updated;
+    // The sender has been waiting on this since it handed the message over; the
+    // recipient's server answered synchronously, so the only thing left between
+    // that answer and the tick on their screen is this wake.
+    wakeUser(settledFor);
 }
 
 void HttpApi::setAttemptPhase(const std::string& attemptId, const std::string& phase)
@@ -248,7 +267,7 @@ void HttpApi::markDeliveredByMessageId(const std::string& messageId)
     if (messageId.empty()) {
         return;
     }
-    const std::lock_guard<std::mutex> lock(attemptsMutex_);
+    std::unique_lock<std::mutex> lock(attemptsMutex_);
     const auto idx = messageIdToAttempt_.find(messageId);
     if (idx == messageIdToAttempt_.end()) {
         return;
@@ -259,10 +278,14 @@ void HttpApi::markDeliveredByMessageId(const std::string& messageId)
     }
     // Upgrade an in-flight (or given-up) attempt to delivered; never override a
     // terminal rejection ("failed").
+    std::string settledFor;
     if (found->second.status == "pending" || found->second.status == "unconfirmed") {
         found->second.status = "delivered";
         found->second.completedAt = nowSeconds();
+        settledFor = found->second.user;
     }
+    lock.unlock();
+    wakeUser(settledFor);
 }
 
 void HttpApi::deliveryWorkerLoop()
@@ -850,6 +873,7 @@ void HttpApi::setupRoutes()
                     }
                 }
                 Attempt pending;
+                pending.user = user;
                 pending.status = "pending";
                 pending.phase = "queued";  // until the delivery worker starts dialing
                 pending.messageId = messageId;

@@ -176,7 +176,15 @@ private:
         std::string errorMessage;
         std::int64_t completedAt = 0;
         std::string messageId;  // delivery id, for the messageId -> attempt index
+        // Who sent it. When the attempt settles, this is the user whose parked
+        // long-poll is woken so their client learns the outcome at once instead of
+        // finding out on its next poll.
+        std::string user;
     };
+
+    // Wakes a user's parked long-poll, if there is a gate. Safe to call with no
+    // gate and with no waiter.
+    void wakeUser(const std::string& user);
 
     // A send accepted into the outbound buffer and delivered off the request
     // thread by a background worker (store-and-forward), so the client's POST

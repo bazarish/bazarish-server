@@ -38,14 +38,20 @@ bazarish-alias-resolver ... --operator-fingerprint <panel-fp>
 (The service node also signs its own quota/transient pushes, so server-core
 authorises both the panel and the service node.)
 
-## Status and management
+## What it shows
 
-- **Status:** the dashboard probes each configured service's signed
-  `GET /healthz` (service name, version, uptime, current and peak RAM) and shows
-  it live, with latency.
-- **Management:** the panel drives the operator endpoints the services already
-  expose - set a user's mailbox quota and provision/revoke a user's personal
-  I2P destination (both server-core).
+A sidebar with two views, drawn by a small script from the panel's own JSON API:
+
+- **Monitoring** - every configured service probed concurrently through its
+  signed `GET /healthz` (name, version, uptime, current and peak RAM, latency),
+  re-probed every few seconds.
+- **Users** - the accounts on the service node: search by fingerprint (the node
+  does the searching), filter by approval state, open an account to read its
+  terms, set its storage quota in megabytes, or approve it.
+
+The sign-in page needs no JavaScript, so a fleet that is entirely down can still
+be logged into. The panel's web files live in `--assets <dir>` (`web/` in this
+repository) - edit them to restyle the panel, then restart it.
 
 The panel is a co-located operations tool. It reaches services on their private
 listen addresses; `/healthz` and the operator endpoints are not exposed through
@@ -57,8 +63,8 @@ that ops address, not with the published facade URL.
 ## Configuration
 
 See `config.example.json`: the authorised admin fingerprints (one string or a
-list), the listen address,
-and the list of services (name, kind, url) - no secrets.
+list), the listen address, and the list of services (name, kind, url) - no
+secrets. The `service-node` entry is the one the account views talk to.
 
 ## Build & test
 
@@ -73,5 +79,6 @@ Requires CMake >= 3.20, C++20, OpenSSL >= 3.0. Uses the shared `common` library
 ## Run
 
 ```bash
-bazarish-admin-panel --config config.json
+bazarish-admin-panel --config config.json --state /var/lib/bazarish/admin-panel \
+  --assets ./web
 ```

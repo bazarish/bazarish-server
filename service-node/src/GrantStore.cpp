@@ -236,6 +236,19 @@ std::vector<std::string> GrantStore::pendingUsers()
     return users;
 }
 
+std::vector<std::string> GrantStore::allUsers() const
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<std::string> users;
+    for (const fs::directory_entry& entry : fs::directory_iterator(root_ / "grants")) {
+        if (entry.path().extension() == ".json") {
+            users.push_back(entry.path().stem().string());
+        }
+    }
+    std::sort(users.begin(), users.end());
+    return users;
+}
+
 void GrantStore::erase(const std::string& user)
 {
     requireUser(user);

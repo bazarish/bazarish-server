@@ -8,6 +8,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -22,7 +23,8 @@ void printUsage()
 {
     std::printf(
         "bazarish-admin-panel %s\n"
-        "Usage: bazarish-admin-panel --config <path> --state <dir> [--listen <host> <port>]\n"
+        "Usage: bazarish-admin-panel --config <path> --state <dir> --assets <dir>\n"
+        "                            [--listen <host> <port>]\n"
         "       bazarish-admin-panel --version\n"
         "\n"
         "Monitors and manages Bazarish services from one web interface. The panel\n"
@@ -83,6 +85,7 @@ int main(const int argc, const char** argv)
 
     std::string configPath;
     std::string stateDir;
+    std::string assetsDir;
     std::string listenHostOverride;
     int listenPortOverride = 0;
     for (int i = 1; i < argc;) {
@@ -93,6 +96,9 @@ int main(const int argc, const char** argv)
         } else if (flag == "--state" && i + 1 < argc) {
             stateDir = argv[i + 1];
             i += 2;
+        } else if (flag == "--assets" && i + 1 < argc) {
+            assetsDir = argv[i + 1];
+            i += 2;
         } else if (flag == "--listen" && i + 2 < argc) {
             listenHostOverride = argv[i + 1];
             listenPortOverride = std::atoi(argv[i + 2]);
@@ -102,7 +108,7 @@ int main(const int argc, const char** argv)
             return 2;
         }
     }
-    if (configPath.empty() || stateDir.empty()) {
+    if (configPath.empty() || stateDir.empty() || assetsDir.empty()) {
         printUsage();
         return 2;
     }
@@ -120,7 +126,14 @@ int main(const int argc, const char** argv)
 
     HttpApiOptions options;
     options.version = kVersion;
-    HttpApi api(std::move(config), identity, options);
+    options.assetsDirectory = assetsDir;
+    std::optional<HttpApi> api;
+    try {
+        api.emplace(std::move(config), identity, options);
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "panel not started: %s\n", error.what());
+        return 2;
+    }
 
     std::printf("bazarish-admin-panel %s\n", kVersion);
     std::printf("panel operator fingerprint: %s\n", identity.fingerprint().c_str());
@@ -128,7 +141,7 @@ int main(const int argc, const char** argv)
     std::printf("listening on %s:%d\n", host.c_str(), port);
     std::fflush(stdout);
 
-    if (!api.listen(host, port)) {
+    if (!api->listen(host, port)) {
         std::fprintf(stderr, "failed to listen on %s:%d\n", host.c_str(), port);
         return 1;
     }

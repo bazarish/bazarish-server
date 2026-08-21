@@ -24,7 +24,6 @@ add_library(bazarish_service_lib STATIC
     src/SubscriptionStore.cpp
     src/AccountApi.cpp
     src/PortalApi.cpp
-    src/PortalAssets.cpp
     src/GrantStore.cpp
     src/OperatorPush.cpp
 )
@@ -57,3 +56,4 @@ bazarish_service_add_test(TestAccountApi)
 bazarish_service_add_test(TestGrantStore)
 bazarish_service_add_test(TestModeratedRegistration)
 bazarish_service_add_test(TestPortal)
+bazarish_service_add_test(TestOperatorApi)

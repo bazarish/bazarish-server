@@ -28,13 +28,6 @@ struct HealthResult {
     std::uint64_t ramPeakBytes = 0;
 };
 
-// Outcome of an operator action.
-struct OpResult {
-    bool ok = false;
-    int status = 0;
-    std::string message;
-};
-
 // Every call is signed with the panel identity (hybrid request auth); the service
 // authorizes the panel fingerprint. There is no shared secret.
 
@@ -42,34 +35,18 @@ struct OpResult {
 // dashboard.
 HealthResult probeHealth(const ServiceEntry& service, const Identity& identity);
 
-// Sets a user's mailbox quota via the operator endpoint of a server-core
-// (/v1/messaging/quota).
-OpResult setQuota(const ServiceEntry& service, const Identity& identity, const std::string& user,
-    std::uint64_t quotaBytes);
-
-// Provisions or revokes a user's personal I2P destination on server-core
-// (/v1/messaging/i2p-dest). An empty transient revokes.
-OpResult setI2pDest(const ServiceEntry& service, const Identity& identity,
-    const std::string& user, const std::string& transientBase64, std::int64_t expiresUnix);
-
-// One account waiting for the operator on a moderated service node.
-struct PendingAccount {
-    std::string user;
-    std::int64_t requestedAt = 0;
-};
-
-// Accounts awaiting approval (GET /v1/account/pending on service-node), oldest
-// first. `ok` is false when the node could not be reached or refused the panel.
-struct PendingResult {
-    bool ok = false;
+// A service's own answer, passed through as it came. The panel's browser side
+// reads the same JSON the service speaks, so a field added on a service reaches
+// the screen without a second schema in the middle.
+struct JsonResult {
+    bool ok = false;  // the service answered 2xx
+    int status = 0;   // 0 when nothing answered at all
+    std::string body;
     std::string error;
-    std::vector<PendingAccount> accounts;
 };
 
-PendingResult listPending(const ServiceEntry& service, const Identity& identity);
-
-// Approves a frozen account, which lets it delegate its I2P destination.
-OpResult approveAccount(
-    const ServiceEntry& service, const Identity& identity, const std::string& user);
+// One signed request to a service, returning its body verbatim.
+JsonResult callJson(const ServiceEntry& service, const Identity& identity,
+    const std::string& method, const std::string& path, const std::string& body = {});
 
 }  // namespace bazarish::admin

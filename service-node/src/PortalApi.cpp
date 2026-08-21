@@ -296,7 +296,7 @@ void PortalApi::setupWebRoutes()
     // keeps the directory a site rather than a file share: only what the
     // operator put there, and nothing above it, can be asked for.
     for (const std::string& name : assets_.published()) {
-        const PortalAssets::File& file = assets_.file(name);
+        const WebAssets::File& file = assets_.file(name);
         http_->get("/" + name, [&file](const http::Request&) {
             http::Response response;
             response.contentType = file.contentType;

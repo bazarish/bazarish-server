@@ -25,7 +25,6 @@ add_library(bazarish_admin_lib STATIC
     src/Config.cpp
     src/AdminAuth.cpp
     src/SessionStore.cpp
-    src/Html.cpp
     src/ServiceClient.cpp
     src/HttpApi.cpp
 )

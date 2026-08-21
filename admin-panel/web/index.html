@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>bazarish admin</title>
+<link rel="icon" href="favicon.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="shell">
+  <nav class="sidebar">
+    <img class="wordmark" src="logo.svg" alt="bazarish" width="404" height="76">
+    <p class="sidebar-note">operator panel {{version}}</p>
+    <ul class="nav" id="nav">
+      <li><a href="#/monitoring" data-view="monitoring">Monitoring</a></li>
+      <li><a href="#/users" data-view="users">Users</a></li>
+    </ul>
+    <form class="sidebar-foot" method="post" action="/logout">
+      <button class="btn btn-quiet" type="submit">Sign out</button>
+    </form>
+  </nav>
+  <main class="content" id="content"></main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

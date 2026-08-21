@@ -1,37 +1,33 @@
 // Bazarish project (c) 2026
 #include "HttpApi.hpp"
 
-#include "Html.hpp"
 #include "ServiceClient.hpp"
 
+#include <bazarish/Crypto.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <bazarish/Log.hpp>
+#include <bazarish/WebAssets.hpp>
 
+#include <nlohmann/json.hpp>
+
+#include <ctime>
+#include <exception>
 #include <functional>
-
-#include <chrono>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <future>
-#include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
-
-namespace bazarish::admin {
 
 namespace {
 
-constexpr const char* kCookieName = "admin_session";
+namespace http = bazarish::http;
 
 std::int64_t nowSeconds()
 {
-    return std::chrono::duration_cast<std::chrono::seconds>(
-        std::chrono::system_clock::now().time_since_epoch())
-        .count();
+    return static_cast<std::int64_t>(std::time(nullptr));
 }
 
-namespace http = bazarish::http;
+const char* const kCookieName = "adminsession";
 
 // The routes are written as "fill in the response"; the engine hands one back.
 using Filler = std::function<void(const http::Request&, http::Response&)>;
@@ -62,7 +58,23 @@ void sendHtml(http::Response& response, const std::string& html, const int statu
 {
     response.status = status;
     response.contentType = "text/html; charset=utf-8";
+    // The sign-in page carries a single-use challenge, and the app pages carry
+    // whatever the fleet looked like a moment ago. Neither is worth caching.
+    response.headers["Cache-Control"] = "no-store";
     response.body = html;
+}
+
+void sendJson(http::Response& response, const std::string& body, const int status = 200)
+{
+    response.status = status;
+    response.contentType = "application/json";
+    response.headers["Cache-Control"] = "no-store";
+    response.body = body;
+}
+
+void sendError(http::Response& response, const int status, const std::string& message)
+{
+    sendJson(response, nlohmann::json{{"error", message}}.dump(), status);
 }
 
 void redirectTo(http::Response& response, const std::string& location)
@@ -71,84 +83,47 @@ void redirectTo(http::Response& response, const std::string& location)
     response.headers["Location"] = location;
 }
 
-std::string humanizeUptime(std::int64_t seconds)
+// Percent-encodes a value for a query string: a fingerprint is safe either way,
+// but a search box takes whatever the operator types.
+std::string urlEncoded(const std::string& text)
 {
-    if (seconds < 0) {
-        seconds = 0;
-    }
-    const long long days = seconds / 86400;
-    seconds %= 86400;
-    const long long hours = seconds / 3600;
-    seconds %= 3600;
-    const long long minutes = seconds / 60;
-    const long long secs = seconds % 60;
-    char buffer[64];
-    if (days > 0) {
-        std::snprintf(buffer, sizeof(buffer), "%lldd %lldh %lldm", days, hours, minutes);
-    } else if (hours > 0) {
-        std::snprintf(buffer, sizeof(buffer), "%lldh %lldm", hours, minutes);
-    } else if (minutes > 0) {
-        std::snprintf(buffer, sizeof(buffer), "%lldm %llds", minutes, secs);
-    } else {
-        std::snprintf(buffer, sizeof(buffer), "%llds", secs);
-    }
-    return buffer;
-}
-
-std::string flashBanner(const std::string& code)
-{
-    std::string text;
-    if (code == "quotaok") {
-        text = "Quota applied.";
-    } else if (code == "i2pok") {
-        text = "I2P destination updated.";
-    } else if (code == "loggedout") {
-        text = "Signed out.";
-    } else {
-        return {};
-    }
-    return "<p class=\"flash\">" + htmlEscape(text) + "</p>";
-}
-
-// Renders one service row from its probe result.
-std::string serviceRow(const ServiceEntry& service, const HealthResult& health)
-{
-    std::string row = "<tr><td><strong>" + htmlEscape(service.name) + "</strong><br>"
-        + "<span class=\"muted\">" + htmlEscape(service.kind) + " &middot; "
-        + htmlEscape(service.url) + "</span></td>";
-    if (health.reachable) {
-        row += "<td class=\"up\">UP</td>";
-        row += "<td>" + htmlEscape(health.version) + "</td>";
-        row += "<td>" + htmlEscape(humanizeUptime(health.uptime)) + "</td>";
-        row += "<td>" + htmlEscape(bytesHuman(health.ramBytes)) + " / "
-            + htmlEscape(bytesHuman(health.ramPeakBytes)) + "</td>";
-    } else {
-        row += "<td class=\"down\">DOWN</td>";
-        std::string note = health.error;
-        if (health.status != 0) {
-            note += " (HTTP " + std::to_string(health.status) + ")";
+    static const char* const kHexDigits = "0123456789ABCDEF";
+    constexpr unsigned kNibbleBits = 4;
+    constexpr unsigned kLowNibble = 0x0F;
+    std::string out;
+    for (const unsigned char c : text) {
+        const bool unreserved = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+            || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~';
+        if (unreserved) {
+            out.push_back(static_cast<char>(c));
+        } else {
+            out.push_back('%');
+            out.push_back(kHexDigits[c >> kNibbleBits]);
+            out.push_back(kHexDigits[c & kLowNibble]);
         }
-        row += "<td colspan=\"3\"><span class=\"muted\">" + htmlEscape(note) + "</span></td>";
     }
-    row += "<td>" + std::to_string(health.latencyMs) + " ms</td></tr>";
-    return row;
+    return out;
 }
 
-std::string resultPage(const OpResult& result, const std::string& action)
+std::string humanizeUptime(const std::int64_t seconds)
 {
-    std::string body;
-    if (result.ok) {
-        body += "<p class=\"flash\">" + htmlEscape(action) + ": ok.</p>";
-    } else {
-        body += "<p class=\"err\">" + htmlEscape(action) + " failed: " + htmlEscape(result.message)
-            + (result.status != 0 ? " (HTTP " + std::to_string(result.status) + ")" : "")
-            + "</p>";
+    constexpr std::int64_t kSecondsPerMinute = 60;
+    constexpr std::int64_t kSecondsPerHour = 3600;
+    constexpr std::int64_t kSecondsPerDay = 86400;
+    if (seconds >= kSecondsPerDay) {
+        return std::to_string(seconds / kSecondsPerDay) + "d "
+            + std::to_string((seconds % kSecondsPerDay) / kSecondsPerHour) + "h";
     }
-    body += "<p><a href=\"/\">Back to dashboard</a></p>";
-    return htmlPage("Result", body);
+    if (seconds >= kSecondsPerHour) {
+        return std::to_string(seconds / kSecondsPerHour) + "h "
+            + std::to_string((seconds % kSecondsPerHour) / kSecondsPerMinute) + "m";
+    }
+    return std::to_string(seconds / kSecondsPerMinute) + "m";
 }
 
 }  // namespace
+
+namespace bazarish::admin {
 
 HttpApi::HttpApi(Config config, const Identity& identity, HttpApiOptions options)
     : config_(std::move(config))
@@ -156,46 +131,89 @@ HttpApi::HttpApi(Config config, const Identity& identity, HttpApiOptions options
     , options_(std::move(options))
     , auth_(config_.audience, config_.admins)
     , sessions_(options_.sessionTtlSeconds)
+    , assets_(options_.assetsDirectory)
 {
 }
 
 HttpApi::~HttpApi() = default;
 
+const ServiceEntry* HttpApi::serviceOfKind(const std::string& kind) const
+{
+    for (const ServiceEntry& service : config_.services) {
+        if (service.kind == kind) {
+            return &service;
+        }
+    }
+    return nullptr;
+}
+
+// Passes a call through to the service that owns the accounts, and hands its
+// answer back untouched. The panel holds no user state of its own: what it shows
+// is what the node says, one request ago.
+void HttpApi::proxyToNode(http::Response& response, const std::string& method,
+    const std::string& path, const std::string& body)
+{
+    const ServiceEntry* const node = serviceOfKind("service-node");
+    if (node == nullptr) {
+        sendError(response, 503, "no service-node configured in this panel");
+        return;
+    }
+    const JsonResult result = callJson(*node, identity_, method, path, body);
+    if (result.status == 0) {
+        bazarish::log::warn("service-node unreachable: {}", result.error);
+        sendError(response, 502, result.error.empty() ? "service-node unreachable" : result.error);
+        return;
+    }
+    sendJson(response, result.body, result.status);
+}
+
 void HttpApi::registerRoutes()
 {
-    // The sign-in page: a fresh challenge to sign in the client, and a box to
-    // paste the resulting blob back. No backend is contacted to log in.
-    const auto loginPage = [this](const std::string& error) -> std::string {
-        const std::string challenge = auth_.issueChallenge(nowSeconds());
-        std::string body;
-        if (!error.empty()) {
-            body += "<p class=\"err\">" + htmlEscape(error) + "</p>";
-        }
-        body += "<p>Sign in with your Bazarish key. Copy this challenge, sign it in your client "
-                "(Signature), and paste the result below. The key never enters the browser.</p>";
-        body += "<pre>" + htmlEscape(challenge) + "</pre>";
-        body += "<form method=\"post\" action=\"/login\">";
-        body += "<input type=\"hidden\" name=\"challenge\" value=\"" + htmlEscape(challenge)
-            + "\">";
-        body += "<label>Signed blob</label><textarea name=\"blob\" rows=\"6\"></textarea>";
-        body += "<button>Sign in</button></form>";
-        return htmlPage("Sign in", body);
+    // The panel's own files, answered from memory.
+    for (const std::string& name : assets_.published()) {
+        const WebAssets::File& file = assets_.file(name);
+        http_->get("/" + name, [&file](const http::Request&) {
+            http::Response response;
+            response.contentType = file.contentType;
+            response.body = file.body;
+            return response;
+        });
+    }
+
+    const auto signedIn = [this](const http::Request& request) {
+        return sessions_.valid(cookieValue(request, kCookieName), nowSeconds());
     };
 
-    http_->get("/login", filled([loginPage](const http::Request&, http::Response& response) {
+    // Signing in needs no scripts and no backend: the panel verifies the blob
+    // itself, so a fleet that is entirely down can still be logged into.
+    const auto loginPage = [this](const std::string& error) {
+        return assets_.render("login.html",
+            {
+                {"challenge", auth_.issueChallenge(nowSeconds())},
+                {"error", error.empty() ? std::string()
+                                        : "<p class=\"notice is-error\">" + error + "</p>"},
+            });
+    };
+
+    http_->get("/login", filled([this, signedIn, loginPage](
+                             const http::Request& request, http::Response& response) {
+        if (signedIn(request)) {
+            redirectTo(response, "/");
+            return;
+        }
         sendHtml(response, loginPage(std::string()));
     }));
 
     http_->post("/login", filled([this, loginPage](
                               const http::Request& request, http::Response& response) {
         try {
-            auth_.login(request.param("challenge"), request.param("blob"),
-                nowSeconds());
+            auth_.login(request.param("challenge"), request.param("blob"), nowSeconds());
             const std::string token = sessions_.create(nowSeconds());
             response.headers["Set-Cookie"]
                 = std::string(kCookieName) + "=" + token + "; HttpOnly; SameSite=Strict; Path=/";
             redirectTo(response, "/");
         } catch (const std::exception& error) {
+            bazarish::log::warn("panel sign-in refused: {}", error.what());
             sendHtml(response, loginPage(error.what()), 401);
         }
     }));
@@ -204,203 +222,95 @@ void HttpApi::registerRoutes()
         sessions_.destroy(cookieValue(request, kCookieName));
         response.headers["Set-Cookie"]
             = std::string(kCookieName) + "=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0";
-        redirectTo(response, "/login?msg=loggedout");
+        redirectTo(response, "/login");
     }));
 
-    // Probes every service concurrently (one slow/down service cannot stall the
-    // dashboard) and returns the status table body rows. Shared by the full page
-    // render and the /api/status partial the page polls every few seconds.
-    const auto renderRows = [this]() -> std::string {
+    http_->get("/", filled([this, signedIn](
+                        const http::Request& request, http::Response& response) {
+        if (!signedIn(request)) {
+            redirectTo(response, "/login");
+            return;
+        }
+        sendHtml(response, assets_.render("index.html", {{"version", options_.version}}));
+    }));
+
+    // Everything below is the app talking to the panel. A stale session gets a
+    // 401 the page turns into a bounce to the sign-in screen.
+    const auto api = [this, signedIn](auto handler) {
+        return filled([this, signedIn, handler](
+                          const http::Request& request, http::Response& response) {
+            if (!signedIn(request)) {
+                sendError(response, 401, "not signed in");
+                return;
+            }
+            try {
+                handler(request, response);
+            } catch (const nlohmann::json::exception& error) {
+                sendError(response, 400, error.what());
+            }
+        });
+    };
+
+    // Every service probed at once: one service being down must not hold the
+    // page on the ones that are up.
+    http_->get("/api/services", api([this](const http::Request&, http::Response& response) {
         std::vector<std::future<HealthResult>> probes;
         probes.reserve(config_.services.size());
+        for (const ServiceEntry& service : config_.services) {
+            probes.push_back(std::async(
+                std::launch::async, [this, &service]() { return probeHealth(service, identity_); }));
+        }
+        nlohmann::json services = nlohmann::json::array();
         for (std::size_t i = 0; i < config_.services.size(); ++i) {
-            probes.push_back(std::async(std::launch::async,
-                [this, i]() { return probeHealth(config_.services[i], identity_); }));
+            const HealthResult health = probes[i].get();
+            services.push_back({
+                {"name", config_.services[i].name},
+                {"kind", config_.services[i].kind},
+                {"url", config_.services[i].url},
+                {"up", health.reachable},
+                {"status", health.status},
+                {"error", health.error},
+                {"latencyMs", health.latencyMs},
+                {"version", health.version},
+                {"uptime", humanizeUptime(health.uptime)},
+                {"ramBytes", health.ramBytes},
+                {"ramPeakBytes", health.ramPeakBytes},
+            });
         }
-        std::string rows;
-        if (config_.services.empty()) {
-            rows += "<tr><td colspan=\"6\" class=\"muted\">No services configured.</td></tr>";
-        }
-        for (std::size_t i = 0; i < config_.services.size(); ++i) {
-            rows += serviceRow(config_.services[i], probes[i].get());
-        }
-        return rows;
-    };
-
-    // The status table rows alone, for the in-page poller. Session-guarded like
-    // the dashboard; a 401 tells the page to bounce to the sign-in screen.
-    http_->get("/api/status", filled([this, renderRows](
-                                  const http::Request& request, http::Response& response) {
-        if (!sessions_.valid(cookieValue(request, kCookieName), nowSeconds())) {
-            response.status = 401;
-            return;
-        }
-        response.contentType = "text/html; charset=utf-8";
-        response.body = renderRows();
+        sendJson(response, nlohmann::json{{"services", services}}.dump());
     }));
 
-    http_->get("/", filled([this, renderRows](
-                        const http::Request& request, http::Response& response) {
-        if (!sessions_.valid(cookieValue(request, kCookieName), nowSeconds())) {
-            redirectTo(response, "/login");
-            return;
+    // The account list, searched and paged by the node itself.
+    http_->get("/api/users", api([this](const http::Request& request, http::Response& response) {
+        std::string query = "/v1/account/users?q=" + urlEncoded(request.query("q"))
+            + "&state=" + urlEncoded(request.query("state"));
+        if (const std::string limit = request.query("limit"); !limit.empty()) {
+            query += "&limit=" + urlEncoded(limit);
         }
-
-        std::string body = flashBanner(request.query("msg"));
-        body += "<form method=\"post\" action=\"/logout\" style=\"float:right\">"
-                "<button>Sign out</button></form>";
-        body += "<h2>Services</h2><table><thead><tr><th>Service</th><th>Status</th>"
-                "<th>Version</th><th>Uptime</th><th>RAM (now / peak)</th><th>Latency</th></tr>"
-                "</thead><tbody id=\"svcrows\">";
-        body += renderRows();
-        body += "</tbody></table><p class=\"muted\">Live - refreshes every 5s.</p>";
-
-        // Management: a quota form and an I2P-dest form, both server-core, built
-        // from the configured services.
-        std::string quotaOptions;
-        std::string i2pOptions;
-        for (const ServiceEntry& service : config_.services) {
-            if (service.kind != "server-core") {
-                continue;
-            }
-            const std::string option = "<option value=\"" + htmlEscape(service.name) + "\">"
-                + htmlEscape(service.name) + "</option>";
-            quotaOptions += option;
-            i2pOptions += option;
+        if (const std::string offset = request.query("offset"); !offset.empty()) {
+            query += "&offset=" + urlEncoded(offset);
         }
-
-        // Accounts frozen on a moderated service node. Only rendered when a node
-        // actually has someone waiting, so an open-registration deployment never
-        // sees this section.
-        for (const ServiceEntry& service : config_.services) {
-            if (service.kind != "service-node") {
-                continue;
-            }
-            const PendingResult pending = listPending(service, identity_);
-            if (!pending.ok || pending.accounts.empty()) {
-                continue;
-            }
-            body += "<h2>Awaiting approval - " + htmlEscape(service.name) + "</h2>";
-            body += "<table><tr><th>User</th><th>Requested</th><th></th></tr>";
-            for (const PendingAccount& account : pending.accounts) {
-                body += "<tr><td><code>" + htmlEscape(account.user) + "</code></td>";
-                body += "<td>" + std::to_string(account.requestedAt) + "</td>";
-                body += "<td><form method=\"post\" action=\"/manage/approve\">";
-                body += "<input type=\"hidden\" name=\"service\" value=\""
-                    + htmlEscape(service.name) + "\">";
-                body += "<input type=\"hidden\" name=\"user\" value=\"" + htmlEscape(account.user)
-                    + "\">";
-                body += "<button>Approve</button></form></td></tr>";
-            }
-            body += "</table>";
-        }
-
-        if (!quotaOptions.empty()) {
-            body += "<h2>Set user quota</h2>";
-            body += "<form method=\"post\" action=\"/manage/quota\">";
-            body += "<label>Service</label><select name=\"service\">" + quotaOptions + "</select>";
-            body += "<label>User fingerprint</label><input name=\"user\" required>";
-            body += "<label>Quota (bytes)</label><input name=\"quotaBytes\" type=\"number\" "
-                    "min=\"0\" required>";
-            body += "<button>Apply quota</button></form>";
-        }
-        if (!i2pOptions.empty()) {
-            body += "<h2>Personal I2P destination (server-core)</h2>";
-            body += "<form method=\"post\" action=\"/manage/i2p-dest\">";
-            body += "<label>Service</label><select name=\"service\">" + i2pOptions + "</select>";
-            body += "<label>User fingerprint</label><input name=\"user\" required>";
-            body += "<label>Transient offline key (base64) - leave empty to revoke</label>"
-                    "<textarea name=\"transient\" rows=\"3\"></textarea>";
-            body += "<label>Expires (unix seconds) - only when provisioning</label>"
-                    "<input name=\"expiresUnix\" type=\"number\" min=\"0\">";
-            body += "<button>Apply</button></form>";
-        }
-
-        // Poll the status partial and swap the table body in place, so the live
-        // figures refresh without reloading the page or disturbing the forms.
-        body += "<script>setInterval(function(){"
-                "fetch('/api/status',{headers:{'Accept':'text/html'}}).then(function(r){"
-                "if(!r.ok){window.location='/login';return null;}return r.text();})"
-                ".then(function(h){if(h!==null){"
-                "document.getElementById('svcrows').innerHTML=h;}})"
-                ".catch(function(){});},5000);</script>";
-
-        sendHtml(response, htmlPage("Dashboard", body, /*wide=*/true));
+        proxyToNode(response, "GET", query, std::string());
     }));
 
-    const auto findService = [this](const std::string& name) -> const ServiceEntry* {
-        for (const ServiceEntry& service : config_.services) {
-            if (service.name == name) {
-                return &service;
-            }
-        }
-        return nullptr;
-    };
-
-    http_->post("/manage/quota", filled([this, findService](const http::Request& request,
-                                     http::Response& response) {
-        if (!sessions_.valid(cookieValue(request, kCookieName), nowSeconds())) {
-            redirectTo(response, "/login");
-            return;
-        }
-        const ServiceEntry* const service = findService(request.param("service"));
-        if (service == nullptr || service->kind != "server-core") {
-            sendHtml(response, resultPage({false, 0, "unknown service"}, "Set quota"), 400);
-            return;
-        }
-        const std::uint64_t quotaBytes
-            = std::strtoull(request.param("quotaBytes").c_str(), nullptr, 10);
-        const OpResult result
-            = setQuota(*service, identity_, request.param("user"), quotaBytes);
-        if (result.ok) {
-            redirectTo(response, "/?msg=quotaok");
-        } else {
-            sendHtml(response, resultPage(result, "Set quota"), 502);
-        }
+    http_->get("/api/user", api([this](const http::Request& request, http::Response& response) {
+        proxyToNode(
+            response, "GET", "/v1/account/user?user=" + urlEncoded(request.query("user")), {});
     }));
 
-    http_->post("/manage/approve", filled([this, findService](const http::Request& request,
-                                       http::Response& response) {
-        if (!sessions_.valid(cookieValue(request, kCookieName), nowSeconds())) {
-            redirectTo(response, "/login");
-            return;
-        }
-        const ServiceEntry* const service = findService(request.param("service"));
-        if (service == nullptr || service->kind != "service-node") {
-            sendHtml(response, resultPage({false, 0, "unknown service"}, "Approve account"), 400);
-            return;
-        }
-        const OpResult result
-            = approveAccount(*service, identity_, request.param("user"));
-        if (result.ok) {
-            redirectTo(response, "/?msg=approved");
-        } else {
-            sendHtml(response, resultPage(result, "Approve account"), 502);
-        }
+    http_->post("/api/approve", api([this](const http::Request& request, http::Response& response) {
+        const nlohmann::json body = nlohmann::json::parse(request.body);
+        proxyToNode(response, "POST", "/v1/account/approve",
+            nlohmann::json{{"user", body.at("user")}}.dump());
     }));
 
-    http_->post("/manage/i2p-dest", filled([this, findService](const http::Request& request,
-                                        http::Response& response) {
-        if (!sessions_.valid(cookieValue(request, kCookieName), nowSeconds())) {
-            redirectTo(response, "/login");
-            return;
-        }
-        const ServiceEntry* const service = findService(request.param("service"));
-        if (service == nullptr || service->kind != "server-core") {
-            sendHtml(response, resultPage({false, 0, "unknown service"}, "Set I2P dest"), 400);
-            return;
-        }
-        const std::string transient = request.param("transient");
-        const std::string expiresParam = request.param("expiresUnix");
-        const std::int64_t expiresUnix
-            = expiresParam.empty() ? 0 : std::strtoll(expiresParam.c_str(), nullptr, 10);
-        const OpResult result = setI2pDest(
-            *service, identity_, request.param("user"), transient, expiresUnix);
-        if (result.ok) {
-            redirectTo(response, "/?msg=i2pok");
-        } else {
-            sendHtml(response, resultPage(result, "Set I2P dest"), 502);
-        }
+    // The quota belongs to the node that grants it; the panel only carries the
+    // operator's number over.
+    http_->put("/api/quota", api([this](const http::Request& request, http::Response& response) {
+        const nlohmann::json body = nlohmann::json::parse(request.body);
+        proxyToNode(response, "PUT", "/v1/account/quota",
+            nlohmann::json{{"user", body.at("user")}, {"quotaBytes", body.at("quotaBytes")}}
+                .dump());
     }));
 }
 

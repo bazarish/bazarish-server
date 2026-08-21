@@ -2,9 +2,9 @@
 #pragma once
 
 #include "GrantStore.hpp"
-#include "PortalAssets.hpp"
 
 #include <bazarish/Captcha.hpp>
+#include <bazarish/WebAssets.hpp>
 #include <bazarish/LoginChallenge.hpp>
 #include <bazarish/PortalSession.hpp>
 
@@ -82,7 +82,7 @@ private:
     std::string homePage(const std::string& user, const std::string& error);
 
     PortalApiOptions options_;
-    PortalAssets assets_;
+    WebAssets assets_;
     Captcha& captcha_;
     GrantStore& grants_;
     LoginChallenge login_;

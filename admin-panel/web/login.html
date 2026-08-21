@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Sign in - bazarish admin</title>
+<link rel="icon" href="favicon.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="centred">
+<main class="sheet">
+  <img class="wordmark" src="logo.svg" alt="bazarish" width="404" height="76">
+  <p class="sheet-note">Operator panel</p>
+  {{error}}
+  <p class="panel-note">Sign in with your key. Copy the challenge, sign it in your client (the Signature button), and paste the result back.</p>
+  <p class="field-label">Challenge</p>
+  <pre class="copy">{{challenge}}</pre>
+  <form method="post" action="/login">
+    <input type="hidden" name="challenge" value="{{challenge}}">
+    <label class="field-label" for="blob">Signed blob</label>
+    <textarea class="field" id="blob" name="blob" required autofocus></textarea>
+    <button class="btn" type="submit">Sign in</button>
+  </form>
+</main>
+</body>
+</html>

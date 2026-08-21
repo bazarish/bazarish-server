@@ -76,6 +76,11 @@ public:
     // Accounts still awaiting approval, oldest request first.
     std::vector<std::string> pendingUsers();
 
+    // Every account this node has a record of, in fingerprint order. The operator
+    // surface lists and searches over this: an account exists here from the
+    // moment it registers, before any certificate is submitted.
+    std::vector<std::string> allUsers() const;
+
     // Drops every grant of a user (account deletion).
     void erase(const std::string& user);
 
@@ -83,7 +88,7 @@ private:
     std::filesystem::path grantPath(const std::string& user) const;
 
     std::filesystem::path root_;
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
 };
 
 }  // namespace bazarish::service

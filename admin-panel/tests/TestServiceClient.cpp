@@ -86,7 +86,7 @@ int main()
         response.body = health::reportJson("server-core", "9.9.9", 1000, 1000 + 42);
         return response;
     });
-    service.put("/v1/messaging/quota", [&](const http::Request& request) {
+    service.put("/v1/account/quota", [&](const http::Request& request) {
         if (!authorize(request)) {
             return refusal();
         }
@@ -120,14 +120,19 @@ int main()
     CHECK(!denied.reachable);
     CHECK(denied.status == 403);
 
-    // An operator action is signed and delivers the body.
-    const OpResult quota = setQuota(entry, panel, "alicefp", 5000);
+    // An operator call is signed, delivers the body, and comes back verbatim for
+    // the panel to hand to the browser.
+    const JsonResult quota = callJson(entry, panel, "PUT", "/v1/account/quota",
+        "{\"user\":\"alicefp\",\"quotaBytes\":5000}");
     CHECK(quota.ok);
+    CHECK(quota.status == 200);
+    CHECK(quota.body == "{\"ok\":true}");
     CHECK(quotaUser == "alicefp");
     CHECK(quotaBytes == 5000);
 
-    // The same action from a non-authorised identity is rejected.
-    const OpResult quotaDenied = setQuota(entry, stranger, "alicefp", 5000);
+    // The same call from a non-authorised identity is rejected.
+    const JsonResult quotaDenied = callJson(entry, stranger, "PUT", "/v1/account/quota",
+        "{\"user\":\"alicefp\",\"quotaBytes\":5000}");
     CHECK(!quotaDenied.ok);
     CHECK(quotaDenied.status == 403);
 

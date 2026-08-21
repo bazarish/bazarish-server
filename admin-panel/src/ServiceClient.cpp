@@ -99,23 +99,6 @@ std::string errorMessage(const bazarish::http::ClientResponse& result)
     return "HTTP " + std::to_string(result.status);
 }
 
-OpResult putJson(const ServiceEntry& service, const Identity& identity, const std::string& path,
-    const nlohmann::json& body)
-{
-    const bazarish::http::ClientResponse result
-        = call(service, identity, "PUT", path, body.dump());
-
-    OpResult out;
-    if (result.status == 0) {
-        out.message = result.error;
-        return out;
-    }
-    out.status = result.status;
-    out.ok = result.status == 200;
-    out.message = out.ok ? "ok" : errorMessage(result);
-    return out;
-}
-
 }  // namespace
 
 HealthResult probeHealth(const ServiceEntry& service, const Identity& identity)
@@ -151,63 +134,18 @@ HealthResult probeHealth(const ServiceEntry& service, const Identity& identity)
     return out;
 }
 
-OpResult setQuota(const ServiceEntry& service, const Identity& identity, const std::string& user,
-    const std::uint64_t quotaBytes)
+JsonResult callJson(const ServiceEntry& service, const Identity& identity,
+    const std::string& method, const std::string& path, const std::string& body)
 {
-    return putJson(service, identity, "/v1/messaging/quota",
-        {{"user", user}, {"quotaBytes", quotaBytes}});
-}
-
-OpResult setI2pDest(const ServiceEntry& service, const Identity& identity,
-    const std::string& user, const std::string& transientBase64, const std::int64_t expiresUnix)
-{
-    return putJson(service, identity, "/v1/messaging/i2p-dest",
-        {{"user", user}, {"transient", transientBase64}, {"expiresUnix", expiresUnix}});
-}
-
-PendingResult listPending(const ServiceEntry& service, const Identity& identity)
-{
-    const std::string path = "/v1/account/pending";
-    const bazarish::http::ClientResponse result
-        = call(service, identity, "GET", path, std::string());
-
-    PendingResult out;
-    if (result.status == 0) {
-        out.error = result.error;
-        return out;
+    const bazarish::http::ClientResponse response = call(service, identity, method, path, body);
+    JsonResult result;
+    result.status = response.status;
+    result.ok = response.status >= 200 && response.status < 300;
+    result.body = response.body;
+    if (!result.ok) {
+        result.error = response.error.empty() ? response.body : response.error;
     }
-    if (result.status != 200) {
-        out.error = errorMessage(result);
-        return out;
-    }
-    try {
-        for (const nlohmann::json& entry : nlohmann::json::parse(result.body).at("pending")) {
-            out.accounts.push_back({entry.at("user").get<std::string>(),
-                entry.value("requestedAt", static_cast<std::int64_t>(0))});
-        }
-        out.ok = true;
-    } catch (const std::exception& error) {
-        out.error = std::string("bad pending body: ") + error.what();
-    }
-    return out;
-}
-
-OpResult approveAccount(
-    const ServiceEntry& service, const Identity& identity, const std::string& user)
-{
-    const std::string path = "/v1/account/approve";
-    const bazarish::http::ClientResponse result
-        = call(service, identity, "POST", path, nlohmann::json{{"user", user}}.dump());
-
-    OpResult out;
-    if (result.status == 0) {
-        out.message = result.error;
-        return out;
-    }
-    out.status = result.status;
-    out.ok = result.status == 200;
-    out.message = out.ok ? "ok" : errorMessage(result);
-    return out;
+    return result;
 }
 
 }  // namespace bazarish::admin

@@ -70,6 +70,31 @@ bazarish::auth::Headers collectAuthHeaders(const http::Request& request)
     return headers;
 }
 
+// How many accounts a listing answers with when the caller names no limit.
+constexpr std::size_t kDefaultUserPageSize = 50;
+
+std::string lowercased(std::string text)
+{
+    for (char& c : text) {
+        if (c >= 'A' && c <= 'Z') {
+            c = static_cast<char>(c - 'A' + 'a');
+        }
+    }
+    return text;
+}
+
+std::size_t parsedCount(const std::string& text, const std::size_t fallback)
+{
+    if (text.empty()) {
+        return fallback;
+    }
+    try {
+        return static_cast<std::size_t>(std::stoull(text));
+    } catch (const std::exception&) {
+        throw std::invalid_argument("not a number: " + text);
+    }
+}
+
 }  // namespace
 
 namespace bazarish::service {
@@ -132,6 +157,28 @@ void AccountApi::stop()
         stopping_ = true;
     }
     stopCv_.notify_all();
+}
+
+nlohmann::json AccountApi::userRecord(
+    const std::string& user, const std::optional<GrantStore::Approval>& approval)
+{
+    const std::optional<SubscriptionStore::Subscription> held = store_.getSubscription(user);
+    const std::optional<GrantStore::SubscriptionGrant> grant = grants_.peekSubscription(user);
+    const std::optional<GrantStore::Transient> transient = grants_.peekTransient(user);
+    return {
+        {"user", user},
+        {"quotaBytes",
+            held.has_value() ? held->quotaBytes
+                             : (grant.has_value() ? grant->quotaBytes : options_.defaultQuotaBytes)},
+        {"subscribed", held.has_value()},
+        {"notAfter", held.has_value() ? held->notAfter : 0},
+        {"grantPending", grant.has_value()},
+        {"approval",
+            !approval.has_value() ? "none" : (approval->pending() ? "pending" : "approved")},
+        {"requestedAt", approval.has_value() ? approval->requestedAt : 0},
+        {"approvedAt", approval.has_value() ? approval->approvedAt : 0},
+        {"transientExpires", transient.has_value() ? transient->expires : 0},
+    };
 }
 
 void AccountApi::setupRoutes()
@@ -203,6 +250,82 @@ void AccountApi::setupRoutes()
                     {"requestedAt", approval.has_value() ? approval->requestedAt : 0}});
             }
             respondJson(response, {{"pending", users}});
+        })));
+
+    // The operator's view of the accounts on this node: everything the panel
+    // lists, searches and edits. The search runs here rather than in the browser -
+    // a node with ten thousand accounts must not ship them all to filter five.
+    http_->get("/v1/account/users",
+        filled(operatorOnly([this](const http::Request& request, http::Response& response) {
+            const std::string query = lowercased(request.query("q"));
+            const std::string state = request.query("state");
+            const std::size_t limit = parsedCount(request.query("limit"), kDefaultUserPageSize);
+            const std::size_t offset = parsedCount(request.query("offset"), 0);
+
+            nlohmann::json users = nlohmann::json::array();
+            std::size_t matched = 0;
+            for (const std::string& user : grants_.allUsers()) {
+                if (!query.empty() && lowercased(user).find(query) == std::string::npos) {
+                    continue;
+                }
+                const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
+                const bool pending = approval.has_value() && approval->pending();
+                if ((state == "pending" && !pending)
+                    || (state == "approved" && (!approval.has_value() || pending))) {
+                    continue;
+                }
+                ++matched;
+                if (matched <= offset || users.size() >= limit) {
+                    continue;
+                }
+                users.push_back(userRecord(user, approval));
+            }
+            respondJson(response,
+                {{"users", users}, {"total", matched}, {"limit", limit}, {"offset", offset}});
+        })));
+
+    // One account in full, for the card the operator opens.
+    http_->get("/v1/account/user",
+        filled(operatorOnly([this](const http::Request& request, http::Response& response) {
+            const std::string user = request.query("user");
+            const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
+            if (!approval.has_value() && !store_.getSubscription(user).has_value()) {
+                respondError(response, 404, ErrorCode::eDeliveryRejected, "no such account");
+                return;
+            }
+            respondJson(response, userRecord(user, approval));
+        })));
+
+    // The quota is this node's to set: it grants it, stores it and pushes it to
+    // the messaging server, which would otherwise keep serving its own default.
+    http_->put("/v1/account/quota",
+        filled(operatorOnly([this](const http::Request& request, http::Response& response) {
+            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const std::string user = body.at("user").get<std::string>();
+            const auto quotaBytes = body.at("quotaBytes").get<std::uint64_t>();
+            const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
+            const std::optional<SubscriptionStore::Subscription> held
+                = store_.getSubscription(user);
+            if (!approval.has_value() && !held.has_value()) {
+                respondError(response, 404, ErrorCode::eDeliveryRejected, "no such account");
+                return;
+            }
+            if (held.has_value()) {
+                SubscriptionStore::Subscription updated = *held;
+                updated.quotaBytes = quotaBytes;
+                store_.putSubscription(updated);
+            }
+            // A grant not yet redeemed carries the quota the certificate will be
+            // checked against, so it has to move with it.
+            if (const std::optional<GrantStore::SubscriptionGrant> grant
+                = grants_.peekSubscription(user);
+                grant.has_value()) {
+                grants_.grantSubscription(user, quotaBytes, grant->termSeconds, grant->grantedAt);
+            }
+            if (options_.publishQuota) {
+                options_.publishQuota(user, quotaBytes);
+            }
+            respondJson(response, userRecord(user, approval));
         })));
 
     http_->post("/v1/account/approve",

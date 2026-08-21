@@ -4,6 +4,8 @@
 #include "GrantStore.hpp"
 #include "SubscriptionStore.hpp"
 
+#include <nlohmann/json.hpp>
+
 #include <bazarish/Auth.hpp>
 #include <bazarish/Bytes.hpp>
 
@@ -12,6 +14,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -83,6 +86,11 @@ public:
     void stop();
 
 private:
+    // One account as the operator surface reports it: what it is entitled to,
+    // whether it is served yet, and how long its delegation still stands.
+    nlohmann::json userRecord(
+        const std::string& user, const std::optional<GrantStore::Approval>& approval);
+
     // Binds on a chosen port (0 lets the kernel pick) and starts serving.
     int bindToAnyPort(const std::string& host, int port);
     void setupRoutes();

@@ -19,6 +19,20 @@
     var nav = document.getElementById("nav");
     var pollTimer = null;
 
+    // A service answers a failure as {"error": {"code", "message"}}; the panel
+    // answers with {"error": "text"}. Either way the operator gets a sentence,
+    // not an object rendered as one.
+    function errorText(data, status) {
+        var error = data && data.error;
+        if (typeof error === "string" && error) {
+            return error;
+        }
+        if (error && typeof error.message === "string" && error.message) {
+            return error.code ? error.message + " (" + error.code + ")" : error.message;
+        }
+        return "HTTP " + status;
+    }
+
     function api(method, path, body) {
         return fetch(path, {
             method: method,
@@ -34,7 +48,7 @@
                 throw new Error("HTTP " + response.status);
             }).then(function (data) {
                 if (!response.ok) {
-                    throw new Error(data.error || ("HTTP " + response.status));
+                    throw new Error(errorText(data, response.status));
                 }
                 return data;
             });

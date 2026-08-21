@@ -58,6 +58,7 @@ int main()
 
     std::string quotaUser;
     std::uint64_t quotaBytes = 0;
+    std::string searchedQuery;
 
     http::Server::Options options;
     options.port = 0;  // the kernel picks one
@@ -98,6 +99,17 @@ int main()
         return response;
     });
 
+    service.get("/v1/account/users", [&](const http::Request& request) {
+        if (!authorize(request)) {
+            return refusal();
+        }
+        const auto mark = request.target.find('?');
+        searchedQuery = mark == std::string::npos ? std::string() : request.target.substr(mark + 1);
+        http::Response response;
+        response.body = "{\"users\":[],\"total\":0}";
+        return response;
+    });
+
     const int port = service.start();
     CHECK(port > 0);
 
@@ -129,6 +141,15 @@ int main()
     CHECK(quota.body == "{\"ok\":true}");
     CHECK(quotaUser == "alicefp");
     CHECK(quotaBytes == 5000);
+
+    // A call that carries a query string: the signature covers the path without
+    // it, which is what the service verifies. Signing the query instead broke
+    // every search the panel makes.
+    const JsonResult searched
+        = callJson(entry, panel, "GET", "/v1/account/users?q=abc&state=pending");
+    CHECK(searched.ok);
+    CHECK(searched.body == "{\"users\":[],\"total\":0}");
+    CHECK(searchedQuery == "q=abc&state=pending");
 
     // The same call from a non-authorised identity is rejected.
     const JsonResult quotaDenied = callJson(entry, stranger, "PUT", "/v1/account/quota",

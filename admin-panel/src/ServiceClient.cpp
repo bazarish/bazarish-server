@@ -62,15 +62,18 @@ bazarish::http::ClientOptions clientOptions()
     return options;
 }
 
-// One signed request to a service, whatever the method.
+// One signed request to a service, whatever the method. The signature covers the
+// query-less path, which is what every service verifies: a signature over the
+// query string would be refused the moment the panel searched for anything.
 bazarish::http::ClientResponse call(const ServiceEntry& service, const Identity& identity,
-    const std::string& method, const std::string& path, const std::string& body)
+    const std::string& method, const std::string& target, const std::string& body)
 {
+    const std::string path = target.substr(0, target.find('?'));
     const auth::Headers signature = auth::signRequest(
         identity, nowSeconds(), method, path, Bytes(body.begin(), body.end()));
     bazarish::http::ClientRequest out;
     out.method = method;
-    out.target = path;
+    out.target = target;
     out.headers = std::map<std::string, std::string>(signature.begin(), signature.end());
     out.body = body;
     if (!body.empty()) {

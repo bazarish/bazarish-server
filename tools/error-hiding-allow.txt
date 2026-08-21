@@ -1,3 +1,3 @@
 # Sites where a catch legitimately reports nothing, one per line, with the reason.
 # Format: <path>:<line> <reason>
-admin-panel/src/ServiceClient.cpp:95 not an error envelope; the HTTP status returned below is the whole answer
+admin-panel/src/ServiceClient.cpp:98 not an error envelope; the HTTP status returned below is the whole answer

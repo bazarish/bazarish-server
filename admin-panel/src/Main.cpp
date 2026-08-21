@@ -24,7 +24,6 @@ void printUsage()
     std::printf(
         "bazarish-admin-panel %s\n"
         "Usage: bazarish-admin-panel --config <path> --state <dir> --assets <dir>\n"
-        "                            [--listen <host> <port>]\n"
         "       bazarish-admin-panel --version\n"
         "\n"
         "Monitors and manages Bazarish services from one web interface. The panel\n"
@@ -86,8 +85,6 @@ int main(const int argc, const char** argv)
     std::string configPath;
     std::string stateDir;
     std::string assetsDir;
-    std::string listenHostOverride;
-    int listenPortOverride = 0;
     for (int i = 1; i < argc;) {
         const std::string flag = argv[i];
         if (flag == "--config" && i + 1 < argc) {
@@ -99,10 +96,6 @@ int main(const int argc, const char** argv)
         } else if (flag == "--assets" && i + 1 < argc) {
             assetsDir = argv[i + 1];
             i += 2;
-        } else if (flag == "--listen" && i + 2 < argc) {
-            listenHostOverride = argv[i + 1];
-            listenPortOverride = std::atoi(argv[i + 2]);
-            i += 3;
         } else {
             printUsage();
             return 2;
@@ -117,12 +110,11 @@ int main(const int argc, const char** argv)
     const bazarish::Identity identity = loadOrCreateIdentity(stateDir);
 
     Config config = Config::fromFile(configPath);
-    std::string host = config.listenHost;
-    int port = config.listenPort;
-    if (!listenHostOverride.empty()) {
-        host = listenHostOverride;
-        port = listenPortOverride;
-    }
+    // The address is the config's to state. A flag that could override it would
+    // mean two answers to the same question, and the operator finding out which
+    // one won by reading a unit file.
+    const std::string host = config.listenHost;
+    const int port = config.listenPort;
 
     HttpApiOptions options;
     options.version = kVersion;

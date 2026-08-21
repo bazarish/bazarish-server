@@ -82,3 +82,9 @@ Requires CMake >= 3.20, C++20, OpenSSL >= 3.0. Uses the shared `common` library
 bazarish-admin-panel --config config.json --state /var/lib/bazarish/admin-panel \
   --assets ./web
 ```
+
+The listen address is the config's alone - there is no flag that overrides it, so
+there is never a question of which one won.
+
+```
+```

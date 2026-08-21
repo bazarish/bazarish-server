@@ -1,0 +1,14 @@
+<!-- Step one. {{error}} is a notice the node fills in (empty when all is well). -->
+  <section class="panel">
+    <h2 class="panel-title">sign in with your key</h2>
+    <p class="panel-note">Sign the challenge in your client and paste the result back. The key never leaves it.</p>
+    {{error}}
+    <p class="field-label">Challenge</p>
+    <pre class="copy">{{challenge}}</pre>
+    <form method="post" action="/login">
+      <input type="hidden" name="challenge" value="{{challenge}}">
+      <label class="field-label" for="blob">Signed blob</label>
+      <textarea class="field" id="blob" name="blob" required autofocus></textarea>
+      <button class="btn" type="submit">Sign in</button>
+    </form>
+  </section>

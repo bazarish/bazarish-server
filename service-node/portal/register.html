@@ -1,0 +1,16 @@
+<!-- Step two, and the last one: reading the code is the registration.
+     {{captcha}} is the drawing, {{captchaId}} the token that answers it. -->
+  <section class="panel">
+    <h2 class="panel-title">register</h2>
+    <p class="panel-note">A free account: {{quota}} of storage.</p>
+    {{error}}
+    <div class="captcha">{{captcha}}</div>
+    <form method="post" action="/register">
+      <input type="hidden" name="captchaId" value="{{captchaId}}">
+      <label class="field-label" for="answer">The code</label>
+      <div class="captcha-row">
+        <input class="field captcha-answer" id="answer" name="captchaAnswer" autocomplete="off" autocapitalize="characters" required autofocus>
+        <button class="btn" type="submit">Register</button>
+      </div>
+    </form>
+  </section>

@@ -9,10 +9,14 @@
 
 namespace bazarish::service {
 
-// The portal's web files - the page shell, the stylesheet, the logo, the fonts.
-// They sit on disk beside the binary instead of inside it, so an operator can
-// restyle the portal without rebuilding it. Each file is read once and answered
-// from memory afterwards, which also means an edit takes effect on restart.
+// The portal's web files - the page shell, one template per state of the flow,
+// the stylesheet, the logo, the fonts. They sit on disk beside the binary
+// instead of inside it, so an operator owns the whole page: not only its colours
+// but every word on it. The node fills in the values a template asks for by
+// name ({{challenge}}, {{quota}}, ...) and writes nothing else.
+//
+// Each file is read once and answered from memory afterwards, which also means
+// an edit takes effect on restart.
 class PortalAssets {
 public:
     struct File {
@@ -20,8 +24,8 @@ public:
         std::string contentType;
     };
 
-    // Loads the page shell and the stylesheet at once: a portal that cannot
-    // draw its own pages must say so at start, not on the first visitor.
+    // Loads every template and the stylesheet at once: a portal that cannot draw
+    // its own pages must say so at start, not on the first visitor.
     explicit PortalAssets(std::filesystem::path directory);
 
     // A file by its plain name, read on first use. Throws when the name is not a
@@ -29,15 +33,15 @@ public:
     // file cannot be read.
     const File& file(const std::string& name);
 
-    // The files the portal publishes: everything in the directory the browser
-    // may ask for by name (the shell is filled in by the portal, not served).
-    std::vector<std::string> published() const;
+    // A template with its {{placeholders}} filled in from values; a placeholder
+    // with no value is left as it stands, so a typo in a template shows up as
+    // itself instead of vanishing.
+    std::string render(
+        const std::string& templateName, const std::map<std::string, std::string>& values);
 
-    // The page shell with its placeholders filled in. Only these three values
-    // come from the node: everything the page says around them is the
-    // operator's to write.
-    std::string page(
-        const std::string& title, const std::string& server, const std::string& content);
+    // The files the portal publishes: everything in the directory the browser
+    // may ask for by name (templates are filled in by the portal, not served).
+    std::vector<std::string> published() const;
 
 private:
     std::filesystem::path directory_;

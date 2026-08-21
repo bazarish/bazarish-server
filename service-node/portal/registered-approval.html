@@ -1,0 +1,14 @@
+<!-- The same account on a moderated node: it is served once the operator says
+     so. {{message}} is their note from the node config (empty if they wrote none). -->
+  <section class="panel">
+    <h2 class="panel-title">registered</h2>
+    <p class="panel-note">The operator approves accounts by hand: connect your client here, and it starts serving once they do.</p>
+    {{message}}
+    <ul class="facts">
+      <li><span>Storage</span>{{quota}}</li>
+      <li><span>Term</span>{{term}}, renewed by your client</li>
+    </ul>
+    <p class="field-label">Server descriptor</p>
+    <pre class="copy">{{descriptor}}</pre>
+    <p class="panel-note">Paste it into your client to connect it here.</p>
+  </section>

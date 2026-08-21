@@ -88,39 +88,6 @@ std::string htmlEscape(const std::string& s)
     return out;
 }
 
-// The page shows one thing to do at a time, under one heading.
-std::string panel(const std::string& title, const std::string& body)
-{
-    return "<section class=\"panel\"><h2 class=\"panel-title\">" + htmlEscape(title) + "</h2>"
-        + body + "</section>";
-}
-
-std::string note(const std::string& text)
-{
-    return "<p class=\"panel-note\">" + htmlEscape(text) + "</p>";
-}
-
-std::string notice(const std::string& text, const std::string& kind)
-{
-    if (text.empty()) {
-        return {};
-    }
-    return "<p class=\"notice " + kind + "\">" + htmlEscape(text) + "</p>";
-}
-
-// Who the visitor is signed in as, and the way out.
-std::string sessionStrip(const std::string& user)
-{
-    return "<div class=\"session\"><span>" + htmlEscape(user)
-        + "</span><form method=\"post\" action=\"/logout\">"
-          "<button class=\"btn btn-quiet\" type=\"submit\">Sign out</button></form></div>";
-}
-
-std::string label(const std::string& text, const std::string& forId)
-{
-    return "<label class=\"field-label\" for=\"" + forId + "\">" + htmlEscape(text) + "</label>";
-}
-
 void sendHtml(http::Response& response, const std::string& html, const int status = 200)
 {
     response.status = status;
@@ -137,6 +104,9 @@ void redirectTo(http::Response& response, const std::string& location)
     response.headers["Location"] = location;
 }
 
+constexpr std::size_t kSizeTextBytes = 32;
+constexpr std::int64_t kSecondsPerDay = 24 * 3600;
+
 // A human-readable byte size for the free quota (powers of 1024).
 std::string bytesHuman(const std::uint64_t bytes)
 {
@@ -147,34 +117,20 @@ std::string bytesHuman(const std::uint64_t bytes)
         value /= 1024.0;
         ++unit;
     }
-    char buffer[32];
+    char buffer[kSizeTextBytes];
     std::snprintf(buffer, sizeof(buffer), value < 10.0 ? "%.1f %s" : "%.0f %s", value, units[unit]);
     return buffer;
 }
 
-constexpr std::int64_t kSecondsPerDay = 24 * 3600;
-
-// A caption over a block that is read rather than filled in.
-std::string fieldLabel(const std::string& text)
+// A notice the node fills into a template's {{error}} / {{message}}: it has to
+// disappear entirely when there is nothing to say, which a placeholder in a file
+// cannot do on its own.
+std::string notice(const std::string& text, const std::string& kind)
 {
-    return "<p class=\"field-label\">" + htmlEscape(text) + "</p>";
-}
-
-// What the account is, in the two numbers a visitor needs.
-std::string facts(const std::uint64_t quotaBytes, const std::int64_t termSeconds)
-{
-    return "<ul class=\"facts\"><li><span>Storage</span>" + htmlEscape(bytesHuman(quotaBytes))
-        + "</li><li><span>Term</span>" + std::to_string(termSeconds / kSecondsPerDay)
-        + " days, renewed by your client</li></ul>";
-}
-
-std::string descriptorBlock(const std::string& descriptor)
-{
-    if (descriptor.empty()) {
+    if (text.empty()) {
         return {};
     }
-    return fieldLabel("Server descriptor") + "<pre class=\"copy\">" + htmlEscape(descriptor)
-        + "</pre><p class=\"panel-note\">Paste it into your client to connect it here.</p>";
+    return "<p class=\"notice " + kind + "\">" + htmlEscape(text) + "</p>";
 }
 
 }  // namespace
@@ -417,62 +373,66 @@ void PortalApi::setupWebRoutes()
 
 std::string PortalApi::homePage(const std::string& user, const std::string& error)
 {
+    const std::string server = htmlEscape(options_.audience);
     if (user.empty()) {
         const std::string challenge = login_.issue(nowSeconds());
-        return assets_.page("Sign in", htmlEscape(options_.audience),
-            panel("sign in with your key",
-                note("Sign the challenge in your client and paste the result back. The key never "
-                     "leaves it.")
-                    + notice(error, "is-error") + fieldLabel("Challenge") + "<pre class=\"copy\">"
-                    + htmlEscape(challenge)
-                    + "</pre><form method=\"post\" action=\"/login\">"
-                      "<input type=\"hidden\" name=\"challenge\" value=\""
-                    + htmlEscape(challenge) + "\">" + label("Signed blob", "blob")
-                    + "<textarea class=\"field\" id=\"blob\" name=\"blob\" required autofocus>"
-                      "</textarea>"
-                      "<button class=\"btn\" type=\"submit\">Sign in</button></form>"));
+        return assets_.render("page.html",
+            {
+                {"title", "Sign in"},
+                {"server", server},
+                {"session", std::string()},
+                {"content",
+                    assets_.render("signin.html",
+                        {
+                            {"challenge", htmlEscape(challenge)},
+                            {"error", notice(error, "is-error")},
+                        })},
+            });
     }
 
+    const std::string session
+        = assets_.render("session.html", {{"fingerprint", htmlEscape(user)}});
     const std::optional<GrantStore::SubscriptionGrant> subscription = grants_.peekSubscription(user);
     const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
+    const std::string operatorNote = notice(options_.registrationMessage, "is-waiting");
 
     std::string title;
-    std::string body;
+    std::string content;
     if (approval.has_value() && approval->pending()) {
         title = "Waiting";
-        body = panel("waiting for the operator",
-            note("The account exists but is not served yet.")
-                + notice(options_.registrationMessage, "is-waiting"));
+        content = assets_.render("waiting.html", {{"message", operatorNote}});
     } else if (subscription.has_value() || approval.has_value()) {
         title = "Registered";
-        const std::string waiting = options_.requiresApproval
-            ? note("The operator approves accounts by hand: connect your client here, and it "
-                   "starts serving once they do.")
-                + notice(options_.registrationMessage, "is-waiting")
-            : std::string();
-        body = panel("registered",
-            waiting
-                + facts(subscription.has_value() ? subscription->quotaBytes
-                                                 : options_.defaultQuotaBytes,
-                    options_.freeSubscriptionTermSeconds)
-                + descriptorBlock(options_.serverDescriptor));
+        const std::uint64_t quota
+            = subscription.has_value() ? subscription->quotaBytes : options_.defaultQuotaBytes;
+        content = assets_.render(
+            options_.requiresApproval ? "registered-approval.html" : "registered.html",
+            {
+                {"quota", htmlEscape(bytesHuman(quota))},
+                {"term", std::to_string(options_.freeSubscriptionTermSeconds / kSecondsPerDay)
+                        + " days"},
+                {"descriptor", htmlEscape(options_.serverDescriptor)},
+                {"message", operatorNote},
+            });
     } else {
         title = "Register";
         const CaptchaChallenge challenge = captcha_.issue(nowSeconds());
-        body = panel("register",
-            note("A free account: " + bytesHuman(options_.defaultQuotaBytes) + " of storage.")
-                + notice(error, "is-error") + "<div class=\"captcha\">" + challenge.body
-                + "</div><form method=\"post\" action=\"/register\">"
-                  "<input type=\"hidden\" name=\"captchaId\" value=\""
-                + htmlEscape(challenge.id) + "\">" + label("The code", "answer")
-                + "<div class=\"captcha-row\">"
-                  "<input class=\"field captcha-answer\" id=\"answer\" name=\"captchaAnswer\" "
-                  "autocomplete=\"off\" autocapitalize=\"characters\" required autofocus>"
-                  "<button class=\"btn\" type=\"submit\">Register</button></div></form>");
+        content = assets_.render("register.html",
+            {
+                {"quota", htmlEscape(bytesHuman(options_.defaultQuotaBytes))},
+                {"captcha", challenge.body},
+                {"captchaId", htmlEscape(challenge.id)},
+                {"error", notice(error, "is-error")},
+            });
     }
 
-    return assets_.page(htmlEscape(title), htmlEscape(options_.audience),
-        sessionStrip(user) + body);
+    return assets_.render("page.html",
+        {
+            {"title", htmlEscape(title)},
+            {"server", server},
+            {"session", session},
+            {"content", content},
+        });
 }
 
 }  // namespace bazarish::service

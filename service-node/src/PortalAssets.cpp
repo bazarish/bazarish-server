@@ -26,15 +26,11 @@ const std::map<std::string, std::string>& contentTypes()
     return kTypes;
 }
 
-// The shell every page is poured into. It is filled in by the portal, so it is
-// not published as a file of its own.
-const char* const kShellFile = "page.html";
+// Templates are poured into pages by the portal, so they are never served as
+// files of their own.
+const char* const kTemplateExtension = ".html";
+const char* const kTemplateContentType = "text/html; charset=utf-8";
 const char* const kStyleFile = "style.css";
-const char* const kShellContentType = "text/html; charset=utf-8";
-
-const char* const kTitleToken = "{{title}}";
-const char* const kServerToken = "{{server}}";
-const char* const kContentToken = "{{content}}";
 
 std::string readFile(const std::filesystem::path& path)
 {
@@ -64,9 +60,14 @@ PortalAssets::PortalAssets(std::filesystem::path directory)
         throw std::runtime_error("portal assets directory not found: " + directory_.string());
     }
     const std::lock_guard<std::mutex> lock(mutex_);
-    cache_.emplace(kShellFile, File{readFile(directory_ / kShellFile), kShellContentType});
-    cache_.emplace(kStyleFile,
-        File{readFile(directory_ / kStyleFile), contentTypes().at(".css")});
+    for (const std::filesystem::directory_entry& entry :
+        std::filesystem::directory_iterator(directory_)) {
+        if (entry.is_regular_file() && entry.path().extension() == kTemplateExtension) {
+            cache_.emplace(entry.path().filename().string(),
+                File{readFile(entry.path()), kTemplateContentType});
+        }
+    }
+    cache_.emplace(kStyleFile, File{readFile(directory_ / kStyleFile), contentTypes().at(".css")});
 }
 
 const PortalAssets::File& PortalAssets::file(const std::string& name)
@@ -75,6 +76,7 @@ const PortalAssets::File& PortalAssets::file(const std::string& name)
     if (name.empty() || asked.filename() != asked) {
         throw std::runtime_error("portal asset name is not a plain file name: " + name);
     }
+
     const std::lock_guard<std::mutex> lock(mutex_);
     const auto cached = cache_.find(name);
     if (cached != cache_.end()) {
@@ -87,6 +89,16 @@ const PortalAssets::File& PortalAssets::file(const std::string& name)
     return cache_.emplace(name, File{readFile(directory_ / name), type->second}).first->second;
 }
 
+std::string PortalAssets::render(
+    const std::string& templateName, const std::map<std::string, std::string>& values)
+{
+    std::string page = file(templateName).body;
+    for (const auto& [name, value] : values) {
+        substitute(page, "{{" + name + "}}", value);
+    }
+    return page;
+}
+
 std::vector<std::string> PortalAssets::published() const
 {
     std::vector<std::string> names;
@@ -95,23 +107,12 @@ std::vector<std::string> PortalAssets::published() const
         if (!entry.is_regular_file()) {
             continue;
         }
-        const std::string name = entry.path().filename().string();
-        if (name == kShellFile || contentTypes().count(entry.path().extension().string()) == 0) {
+        if (contentTypes().count(entry.path().extension().string()) == 0) {
             continue;
         }
-        names.push_back(name);
+        names.push_back(entry.path().filename().string());
     }
     return names;
-}
-
-std::string PortalAssets::page(
-    const std::string& title, const std::string& server, const std::string& content)
-{
-    std::string html = file(kShellFile).body;
-    substitute(html, kTitleToken, title);
-    substitute(html, kServerToken, server);
-    substitute(html, kContentToken, content);
-    return html;
 }
 
 }  // namespace bazarish::service

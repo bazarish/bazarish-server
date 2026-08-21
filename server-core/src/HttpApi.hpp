@@ -55,7 +55,7 @@ struct HttpApiOptions {
     // The server's default per-user mailbox quota, reported (alongside actual usage)
     // by /v1/messaging/storage-usage when a user has no quota override. Mirrors the
     // delivery engine's defaultQuotaBytes.
-    std::uint64_t defaultQuotaBytes = 50 * 1024 * 1024;
+    std::uint64_t defaultQuotaBytes = 20 * 1024 * 1024;
     // How long a completed send attempt stays pollable.
     std::int64_t attemptRetentionSeconds = 600;
     // Mailbox TTL backstop: a pending blob still un-acked by all of a user's

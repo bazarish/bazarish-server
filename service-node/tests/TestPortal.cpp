@@ -101,7 +101,7 @@ void testPortalDiscovery()
     options.portalMessage = "Register at the portal";
     options.portalLinks = {"https://portal.example/a", "http://abc.onion/b"};
     options.freeRegistrationCaptcha = true;
-    options.defaultQuotaBytes = 50 * 1024 * 1024;
+    options.defaultQuotaBytes = 20 * 1024 * 1024;
     options.registration = AccountApiOptions::Registration::eApproval;
     options.registrationMessage = "write to the operator";
 
@@ -129,7 +129,7 @@ void testPortalDiscovery()
     CHECK(registration.at("captcha").get<bool>());
     CHECK(registration.at("requiresApproval").get<bool>());
     CHECK(registration.at("message").get<std::string>() == "write to the operator");
-    CHECK(body.at("quotaBytes").get<std::uint64_t>() == 50 * 1024 * 1024);
+    CHECK(body.at("quotaBytes").get<std::uint64_t>() == 20 * 1024 * 1024);
 
     api.stop();
     serverThread.join();

@@ -32,7 +32,7 @@ struct PortalApiOptions {
     std::int64_t sessionTtlSeconds = 3600;
     // The subscription granted on registration. Every account gets the same one:
     // nothing on this node is for sale.
-    std::uint64_t defaultQuotaBytes = 50 * 1024 * 1024;
+    std::uint64_t defaultQuotaBytes = 20 * 1024 * 1024;
     std::int64_t freeSubscriptionTermSeconds = 14 * 24 * 3600;
     // When false, registration is open to any logged-in (sign-in-with-key) user
     // without solving a captcha. Advertised to clients via the discovery

@@ -131,7 +131,7 @@ struct RegistrationConfig {
 // storage quota every account gets, how the portal presents itself, and who may
 // register.
 struct NodeConfig {
-    std::uint64_t freeStorageBytes = 50 * 1024 * 1024;
+    std::uint64_t freeStorageBytes = 20 * 1024 * 1024;
     PortalConfig portal;
     RegistrationConfig registration;
 };

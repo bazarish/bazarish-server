@@ -14,7 +14,7 @@
   },
 
   "settlementCurrency": "XMR",
-  "freeStorageBytes": 52428800,
+  "freeStorageBytes": 20971520,
 
   "services": {
     "i2pDest":  { "enabled": true, "priceAtomic": "200000000000", "periodDays": 30 },

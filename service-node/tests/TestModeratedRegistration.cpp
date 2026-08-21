@@ -83,7 +83,7 @@ int main()
     AccountApiOptions options;
     options.serverFingerprint = serverFp;
     options.serverCardDer = cardDer;
-    options.defaultQuotaBytes = 50 * 1024 * 1024;
+    options.defaultQuotaBytes = 20 * 1024 * 1024;
     options.maxTermSeconds = 14 * 24 * 3600;
     options.operatorFingerprints = {panel.fingerprint()};
     options.registration = AccountApiOptions::Registration::eApproval;

@@ -324,11 +324,49 @@
             });
         }));
 
+        // What the operator can do to an account depends on where it stands. An
+        // account already out of service has nothing to take out of it; one that
+        // was never redeemed by a client has nothing to approve.
+        var onHold = user.approval === "pending" && Boolean(user.holdMessage);
         if (user.approval === "pending") {
-            controls(section(box, "Approval"), "The account is served from now on.")
-                .appendChild(actionButton("Approve", "", function (done) {
-                    api("POST", "/api/approve", { user: user.user }).then(function () {
-                        onChanged("Approved.");
+            controls(section(box, onHold ? "Back into service" : "Approval"),
+                onHold ? "Its client republishes the address within a minute, and the account is"
+                    + " served again."
+                    : "The account is served from now on.")
+                .appendChild(actionButton(onHold ? "Return to service" : "Approve", "",
+                    function (done) {
+                        api("POST", "/api/approve", { user: user.user }).then(function () {
+                            onChanged(onHold ? "Back in service." : "Approved.");
+                        }).catch(function (error) {
+                            done();
+                            onError(error);
+                        });
+                    }));
+        }
+
+        if (user.approval === "approved" || onHold) {
+            var holdBlock = section(box,
+                onHold ? "Message to its owner" : "Take out of service");
+            var holdRow = controls(holdBlock, onHold
+                ? "The account stays out of service; this replaces what its owner reads."
+                : "The soft measure: the address is revoked, the account waits for you again, and"
+                    + " its owner reads this line instead of the node-wide one.");
+            var holdNote = element("input", "field");
+            holdNote.type = "text";
+            holdNote.value = onHold ? user.holdMessage : kDefaultHoldMessage;
+            holdRow.appendChild(holdNote);
+            holdRow.appendChild(actionButton(onHold ? "Update message" : "Undelegate", "btn-quiet",
+                function (done) {
+                    if (!holdNote.value.trim()) {
+                        done();
+                        onError(new Error("Say what you are stopping the account for."));
+                        return;
+                    }
+                    api("POST", "/api/undelegate", {
+                        user: user.user,
+                        message: holdNote.value.trim()
+                    }).then(function () {
+                        onChanged(onHold ? "Message updated." : "Undelegated. The account is on hold.");
                     }).catch(function (error) {
                         done();
                         onError(error);
@@ -336,30 +374,11 @@
                 }));
         }
 
-        var holdBlock = section(box, "Take out of service");
-        var holdRow = controls(holdBlock,
-            "The soft measure: the address is revoked, the account waits for you again, and its"
-            + " owner reads this line instead of the node-wide one.");
-        var holdNote = element("input", "field");
-        holdNote.type = "text";
-        holdNote.value = kDefaultHoldMessage;
-        holdRow.appendChild(holdNote);
-        holdRow.appendChild(actionButton("Undelegate", "btn-quiet", function (done) {
-            if (!holdNote.value.trim()) {
-                done();
-                onError(new Error("Say what you are stopping the account for."));
-                return;
-            }
-            api("POST", "/api/undelegate", {
-                user: user.user,
-                message: holdNote.value.trim()
-            }).then(function () {
-                onChanged("Undelegated. The account is on hold.");
-            }).catch(function (error) {
-                done();
-                onError(error);
-            });
-        }));
+        if (user.approval === "none") {
+            section(box, "Approval").appendChild(element("p", "hint",
+                "Registered at the portal and not redeemed by a client yet - there is nothing to"
+                + " approve or take out of service."));
+        }
 
         var removeBlock = section(box, "Remove");
         controls(removeBlock,

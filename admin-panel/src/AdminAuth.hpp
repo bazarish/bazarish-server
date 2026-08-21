@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
+#include <vector>
 #include <unordered_map>
 
 namespace bazarish::admin {
@@ -50,21 +51,21 @@ private:
 };
 
 // The panel login policy: a challenge it issued, a valid signature over it, and a
-// signer that matches the one configured admin identity.
+// signer that matches one of the configured admin identities.
 class AdminAuth {
 public:
-    AdminAuth(std::string audience, std::string adminFingerprint);
+    AdminAuth(std::string audience, std::vector<std::string> adminFingerprints);
 
     std::string issueChallenge(std::int64_t now);
 
     // Completes a login. Verifies the blob's signature over the challenge,
-    // requires the signer to be the configured admin, then consumes the challenge
+    // requires the signer to be a configured admin, then consumes the challenge
     // (single-use). Returns the admin fingerprint on success; throws otherwise.
     std::string login(const std::string& challenge, const std::string& blob, std::int64_t now);
 
 private:
     ChallengeStore challenges_;
-    std::string adminFingerprint_;
+    std::vector<std::string> adminFingerprints_;
 };
 
 }  // namespace bazarish::admin

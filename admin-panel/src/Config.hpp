@@ -16,18 +16,18 @@ struct ServiceEntry {
     std::string url;   // e.g. http://127.0.0.1:8420
 };
 
-// The panel configuration, loaded from a JSON file at startup. The admin pastes
-// their own Bazarish fingerprint (from `bazarish-client whoami`) into `admin`;
-// only that identity may sign in.
+// The panel configuration, loaded from a JSON file at startup. An admin pastes
+// their own Bazarish fingerprint (from `bazarish-client whoami`) into `admin`,
+// which is one fingerprint or a list of them; only those identities may sign in.
 struct Config {
-    std::string admin;
+    std::vector<std::string> admins;
     std::string audience = "bazarish-admin-panel";
     std::string listenHost = "127.0.0.1";
     int listenPort = 8460;
     std::vector<ServiceEntry> services;
 
     // Parses configuration from JSON text. Throws std::runtime_error on malformed
-    // input or a missing required field (the admin fingerprint).
+    // input or a missing required field (the admin fingerprints).
     static Config fromJson(const std::string& text);
 
     // Reads and parses the configuration file. Throws if it cannot be read.

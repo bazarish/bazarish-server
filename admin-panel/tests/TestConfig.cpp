@@ -43,7 +43,8 @@ int main()
         ]
     })";
     const Config config = Config::fromJson(text);
-    CHECK(config.admin == "abcd1234");
+    CHECK(config.admins.size() == 1);
+    CHECK(config.admins.front() == "abcd1234");
     CHECK(config.listenHost == "0.0.0.0");
     CHECK(config.listenPort == 9000);
     CHECK(config.services.size() == 2);
@@ -58,6 +59,13 @@ int main()
     CHECK(minimal.listenHost == "127.0.0.1");
     CHECK(minimal.listenPort == 8460);
     CHECK(minimal.services.empty());
+
+    // Several operators, each with their own key.
+    const Config shared = Config::fromJson(R"({"admin": ["one", "two"]})");
+    CHECK(shared.admins.size() == 2);
+    CHECK(shared.admins.at(1) == "two");
+    CHECK_THROWS(Config::fromJson(R"({"admin": []})"));
+    CHECK_THROWS(Config::fromJson(R"({"admin": ["one", ""]})"));
 
     // A missing or empty admin fingerprint is rejected.
     CHECK_THROWS(Config::fromJson(R"({"services": []})"));

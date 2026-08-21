@@ -154,7 +154,7 @@ HttpApi::HttpApi(Config config, const Identity& identity, HttpApiOptions options
     : config_(std::move(config))
     , identity_(identity)
     , options_(std::move(options))
-    , auth_(config_.audience, config_.admin)
+    , auth_(config_.audience, config_.admins)
     , sessions_(options_.sessionTtlSeconds)
 {
 }

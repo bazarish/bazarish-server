@@ -14,7 +14,7 @@ logging in is done by signing a challenge with the client.
 2. Open `/login`; the page shows a challenge.
 3. Sign it in your client: `bazarish-client sign-login <profile> <challenge>`.
 4. Paste the resulting blob back. The panel verifies the hybrid signature
-   **locally** against the configured admin fingerprint and starts a session.
+   **locally** against the configured admin fingerprints and starts a session.
 
 The login needs no backend online - the panel is the verifier. The challenge is
 single-use and bound to this panel's audience, so a login blob captured anywhere
@@ -56,7 +56,8 @@ that ops address, not with the published facade URL.
 
 ## Configuration
 
-See `config.example.json`: the authorised admin fingerprint, the listen address,
+See `config.example.json`: the authorised admin fingerprints (one string or a
+list), the listen address,
 and the list of services (name, kind, url) - no secrets.
 
 ## Build & test

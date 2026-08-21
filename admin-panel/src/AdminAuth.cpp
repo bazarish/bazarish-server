@@ -7,6 +7,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <stdexcept>
 #include <utility>
 
@@ -87,9 +88,9 @@ bool ChallengeStore::consume(const std::string& challenge, const std::int64_t no
     return issued_.erase(nonce) == 1;
 }
 
-AdminAuth::AdminAuth(std::string audience, std::string adminFingerprint)
+AdminAuth::AdminAuth(std::string audience, std::vector<std::string> adminFingerprints)
     : challenges_(std::move(audience))
-    , adminFingerprint_(std::move(adminFingerprint))
+    , adminFingerprints_(std::move(adminFingerprints))
 {
 }
 
@@ -104,8 +105,9 @@ std::string AdminAuth::login(
     // Verify the signature before consuming the challenge, so a failed attempt
     // (bad blob) does not burn a valid challenge.
     const std::string fingerprint = verifyLoginBlob(blob, now, challenge);
-    if (fingerprint != adminFingerprint_) {
-        throw std::runtime_error("login: not the configured admin identity");
+    if (std::find(adminFingerprints_.begin(), adminFingerprints_.end(), fingerprint)
+        == adminFingerprints_.end()) {
+        throw std::runtime_error("login: not a configured admin identity");
     }
     // The single-use consume is what defeats replay: a login blob captured from
     // any other verifier carries a challenge this panel never issued, so it is

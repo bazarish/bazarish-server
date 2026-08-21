@@ -91,7 +91,7 @@ int main()
 
     // Full login: a panel-issued challenge, signed by the configured admin.
     {
-        AdminAuth auth("bazarish-admin-panel", admin.fingerprint());
+        AdminAuth auth("bazarish-admin-panel", {admin.fingerprint()});
         const std::string challenge = auth.issueChallenge(kNow);
         const std::string blob = forgeBlob(admin, challenge, kNow);
         CHECK(auth.login(challenge, blob, kNow) == admin.fingerprint());
@@ -99,9 +99,18 @@ int main()
         CHECK_THROWS(auth.login(challenge, blob, kNow));
     }
 
+    // A panel with two operators takes either of them.
+    {
+        const Identity second = Identity::generate();
+        AdminAuth auth("bazarish-admin-panel", {admin.fingerprint(), second.fingerprint()});
+        const std::string challenge = auth.issueChallenge(kNow);
+        CHECK(auth.login(challenge, forgeBlob(second, challenge, kNow), kNow)
+            == second.fingerprint());
+    }
+
     // A valid signature from a non-admin identity is rejected.
     {
-        AdminAuth auth("bazarish-admin-panel", admin.fingerprint());
+        AdminAuth auth("bazarish-admin-panel", {admin.fingerprint()});
         const Identity stranger = Identity::generate();
         const std::string challenge = auth.issueChallenge(kNow);
         const std::string blob = forgeBlob(stranger, challenge, kNow);
@@ -110,7 +119,7 @@ int main()
 
     // A blob signed too long ago fails the freshness check.
     {
-        AdminAuth auth("bazarish-admin-panel", admin.fingerprint());
+        AdminAuth auth("bazarish-admin-panel", {admin.fingerprint()});
         const std::string challenge = auth.issueChallenge(kNow);
         const std::string blob = forgeBlob(admin, challenge, kNow);
         CHECK_THROWS(
@@ -121,7 +130,7 @@ int main()
     // never issued (e.g. captured from another verifier) is rejected, because the
     // challenge is not in the issued set.
     {
-        AdminAuth auth("bazarish-admin-panel", admin.fingerprint());
+        AdminAuth auth("bazarish-admin-panel", {admin.fingerprint()});
         const std::string foreign = makeChallenge("deadbeef", kNow, "bazarish-admin-panel");
         const std::string blob = forgeBlob(admin, foreign, kNow);
         CHECK_THROWS(auth.login(foreign, blob, kNow));

@@ -1,5 +1,5 @@
 {
-    "admin": "REPLACE_WITH_YOUR_FINGERPRINT_FROM_bazarish-client_whoami",
+    "admin": ["REPLACE_WITH_YOUR_FINGERPRINT_FROM_bazarish-client_whoami"],
     "audience": "bazarish-admin-panel",
     "listen": {"host": "127.0.0.1", "port": 8460},
     "services": [

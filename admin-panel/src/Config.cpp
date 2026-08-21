@@ -30,9 +30,19 @@ Config Config::fromJson(const std::string& text)
     const nlohmann::json json = nlohmann::json::parse(text);
 
     Config config;
-    config.admin = json.at("admin").get<std::string>();
-    if (config.admin.empty()) {
-        throw std::runtime_error("config: \"admin\" fingerprint must not be empty");
+    const nlohmann::json& admin = json.at("admin");
+    if (admin.is_array()) {
+        config.admins = admin.get<std::vector<std::string>>();
+    } else {
+        config.admins = {admin.get<std::string>()};
+    }
+    if (config.admins.empty()) {
+        throw std::runtime_error("config: \"admin\" must name at least one fingerprint");
+    }
+    for (const std::string& fingerprint : config.admins) {
+        if (fingerprint.empty()) {
+            throw std::runtime_error("config: \"admin\" fingerprint must not be empty");
+        }
     }
     if (json.contains("audience")) {
         config.audience = json.at("audience").get<std::string>();

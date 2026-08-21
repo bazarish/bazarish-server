@@ -419,7 +419,7 @@ std::string PortalApi::homePage(const std::string& user, const std::string& erro
 {
     if (user.empty()) {
         const std::string challenge = login_.issue(nowSeconds());
-        return assets_.page("Sign in - bazarish", "messaging server " + htmlEscape(options_.audience),
+        return assets_.page("Sign in", htmlEscape(options_.audience),
             panel("sign in with your key",
                 note("Sign the challenge in your client and paste the result back. The key never "
                      "leaves it.")
@@ -464,8 +464,8 @@ std::string PortalApi::homePage(const std::string& user, const std::string& erro
                   "<button class=\"btn\" type=\"submit\">Register</button></div></form>");
     }
 
-    return assets_.page(htmlEscape(title) + " - bazarish",
-        "messaging server " + htmlEscape(options_.audience), sessionStrip(user) + body);
+    return assets_.page(htmlEscape(title), htmlEscape(options_.audience),
+        sessionStrip(user) + body);
 }
 
 }  // namespace bazarish::service

@@ -19,6 +19,7 @@ const std::map<std::string, std::string>& contentTypes()
         {".svg", "image/svg+xml"},
         {".png", "image/png"},
         {".ico", "image/x-icon"},
+        {".js", "text/javascript; charset=utf-8"},
         {".woff2", "font/woff2"},
         {".txt", "text/plain; charset=utf-8"},
     };
@@ -32,7 +33,7 @@ const char* const kStyleFile = "style.css";
 const char* const kShellContentType = "text/html; charset=utf-8";
 
 const char* const kTitleToken = "{{title}}";
-const char* const kSubtitleToken = "{{subtitle}}";
+const char* const kServerToken = "{{server}}";
 const char* const kContentToken = "{{content}}";
 
 std::string readFile(const std::filesystem::path& path)
@@ -104,11 +105,11 @@ std::vector<std::string> PortalAssets::published() const
 }
 
 std::string PortalAssets::page(
-    const std::string& title, const std::string& subtitle, const std::string& content)
+    const std::string& title, const std::string& server, const std::string& content)
 {
     std::string html = file(kShellFile).body;
     substitute(html, kTitleToken, title);
-    substitute(html, kSubtitleToken, subtitle);
+    substitute(html, kServerToken, server);
     substitute(html, kContentToken, content);
     return html;
 }

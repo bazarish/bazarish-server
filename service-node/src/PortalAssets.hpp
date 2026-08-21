@@ -33,9 +33,11 @@ public:
     // may ask for by name (the shell is filled in by the portal, not served).
     std::vector<std::string> published() const;
 
-    // The page shell with its placeholders filled in.
+    // The page shell with its placeholders filled in. Only these three values
+    // come from the node: everything the page says around them is the
+    // operator's to write.
     std::string page(
-        const std::string& title, const std::string& subtitle, const std::string& content);
+        const std::string& title, const std::string& server, const std::string& content);
 
 private:
     std::filesystem::path directory_;

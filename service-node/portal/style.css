@@ -193,6 +193,13 @@ textarea.field {
     user-select: all;
 }
 
+/* Added by portal.js; a browser without scripts never sees it. */
+.btn-copy {
+    margin-top: 0.6rem;
+    padding: 0.4rem 0.8rem;
+    font-size: 0.68rem;
+}
+
 /* --- the captcha: the one bright thing on the page --- */
 
 .captcha {

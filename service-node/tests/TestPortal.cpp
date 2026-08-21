@@ -244,6 +244,12 @@ void testWebFlow()
     CHECK(style.contentType.find("text/css") != std::string::npos);
     CHECK(call(port, "GET", "/../CMakeLists.txt").status == 404);
 
+    // The script is an extra, not a dependency: the page above already carries
+    // the whole flow, and the script only adds a copy button on top of it.
+    const http::ClientResponse script = call(port, "GET", "/portal.js");
+    CHECK(script.status == 200);
+    CHECK(script.contentType.find("javascript") != std::string::npos);
+
     const std::string challenge = between(page.body, "<pre class=\"copy\">", "</pre>");
     const std::string blob = signLoginBlob(identity, now(), challenge);
     const http::ClientResponse signedIn = postForm(port, "/login",

@@ -1,0 +1,30 @@
+{
+  // Where this node keeps its identity and its records.
+  "state": "/var/lib/bazarish/service-node",
+  // The card of the messaging server this node belongs to.
+  "serverCard": "/var/lib/bazarish/server-core/server-card.der",
+  "listen": {"host": "127.0.0.1", "port": 8421},
+  // The messaging server's private channel, for the pushes this node owes it.
+  "messaging": {"host": "127.0.0.1", "port": 8420},
+  // Who may call the operator endpoints (the admin panel).
+  "operators": [],
+  "logLevel": "info",
+
+  // What a new account gets.
+  "freeStorageBytes": 20971520,
+
+  "portal": {
+    "listen": {"host": "0.0.0.0", "port": 8431},
+    "assets": "/opt/bazarish/bazarish-server/service-node/portal",
+    "message": "Sign in with your key and pass the captcha.",
+    "links": [],
+    "facades": [],
+    "captcha": {"enabled": true, "length": 5, "ttlSeconds": 300}
+  },
+
+  "registration": {
+    "requireApproval": false,
+    "message": "",
+    "ttlDays": 7
+  }
+}

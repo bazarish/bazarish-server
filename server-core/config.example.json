@@ -1,0 +1,22 @@
+{
+  // Keys and stored content; the server card is written here on first start.
+  "state": "/var/lib/bazarish/server-core",
+  "listen": {"host": "127.0.0.1", "port": 8420},
+  // Who may call the operator endpoints: the service node and the admin panel.
+  "operators": [],
+  // The local service node, for first-contact card fetches by fingerprint.
+  "serviceNode": "http://127.0.0.1:8421",
+  "i2p": {
+    "enabled": true,
+    "privacy": "max",
+    "tunnelQuantity": 16,
+    "warmPoolMin": 2,
+    "warmPoolMax": 10,
+    "log": false
+  },
+  // Inbound deliveries per peer destination per 60s (0 disables).
+  "federationRateLimit": 240,
+  // TTL backstop for mail no device ever acked (0 disables).
+  "mailboxRetentionDays": 30,
+  "logLevel": "info"
+}

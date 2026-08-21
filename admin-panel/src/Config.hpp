@@ -21,6 +21,11 @@ struct ServiceEntry {
 // which is one fingerprint or a list of them; only those identities may sign in.
 struct Config {
     std::vector<std::string> admins;
+    // Where the panel keeps its own signing identity, and where its web files
+    // live. In the config like everything else: a flag that could override them
+    // would be a second answer to the same question.
+    std::string stateDir;
+    std::string assetsDir;
     std::string audience = "bazarish-admin-panel";
     std::string listenHost = "127.0.0.1";
     int listenPort = 8460;

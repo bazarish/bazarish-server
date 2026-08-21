@@ -9,6 +9,7 @@
 
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Certificates.hpp>
+#include <bazarish/ConfigFile.hpp>
 #include <bazarish/Crypto.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/ServerDescriptor.hpp>
@@ -39,23 +40,18 @@ void printUsage()
 {
     std::printf(
         "bazarish-service-node %s\n"
-        "Usage: bazarish-service-node --state <dir> --server-card <path>\n"
-        "         [--listen <host> <port>]\n"
-        "         [--portal-listen <host> <port> --portal-assets <dir>]\n"
-        "         [--config <path>]\n"
-        "         [--messaging <host> <port>]\n"
-        "         [--operator-fingerprint <fp>]... [--log-level <error|warn|info|debug>]\n"
-        "       bazarish-service-node --state <dir> --fingerprint\n"
+        "Usage: bazarish-service-node --config <path>\n"
+        "       bazarish-service-node --config <path> --fingerprint\n"
         "       bazarish-service-node --version\n"
         "\n"
-        "The server card (produced by bazarish-server --i2p) binds this\n"
-        "service node to its messaging server and is returned to clients on\n"
-        "subscribe.\n"
-        "--portal-assets is the directory holding the portal's web files (page\n"
-        "shell, stylesheet, logo, fonts); edit them there to restyle the portal.\n"
+        "Everything this node runs on is in the config file: where its state\n"
+        "lives, the server card that binds it to its messaging server, the\n"
+        "addresses it listens on and reaches, who may act as operator, and what\n"
+        "new accounts get. Nothing is settable twice - a flag that could override\n"
+        "the file would mean two answers to the same question.\n"
         "--fingerprint prints this node's operator fingerprint (creating its\n"
         "identity if needed) and exits, so the messaging server can be started\n"
-        "with --operator-fingerprint before this node runs.\n",
+        "with it already authorised before this node runs.\n",
         kVersion);
 }
 
@@ -134,7 +130,17 @@ struct RegistrationConfig {
 // The node's own config. Nothing here is for sale - the only knobs are the
 // storage quota every account gets, how the portal presents itself, and who may
 // register.
+// Where the node runs and what it runs on. Everything a command line used to
+// carry lives here, so there is one place to look and one place to change.
 struct NodeConfig {
+    std::string stateDir;
+    std::string serverCard;
+    bazarish::ConfigView::Endpoint listen{kDefaultHost, kDefaultPort};
+    bazarish::ConfigView::Endpoint portalListen;
+    std::string portalAssets;
+    bazarish::ConfigView::Endpoint messaging;
+    std::vector<std::string> operators;
+    bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
     std::uint64_t freeStorageBytes = 20 * 1024 * 1024;
     PortalConfig portal;
     RegistrationConfig registration;
@@ -142,13 +148,35 @@ struct NodeConfig {
 
 NodeConfig loadNodeConfig(const fs::path& path)
 {
-    std::ifstream in(path);
-    if (!in) {
-        throw std::runtime_error("failed to open node config " + path.string());
-    }
-    const nlohmann::json doc = nlohmann::json::parse(in);
+    const nlohmann::json doc = bazarish::ConfigFile(path).read();
+    const bazarish::ConfigView view(doc);
 
     NodeConfig config;
+    config.stateDir = view.text("state");
+    config.serverCard = view.text("serverCard");
+    if (const std::optional<bazarish::ConfigView::Endpoint> listen = view.endpoint("listen");
+        listen.has_value()) {
+        config.listen = *listen;
+    }
+    if (const std::optional<bazarish::ConfigView::Endpoint> portal
+        = view.endpoint("portal.listen");
+        portal.has_value()) {
+        config.portalListen = *portal;
+    }
+    config.portalAssets = view.text("portal.assets");
+    if (const std::optional<bazarish::ConfigView::Endpoint> messaging
+        = view.endpoint("messaging");
+        messaging.has_value()) {
+        config.messaging = *messaging;
+    }
+    config.operators = view.list("operators");
+    if (const std::string level = view.text("logLevel"); !level.empty()) {
+        const std::optional<bazarish::log::Level> parsed = bazarish::log::levelFromString(level);
+        if (!parsed.has_value()) {
+            throw std::runtime_error("config: logLevel is not a level");
+        }
+        config.logLevel = *parsed;
+    }
     config.freeStorageBytes = doc.value("freeStorageBytes", config.freeStorageBytes);
     if (doc.contains("portal")) {
         const nlohmann::json& portal = doc.at("portal");
@@ -185,81 +213,54 @@ int main(const int argc, const char** argv)
         std::printf("bazarish-service-node %s\n", kVersion);
         return 0;
     }
+    if (argc < 3 || std::strcmp(argv[1], "--config") != 0) {
+        printUsage();
+        return 2;
+    }
+    const fs::path configPath(argv[2]);
+    NodeConfig nodeConfig;
+    try {
+        nodeConfig = loadNodeConfig(configPath);
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "config: %s\n", error.what());
+        return 2;
+    }
+    if (nodeConfig.stateDir.empty() || nodeConfig.serverCard.empty()) {
+        std::fprintf(stderr, "config: \"state\" and \"serverCard\" are required\n");
+        return 2;
+    }
+    const fs::path stateDir(nodeConfig.stateDir);
+
     // The messaging server must authorise this node's operator fingerprint, but
     // this node cannot start before that server has written its card. This mode
     // breaks the cycle: it materialises the identity and prints the fingerprint,
     // so the server can be started with it already configured.
-    if (argc == 4 && std::strcmp(argv[1], "--state") == 0
-        && std::strcmp(argv[3], "--fingerprint") == 0) {
-        std::printf("%s\n", loadOrCreateIdentity(fs::path(argv[2])).fingerprint().c_str());
+    if (argc == 4 && std::strcmp(argv[3], "--fingerprint") == 0) {
+        fs::create_directories(stateDir);
+        std::printf("%s\n", loadOrCreateIdentity(stateDir).fingerprint().c_str());
         return 0;
     }
-    if (argc < 5 || std::strcmp(argv[1], "--state") != 0
-        || std::strcmp(argv[3], "--server-card") != 0) {
+    if (argc != 3) {
         printUsage();
         return 2;
     }
 
-    const fs::path stateDir(argv[2]);
-    const fs::path cardPath(argv[4]);
-    std::string host = kDefaultHost;
-    int port = kDefaultPort;
-    std::string portalHost;
-    int portalPort = 0;
-    fs::path portalAssets;
-    fs::path configPath;
-    std::string messagingHost;
-    int messagingPort = 0;
-    std::vector<std::string> operatorFingerprints;
-    bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
-    for (int i = 5; i < argc;) {
-        const std::string flag = argv[i];
-        if (flag == "--listen" && i + 2 < argc) {
-            host = argv[i + 1];
-            port = std::atoi(argv[i + 2]);
-            i += 3;
-        } else if (flag == "--portal-listen" && i + 2 < argc) {
-            portalHost = argv[i + 1];
-            portalPort = std::atoi(argv[i + 2]);
-            i += 3;
-        } else if (flag == "--portal-assets" && i + 1 < argc) {
-            portalAssets = argv[i + 1];
-            i += 2;
-        } else if (flag == "--config" && i + 1 < argc) {
-            configPath = argv[i + 1];
-            i += 2;
-        } else if (flag == "--messaging" && i + 2 < argc) {
-            messagingHost = argv[i + 1];
-            messagingPort = std::atoi(argv[i + 2]);
-            i += 3;
-        } else if (flag == "--operator-fingerprint" && i + 1 < argc) {
-            operatorFingerprints.emplace_back(argv[i + 1]);
-            i += 2;
-        } else if (flag == "--log-level" && i + 1 < argc) {
-            const std::optional<bazarish::log::Level> parsed
-                = bazarish::log::levelFromString(argv[i + 1]);
-            if (!parsed.has_value()) {
-                printUsage();
-                return 2;
-            }
-            logLevel = parsed.value();
-            i += 2;
-        } else {
-            printUsage();
-            return 2;
-        }
-    }
+    const fs::path cardPath(nodeConfig.serverCard);
+    const std::string host = nodeConfig.listen.host;
+    const int port = nodeConfig.listen.port;
+    const std::string portalHost = nodeConfig.portalListen.host;
+    const int portalPort = nodeConfig.portalListen.port;
+    const fs::path portalAssets(nodeConfig.portalAssets);
+    const std::string messagingHost = nodeConfig.messaging.host;
+    const int messagingPort = nodeConfig.messaging.port;
+    const std::vector<std::string> operatorFingerprints = nodeConfig.operators;
+    const bazarish::log::Level logLevel = nodeConfig.logLevel;
 
     bazarish::log::setComponent("service-node");
     bazarish::log::setLevel(logLevel);
 
     const bazarish::Bytes cardDer = readFileBytes(cardPath);
     const bazarish::ServerCard card = bazarish::ServerCard::verify(cardDer);
-
-    // Payments/paid-services config (a single source feeding both the discovery
-    // advertisement and the buy endpoints); dev defaults when no file is given.
-    const NodeConfig nodeConfig
-        = configPath.empty() ? NodeConfig{} : loadNodeConfig(configPath);
 
     fs::create_directories(stateDir);
     // The service node's own signing identity: it signs its operator pushes

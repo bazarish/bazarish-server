@@ -3,6 +3,7 @@
 #include "I2pFront.hpp"
 
 #include <bazarish/I2p.hpp>
+#include <bazarish/ConfigFile.hpp>
 #include <bazarish/Log.hpp>
 
 #include <cstdio>
@@ -24,29 +25,22 @@ void printUsage()
 {
     std::printf(
         "bazarish-facade-http %s\n"
-        "Usage: bazarish-facade-http --base-path <secret-uri-prefix> | --public\n"
-        "                           [--listen <host> <port>]\n"
-        "                           [--i2p --state <dir> [--i2p-dests <n>]]\n"
-        "                           [--privacy <minimal|middle|max>] [--tunnel-quantity <n>]\n"
-        "                           [--ops-listen <host> <port>]\n"
-        "                           [--messaging <host> <port>]\n"
-        "                           [--account <host> <port>]\n"
-        "                           [--operator-fingerprint <fp>]...\n"
-        "                           [--log-level <error|warn|info|debug>]\n"
+        "Usage: bazarish-facade-http --config <path>\n"
         "       bazarish-facade-http --version\n"
         "\n"
         "Transparent reverse proxy: <secret>/v1/messaging/* -> messaging server,\n"
-        "<secret>/v1/account/* -> service node; anything else is a 404.\n"
-        "The secret prefix is mandatory: it is the only thing standing between a\n"
-        "scan of the host and the clearnet API, and it reaches a client only inside\n"
-        "the facade URL of the server descriptor. Use --public solely when a\n"
-        "fronting proxy already publishes this facade under a secret URI.\n"
-        "--i2p publishes the same API on the facade's own I2P destination(s) - the\n"
+        "<secret>/v1/account/* -> service node; anything else is a 404. Everything\n"
+        "it runs on is in the config file.\n"
+        "\n"
+        "\"basePath\" is mandatory: it is the only thing standing between a scan of\n"
+        "the host and the clearnet API, and it reaches a client only inside the\n"
+        "facade URL of the server descriptor. Set \"public\": true instead solely\n"
+        "when a fronting proxy already publishes this facade under a secret URI.\n"
+        "\"i2p\" publishes the same API on the facade's own destination(s) - the\n"
         "preferred way in: clients reach it without touching the clearnet at all.\n"
-        "The keys live in --state and the addresses are stable across restarts,\n"
-        "because they travel in the server descriptor. Clearnet stays up beside it\n"
-        "for the bootstrap (a client with no netDb yet reseeds over it).\n"
-        "--ops-listen adds a private socket serving the operator-signed /healthz\n"
+        "The keys live in \"state\" and the addresses are stable across restarts,\n"
+        "because they travel in the server descriptor.\n"
+        "\"opsListen\" adds a private socket serving the operator-signed /healthz\n"
         "for the admin panel; it is never published to clients.\n",
         kVersion);
 }
@@ -70,89 +64,76 @@ int main(const int argc, const char** argv)
         return 0;
     }
 
-    std::string host = kDefaultHost;
-    int port = kDefaultPort;
-    std::string opsHost;
-    int opsPort = 0;
-    bool servePublicRoot = false;
-    bool enableI2p = false;
-    std::filesystem::path stateDir;
-    std::size_t i2pDests = 1;
+    if (argc != 3 || std::strcmp(argv[1], "--config") != 0) {
+        printUsage();
+        return 2;
+    }
+    bazarish::ConfigView config(nlohmann::json::object());
+    try {
+        config = bazarish::ConfigView(bazarish::ConfigFile(std::filesystem::path(argv[2])).read());
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "config: %s\n", error.what());
+        return 2;
+    }
+
+    const bazarish::ConfigView::Endpoint listen = config.endpoint("listen").value_or(
+        bazarish::ConfigView::Endpoint{kDefaultHost, kDefaultPort});
+    const std::string host = listen.host;
+    const int port = listen.port;
+    const std::optional<bazarish::ConfigView::Endpoint> ops = config.endpoint("opsListen");
+    const std::string opsHost = ops.has_value() ? ops->host : std::string();
+    const int opsPort = ops.has_value() ? ops->port : 0;
+    const bool servePublicRoot = config.flag("public", false);
+    const bool enableI2p = config.flag("i2p.enabled", false);
+    const std::filesystem::path stateDir(config.text("state"));
+    const std::size_t i2pDests = static_cast<std::size_t>(config.number("i2p.destinations", 1));
     bazarish::i2p::Privacy privacy = bazarish::i2p::Privacy::eMax;
-    int tunnelQuantity = bazarish::i2p::kDefaultTunnelQuantity;
-    bazarish::facade::FacadeOptions options;
-    options.version = kVersion;
-    bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
-    for (int i = 1; i < argc;) {
-        if (std::strcmp(argv[i], "--listen") == 0 && i + 2 < argc) {
-            host = argv[i + 1];
-            port = std::atoi(argv[i + 2]);
-            i += 3;
-        } else if (std::strcmp(argv[i], "--ops-listen") == 0 && i + 2 < argc) {
-            opsHost = argv[i + 1];
-            opsPort = std::atoi(argv[i + 2]);
-            i += 3;
-        } else if (std::strcmp(argv[i], "--i2p") == 0) {
-            enableI2p = true;
-            i += 1;
-        } else if (std::strcmp(argv[i], "--state") == 0 && i + 1 < argc) {
-            stateDir = argv[i + 1];
-            i += 2;
-        } else if (std::strcmp(argv[i], "--i2p-dests") == 0 && i + 1 < argc) {
-            i2pDests = static_cast<std::size_t>(std::atoi(argv[i + 1]));
-            i += 2;
-        } else if (std::strcmp(argv[i], "--privacy") == 0 && i + 1 < argc) {
-            const std::optional<bazarish::i2p::Privacy> parsed
-                = bazarish::i2p::privacyFromString(argv[i + 1]);
-            if (!parsed.has_value()) {
-                printUsage();
-                return 2;
-            }
-            privacy = parsed.value();
-            i += 2;
-        } else if (std::strcmp(argv[i], "--tunnel-quantity") == 0 && i + 1 < argc) {
-            tunnelQuantity = std::atoi(argv[i + 1]);
-            i += 2;
-        } else if (std::strcmp(argv[i], "--public") == 0) {
-            servePublicRoot = true;
-            i += 1;
-        } else if (std::strcmp(argv[i], "--messaging") == 0 && i + 2 < argc) {
-            options.messagingHost = argv[i + 1];
-            options.messagingPort = std::atoi(argv[i + 2]);
-            i += 3;
-        } else if (std::strcmp(argv[i], "--account") == 0 && i + 2 < argc) {
-            options.accountHost = argv[i + 1];
-            options.accountPort = std::atoi(argv[i + 2]);
-            i += 3;
-        } else if (std::strcmp(argv[i], "--base-path") == 0 && i + 1 < argc) {
-            options.basePath = argv[i + 1];
-            i += 2;
-        } else if (std::strcmp(argv[i], "--operator-fingerprint") == 0 && i + 1 < argc) {
-            options.operatorFingerprints.emplace_back(argv[i + 1]);
-            i += 2;
-        } else if (std::strcmp(argv[i], "--log-level") == 0 && i + 1 < argc) {
-            const std::optional<bazarish::log::Level> parsed
-                = bazarish::log::levelFromString(argv[i + 1]);
-            if (!parsed.has_value()) {
-                printUsage();
-                return 2;
-            }
-            logLevel = parsed.value();
-            i += 2;
-        } else {
-            printUsage();
+    if (const std::string named = config.text("i2p.privacy"); !named.empty()) {
+        const std::optional<bazarish::i2p::Privacy> parsed
+            = bazarish::i2p::privacyFromString(named);
+        if (!parsed.has_value()) {
+            std::fprintf(stderr, "config: i2p.privacy is not a privacy level\n");
             return 2;
         }
+        privacy = *parsed;
+    }
+    const int tunnelQuantity = static_cast<int>(
+        config.number("i2p.tunnelQuantity", bazarish::i2p::kDefaultTunnelQuantity));
+
+    bazarish::facade::FacadeOptions options;
+    options.version = kVersion;
+    options.basePath = config.text("basePath");
+    options.operatorFingerprints = config.list("operators");
+    if (const std::optional<bazarish::ConfigView::Endpoint> messaging
+        = config.endpoint("messaging");
+        messaging.has_value()) {
+        options.messagingHost = messaging->host;
+        options.messagingPort = messaging->port;
+    }
+    if (const std::optional<bazarish::ConfigView::Endpoint> account = config.endpoint("account");
+        account.has_value()) {
+        options.accountHost = account->host;
+        options.accountPort = account->port;
+    }
+
+    bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
+    if (const std::string level = config.text("logLevel"); !level.empty()) {
+        const std::optional<bazarish::log::Level> parsed = bazarish::log::levelFromString(level);
+        if (!parsed.has_value()) {
+            std::fprintf(stderr, "config: logLevel is not a level\n");
+            return 2;
+        }
+        logLevel = *parsed;
     }
 
     if (options.basePath.empty() && !servePublicRoot) {
         std::fprintf(stderr,
-            "the clearnet API must not be reachable without a secret prefix: pass\n"
-            "--base-path <secret>, or --public when a fronting proxy owns the secret\n");
+            "the clearnet API must not be reachable without a secret prefix: set\n"
+            "\"basePath\", or \"public\": true when a fronting proxy owns the secret\n");
         return 2;
     }
     if (!options.basePath.empty() && servePublicRoot) {
-        std::fprintf(stderr, "--public and --base-path contradict each other\n");
+        std::fprintf(stderr, "config: \"public\" and \"basePath\" contradict each other\n");
         return 2;
     }
     if (!options.basePath.empty() && !isValidBasePath(options.basePath)) {

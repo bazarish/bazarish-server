@@ -9,6 +9,7 @@
 #include "PerUserDestinations.hpp"
 
 #include <bazarish/Certificates.hpp>
+#include <bazarish/ConfigFile.hpp>
 #include <bazarish/Crypto.hpp>
 #include <bazarish/I2p.hpp>
 #include <bazarish/Log.hpp>
@@ -71,30 +72,19 @@ void printUsage()
 {
     std::printf(
         "bazarish-server %s\n"
-        "Usage: bazarish-server --state <directory> --i2p [--listen <host> <port>]\n"
-        "          [--contact-request-limit <bytes>] [--operator-fingerprint <fp>]...\n"
-        "          [--privacy <minimal|middle|max>] [--tunnel-quantity <n>]\n"
-        "          [--federation-rate-limit <n>] [--service-node <url>]\n"
-        "          [--mailbox-retention <days>]\n"
-        "          [--log-level <error|warn|info|debug>] [--i2p-log]\n"
+        "Usage: bazarish-server --config <path>\n"
         "       bazarish-server --version\n"
         "\n"
-        "The state directory holds the server keys and the content storage;\n"
-        "keys are generated on first start. The server card is always written\n"
-        "to <state>/server-card.der. --i2p is required: delivery is routed by\n"
-        "I2P destination (there is no non-I2P transport); it builds the home\n"
-        "destination on the embedded I2P router and adds the i2p endpoint to\n"
-        "the card. A send is delivered locally when its toDest is one of this\n"
-        "server's destinations, otherwise it is dialled directly over I2P.\n"
-        "--contact-request-limit <bytes> caps the tokenless contact-request\n"
-        "payload.\n"
-        "--federation-rate-limit caps inbound I2P deliveries per connecting\n"
-        "destination per 60s (default 240, 0 disables). --mailbox-retention\n"
-        "<days> is the TTL backstop that reclaims mail never acked by all of a\n"
-        "user's devices (default 30, 0 disables); the primary cleanup is\n"
-        "delete-on-all-devices-acked. --service-node <url> is the local service\n"
-        "node (e.g. http://127.0.0.1:PORT) used to answer first-contact card\n"
-        "fetches by fingerprint; without it card fetch is off.\n",
+        "Everything this server runs on is in the config file - state directory,\n"
+        "listen address, operator fingerprints, I2P settings, limits - so there is\n"
+        "one place to look and one place to change. The state directory holds the\n"
+        "server keys and the content storage; keys are generated on first start,\n"
+        "and the server card is always written to <state>/server-card.der.\n"
+        "\n"
+        "Delivery is routed by I2P destination: the server builds its home\n"
+        "destination on the embedded router and adds the i2p endpoint to its card.\n"
+        "A send is delivered locally when its toDest is one of this server's\n"
+        "destinations, otherwise it is dialled directly over I2P.\n",
         kVersion);
 }
 
@@ -157,97 +147,80 @@ int main(const int argc, const char** argv)
         std::printf("bazarish-server %s\n", kVersion);
         return 0;
     }
-    if (argc < 3 || std::strcmp(argv[1], "--state") != 0) {
+    if (argc != 3 || std::strcmp(argv[1], "--config") != 0) {
         printUsage();
         return 2;
     }
 
-    const fs::path stateDir(argv[2]);
-    std::string host = kDefaultHost;
-    int port = kDefaultPort;
-    bool enableI2p = false;
+    bazarish::ConfigView config(nlohmann::json::object());
+    try {
+        config = bazarish::ConfigView(bazarish::ConfigFile(fs::path(argv[2])).read());
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "config: %s\n", error.what());
+        return 2;
+    }
+
+    const fs::path stateDir(config.text("state"));
+    if (stateDir.empty()) {
+        std::fprintf(stderr, "config: \"state\" is required\n");
+        return 2;
+    }
+    const bazarish::ConfigView::Endpoint listen
+        = config.endpoint("listen").value_or(bazarish::ConfigView::Endpoint{kDefaultHost,
+            kDefaultPort});
+    const std::string host = listen.host;
+    const int port = listen.port;
+    const bool enableI2p = config.flag("i2p.enabled", true);
     bazarish::server::DeliveryEngineOptions engineOptions;
-    std::vector<std::string> operatorFingerprints;
-    std::string serviceNodeUrl;
+    engineOptions.contactRequestLimitBytes
+        = static_cast<std::uint64_t>(config.number("contactRequestLimitBytes",
+            static_cast<std::int64_t>(engineOptions.contactRequestLimitBytes)));
+    const std::vector<std::string> operatorFingerprints = config.list("operators");
+    const std::string serviceNodeUrl = config.text("serviceNode");
     bazarish::i2p::Privacy privacy = bazarish::i2p::Privacy::eMax;
+    if (const std::string named = config.text("i2p.privacy"); !named.empty()) {
+        const std::optional<bazarish::i2p::Privacy> parsed
+            = bazarish::i2p::privacyFromString(named);
+        if (!parsed.has_value()) {
+            std::fprintf(stderr, "config: i2p.privacy is not a privacy level\n");
+            return 2;
+        }
+        privacy = *parsed;
+    }
     // Public server destinations carry inbound federation traffic, so they run a
     // full tunnel pool (load balancing across tunnels for one address); 16 is the
     // I2P ceiling. Operators on a constrained uplink can lower it.
-    int tunnelQuantity = bazarish::i2p::kMaxTunnelQuantity;
+    const int tunnelQuantity = static_cast<int>(
+        config.number("i2p.tunnelQuantity", bazarish::i2p::kMaxTunnelQuantity));
     // Warm pool of single-use transient outbound dests for anonymous card/resolve
     // fetches: target adapts between min and max with demand. 0 max disables it
     // (fetches then dial from the home dest).
-    std::size_t warmPoolMin = 2;
-    std::size_t warmPoolMax = 10;
-    std::size_t federationRateLimit = 240;  // inbound deliveries per peer dest per 60s
-    std::int64_t mailboxRetentionDays = 30;  // TTL backstop for never-fully-acked mail (0 = off)
+    const std::size_t warmPoolMin = static_cast<std::size_t>(config.number("i2p.warmPoolMin", 2));
+    const std::size_t warmPoolMax = static_cast<std::size_t>(config.number("i2p.warmPoolMax", 10));
+    // Inbound deliveries per peer dest per 60s.
+    const std::size_t federationRateLimit
+        = static_cast<std::size_t>(config.number("federationRateLimit", 240));
+    // TTL backstop for never-fully-acked mail (0 = off).
+    const std::int64_t mailboxRetentionDays = config.number("mailboxRetentionDays", 30);
     bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
-    // libi2pd's own logging is off by default (fresh common); --i2p-log re-enables
-    // it for debugging.
-    bool i2pLog = false;
-    for (int i = 3; i < argc;) {
-        if (std::strcmp(argv[i], "--listen") == 0 && i + 2 < argc) {
-            host = argv[i + 1];
-            port = std::atoi(argv[i + 2]);
-            i += 3;
-        } else if (std::strcmp(argv[i], "--operator-fingerprint") == 0 && i + 1 < argc) {
-            operatorFingerprints.emplace_back(argv[i + 1]);
-            i += 2;
-        } else if (std::strcmp(argv[i], "--i2p") == 0) {
-            enableI2p = true;
-            i += 1;
-        } else if (std::strcmp(argv[i], "--contact-request-limit") == 0 && i + 1 < argc) {
-            engineOptions.contactRequestLimitBytes
-                = std::strtoull(argv[i + 1], nullptr, 10);
-            i += 2;
-        } else if (std::strcmp(argv[i], "--privacy") == 0 && i + 1 < argc) {
-            const std::optional<bazarish::i2p::Privacy> parsed
-                = bazarish::i2p::privacyFromString(argv[i + 1]);
-            if (!parsed.has_value()) {
-                printUsage();
-                return 2;
-            }
-            privacy = parsed.value();
-            i += 2;
-        } else if (std::strcmp(argv[i], "--tunnel-quantity") == 0 && i + 1 < argc) {
-            tunnelQuantity = std::atoi(argv[i + 1]);
-            i += 2;
-        } else if (std::strcmp(argv[i], "--warm-pool-max") == 0 && i + 1 < argc) {
-            warmPoolMax = static_cast<std::size_t>(std::strtoull(argv[i + 1], nullptr, 10));
-            i += 2;
-        } else if (std::strcmp(argv[i], "--federation-rate-limit") == 0 && i + 1 < argc) {
-            federationRateLimit = static_cast<std::size_t>(std::strtoull(argv[i + 1], nullptr, 10));
-            i += 2;
-        } else if (std::strcmp(argv[i], "--mailbox-retention") == 0 && i + 1 < argc) {
-            mailboxRetentionDays = std::atoll(argv[i + 1]);
-            i += 2;
-        } else if (std::strcmp(argv[i], "--service-node") == 0 && i + 1 < argc) {
-            serviceNodeUrl = argv[i + 1];
-            i += 2;
-        } else if (std::strcmp(argv[i], "--log-level") == 0 && i + 1 < argc) {
-            const std::optional<bazarish::log::Level> parsed
-                = bazarish::log::levelFromString(argv[i + 1]);
-            if (!parsed.has_value()) {
-                printUsage();
-                return 2;
-            }
-            logLevel = parsed.value();
-            i += 2;
-        } else if (std::strcmp(argv[i], "--i2p-log") == 0) {
-            i2pLog = true;
-            ++i;
-        } else {
-            printUsage();
+    if (const std::string level = config.text("logLevel"); !level.empty()) {
+        const std::optional<bazarish::log::Level> parsed = bazarish::log::levelFromString(level);
+        if (!parsed.has_value()) {
+            std::fprintf(stderr, "config: logLevel is not a level\n");
             return 2;
         }
+        logLevel = *parsed;
     }
+    // libi2pd's own logging is off by default; the config turns it on for
+    // debugging.
+    const bool i2pLog = config.flag("i2p.log", false);
 
     // Delivery is routed purely by I2P destination, so the server must operate
     // one: --i2p is required (there is no non-I2P transport).
     if (!enableI2p) {
         std::fprintf(stderr,
-            "I2P federation is required: rerun with --i2p (delivery is routed by I2P "
-            "destination; there is no non-I2P transport).\n");
+            "I2P federation is required: \"i2p\": {\"enabled\": false} is not a server this "
+            "protocol can run (delivery is routed by I2P destination).\n");
         return 2;
     }
 

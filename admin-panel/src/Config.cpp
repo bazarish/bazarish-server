@@ -27,7 +27,7 @@ bool isKnownKind(const std::string& kind)
 
 Config Config::fromJson(const std::string& text)
 {
-    const nlohmann::json json = nlohmann::json::parse(text);
+    const nlohmann::json json = nlohmann::json::parse(text, nullptr, true, true);
 
     Config config;
     const nlohmann::json& admin = json.at("admin");
@@ -44,6 +44,8 @@ Config Config::fromJson(const std::string& text)
             throw std::runtime_error("config: \"admin\" fingerprint must not be empty");
         }
     }
+    config.stateDir = json.value("state", std::string());
+    config.assetsDir = json.value("assets", std::string());
     if (json.contains("audience")) {
         config.audience = json.at("audience").get<std::string>();
     }

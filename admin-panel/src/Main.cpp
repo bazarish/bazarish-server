@@ -23,7 +23,7 @@ void printUsage()
 {
     std::printf(
         "bazarish-admin-panel %s\n"
-        "Usage: bazarish-admin-panel --config <path> --state <dir> --assets <dir>\n"
+        "Usage: bazarish-admin-panel --config <path>\n"
         "       bazarish-admin-panel --version\n"
         "\n"
         "Monitors and manages Bazarish services from one web interface. The panel\n"
@@ -83,33 +83,29 @@ int main(const int argc, const char** argv)
     }
 
     std::string configPath;
-    std::string stateDir;
-    std::string assetsDir;
     for (int i = 1; i < argc;) {
         const std::string flag = argv[i];
         if (flag == "--config" && i + 1 < argc) {
             configPath = argv[i + 1];
-            i += 2;
-        } else if (flag == "--state" && i + 1 < argc) {
-            stateDir = argv[i + 1];
-            i += 2;
-        } else if (flag == "--assets" && i + 1 < argc) {
-            assetsDir = argv[i + 1];
             i += 2;
         } else {
             printUsage();
             return 2;
         }
     }
-    if (configPath.empty() || stateDir.empty() || assetsDir.empty()) {
+    if (configPath.empty()) {
         printUsage();
         return 2;
     }
 
-    fs::create_directories(stateDir);
-    const bazarish::Identity identity = loadOrCreateIdentity(stateDir);
-
     Config config = Config::fromFile(configPath);
+    if (config.stateDir.empty() || config.assetsDir.empty()) {
+        std::fprintf(stderr, "config: \"state\" and \"assets\" are required\n");
+        return 2;
+    }
+
+    fs::create_directories(config.stateDir);
+    const bazarish::Identity identity = loadOrCreateIdentity(config.stateDir);
     // The address is the config's to state. A flag that could override it would
     // mean two answers to the same question, and the operator finding out which
     // one won by reading a unit file.
@@ -118,7 +114,7 @@ int main(const int argc, const char** argv)
 
     HttpApiOptions options;
     options.version = kVersion;
-    options.assetsDirectory = assetsDir;
+    options.assetsDirectory = config.assetsDir;
     std::optional<HttpApi> api;
     try {
         api.emplace(std::move(config), identity, options);

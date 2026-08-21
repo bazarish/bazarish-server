@@ -1,11 +1,14 @@
 {
-    "admin": ["REPLACE_WITH_YOUR_FINGERPRINT_FROM_bazarish-client_whoami"],
-    "audience": "bazarish-admin-panel",
-    "listen": {"host": "127.0.0.1", "port": 8460},
-    "services": [
-        {"name": "server-core", "kind": "server-core", "url": "http://127.0.0.1:8420"},
-        {"name": "service-node", "kind": "service-node", "url": "http://127.0.0.1:8421"},
-        {"name": "facade", "kind": "facade", "url": "http://127.0.0.1:8429"},
-        {"name": "alias-resolver", "kind": "alias-resolver", "url": "http://127.0.0.1:8455"}
-    ]
+  // Only these fingerprints may sign in. One string or a list of them.
+  "admin": ["REPLACE_WITH_YOUR_FINGERPRINT_FROM_bazarish-client_whoami"],
+  "audience": "bazarish-admin-panel",
+  "state": "/var/lib/bazarish/admin-panel",
+  "assets": "/opt/bazarish/bazarish-server/admin-panel/web",
+  "listen": {"host": "127.0.0.1", "port": 8460},
+  "services": [
+    {"name": "server-core",    "kind": "server-core",    "url": "http://127.0.0.1:8420"},
+    {"name": "service-node",   "kind": "service-node",   "url": "http://127.0.0.1:8421"},
+    {"name": "facade",         "kind": "facade",         "url": "http://127.0.0.1:8429"},
+    {"name": "alias-resolver", "kind": "alias-resolver", "url": "http://127.0.0.1:8432"}
+  ]
 }

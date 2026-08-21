@@ -1,7 +1,7 @@
 {
   // The secret prefix the whole clearnet API lives under. Mandatory unless a
   // fronting proxy owns the secret, in which case set "public": true instead.
-  "basePath": "/REPLACE/WITH-A-SECRET",
+  "basePath": "/REPLACE_WITH_A_SECRET_PATH",
   "listen": {"host": "0.0.0.0", "port": 8419},
   // A private socket serving the operator-signed /healthz for the admin panel.
   "opsListen": {"host": "127.0.0.1", "port": 8429},

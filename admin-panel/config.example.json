@@ -1,6 +1,6 @@
 {
   // Only these fingerprints may sign in. One string or a list of them.
-  "admin": ["REPLACE_WITH_YOUR_FINGERPRINT_FROM_bazarish-client_whoami"],
+  "admin": ["REPLACE_WITH_YOUR_FINGERPRINT"],
   "audience": "bazarish-admin-panel",
   "state": "/var/lib/bazarish/admin-panel",
   "assets": "/opt/bazarish/bazarish-server/admin-panel/web",

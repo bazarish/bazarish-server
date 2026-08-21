@@ -158,8 +158,8 @@
             // whole deployment as clients see it.
             if (service.kind === "facade") {
                 facts.appendChild(fact("requests", humanCount(service.requestsLastMinute)
-                    + " / min  " + humanCount(service.requestsLastHour)
-                    + " / h  " + humanCount(service.requestsLastDay) + " / day"));
+                    + "/min  " + humanCount(service.requestsLastHour)
+                    + "/h  " + humanCount(service.requestsLastDay) + "/day"));
                 facts.appendChild(fact("in flight", String(service.inFlight)));
             }
         } else {

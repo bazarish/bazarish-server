@@ -55,6 +55,12 @@ GrantStore::GrantStore(fs::path root)
     : root_(std::move(root))
 {
     fs::create_directories(root_ / "grants");
+    fs::create_directories(root_ / "bans");
+}
+
+fs::path GrantStore::banPath(const std::string& user) const
+{
+    return root_ / "bans" / (user + ".json");
 }
 
 fs::path GrantStore::grantPath(const std::string& user) const
@@ -185,6 +191,7 @@ std::optional<GrantStore::Approval> GrantStore::peekApproval(const std::string& 
     Approval result;
     result.requestedAt = entry.at("requestedAt").get<std::int64_t>();
     result.approvedAt = entry.at("approvedAt").get<std::int64_t>();
+    result.message = entry.value("message", std::string());
     return result;
 }
 
@@ -205,7 +212,56 @@ void GrantStore::approve(const std::string& user, const std::int64_t now)
         return;
     }
     entry["approvedAt"] = now;
+    entry["message"] = "";
     writeFileAtomic(path, body.dump());
+}
+
+void GrantStore::hold(const std::string& user, const std::string& message, const std::int64_t now)
+{
+    requireUser(user);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const fs::path path = grantPath(user);
+    nlohmann::json body = fs::exists(path) ? readJsonFile(path) : nlohmann::json::object();
+    nlohmann::json& entry = body["approval"];
+    // An account put on hold before it was ever recorded still has to have a
+    // request date, or it would look like it had waited forever.
+    if (!entry.contains("requestedAt")) {
+        entry["requestedAt"] = now;
+    }
+    entry["approvedAt"] = 0;
+    entry["message"] = message;
+    writeFileAtomic(path, body.dump());
+}
+
+void GrantStore::ban(const std::string& user, const std::string& reason, const std::int64_t now)
+{
+    requireUser(user);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    writeFileAtomic(banPath(user),
+        nlohmann::json{{"reason", reason}, {"bannedAt", now}}.dump());
+}
+
+std::optional<GrantStore::Ban> GrantStore::peekBan(const std::string& user) const
+{
+    requireUser(user);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const fs::path path = banPath(user);
+    if (!fs::exists(path)) {
+        return std::nullopt;
+    }
+    const nlohmann::json body = readJsonFile(path);
+    Ban result;
+    result.reason = body.value("reason", std::string());
+    result.bannedAt = body.value("bannedAt", std::int64_t{0});
+    return result;
+}
+
+void GrantStore::unban(const std::string& user)
+{
+    requireUser(user);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    std::error_code ignored;
+    fs::remove(banPath(user), ignored);
 }
 
 std::vector<std::string> GrantStore::pendingUsers()
@@ -240,12 +296,17 @@ std::vector<std::string> GrantStore::allUsers() const
 {
     const std::lock_guard<std::mutex> lock(mutex_);
     std::vector<std::string> users;
-    for (const fs::directory_entry& entry : fs::directory_iterator(root_ / "grants")) {
-        if (entry.path().extension() == ".json") {
-            users.push_back(entry.path().stem().string());
+    // Banned keys have no account left, and are exactly the ones an operator
+    // may need to find again to lift the ban.
+    for (const char* const directory : {"grants", "bans"}) {
+        for (const fs::directory_entry& entry : fs::directory_iterator(root_ / directory)) {
+            if (entry.path().extension() == ".json") {
+                users.push_back(entry.path().stem().string());
+            }
         }
     }
     std::sort(users.begin(), users.end());
+    users.erase(std::unique(users.begin(), users.end()), users.end());
     return users;
 }
 

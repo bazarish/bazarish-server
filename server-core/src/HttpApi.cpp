@@ -700,6 +700,24 @@ void HttpApi::setupRoutes()
                 });
         }));
 
+    // --- Operator-internal: what the storage occupies ---
+    //
+    // The panel shows this next to the sum of the quotas: the two answer
+    // different questions, and only this one is measured.
+    http_->get("/v1/messaging/storage",
+        [this, operatorRejection](
+            const bazarish::http::Request& request) -> bazarish::http::Response {
+            if (const std::optional<bazarish::http::Response> refused = operatorRejection(request);
+                refused.has_value()) {
+                return *refused;
+            }
+            if (!options_.diskUsage) {
+                return errorResponse(
+                    503, ErrorCode::eDeliveryRejected, "this server cannot measure its storage");
+            }
+            return jsonResponse({{"usedBytes", options_.diskUsage()}});
+        });
+
     // --- Operator-internal: per-user storage quota ---
     //
     // Set by the operator's service node over the private channel when a user's

@@ -2,6 +2,7 @@
 #pragma once
 
 #include "GrantStore.hpp"
+#include "NodeSettings.hpp"
 
 #include <bazarish/Captcha.hpp>
 #include <bazarish/WebAssets.hpp>
@@ -33,7 +34,8 @@ struct PortalApiOptions {
     std::string sessionSecret;
     std::int64_t sessionTtlSeconds = 3600;
     // The subscription granted on registration. Every account gets the same one:
-    // nothing on this node is for sale.
+    // nothing on this node is for sale. The initial value; an operator can
+    // change it while the node runs (see settings).
     std::uint64_t defaultQuotaBytes = 20 * 1024 * 1024;
     std::int64_t freeSubscriptionTermSeconds = 14 * 24 * 3600;
     // When false, registration is open to any logged-in (sign-in-with-key) user
@@ -50,6 +52,9 @@ struct PortalApiOptions {
     std::string registrationMessage;
     // Where the portal's web files live (page shell, stylesheet, logo, fonts).
     std::filesystem::path assetsDirectory;
+    // The live knobs, shared with the account API. When null (tests), the values
+    // above are taken as the settings.
+    std::shared_ptr<NodeSettings> settings;
 };
 
 // The service node's web portal (browser-facing). It exposes two faces on one
@@ -81,7 +86,11 @@ private:
     // shown on the step the visitor is standing on, empty when there is none.
     std::string homePage(const std::string& user, const std::string& error);
 
+    // What the operator has set, live.
+    NodeSettings::Values settings() const { return settings_->get(); }
+
     PortalApiOptions options_;
+    std::shared_ptr<NodeSettings> settings_;
     WebAssets assets_;
     Captcha& captcha_;
     GrantStore& grants_;

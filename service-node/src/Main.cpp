@@ -2,6 +2,7 @@
 #include "AccountApi.hpp"
 #include "GrantStore.hpp"
 #include "PortalApi.hpp"
+#include "NodeSettings.hpp"
 #include "OperatorPush.hpp"
 #include <bazarish/SelfHostedCaptcha.hpp>
 #include "SubscriptionStore.hpp"
@@ -283,6 +284,14 @@ int main(const int argc, const char** argv)
     options.serverCardDer = cardDer;
     options.version = kVersion;
     options.operatorFingerprints = operatorFingerprints;
+    // One live set of knobs for the account API and the portal, written back to
+    // the config file the node was started with, so what an operator changes in
+    // the panel is what the node reads at the next start.
+    const auto settings = std::make_shared<bazarish::service::NodeSettings>(configPath,
+        bazarish::service::NodeSettings::Values{nodeConfig.registration.requireApproval,
+            nodeConfig.registration.message, nodeConfig.freeStorageBytes,
+            nodeConfig.registration.ttlDays});
+    options.settings = settings;
     options.defaultQuotaBytes = nodeConfig.freeStorageBytes;
     options.portalMessage = nodeConfig.portal.message;
     options.portalLinks = nodeConfig.portal.links;
@@ -348,6 +357,7 @@ int main(const int argc, const char** argv)
         portalOptions.requiresApproval = nodeConfig.registration.requireApproval;
         portalOptions.registrationMessage = nodeConfig.registration.message;
         portalOptions.assetsDirectory = portalAssets;
+        portalOptions.settings = settings;
         try {
             portal = std::make_unique<bazarish::service::PortalApi>(portalOptions, *captcha, grants);
         } catch (const std::exception& error) {
@@ -363,28 +373,40 @@ int main(const int argc, const char** argv)
     // A moderated node accumulates accounts nobody ever approves. Sweep them so a
     // dead registration does not sit there forever holding a fingerprint.
     static std::thread sweepThread;
-    if (nodeConfig.registration.requireApproval && nodeConfig.registration.ttlDays > 0) {
-        const std::int64_t ttlSeconds = nodeConfig.registration.ttlDays * 24 * 3600;
-        sweepThread = std::thread([&grants, &store, ttlSeconds]() {
-            while (true) {
-                std::this_thread::sleep_for(std::chrono::hours(1));
-                const std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
-                for (const std::string& user : grants.pendingUsers()) {
-                    const std::optional<bazarish::service::GrantStore::Approval> approval
-                        = grants.peekApproval(user);
-                    if (!approval.has_value() || approval->requestedAt + ttlSeconds > now) {
-                        continue;
-                    }
-                    grants.erase(user);
-                    store.deleteSubscription(user);
-                    bazarish::log::info("swept never-approved account {}", user.substr(0, 12));
-                }
+    sweepThread = std::thread([&grants, &store, settings]() {
+        constexpr std::int64_t kSecondsPerDay = 24 * 3600;
+        while (true) {
+            std::this_thread::sleep_for(std::chrono::hours(1));
+            const std::int64_t ttlDays = settings->get().registrationTtlDays;
+            if (ttlDays <= 0) {
+                continue;  // the operator keeps them forever
             }
-        });
-        sweepThread.detach();
-        bazarish::log::info("registration requires approval; unapproved accounts expire in {} days",
-            nodeConfig.registration.ttlDays);
-    }
+            const std::int64_t ttlSeconds = ttlDays * kSecondsPerDay;
+            const std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
+            for (const std::string& user : grants.allUsers()) {
+                const std::optional<bazarish::service::GrantStore::Approval> approval
+                    = grants.peekApproval(user);
+                const std::optional<bazarish::service::GrantStore::SubscriptionGrant> grant
+                    = grants.peekSubscription(user);
+                // An account waiting for an operator who never came, and a portal
+                // registration no client ever redeemed: neither is a served
+                // account, and neither should hold a fingerprint forever.
+                std::int64_t since = 0;
+                if (approval.has_value() && approval->pending()) {
+                    since = approval->requestedAt;
+                } else if (!approval.has_value() && grant.has_value()) {
+                    since = grant->grantedAt;
+                }
+                if (since == 0 || since + ttlSeconds > now) {
+                    continue;
+                }
+                grants.erase(user);
+                store.deleteSubscription(user);
+                bazarish::log::info("swept unfinished registration {}", user.substr(0, 12));
+            }
+        }
+    });
+    sweepThread.detach();
 
     std::printf("bazarish-service-node %s\n", kVersion);
     std::printf("bound to server: %s\n", card.server.c_str());

@@ -1,7 +1,7 @@
 // Bazarish project (c) 2026
 // The operator panel. Everything past the sign-in page is drawn here from the
 // panel's JSON API; the panel itself holds no user state, it passes the calls
-// through to the service that owns the accounts.
+// through to the services that own it.
 (function () {
     "use strict";
 
@@ -10,10 +10,13 @@
     // How long to wait after the last keystroke before searching, so a typed
     // fingerprint is one request rather than fifty-two.
     var kSearchDebounceMs = 250;
+    // Accounts fetched per request; the next page loads as the list is scrolled.
+    var kPageSize = 25;
     var kBytesPerMiB = 1024 * 1024;
     // A quota an operator can enter, in whole megabytes.
     var kMinQuotaMiB = 1;
     var kMaxQuotaMiB = 1024 * 1024;
+    var kSecondsPerMs = 1000;
 
     var content = document.getElementById("content");
     var nav = document.getElementById("nav");
@@ -88,11 +91,18 @@
         if (!unixSeconds) {
             return "never";
         }
-        return new Date(unixSeconds * 1000).toISOString().replace("T", " ").slice(0, 16);
+        return new Date(unixSeconds * kSecondsPerMs).toISOString().replace("T", " ").slice(0, 16);
     }
 
     function notice(message, kind) {
-        var box = element("p", "notice" + (kind ? " " + kind : ""), message);
+        return element("p", "notice" + (kind ? " " + kind : ""), message);
+    }
+
+    function view(title) {
+        content.innerHTML = "";
+        var box = element("div", "view");
+        box.appendChild(element("h1", "view-title", title));
+        content.appendChild(box);
         return box;
     }
 
@@ -115,8 +125,8 @@
             facts.appendChild(fact("memory",
                 humanBytes(service.ramBytes) + " / " + humanBytes(service.ramPeakBytes) + " peak"));
         } else {
-            facts.appendChild(fact("error",
-                (service.error || "no answer") + (service.status ? " (HTTP " + service.status + ")" : "")));
+            facts.appendChild(fact("error", (service.error || "no answer")
+                + (service.status ? " (HTTP " + service.status + ")" : "")));
         }
         facts.appendChild(fact("latency", service.latencyMs + " ms"));
         card.appendChild(facts);
@@ -124,10 +134,9 @@
     }
 
     function renderMonitoring() {
-        content.innerHTML = "";
-        content.appendChild(element("h1", "view-title", "monitoring"));
+        var box = view("monitoring");
         var cards = element("div", "cards");
-        content.appendChild(cards);
+        box.appendChild(cards);
 
         function load() {
             api("GET", "/api/services").then(function (data) {
@@ -150,18 +159,58 @@
 
     // --- users ------------------------------------------------------------
 
-    function approvalTag(user) {
-        if (user.approval === "pending") {
-            return element("span", "tag is-pending", "pending");
-        }
-        if (user.approval === "approved") {
-            return element("span", "tag is-approved", "approved");
-        }
-        return element("span", "tag", "no account");
+    function isDelegated(user) {
+        return Boolean(user.transientExpires)
+            && user.transientExpires * kSecondsPerMs > Date.now();
     }
 
-    function userDetail(user, onChanged) {
+    function stateTags(user) {
+        var tags = element("span", "row-tags");
+        if (user.banned) {
+            tags.appendChild(element("span", "tag is-banned", "banned"));
+            return tags;
+        }
+        if (user.approval === "pending") {
+            tags.appendChild(element("span", "tag is-pending", "pending"));
+        } else if (user.approval === "approved") {
+            tags.appendChild(element("span", "tag is-approved", "approved"));
+        } else {
+            tags.appendChild(element("span", "tag", "no account"));
+        }
+        if (isDelegated(user)) {
+            tags.appendChild(element("span", "tag is-live", "delegated"));
+        } else if (user.dest) {
+            // An address that was published and is no longer operated: the
+            // account is reachable at nothing until the client renews.
+            tags.appendChild(element("span", "tag is-pending", "lapsed"));
+        } else {
+            tags.appendChild(element("span", "tag", "no address"));
+        }
+        return tags;
+    }
+
+    // One labelled action with a line of its own to explain itself, so an
+    // irreversible one is never a bare button.
+    function action(box, label, kind, hint, run) {
+        var wrap = element("div", "action");
+        var button = element("button", "btn " + kind, label);
+        wrap.appendChild(button);
+        if (hint) {
+            wrap.appendChild(element("span", "action-hint", hint));
+        }
+        button.addEventListener("click", function () {
+            button.disabled = true;
+            run(function () {
+                button.disabled = false;
+            });
+        });
+        box.appendChild(wrap);
+        return wrap;
+    }
+
+    function userDetail(user, onChanged, onError) {
         var box = element("div", "detail");
+
         var head = element("div", "detail-head");
         head.appendChild(element("p", "detail-key", user.user));
         head.appendChild(window.bazarishCopy.button("Copy key", function () {
@@ -170,52 +219,72 @@
         box.appendChild(head);
 
         var facts = element("ul", "facts");
-        facts.appendChild(fact("approval", user.approval));
-        facts.appendChild(fact("registered", humanDate(user.requestedAt)));
+        facts.appendChild(fact("approval", user.banned ? "banned" : user.approval));
+        if (user.banned) {
+            facts.appendChild(fact("reason", user.banReason || "-"));
+        }
+        if (user.holdMessage) {
+            facts.appendChild(fact("message", user.holdMessage));
+        }
+        facts.appendChild(fact("registered", humanDate(user.registeredAt)));
+        if (user.approval === "pending") {
+            facts.appendChild(fact("waiting since", humanDate(user.requestedAt)));
+        }
         if (user.approval === "approved") {
             facts.appendChild(fact("approved", humanDate(user.approvedAt)));
         }
         facts.appendChild(fact("subscription",
             user.subscribed ? "until " + humanDate(user.notAfter) : "not redeemed yet"));
+        // A registration that never became a served account is dropped; say when,
+        // so "nothing happened here" has a date attached to it.
+        if (user.sweepAt) {
+            facts.appendChild(fact("dropped unless finished", humanDate(user.sweepAt)));
+        }
+        facts.appendChild(fact("address", user.dest || "none published"));
         facts.appendChild(fact("delegation",
-            user.transientExpires ? "until " + humanDate(user.transientExpires) : "none"));
+            isDelegated(user) ? "until " + humanDate(user.transientExpires) : "none"));
         box.appendChild(facts);
 
-        var label = element("p", "field-label", "Storage quota");
-        box.appendChild(label);
-        var row = element("div", "quota-row");
-        var input = element("input", "field");
-        input.type = "number";
-        input.min = String(kMinQuotaMiB);
-        input.max = String(kMaxQuotaMiB);
-        input.step = "1";
-        input.value = String(Math.max(kMinQuotaMiB, Math.round(user.quotaBytes / kBytesPerMiB)));
-        row.appendChild(input);
-        row.appendChild(element("span", "quota-unit", "MB"));
-        var save = element("button", "btn btn-quiet", "Save quota");
-        row.appendChild(save);
-        box.appendChild(row);
-
-        var actions = element("div", "actions");
-        if (user.approval === "pending") {
-            var approve = element("button", "btn", "Approve account");
-            approve.addEventListener("click", function () {
-                approve.disabled = true;
-                api("POST", "/api/approve", { user: user.user }).then(function () {
-                    onChanged("Approved. The account is served from now on.");
-                }).catch(function (error) {
-                    approve.disabled = false;
-                    box.appendChild(notice(error.message, "is-error"));
-                });
-            });
-            actions.appendChild(approve);
+        if (user.dest) {
+            var addressRow = element("div", "action");
+            addressRow.appendChild(window.bazarishCopy.button("Copy address", function () {
+                return user.dest;
+            }));
+            box.appendChild(addressRow);
         }
-        box.appendChild(actions);
+
+        if (user.banned) {
+            action(box, "Lift the ban", "btn-quiet", "The key may register again.",
+                function (done) {
+                    api("POST", "/api/unban", { user: user.user }).then(function () {
+                        onChanged("Ban lifted.");
+                    }).catch(function (error) {
+                        done();
+                        onError(error);
+                    });
+                });
+            return box;
+        }
+
+        box.appendChild(element("p", "field-label", "Storage quota"));
+        var quotaRow = element("div", "quota-row");
+        var quota = element("input", "field quota-input");
+        quota.type = "number";
+        quota.min = String(kMinQuotaMiB);
+        quota.max = String(kMaxQuotaMiB);
+        quota.step = "1";
+        quota.value = String(Math.max(kMinQuotaMiB, Math.round(user.quotaBytes / kBytesPerMiB)));
+        quotaRow.appendChild(quota);
+        quotaRow.appendChild(element("span", "quota-unit", "MB"));
+        var save = element("button", "btn btn-quiet", "Save");
+        quotaRow.appendChild(save);
+        box.appendChild(quotaRow);
 
         save.addEventListener("click", function () {
-            var megabytes = Number(input.value);
-            if (!Number.isFinite(megabytes) || megabytes < kMinQuotaMiB || megabytes > kMaxQuotaMiB) {
-                box.appendChild(notice("A quota is a whole number of megabytes.", "is-error"));
+            var megabytes = Number(quota.value);
+            if (!Number.isFinite(megabytes) || megabytes < kMinQuotaMiB
+                || megabytes > kMaxQuotaMiB) {
+                onError(new Error("A quota is a whole number of megabytes."));
                 return;
             }
             save.disabled = true;
@@ -226,27 +295,94 @@
                 onChanged("Quota set to " + Math.round(megabytes) + " MB.");
             }).catch(function (error) {
                 save.disabled = false;
-                box.appendChild(notice(error.message, "is-error"));
+                onError(error);
             });
         });
+
+        if (user.approval === "pending") {
+            action(box, "Approve", "", "The account is served from now on.", function (done) {
+                api("POST", "/api/approve", { user: user.user }).then(function () {
+                    onChanged("Approved.");
+                }).catch(function (error) {
+                    done();
+                    onError(error);
+                });
+            });
+        }
+
+        box.appendChild(element("p", "field-label", "Take out of service"));
+        var holdNote = element("input", "field");
+        holdNote.type = "text";
+        holdNote.placeholder = "What its owner is told (optional)";
+        box.appendChild(holdNote);
+        action(box, "Undelegate", "btn-quiet",
+            "Revokes the address; the account waits for you again.", function (done) {
+                api("POST", "/api/undelegate", {
+                    user: user.user,
+                    message: holdNote.value.trim()
+                }).then(function () {
+                    onChanged("Undelegated. The account is on hold.");
+                }).catch(function (error) {
+                    done();
+                    onError(error);
+                });
+            });
+
+        box.appendChild(element("p", "field-label", "Remove"));
+        action(box, "Delete account", "btn-danger",
+            "Certificate, grants and address. The key may register again.", function (done) {
+                if (!window.confirm("Delete this account? The key may register again.")) {
+                    done();
+                    return;
+                }
+                api("POST", "/api/delete", { user: user.user }).then(function () {
+                    onChanged("Account deleted.");
+                }).catch(function (error) {
+                    done();
+                    onError(error);
+                });
+            });
+
+        var banReason = element("input", "field");
+        banReason.type = "text";
+        banReason.placeholder = "Reason shown to the key (default: Banned)";
+        box.appendChild(banReason);
+        action(box, "Ban key", "btn-danger",
+            "Deletes the account and refuses this key from now on.", function (done) {
+                if (!window.confirm("Ban this key? It will not register here again.")) {
+                    done();
+                    return;
+                }
+                api("POST", "/api/ban", {
+                    user: user.user,
+                    reason: banReason.value.trim()
+                }).then(function () {
+                    onChanged("Key banned.");
+                }).catch(function (error) {
+                    done();
+                    onError(error);
+                });
+            });
 
         return box;
     }
 
     function renderUsers(selected) {
-        content.innerHTML = "";
-        content.appendChild(element("h1", "view-title", "users"));
+        var box = view("users");
 
         var state = "all";
         // The open account is in the address bar, so an operator can hand a
         // colleague a link to the account they are talking about.
         var openUser = selected || null;
-        var flash = null;
+        var offset = 0;
+        var total = 0;
+        var loading = false;
+        var exhausted = false;
 
         var toolbar = element("div", "toolbar");
         var search = element("input", "field search");
         search.type = "search";
-        search.placeholder = "Search by fingerprint";
+        search.placeholder = "Search by fingerprint or address";
         search.autocomplete = "off";
         toolbar.appendChild(search);
 
@@ -258,72 +394,230 @@
                 Object.keys(chips).forEach(function (key) {
                     chips[key].className = "chip" + (key === state ? " is-on" : "");
                 });
-                load();
+                reload();
             });
             chips[name] = chip;
             toolbar.appendChild(chip);
         });
-        content.appendChild(toolbar);
+        box.appendChild(toolbar);
 
+        var flash = element("div", "flash-slot");
+        box.appendChild(flash);
         var count = element("p", "muted", "");
-        content.appendChild(count);
+        box.appendChild(count);
         var rows = element("div", "rows");
-        content.appendChild(rows);
+        box.appendChild(rows);
+        var more = element("p", "muted more", "");
+        box.appendChild(more);
 
-        function load() {
-            var query = "/api/users?q=" + encodeURIComponent(search.value.trim())
-                + "&state=" + encodeURIComponent(state);
-            api("GET", query).then(function (data) {
-                rows.innerHTML = "";
-                count.textContent = data.total === data.users.length
-                    ? data.total + " account(s)"
-                    : "showing " + data.users.length + " of " + data.total;
-                if (flash) {
-                    rows.parentNode.insertBefore(flash, rows);
-                }
-                if (!data.users.length) {
-                    rows.appendChild(element("p", "muted", "Nothing here."));
-                    return;
-                }
-                data.users.forEach(function (user) {
-                    var row = element("button", "row" + (openUser === user.user ? " is-open" : ""));
-                    row.type = "button";
-                    row.appendChild(element("span", "row-key", user.user));
-                    row.appendChild(approvalTag(user));
-                    row.appendChild(element("span", "row-quota",
-                        Math.round(user.quotaBytes / kBytesPerMiB) + " MB"));
-                    row.addEventListener("click", function () {
-                        openUser = openUser === user.user ? null : user.user;
-                        flash = null;
-                        setHash(openUser ? "#/users/" + openUser : "#/users");
-                        load();
-                    });
-                    rows.appendChild(row);
-                    if (openUser === user.user) {
-                        rows.appendChild(userDetail(user, function (message) {
-                            flash = notice(message);
-                            load();
-                        }));
-                    }
-                });
-            }).catch(function (error) {
-                rows.innerHTML = "";
-                rows.appendChild(notice(error.message, "is-error"));
+        function say(message, kind) {
+            flash.innerHTML = "";
+            flash.appendChild(notice(message, kind));
+        }
+
+        function reload() {
+            offset = 0;
+            exhausted = false;
+            rows.innerHTML = "";
+            loadPage();
+        }
+
+        function addRow(user) {
+            var row = element("button", "row" + (openUser === user.user ? " is-open" : ""));
+            row.type = "button";
+            var keys = element("span", "row-keys");
+            keys.appendChild(element("span", "row-key", user.user));
+            keys.appendChild(element("span", "row-dest", user.dest || "no address published"));
+            row.appendChild(keys);
+            row.appendChild(stateTags(user));
+            row.appendChild(element("span", "row-quota",
+                Math.round(user.quotaBytes / kBytesPerMiB) + " MB"));
+            row.addEventListener("click", function () {
+                openUser = openUser === user.user ? null : user.user;
+                setHash(openUser ? "#/users/" + openUser : "#/users");
+                reload();
             });
+            rows.appendChild(row);
+            if (openUser === user.user) {
+                rows.appendChild(userDetail(user, function (message) {
+                    say(message);
+                    reload();
+                }, function (error) {
+                    say(error.message, "is-error");
+                }));
+            }
+        }
+
+        function loadPage() {
+            if (loading || exhausted) {
+                return;
+            }
+            loading = true;
+            more.textContent = "Loading...";
+            var query = "/api/users?q=" + encodeURIComponent(search.value.trim())
+                + "&state=" + encodeURIComponent(state)
+                + "&limit=" + kPageSize + "&offset=" + offset;
+            api("GET", query).then(function (data) {
+                loading = false;
+                total = data.total;
+                data.users.forEach(addRow);
+                offset += data.users.length;
+                exhausted = data.users.length === 0 || offset >= total;
+                count.textContent = offset >= total
+                    ? total + " account(s)"
+                    : "showing " + offset + " of " + total;
+                more.textContent = exhausted ? "" : "Scroll for more";
+                if (!rows.children.length) {
+                    rows.appendChild(element("p", "muted", "Nothing here."));
+                }
+                // A short page that does not fill the window would never scroll,
+                // and the rest would stay unreachable.
+                if (!exhausted && more.getBoundingClientRect().top < window.innerHeight) {
+                    loadPage();
+                }
+            }).catch(function (error) {
+                loading = false;
+                exhausted = true;
+                more.textContent = "";
+                say(error.message, "is-error");
+            });
+        }
+
+        window.addEventListener("scroll", onScroll, { passive: true });
+        function onScroll() {
+            if (!content.contains(rows)) {
+                window.removeEventListener("scroll", onScroll);
+                return;
+            }
+            if (more.getBoundingClientRect().top < window.innerHeight) {
+                loadPage();
+            }
         }
 
         var debounce = null;
         search.addEventListener("input", function () {
             window.clearTimeout(debounce);
-            debounce = window.setTimeout(load, kSearchDebounceMs);
+            debounce = window.setTimeout(reload, kSearchDebounceMs);
         });
-        load();
+        reload();
         search.focus();
+    }
+
+    // --- settings ---------------------------------------------------------
+
+    function renderSettings() {
+        var box = view("settings");
+        var form = element("div", "panel-box");
+        box.appendChild(form);
+        form.appendChild(element("p", "muted", "Loading..."));
+
+        api("GET", "/api/settings").then(function (data) {
+            form.innerHTML = "";
+
+            var totals = element("ul", "facts");
+            totals.appendChild(fact("accounts", String(data.accounts)));
+            totals.appendChild(fact("allocated by quota", humanBytes(data.allocatedBytes)));
+            totals.appendChild(fact("on disk", data.diskUsedBytes === null
+                ? "unknown (" + data.diskError + ")"
+                : humanBytes(data.diskUsedBytes)));
+            form.appendChild(totals);
+
+            form.appendChild(element("p", "field-label", "Registration"));
+            var modes = element("div", "toolbar");
+            var moderated = data.requireApproval;
+            var modeChips = {};
+            [["open", false], ["moderated", true]].forEach(function (entry) {
+                var chip = element("button", "chip" + (entry[1] === moderated ? " is-on" : ""),
+                    entry[0]);
+                chip.addEventListener("click", function () {
+                    moderated = entry[1];
+                    Object.keys(modeChips).forEach(function (key) {
+                        modeChips[key].className = "chip"
+                            + ((key === "moderated") === moderated ? " is-on" : "");
+                    });
+                });
+                modeChips[entry[0]] = chip;
+                modes.appendChild(chip);
+            });
+            form.appendChild(modes);
+            form.appendChild(element("p", "muted",
+                "Open: an account is served as soon as it registers. Moderated: it waits for you."));
+
+            form.appendChild(element("p", "field-label", "Message to a waiting account"));
+            var message = element("textarea", "field");
+            message.value = data.registrationMessage || "";
+            message.placeholder = "How to reach you";
+            form.appendChild(message);
+
+            form.appendChild(element("p", "field-label",
+                "Keep an unfinished registration for"));
+            var ttlRow = element("div", "quota-row");
+            var ttl = element("input", "field quota-input");
+            ttl.type = "number";
+            ttl.min = "0";
+            ttl.step = "1";
+            ttl.value = String(data.registrationTtlDays);
+            ttlRow.appendChild(ttl);
+            ttlRow.appendChild(element("span", "quota-unit", "days (0: forever)"));
+            form.appendChild(ttlRow);
+            form.appendChild(element("p", "muted",
+                "An account waiting for you, or one registered at the portal that no client ever"
+                + " redeemed, is dropped after this."));
+
+            form.appendChild(element("p", "field-label", "Storage for a new account"));
+            var quotaRow = element("div", "quota-row");
+            var quota = element("input", "field quota-input");
+            quota.type = "number";
+            quota.min = String(kMinQuotaMiB);
+            quota.max = String(kMaxQuotaMiB);
+            quota.step = "1";
+            quota.value = String(Math.round(data.defaultQuotaBytes / kBytesPerMiB));
+            quotaRow.appendChild(quota);
+            quotaRow.appendChild(element("span", "quota-unit", "MB"));
+            var save = element("button", "btn", "Save settings");
+            quotaRow.appendChild(save);
+            form.appendChild(quotaRow);
+
+            save.addEventListener("click", function () {
+                var megabytes = Number(quota.value);
+                if (!Number.isFinite(megabytes) || megabytes < kMinQuotaMiB
+                    || megabytes > kMaxQuotaMiB) {
+                    form.appendChild(notice("Storage is a whole number of megabytes.", "is-error"));
+                    return;
+                }
+                save.disabled = true;
+                api("PUT", "/api/settings", {
+                    requireApproval: moderated,
+                    registrationMessage: message.value.trim(),
+                    registrationTtlDays: Math.max(0, Math.round(Number(ttl.value) || 0)),
+                    defaultQuotaBytes: Math.round(megabytes) * kBytesPerMiB
+                }).then(function () {
+                    renderSettings();
+                }).catch(function (error) {
+                    save.disabled = false;
+                    form.appendChild(notice(error.message, "is-error"));
+                });
+            });
+        }).catch(function (error) {
+            form.innerHTML = "";
+            form.appendChild(notice(error.message, "is-error"));
+        });
     }
 
     // --- routing ----------------------------------------------------------
 
-    var views = { monitoring: renderMonitoring, users: renderUsers };
+    var views = { monitoring: renderMonitoring, users: renderUsers, settings: renderSettings };
+
+    // A hash the page writes itself must not redraw the page from the top.
+    var ownHashWrite = false;
+
+    function setHash(value) {
+        if (window.location.hash === value) {
+            return;
+        }
+        ownHashWrite = true;
+        window.location.hash = value;
+    }
 
     function route() {
         window.clearInterval(pollTimer);
@@ -334,19 +628,6 @@
             link.className = link.dataset.view === name ? "is-current" : "";
         });
         views[name](parts[1]);
-    }
-
-    // A hash the page writes itself must not redraw the page: the list already
-    // shows what the new address describes, and a redraw would throw away the
-    // search that led there.
-    var ownHashWrite = false;
-
-    function setHash(value) {
-        if (window.location.hash === value) {
-            return;
-        }
-        ownHashWrite = true;
-        window.location.hash = value;
     }
 
     window.addEventListener("hashchange", function () {

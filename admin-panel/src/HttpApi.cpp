@@ -304,6 +304,71 @@ void HttpApi::registerRoutes()
             nlohmann::json{{"user", body.at("user")}}.dump());
     }));
 
+    http_->post("/api/undelegate", api([this](
+                                       const http::Request& request, http::Response& response) {
+        const nlohmann::json body = nlohmann::json::parse(request.body);
+        proxyToNode(response, "POST", "/v1/account/undelegate",
+            nlohmann::json{{"user", body.at("user")},
+                {"message", body.value("message", std::string())}}
+                .dump());
+    }));
+
+    http_->post("/api/delete", api([this](const http::Request& request, http::Response& response) {
+        const nlohmann::json body = nlohmann::json::parse(request.body);
+        proxyToNode(response, "DELETE",
+            "/v1/account/user?user=" + urlEncoded(body.at("user").get<std::string>()), {});
+    }));
+
+    http_->post("/api/ban", api([this](const http::Request& request, http::Response& response) {
+        const nlohmann::json body = nlohmann::json::parse(request.body);
+        proxyToNode(response, "POST", "/v1/account/ban",
+            nlohmann::json{{"user", body.at("user")}, {"reason", body.value("reason", std::string())}}
+                .dump());
+    }));
+
+    http_->post("/api/unban", api([this](const http::Request& request, http::Response& response) {
+        const nlohmann::json body = nlohmann::json::parse(request.body);
+        proxyToNode(response, "POST", "/v1/account/unban",
+            nlohmann::json{{"user", body.at("user")}}.dump());
+    }));
+
+    // The settings an operator turns, plus the two numbers that say whether they
+    // still fit: what the quotas promise, and what the messaging server's disk
+    // actually holds. The second is measured by the server that owns the disk.
+    http_->get("/api/settings", api([this](const http::Request&, http::Response& response) {
+        const ServiceEntry* const node = serviceOfKind("service-node");
+        if (node == nullptr) {
+            sendError(response, 503, "no service-node configured in this panel");
+            return;
+        }
+        const JsonResult settings = callJson(*node, identity_, "GET", "/v1/account/settings");
+        if (!settings.ok) {
+            bazarish::log::warn("service-node settings unavailable: {}", settings.error);
+            sendJson(response, settings.body, settings.status == 0 ? 502 : settings.status);
+            return;
+        }
+        nlohmann::json merged = nlohmann::json::parse(settings.body);
+        // A storage figure nobody could measure is reported as unknown, not as
+        // zero: "no data" and "nothing stored" are not the same answer.
+        merged["diskUsedBytes"] = nullptr;
+        merged["diskError"] = "no server-core configured in this panel";
+        if (const ServiceEntry* const core = serviceOfKind("server-core"); core != nullptr) {
+            const JsonResult disk = callJson(*core, identity_, "GET", "/v1/messaging/storage");
+            if (disk.ok) {
+                merged["diskUsedBytes"] = nlohmann::json::parse(disk.body).at("usedBytes");
+                merged["diskError"] = "";
+            } else {
+                bazarish::log::warn("storage usage unavailable: {}", disk.error);
+                merged["diskError"] = disk.error.empty() ? "server-core unreachable" : disk.error;
+            }
+        }
+        sendJson(response, merged.dump());
+    }));
+
+    http_->put("/api/settings", api([this](const http::Request& request, http::Response& response) {
+        proxyToNode(response, "PUT", "/v1/account/settings", request.body);
+    }));
+
     // The quota belongs to the node that grants it; the panel only carries the
     // operator's number over.
     http_->put("/api/quota", api([this](const http::Request& request, http::Response& response) {

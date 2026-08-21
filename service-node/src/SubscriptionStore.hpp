@@ -25,6 +25,10 @@ public:
         std::int64_t issuedAt = 0;
         std::int64_t notAfter = 0;
         std::uint64_t quotaBytes = 0;
+        // The I2P destination the user published in this certificate, kept out
+        // of it so a listing can show and search addresses without verifying a
+        // certificate per row. Empty until the user publishes routing.
+        std::string dest;
         // The hybrid-signed subscription certificate (DER).
         Bytes certificate;
     };

@@ -58,6 +58,10 @@ public:
     struct Approval {
         std::int64_t requestedAt = 0;
         std::int64_t approvedAt = 0;  // 0 while pending
+        // What the operator wrote when they put this account back on hold, shown
+        // to that user in place of the node-wide registration message. Empty
+        // when the account is simply waiting its turn.
+        std::string message;
 
         bool pending() const { return approvedAt == 0; }
     };
@@ -73,6 +77,11 @@ public:
     // already approved.
     void approve(const std::string& user, std::int64_t now);
 
+    // Puts an approved account back on hold, with the operator's own words for
+    // its owner. The account keeps everything else it has; what it loses is
+    // being served.
+    void hold(const std::string& user, const std::string& message, std::int64_t now);
+
     // Accounts still awaiting approval, oldest request first.
     std::vector<std::string> pendingUsers();
 
@@ -81,11 +90,32 @@ public:
     // moment it registers, before any certificate is submitted.
     std::vector<std::string> allUsers() const;
 
-    // Drops every grant of a user (account deletion).
+    // Drops every grant of a user (account deletion). A ban, kept apart, stays.
     void erase(const std::string& user);
+
+    // --- Bans ---
+    //
+    // A ban outlives the account it removed: it is what stops the same key from
+    // registering again, so it is stored on its own rather than inside a record
+    // the ban itself deletes.
+
+    // Refuses this fingerprint from now on, with the reason its owner is shown.
+    void ban(const std::string& user, const std::string& reason, std::int64_t now);
+
+    struct Ban {
+        std::string reason;
+        std::int64_t bannedAt = 0;
+    };
+
+    // The ban on this fingerprint, if any.
+    std::optional<Ban> peekBan(const std::string& user) const;
+
+    // Lifts a ban. A no-op when there is none.
+    void unban(const std::string& user);
 
 private:
     std::filesystem::path grantPath(const std::string& user) const;
+    std::filesystem::path banPath(const std::string& user) const;
 
     std::filesystem::path root_;
     mutable std::mutex mutex_;

@@ -11,6 +11,7 @@
 #include <nlohmann/json.hpp>
 
 #include <ctime>
+#include <filesystem>
 #include <optional>
 #include <stdexcept>
 
@@ -73,6 +74,9 @@ bazarish::auth::Headers collectAuthHeaders(const http::Request& request)
 // How many accounts a listing answers with when the caller names no limit.
 constexpr std::size_t kDefaultUserPageSize = 50;
 
+// What a banned key is told when the operator left the reason empty.
+const char* const kDefaultBanReason = "Banned";
+
 std::string lowercased(std::string text)
 {
     for (char& c : text) {
@@ -95,13 +99,56 @@ std::size_t parsedCount(const std::string& text, const std::size_t fallback)
     }
 }
 
+// When the node will drop this account if nothing changes. Two registrations
+// never become served accounts: one waiting for an operator who never approves
+// it, and one the portal issued that no client ever redeemed. Both are swept
+// after the same lifetime; an account that is served is not swept at all.
+std::int64_t sweepDeadline(const std::int64_t registeredAt, const bool subscribed,
+    const std::optional<bazarish::service::GrantStore::Approval>& approval,
+    const bazarish::service::NodeSettings::Values& settings)
+{
+    constexpr std::int64_t kSecondsPerDay = 24 * 3600;
+    if (settings.registrationTtlDays <= 0 || registeredAt == 0) {
+        return 0;
+    }
+    const bool waitingForOperator = approval.has_value() && approval->pending();
+    const bool neverRedeemed = !subscribed && !approval.has_value();
+    if (!waitingForOperator && !neverRedeemed) {
+        return 0;
+    }
+    const std::int64_t from
+        = waitingForOperator ? approval->requestedAt : registeredAt;
+    return from + settings.registrationTtlDays * kSecondsPerDay;
+}
+
+// What a waiting account's owner is told: the operator's own words for this
+// account when they wrote any, and the node-wide registration message otherwise.
+std::string holdMessageFor(const std::optional<bazarish::service::GrantStore::Approval>& approval,
+    const bazarish::service::NodeSettings::Values& settings)
+{
+    if (approval.has_value() && !approval->message.empty()) {
+        return approval->message;
+    }
+    return settings.registrationMessage;
+}
+
 }  // namespace
 
 namespace bazarish::service {
 
 AccountApi::AccountApi(
     SubscriptionStore& store, GrantStore& grants, const AccountApiOptions options)
-    : store_(store)
+    // Without a shared settings object (tests) the options are the settings, and
+    // a change to them has nowhere to be written: an empty config path says so
+    // by refusing the write rather than dropping it.
+    : settings_(options.settings ? options.settings
+                                 : std::make_shared<NodeSettings>(std::filesystem::path(),
+                                       NodeSettings::Values{
+                                           options.registration
+                                               == AccountApiOptions::Registration::eApproval,
+                                           options.registrationMessage,
+                                           options.defaultQuotaBytes}))
+    , store_(store)
     , grants_(grants)
     , options_(options)
     , startedAt_(nowSeconds())
@@ -159,17 +206,45 @@ void AccountApi::stop()
     stopCv_.notify_all();
 }
 
+void AccountApi::revokeDestination(const std::string& user)
+{
+    if (options_.publishI2pTransient) {
+        options_.publishI2pTransient(user, std::string(), 0);
+    }
+    grants_.setI2pTransient(user, 0, nowSeconds());
+}
+
+void AccountApi::deleteAccount(const std::string& user)
+{
+    revokeDestination(user);
+    store_.deleteSubscription(user);
+    grants_.erase(user);
+}
+
 nlohmann::json AccountApi::userRecord(
     const std::string& user, const std::optional<GrantStore::Approval>& approval)
 {
     const std::optional<SubscriptionStore::Subscription> held = store_.getSubscription(user);
     const std::optional<GrantStore::SubscriptionGrant> grant = grants_.peekSubscription(user);
     const std::optional<GrantStore::Transient> transient = grants_.peekTransient(user);
+    const std::optional<GrantStore::Ban> ban = grants_.peekBan(user);
+    const NodeSettings::Values values = settings();
+    // The portal registers the account; a client redeems it later, or never. The
+    // first date is the one an operator asks about when nothing else happened.
+    const std::int64_t registeredAt = grant.has_value() ? grant->grantedAt
+        : (approval.has_value() ? approval->requestedAt : 0);
     return {
         {"user", user},
+        {"dest", held.has_value() ? held->dest : std::string()},
+        {"registeredAt", registeredAt},
+        {"sweepAt", sweepDeadline(registeredAt, held.has_value(), approval, values)},
+        {"banned", ban.has_value()},
+        {"banReason", ban.has_value() ? ban->reason : std::string()},
+        {"holdMessage", approval.has_value() ? approval->message : std::string()},
         {"quotaBytes",
             held.has_value() ? held->quotaBytes
-                             : (grant.has_value() ? grant->quotaBytes : options_.defaultQuotaBytes)},
+                             : (grant.has_value() ? grant->quotaBytes
+                                                 : settings().defaultQuotaBytes)},
         {"subscribed", held.has_value()},
         {"notAfter", held.has_value() ? held->notAfter : 0},
         {"grantPending", grant.has_value()},
@@ -265,8 +340,17 @@ void AccountApi::setupRoutes()
             nlohmann::json users = nlohmann::json::array();
             std::size_t matched = 0;
             for (const std::string& user : grants_.allUsers()) {
-                if (!query.empty() && lowercased(user).find(query) == std::string::npos) {
-                    continue;
+                // An operator searches with whatever they were given: the key
+                // fingerprint or the address it is served at.
+                if (!query.empty()) {
+                    const std::optional<SubscriptionStore::Subscription> held
+                        = store_.getSubscription(user);
+                    const bool matches = lowercased(user).find(query) != std::string::npos
+                        || (held.has_value()
+                            && lowercased(held->dest).find(query) != std::string::npos);
+                    if (!matches) {
+                        continue;
+                    }
                 }
                 const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
                 const bool pending = approval.has_value() && approval->pending();
@@ -282,6 +366,127 @@ void AccountApi::setupRoutes()
             }
             respondJson(response,
                 {{"users", users}, {"total", matched}, {"limit", limit}, {"offset", offset}});
+        })));
+
+    // Takes an account out of service without taking it away: the destination is
+    // revoked and the account goes back to waiting, with the operator's own words
+    // in place of the node-wide message.
+    http_->post("/v1/account/undelegate",
+        filled(operatorOnly([this](const http::Request& request, http::Response& response) {
+            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const std::string user = body.at("user").get<std::string>();
+            const std::string message = body.value("message", std::string());
+            if (!grants_.peekApproval(user).has_value()) {
+                respondError(response, 404, ErrorCode::eDeliveryRejected, "no such account");
+                return;
+            }
+            revokeDestination(user);
+            grants_.hold(user, message, nowSeconds());
+            respondJson(response, userRecord(user, grants_.peekApproval(user)));
+        })));
+
+    // Deletes the account outright: certificate, grants and destination. The key
+    // may register again.
+    http_->del("/v1/account/user",
+        filled(operatorOnly([this](const http::Request& request, http::Response& response) {
+            const std::string user = request.query("user");
+            if (!grants_.peekApproval(user).has_value()
+                && !store_.getSubscription(user).has_value()) {
+                respondError(response, 404, ErrorCode::eDeliveryRejected, "no such account");
+                return;
+            }
+            deleteAccount(user);
+            respondJson(response, {{"ok", true}});
+        })));
+
+    // The same, plus a refusal that outlives it: this key does not register here
+    // again, and the reason is what its owner is shown when it tries.
+    http_->post("/v1/account/ban",
+        filled(operatorOnly([this](const http::Request& request, http::Response& response) {
+            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const std::string user = body.at("user").get<std::string>();
+            const std::string reason = body.value("reason", std::string());
+            deleteAccount(user);
+            grants_.ban(user, reason.empty() ? std::string(kDefaultBanReason) : reason,
+                nowSeconds());
+            respondJson(response, userRecord(user, grants_.peekApproval(user)));
+        })));
+
+    http_->post("/v1/account/unban",
+        filled(operatorOnly([this](const http::Request& request, http::Response& response) {
+            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const std::string user = body.at("user").get<std::string>();
+            grants_.unban(user);
+            respondJson(response, {{"ok", true}});
+        })));
+
+    // What an operator may change while the node runs, and the two totals that
+    // say whether the numbers still fit: what has been promised to accounts, and
+    // what is actually on disk (which the messaging server owns and answers).
+    http_->get("/v1/account/settings",
+        filled(operatorOnly([this](const http::Request&, http::Response& response) {
+            const NodeSettings::Values values = settings();
+            std::uint64_t allocated = 0;
+            std::size_t accounts = 0;
+            for (const std::string& user : grants_.allUsers()) {
+                ++accounts;
+                const std::optional<SubscriptionStore::Subscription> held
+                    = store_.getSubscription(user);
+                const std::optional<GrantStore::SubscriptionGrant> grant
+                    = grants_.peekSubscription(user);
+                allocated += held.has_value() ? held->quotaBytes
+                                              : (grant.has_value() ? grant->quotaBytes
+                                                                   : values.defaultQuotaBytes);
+            }
+            respondJson(response,
+                {
+                    {"requireApproval", values.requireApproval},
+                    {"registrationMessage", values.registrationMessage},
+                    {"defaultQuotaBytes", values.defaultQuotaBytes},
+                    {"registrationTtlDays", values.registrationTtlDays},
+                    {"accounts", accounts},
+                    {"allocatedBytes", allocated},
+                });
+        })));
+
+    http_->put("/v1/account/settings",
+        filled(operatorOnly([this](const http::Request& request, http::Response& response) {
+            const nlohmann::json body = nlohmann::json::parse(request.body);
+            NodeSettings::Values values = settings();
+            if (body.contains("requireApproval")) {
+                values.requireApproval = body.at("requireApproval").get<bool>();
+            }
+            if (body.contains("registrationMessage")) {
+                values.registrationMessage
+                    = body.at("registrationMessage").get<std::string>();
+            }
+            if (body.contains("registrationTtlDays")) {
+                values.registrationTtlDays = body.at("registrationTtlDays").get<std::int64_t>();
+                if (values.registrationTtlDays < 0) {
+                    throw std::invalid_argument("a lifetime cannot be negative");
+                }
+            }
+            if (body.contains("defaultQuotaBytes")) {
+                values.defaultQuotaBytes = body.at("defaultQuotaBytes").get<std::uint64_t>();
+                if (values.defaultQuotaBytes == 0) {
+                    throw std::invalid_argument("a new account needs some storage");
+                }
+            }
+            try {
+                settings_->set(values);
+            } catch (const std::exception& error) {
+                // The operator asked for a change that cannot outlive a restart.
+                // Saying so beats applying it and losing it later.
+                respondError(response, 500, ErrorCode::eDeliveryRejected, error.what());
+                return;
+            }
+            respondJson(response,
+                {
+                    {"requireApproval", values.requireApproval},
+                    {"registrationMessage", values.registrationMessage},
+                    {"defaultQuotaBytes", values.defaultQuotaBytes},
+                    {"registrationTtlDays", values.registrationTtlDays},
+                });
         })));
 
     // One account in full, for the card the operator opens.
@@ -409,11 +614,18 @@ void AccountApi::setupRoutes()
                   return;
               }
 
+              if (const std::optional<GrantStore::Ban> ban = grants_.peekBan(cert.user);
+                  ban.has_value()) {
+                  respondError(response, 403, ErrorCode::eDeliveryRejected, ban->reason);
+                  return;
+              }
+
               SubscriptionStore::Subscription record;
               record.user = cert.user;
               record.issuedAt = cert.issuedAt;
               record.notAfter = cert.notAfter;
               record.quotaBytes = effectiveQuota;
+              record.dest = cert.dest;
               record.certificate = der;
               store_.putSubscription(record);
               // The granted quota is this node's to set: push it so the messaging
@@ -427,7 +639,7 @@ void AccountApi::setupRoutes()
               // original request time, so a pending account cannot outlive its
               // deadline by renewing.
               grants_.recordRegistration(
-                  cert.user, now, options_.registration == AccountApiOptions::Registration::eOpen);
+                  cert.user, now, !settings().requireApproval);
               const std::optional<GrantStore::Approval> approval
                   = grants_.peekApproval(cert.user);
               const bool pending = approval.has_value() && approval->pending();
@@ -440,7 +652,7 @@ void AccountApi::setupRoutes()
                       {"serverCard", toBase64(options_.serverCardDer)},
                       {"approval", pending ? "pending" : "approved"},
                       {"registrationMessage",
-                          pending ? options_.registrationMessage : std::string()},
+                          pending ? holdMessageFor(approval, settings()) : std::string()},
                   });
           };
 
@@ -500,9 +712,9 @@ void AccountApi::setupRoutes()
             }
             if (approval->pending()) {
                 respondError(response, 403, ErrorCode::eAccountPendingApproval,
-                    options_.registrationMessage.empty()
+                    settings().registrationMessage.empty()
                         ? "account is awaiting operator approval"
-                        : options_.registrationMessage);
+                        : settings().registrationMessage);
                 return;
             }
             const nlohmann::json body = nlohmann::json::parse(request.body);
@@ -536,7 +748,8 @@ void AccountApi::setupRoutes()
                         !approval.has_value() ? "none"
                                               : (approval->pending() ? "pending" : "approved")},
                     {"registrationMessage",
-                        approval.has_value() && approval->pending() ? options_.registrationMessage
+                        approval.has_value() && approval->pending()
+                            ? holdMessageFor(approval, settings())
                                                                     : std::string()},
                     {"transientExpires", transient.has_value() ? transient->expires : 0},
                     {"transientUpdatedAt", transient.has_value() ? transient->updatedAt : 0},
@@ -585,11 +798,10 @@ void AccountApi::setupRoutes()
                         {
                             {"captcha", options_.freeRegistrationCaptcha},
                             {"requiresApproval",
-                                options_.registration
-                                    == AccountApiOptions::Registration::eApproval},
-                            {"message", options_.registrationMessage},
+                                settings().requireApproval},
+                            {"message", settings().registrationMessage},
                         }},
-                    {"quotaBytes", options_.defaultQuotaBytes},
+                    {"quotaBytes", settings().defaultQuotaBytes},
                 });
         }));
 }

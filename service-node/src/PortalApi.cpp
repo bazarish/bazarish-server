@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <ctime>
 #include <exception>
+#include <filesystem>
 #include <iterator>
 #include <map>
 #include <optional>
@@ -140,6 +141,11 @@ namespace bazarish::service {
 
 PortalApi::PortalApi(PortalApiOptions options, Captcha& captcha, GrantStore& grants)
     : options_(std::move(options))
+    , settings_(options_.settings
+              ? options_.settings
+              : std::make_shared<NodeSettings>(std::filesystem::path(),
+                    NodeSettings::Values{options_.requiresApproval, options_.registrationMessage,
+                        options_.defaultQuotaBytes}))
     , assets_(options_.assetsDirectory)
     , captcha_(captcha)
     , grants_(grants)
@@ -262,6 +268,12 @@ void PortalApi::setupRoutes()
                 respondJson(response, {{"error", "not authenticated"}});
                 return;
             }
+            if (const std::optional<GrantStore::Ban> ban = grants_.peekBan(userId);
+                ban.has_value()) {
+                response.status = 403;
+                respondJson(response, {{"error", "banned"}, {"message", ban->reason}});
+                return;
+            }
             if (options_.requireCaptcha) {
                 const nlohmann::json body = nlohmann::json::parse(request.body, nullptr, false);
                 if (body.is_discarded() || !body.contains("captchaId")
@@ -277,12 +289,12 @@ void PortalApi::setupRoutes()
                     return;
                 }
             }
-            grants_.grantSubscription(userId, options_.defaultQuotaBytes,
+            grants_.grantSubscription(userId, settings().defaultQuotaBytes,
                 options_.freeSubscriptionTermSeconds, nowSeconds());
             respondJson(response,
                 {
                     {"ok", true},
-                    {"quotaBytes", options_.defaultQuotaBytes},
+                    {"quotaBytes", settings().defaultQuotaBytes},
                     {"termSeconds", options_.freeSubscriptionTermSeconds},
                 });
         }));
@@ -320,9 +332,9 @@ void PortalApi::setupWebRoutes()
         // A node that asks for no captcha has nothing left to ask: proving the
         // key is the registration, so it happens as the key is proven instead of
         // behind a button that would only repeat the question.
-        if (!user.empty() && !options_.requireCaptcha
+        if (!user.empty() && !options_.requireCaptcha && !grants_.peekBan(user).has_value()
             && !grants_.peekSubscription(user).has_value()) {
-            grants_.grantSubscription(user, options_.defaultQuotaBytes,
+            grants_.grantSubscription(user, settings().defaultQuotaBytes,
                 options_.freeSubscriptionTermSeconds, nowSeconds());
         }
         sendHtml(response, homePage(user, std::string()));
@@ -360,13 +372,17 @@ void PortalApi::setupWebRoutes()
             redirectTo(response, "/");
             return;
         }
+        if (grants_.peekBan(user).has_value()) {
+            sendHtml(response, homePage(user, std::string()), 403);
+            return;
+        }
         if (options_.requireCaptcha
             && !captcha_.verify(
                 request.param("captchaId"), request.param("captchaAnswer"), nowSeconds())) {
             sendHtml(response, homePage(user, "That is not the code. Here is another one."), 403);
             return;
         }
-        grants_.grantSubscription(user, options_.defaultQuotaBytes,
+        grants_.grantSubscription(user, settings().defaultQuotaBytes,
             options_.freeSubscriptionTermSeconds, nowSeconds());
         redirectTo(response, "/");
     }));
@@ -393,15 +409,27 @@ std::string PortalApi::homePage(const std::string& user, const std::string& erro
 
     const std::string session
         = assets_.render("session.html", {{"fingerprint", htmlEscape(user)}});
+    // A refused key is told so and nothing else: no captcha, no terms, no way in.
+    if (const std::optional<GrantStore::Ban> ban = grants_.peekBan(user); ban.has_value()) {
+        return assets_.render("page.html",
+            {
+                {"title", "Refused"},
+                {"server", server},
+                {"session", session},
+                {"content",
+                    assets_.render("banned.html", {{"message", htmlEscape(ban->reason)}})},
+            });
+    }
+
     const std::optional<GrantStore::SubscriptionGrant> subscription = grants_.peekSubscription(user);
     const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
-    const std::string operatorNote = notice(options_.registrationMessage, "is-waiting");
+    const std::string operatorNote = notice(settings().registrationMessage, "is-waiting");
 
     // What the account is worth saying about, wherever it stands: a user waiting
     // for an operator needs the terms and the descriptor as much as one already
     // served.
     const std::uint64_t quota
-        = subscription.has_value() ? subscription->quotaBytes : options_.defaultQuotaBytes;
+        = subscription.has_value() ? subscription->quotaBytes : settings().defaultQuotaBytes;
     const std::map<std::string, std::string> account = {
         {"quota", htmlEscape(bytesHuman(quota))},
         {"term", std::to_string(options_.freeSubscriptionTermSeconds / kSecondsPerDay) + " days"},
@@ -417,13 +445,13 @@ std::string PortalApi::homePage(const std::string& user, const std::string& erro
     } else if (subscription.has_value() || approval.has_value()) {
         title = "Registered";
         content = assets_.render(
-            options_.requiresApproval ? "registered-approval.html" : "registered.html", account);
+            settings().requireApproval ? "registered-approval.html" : "registered.html", account);
     } else {
         title = "Register";
         const CaptchaChallenge challenge = captcha_.issue(nowSeconds());
         content = assets_.render("register.html",
             {
-                {"quota", htmlEscape(bytesHuman(options_.defaultQuotaBytes))},
+                {"quota", htmlEscape(bytesHuman(settings().defaultQuotaBytes))},
                 {"captcha", challenge.body},
                 {"captchaId", htmlEscape(challenge.id)},
                 {"error", notice(error, "is-error")},

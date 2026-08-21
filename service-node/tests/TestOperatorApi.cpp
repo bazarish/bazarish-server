@@ -93,6 +93,14 @@ int main()
     options.operatorFingerprints = {panel.fingerprint()};
     std::string quotaUser;
     std::uint64_t quotaPushed = 0;
+    std::string revokedUser;
+    std::string revokedTransient = "not-called";
+    options.publishI2pTransient = [&](const std::string& user, const std::string& transientB64,
+                                      const std::int64_t) {
+        revokedUser = user;
+        revokedTransient = transientB64;
+        return true;
+    };
     options.publishQuota = [&](const std::string& user, const std::uint64_t quotaBytes) {
         quotaUser = user;
         quotaPushed = quotaBytes;
@@ -201,6 +209,58 @@ int main()
             = nlohmann::json{{"user", unknown}, {"quotaBytes", raised}}.dump();
         CHECK(call(port, panel, "PUT", "/v1/account/quota", missing).status == 404);
         CHECK(call(port, stranger, "PUT", "/v1/account/quota", body).status == 403);
+    }
+
+    // Taking an account out of service: the destination is revoked and the
+    // account waits again, with the operator's own words for its owner.
+    {
+        const std::string body = nlohmann::json{{"user", served},
+            {"message", "Talk to the operator before this comes back."}}
+                                     .dump();
+        const http::ClientResponse held
+            = call(port, panel, "POST", "/v1/account/undelegate", body);
+        CHECK(held.status == 200);
+        CHECK(revokedUser == served);
+        CHECK(revokedTransient.empty());
+        const nlohmann::json record = nlohmann::json::parse(held.body);
+        CHECK(record.at("approval").get<std::string>() == "pending");
+        CHECK(record.at("holdMessage").get<std::string>()
+            == "Talk to the operator before this comes back.");
+        CHECK(grants.peekApproval(served)->pending());
+    }
+
+    // Deleting takes the account away and leaves the key free to come back.
+    {
+        const http::ClientResponse gone
+            = call(port, panel, "DELETE", "/v1/account/user?user=" + waitingOne);
+        CHECK(gone.status == 200);
+        CHECK(!grants.peekApproval(waitingOne).has_value());
+        CHECK(call(port, panel, "GET", "/v1/account/user?user=" + waitingOne).status == 404);
+    }
+
+    // A ban takes the account away too, and stays behind so the key cannot
+    // register again; the operator's reason is what its owner is shown.
+    {
+        const std::string body
+            = nlohmann::json{{"user", waitingTwo}, {"reason", "Spam"}}.dump();
+        CHECK(call(port, panel, "POST", "/v1/account/ban", body).status == 200);
+        CHECK(!grants.peekApproval(waitingTwo).has_value());
+        CHECK(grants.peekBan(waitingTwo)->reason == "Spam");
+
+        // A banned key is still listed - it is the only way back to lifting it.
+        const http::ClientResponse listed
+            = call(port, panel, "GET", "/v1/account/users?q=" + waitingTwo);
+        const nlohmann::json record = nlohmann::json::parse(listed.body).at("users").at(0);
+        CHECK(record.at("banned").get<bool>());
+        CHECK(record.at("banReason").get<std::string>() == "Spam");
+
+        // An empty reason still says something.
+        const std::string bare = nlohmann::json{{"user", served}}.dump();
+        CHECK(call(port, panel, "POST", "/v1/account/ban", bare).status == 200);
+        CHECK(grants.peekBan(served)->reason == "Banned");
+
+        CHECK(call(port, panel, "POST", "/v1/account/unban", body).status == 200);
+        CHECK(!grants.peekBan(waitingTwo).has_value());
     }
 
     api.stop();

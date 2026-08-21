@@ -2,6 +2,7 @@
 #pragma once
 
 #include "GrantStore.hpp"
+#include "NodeSettings.hpp"
 #include "SubscriptionStore.hpp"
 
 #include <nlohmann/json.hpp>
@@ -30,7 +31,8 @@ struct AccountApiOptions {
     std::string serverFingerprint;
     // The server card returned to clients on subscribe (DER).
     Bytes serverCardDer;
-    // Quota granted to a free subscription.
+    // Quota granted to a free subscription. The initial value: an operator can
+    // change it while the node runs (see settings).
     std::uint64_t defaultQuotaBytes = 10 * 1024 * 1024;
     // Maximum subscription validity the server accepts.
     std::int64_t maxTermSeconds = 14 * 24 * 3600;
@@ -67,9 +69,15 @@ struct AccountApiOptions {
     // never brought up, so it can neither send nor receive - until an operator
     // approves it by hand. This is moderation, not a paywall: the operator sets
     // registrationMessage to tell the user how to reach them.
+    // The initial values: an operator changes both while the node runs.
     enum class Registration { eOpen, eApproval };
     Registration registration = Registration::eOpen;
     std::string registrationMessage;
+
+    // The live knobs, shared with the portal so the two cannot disagree and
+    // written back to the node config. When null (tests), the values above are
+    // taken as the settings and nothing is persisted.
+    std::shared_ptr<NodeSettings> settings;
 };
 
 // The /v1/account/* HTTP API: subscriptions, aliases and alias resolution.
@@ -88,6 +96,16 @@ public:
 private:
     // One account as the operator surface reports it: what it is entitled to,
     // whether it is served yet, and how long its delegation still stands.
+    // Revokes the user's destination on the messaging server (an empty transient
+    // is the revoke) and forgets the delegation this node recorded.
+    void revokeDestination(const std::string& user);
+    // Removes an account: its certificate, its grants and its destination. The
+    // ban, if any, is not part of it - a ban outlives what it removed.
+    void deleteAccount(const std::string& user);
+
+    // What the operator has set, live.
+    NodeSettings::Values settings() const { return settings_->get(); }
+
     nlohmann::json userRecord(
         const std::string& user, const std::optional<GrantStore::Approval>& approval);
 
@@ -95,6 +113,7 @@ private:
     int bindToAnyPort(const std::string& host, int port);
     void setupRoutes();
 
+    std::shared_ptr<NodeSettings> settings_;
     SubscriptionStore& store_;
     GrantStore& grants_;
     const AccountApiOptions options_;

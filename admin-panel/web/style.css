@@ -166,6 +166,12 @@ body.centred {
     min-width: 0;
 }
 
+/* A column an eye can track: a fingerprint is 52 characters and a wide row
+   makes the operator scan across half a screen of empty space to read it. */
+.view {
+    max-width: 46rem;
+}
+
 .view-title {
     margin: 0 0 1.5rem;
     font-size: 0.8rem;
@@ -179,7 +185,7 @@ body.centred {
 
 .cards {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
     gap: 0.75rem;
 }
 
@@ -259,12 +265,11 @@ body.centred {
     flex-wrap: wrap;
     align-items: center;
     gap: 0.6rem;
-    margin-bottom: 1.25rem;
+    margin-bottom: 1rem;
 }
 
 .search {
-    flex: 1 1 18rem;
-    max-width: 32rem;
+    flex: 1 1 16rem;
 }
 
 .chip {
@@ -286,25 +291,36 @@ body.centred {
     background: var(--bz-ok-bg);
 }
 
+.flash-slot:empty {
+    display: none;
+}
+
+.more {
+    margin: 0.75rem 0 0;
+    font-size: 0.72rem;
+}
+
 .rows {
     border: 1px solid var(--bz-line);
     border-radius: var(--bz-radius);
     overflow: hidden;
 }
 
+/* Fixed columns: the key on the left, what it is on the right, always in the
+   same place, so a list of fifty reads as a list and not as a paragraph. */
 .row {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
     align-items: center;
-    gap: 0.5rem 1rem;
+    gap: 0.75rem;
     width: 100%;
-    padding: 0.7rem 1rem;
+    padding: 0.6rem 0.9rem;
     background: var(--bz-surface);
     border: 0;
     border-bottom: 1px solid var(--bz-line);
     color: var(--bz-ink);
     font: inherit;
-    font-size: 0.8rem;
+    font-size: 0.78rem;
     text-align: left;
     cursor: pointer;
 }
@@ -318,14 +334,32 @@ body.centred {
     background: var(--bz-surface-2);
 }
 
-.row-key {
-    flex: 1 1 20rem;
-    overflow-wrap: anywhere;
+.row-keys {
+    min-width: 0;
+}
+
+.row-key,
+.row-dest {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.row-dest {
+    color: var(--bz-ink-faint);
+    font-size: 0.68rem;
+}
+
+.row-tags {
+    display: flex;
+    gap: 0.35rem;
 }
 
 .row-quota {
     color: var(--bz-ink-dim);
-    font-size: 0.75rem;
+    font-size: 0.72rem;
+    white-space: nowrap;
 }
 
 .tag {
@@ -333,9 +367,10 @@ body.centred {
     border: 1px solid var(--bz-line-2);
     border-radius: var(--bz-radius-sm);
     color: var(--bz-ink-faint);
-    font-size: 0.65rem;
-    letter-spacing: 0.12em;
+    font-size: 0.62rem;
+    letter-spacing: 0.1em;
     text-transform: uppercase;
+    white-space: nowrap;
 }
 
 .tag.is-pending {
@@ -350,12 +385,27 @@ body.centred {
     color: var(--bz-ink);
 }
 
-.detail {
-    margin-top: 1rem;
-    padding: 1.1rem 1.2rem;
+.tag.is-live {
+    border-color: var(--bz-green-dim);
+    color: var(--bz-green);
+}
+
+.tag.is-banned {
+    border-color: var(--bz-err-line);
+    background: var(--bz-err-bg);
+    color: var(--bz-err);
+}
+
+.detail,
+.panel-box {
+    padding: 1rem 1.1rem;
     background: var(--bz-surface);
     border: 1px solid var(--bz-line-2);
     border-radius: var(--bz-radius);
+}
+
+.detail {
+    margin: 0.5rem 0 0.75rem;
 }
 
 .detail-head {
@@ -363,54 +413,67 @@ body.centred {
     flex-wrap: wrap;
     align-items: center;
     gap: 0.6rem;
-    margin-bottom: 1rem;
+    margin-bottom: 0.75rem;
 }
 
 .detail-key {
-    flex: 1 1 20rem;
+    flex: 1 1 18rem;
     margin: 0;
-    font-size: 0.85rem;
+    font-size: 0.8rem;
     overflow-wrap: anywhere;
 }
 
 /* Added by copy.js; a browser without scripts never sees it. */
 .btn-copy {
-    margin-top: 0.6rem;
-    padding: 0.35rem 0.75rem;
-    font-size: 0.65rem;
+    margin: 0;
+    padding: 0.35rem 0.7rem;
+    font-size: 0.62rem;
 }
 
-.detail-head .btn-copy {
-    margin-top: 0;
+/* One line per action: the button and what it does, side by side, so nothing
+   irreversible is a bare word on a row of its own. */
+.action {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem;
+    margin-top: 0.6rem;
+}
+
+.action .btn {
+    margin: 0;
+    flex: 0 0 auto;
+}
+
+.action-hint {
+    flex: 1 1 14rem;
+    color: var(--bz-ink-faint);
+    font-size: 0.7rem;
 }
 
 .quota-row {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 0.6rem;
-    margin-top: 1rem;
+    gap: 0.5rem;
+    margin-top: 0.35rem;
 }
 
-.quota-row .field {
-    width: 7rem;
+/* The generic field is full width; inside the quota row it is a small number
+   box, and the rule has to say so louder than the generic one that follows it. */
+.quota-row .quota-input {
+    width: 6.5rem;
+    flex: 0 0 auto;
     text-align: right;
+}
+
+.quota-row .btn {
+    margin: 0;
 }
 
 .quota-unit {
     color: var(--bz-ink-faint);
-    font-size: 0.75rem;
-}
-
-.actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.6rem;
-    margin-top: 1rem;
-}
-
-.actions .btn {
-    margin: 0;
+    font-size: 0.72rem;
 }
 
 /* --- fields, buttons, notices --- */
@@ -497,6 +560,19 @@ textarea.field {
     background: transparent;
     border-color: var(--bz-ink-faint);
     color: var(--bz-ink);
+}
+
+/* What cannot be undone does not look like what can. */
+.btn-danger {
+    background: transparent;
+    border-color: var(--bz-err-line);
+    color: var(--bz-err);
+}
+
+.btn-danger:hover {
+    background: var(--bz-err-bg);
+    border-color: var(--bz-err);
+    color: var(--bz-err);
 }
 
 .panel-note,

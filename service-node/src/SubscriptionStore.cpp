@@ -71,6 +71,7 @@ void SubscriptionStore::putSubscription(const Subscription& subscription)
         {"issuedAt", subscription.issuedAt},
         {"notAfter", subscription.notAfter},
         {"quotaBytes", subscription.quotaBytes},
+        {"dest", subscription.dest},
         {"cert", toBase64(subscription.certificate)},
     };
     writeFileAtomic(subscriptionPath(subscription.user), body.dump());
@@ -91,6 +92,7 @@ std::optional<SubscriptionStore::Subscription> SubscriptionStore::getSubscriptio
     subscription.issuedAt = body.at("issuedAt").get<std::int64_t>();
     subscription.notAfter = body.at("notAfter").get<std::int64_t>();
     subscription.quotaBytes = body.at("quotaBytes").get<std::uint64_t>();
+    subscription.dest = body.value("dest", std::string());
     subscription.certificate = fromBase64(body.at("cert").get<std::string>());
     return subscription;
 }

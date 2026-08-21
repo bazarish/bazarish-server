@@ -98,6 +98,11 @@ struct HttpApiOptions {
     // client has no I2P yet, and every RouterInfo authenticates itself. Empty
     // disables the endpoint.
     std::function<std::vector<Bytes>(std::size_t count)> reseedSample;
+
+    // What this server's storage actually occupies on disk, for the operator
+    // panel. Quotas say what has been promised; only the filesystem says what has
+    // been used. Empty = the endpoint answers that it cannot tell.
+    std::function<std::uint64_t()> diskUsage;
     // Longest a client may ask to be held on the event face. Anything longer is
     // clamped: an idle I2P stream that lives too long is torn down under us.
     int maxEventWaitSeconds = 30;

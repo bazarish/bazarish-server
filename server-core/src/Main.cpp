@@ -418,6 +418,23 @@ int main(const int argc, const char** argv)
         httpOptions.reseedSample
             = [](const std::size_t count) { return bazarish::i2p::sampleRouterInfos(count); };
     }
+    // What the mailboxes actually take up. Walked on demand (the panel asks for
+    // it when an operator opens the settings page), not tracked, so it cannot
+    // drift from the filesystem.
+    httpOptions.diskUsage = [stateDir]() {
+        std::uint64_t used = 0;
+        std::error_code failure;
+        for (const fs::directory_entry& entry :
+            fs::recursive_directory_iterator(stateDir, failure)) {
+            if (entry.is_regular_file(failure)) {
+                used += entry.file_size(failure);
+            }
+        }
+        if (failure) {
+            bazarish::log::warn("storage walk incomplete: {}", failure.message());
+        }
+        return used;
+    };
     httpOptions.assignDestination
         = [&perUserDests](const std::string& user) -> bazarish::server::DestinationAssignment {
         // The address may be empty until the session builds - then no local

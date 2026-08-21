@@ -40,7 +40,8 @@ int main()
 
     // Subscriptions.
     CHECK(!store.getSubscription(alice).has_value());
-    SubscriptionStore::Subscription sub{alice, 1000, 2000, 10485760, Bytes{0xaa, 0xbb}};
+    SubscriptionStore::Subscription sub{
+        alice, 1000, 2000, 10485760, "destination.b32.i2p", Bytes{0xaa, 0xbb}};
     store.putSubscription(sub);
     const auto loaded = store.getSubscription(alice);
     CHECK(loaded.has_value());
@@ -48,6 +49,8 @@ int main()
     CHECK(loaded->notAfter == 2000);
     CHECK(loaded->quotaBytes == 10485760);
     CHECK(loaded->certificate == (Bytes{0xaa, 0xbb}));
+    // The address is kept beside the certificate so a listing can show it.
+    CHECK(loaded->dest == "destination.b32.i2p");
     store.deleteSubscription(alice);
     CHECK(!store.getSubscription(alice).has_value());
 

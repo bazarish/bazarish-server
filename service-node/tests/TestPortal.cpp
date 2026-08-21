@@ -288,6 +288,33 @@ void testWebFlow()
     CHECK(done.body.find(options.serverDescriptor) != std::string::npos);
     CHECK(done.body.find(StubCaptcha::kBody) == std::string::npos);
 
+    // A banned key is told so and gets nothing else: no captcha, no terms.
+    {
+        const Identity refused = Identity::generate();
+        grants.ban(refused.fingerprint(), "Spam", now());
+        const http::ClientResponse page = call(port, "GET", "/");
+        const std::string challenge = between(page.body, "<pre class=\"copy\">", "</pre>");
+        const http::ClientResponse signedIn = postForm(port, "/login",
+            "challenge=" + urlEncoded(challenge) + "&blob="
+                + urlEncoded(signLoginBlob(refused, now(), challenge)));
+        CHECK(signedIn.status == 303);
+        const std::string banned
+            = between(signedIn.headers.at("set-cookie") + ";", "session=", ";");
+
+        const http::ClientResponse shown
+            = call(port, "GET", "/", {{"Cookie", "session=" + banned}});
+        CHECK(shown.status == 200);
+        CHECK(shown.body.find("Spam") != std::string::npos);
+        CHECK(shown.body.find(StubCaptcha::kBody) == std::string::npos);
+
+        const http::ClientResponse tried = postForm(port, "/register",
+            std::string("captchaId=") + StubCaptcha::kId + "&captchaAnswer="
+                + StubCaptcha::kAnswer,
+            "session=" + banned);
+        CHECK(tried.status == 403);
+        CHECK(!grants.peekSubscription(refused.fingerprint()).has_value());
+    }
+
     portal.stop();
     portalThread.join();
     fs::remove_all(root);

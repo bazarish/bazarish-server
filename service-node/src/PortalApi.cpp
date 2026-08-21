@@ -88,39 +88,16 @@ std::string htmlEscape(const std::string& s)
     return out;
 }
 
-// One step of the flow as markup. Which state a step is in is the whole page:
-// a visitor is either proving a key or reading a captcha, never both.
-enum class StepState { eActive, eDone, eReady, eWaiting };
-
-std::string stepClass(const StepState state)
+// The page shows one thing to do at a time, under one heading.
+std::string panel(const std::string& title, const std::string& body)
 {
-    switch (state) {
-    case StepState::eActive:
-        return "is-active";
-    case StepState::eDone:
-        return "is-done";
-    case StepState::eReady:
-        return "is-ready";
-    case StepState::eWaiting:
-        return "is-waiting";
-    }
-    throw std::logic_error("unhandled step state");
-}
-
-std::string step(const StepState state, const std::string& title, const std::string& body)
-{
-    return "<section class=\"step " + stepClass(state) + "\"><h2 class=\"step-title\">"
-        + htmlEscape(title) + "</h2>" + body + "</section>";
+    return "<section class=\"panel\"><h2 class=\"panel-title\">" + htmlEscape(title) + "</h2>"
+        + body + "</section>";
 }
 
 std::string note(const std::string& text)
 {
-    return "<p class=\"step-note\">" + htmlEscape(text) + "</p>";
-}
-
-std::string hint(const std::string& text)
-{
-    return "<p class=\"hint\">" + htmlEscape(text) + "</p>";
+    return "<p class=\"panel-note\">" + htmlEscape(text) + "</p>";
 }
 
 std::string notice(const std::string& text, const std::string& kind)
@@ -129,6 +106,14 @@ std::string notice(const std::string& text, const std::string& kind)
         return {};
     }
     return "<p class=\"notice " + kind + "\">" + htmlEscape(text) + "</p>";
+}
+
+// Who the visitor is signed in as, and the way out.
+std::string sessionStrip(const std::string& user)
+{
+    return "<div class=\"session\"><span>" + htmlEscape(user)
+        + "</span><form method=\"post\" action=\"/logout\">"
+          "<button class=\"btn btn-quiet\" type=\"submit\">Sign out</button></form></div>";
 }
 
 std::string label(const std::string& text, const std::string& forId)
@@ -189,7 +174,7 @@ std::string descriptorBlock(const std::string& descriptor)
         return {};
     }
     return fieldLabel("Server descriptor") + "<pre class=\"copy\">" + htmlEscape(descriptor)
-        + "</pre><p class=\"step-note\">Paste this into your client to connect it here.</p>";
+        + "</pre><p class=\"panel-note\">Paste it into your client to connect it here.</p>";
 }
 
 }  // namespace
@@ -432,62 +417,43 @@ void PortalApi::setupWebRoutes()
 
 std::string PortalApi::homePage(const std::string& user, const std::string& error)
 {
-    const bool signedIn = !user.empty();
-
-    std::string title;
-    std::string keyStep;
-    if (signedIn) {
-        keyStep = step(StepState::eDone, "your key",
-            note("Signed in as " + user)
-                + "<form method=\"post\" action=\"/logout\">"
-                  "<button class=\"btn btn-quiet\" type=\"submit\">Sign out</button></form>");
-    } else {
-        title = "Sign in";
+    if (user.empty()) {
         const std::string challenge = login_.issue(nowSeconds());
-        keyStep = step(StepState::eActive, "sign in with your key",
-            note("Your key stays in your client. Copy the challenge, sign it there "
-                 "(the Signature button), and paste the result back.")
-                + notice(error, "is-error") + fieldLabel("Challenge")
-                + "<pre class=\"copy\">" + htmlEscape(challenge) + "</pre>"
-                + hint("Click the block to select all of it.")
-                + "<form method=\"post\" action=\"/login\">"
-                  "<input type=\"hidden\" name=\"challenge\" value=\""
-                + htmlEscape(challenge) + "\">" + label("Signed blob", "blob")
-                + "<textarea class=\"field\" id=\"blob\" name=\"blob\" required autofocus>"
-                  "</textarea>"
-                  "<button class=\"btn\" type=\"submit\">Sign in</button></form>");
+        return assets_.page("Sign in - bazarish", "messaging server " + htmlEscape(options_.audience),
+            panel("sign in with your key",
+                note("Sign the challenge in your client and paste the result back. The key never "
+                     "leaves it.")
+                    + notice(error, "is-error") + fieldLabel("Challenge") + "<pre class=\"copy\">"
+                    + htmlEscape(challenge)
+                    + "</pre><form method=\"post\" action=\"/login\">"
+                      "<input type=\"hidden\" name=\"challenge\" value=\""
+                    + htmlEscape(challenge) + "\">" + label("Signed blob", "blob")
+                    + "<textarea class=\"field\" id=\"blob\" name=\"blob\" required autofocus>"
+                      "</textarea>"
+                      "<button class=\"btn\" type=\"submit\">Sign in</button></form>"));
     }
 
-    std::string accountStep;
-    const std::optional<GrantStore::SubscriptionGrant> subscription
-        = signedIn ? grants_.peekSubscription(user) : std::nullopt;
-    const std::optional<GrantStore::Approval> approval
-        = signedIn ? grants_.peekApproval(user) : std::nullopt;
+    const std::optional<GrantStore::SubscriptionGrant> subscription = grants_.peekSubscription(user);
+    const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
 
-    if (!signedIn) {
-        accountStep = step(StepState::eWaiting, "register",
-            note("One captcha, and this server carries your messages. The account is free: "
-                 + bytesHuman(options_.defaultQuotaBytes) + " of storage, renewed from your "
-                 "client."));
-    } else if (approval.has_value() && approval->pending()) {
+    std::string title;
+    std::string body;
+    if (approval.has_value() && approval->pending()) {
         title = "Waiting";
-        accountStep = step(StepState::eWaiting, "waiting for the operator",
-            note("Your account exists but is not served yet.")
+        body = panel("waiting for the operator",
+            note("The account exists but is not served yet.")
                 + notice(options_.registrationMessage, "is-waiting"));
     } else if (subscription.has_value() || approval.has_value()) {
         title = "Registered";
-        accountStep = step(StepState::eReady, "registered",
-            note("Open your client and connect it here - it will pick the account up.")
-                + facts(subscription.has_value() ? subscription->quotaBytes
-                                                 : options_.defaultQuotaBytes,
-                      options_.freeSubscriptionTermSeconds)
+        body = panel("registered",
+            facts(subscription.has_value() ? subscription->quotaBytes : options_.defaultQuotaBytes,
+                options_.freeSubscriptionTermSeconds)
                 + descriptorBlock(options_.serverDescriptor));
     } else {
         title = "Register";
         const CaptchaChallenge challenge = captcha_.issue(nowSeconds());
-        accountStep = step(StepState::eActive, "register",
-            note("Read the code and type it in. That is the whole registration: "
-                 + bytesHuman(options_.defaultQuotaBytes) + " of storage, free.")
+        body = panel("register",
+            note("A free account: " + bytesHuman(options_.defaultQuotaBytes) + " of storage.")
                 + notice(error, "is-error") + "<div class=\"captcha\">" + challenge.body
                 + "</div><form method=\"post\" action=\"/register\">"
                   "<input type=\"hidden\" name=\"captchaId\" value=\""
@@ -499,7 +465,7 @@ std::string PortalApi::homePage(const std::string& user, const std::string& erro
     }
 
     return assets_.page(htmlEscape(title) + " - bazarish",
-        "messaging server " + htmlEscape(options_.audience), keyStep + accountStep);
+        "messaging server " + htmlEscape(options_.audience), sessionStrip(user) + body);
 }
 
 }  // namespace bazarish::service

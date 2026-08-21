@@ -93,18 +93,34 @@ body {
     overflow-wrap: anywhere;
 }
 
-/* --- steps: the page is the state of one short flow --- */
+/* --- the panel: one thing to do at a time --- */
 
-.step {
-    padding: 1.75rem 0;
+.session {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 1.25rem 0;
     border-bottom: 1px solid var(--bz-line);
+    color: var(--bz-ink-dim);
+    font-size: 0.8rem;
+    overflow-wrap: anywhere;
 }
 
-.step:last-of-type {
-    border-bottom: 0;
+.session form {
+    margin: 0;
 }
 
-.step-title {
+.session .btn {
+    margin: 0;
+}
+
+.panel {
+    padding: 1.75rem 0 0;
+}
+
+.panel-title {
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -116,52 +132,16 @@ body {
     color: var(--bz-green-dim);
 }
 
-/* The brand's slash marks the step; it goes neon on the one you are on. */
-.step-title::before {
+/* The brand's slash marks the heading. */
+.panel-title::before {
     content: "/";
-    color: var(--bz-green-dim);
 }
 
-.step-note {
+.panel-note {
     margin: 0.6rem 0 0;
     color: var(--bz-ink-dim);
     font-size: 0.85rem;
     overflow-wrap: anywhere;
-}
-
-.step.is-active .step-title::before {
-    color: var(--bz-green);
-}
-
-.step.is-active .step-title::after {
-    content: "";
-    width: 0.5rem;
-    height: 0.85em;
-    background: var(--bz-green);
-    animation: bz-blink 1.05s steps(1) infinite;
-}
-
-@keyframes bz-blink {
-    50% {
-        opacity: 0;
-    }
-}
-
-.step.is-done .step-title,
-.step.is-done .step-title::before,
-.step.is-waiting .step-title,
-.step.is-waiting .step-title::before {
-    color: var(--bz-ink-faint);
-}
-
-.step.is-waiting .step-note {
-    color: var(--bz-ink-faint);
-}
-
-/* The end of the flow: done, and worth saying so. */
-.step.is-ready .step-title,
-.step.is-ready .step-title::before {
-    color: var(--bz-green-dim);
 }
 
 /* --- fields --- */
@@ -211,12 +191,6 @@ textarea.field {
     white-space: pre-wrap;
     word-break: break-all;
     user-select: all;
-}
-
-.hint {
-    margin: 0.4rem 0 0;
-    color: var(--bz-ink-faint);
-    font-size: 0.72rem;
 }
 
 /* --- the captcha: the one bright thing on the page --- */
@@ -352,17 +326,15 @@ textarea.field {
 
 /* --- colophon --- */
 
+.colophon a {
+    color: var(--bz-green-dim);
+}
+
 .colophon {
-    margin-top: 2rem;
+    margin-top: 2.5rem;
     padding-top: 1rem;
     border-top: 1px solid var(--bz-line);
     color: var(--bz-ink-faint);
     font-size: 0.7rem;
     letter-spacing: 0.05em;
-}
-
-@media (prefers-reduced-motion: reduce) {
-    .step.is-active .step-title::after {
-        animation: none;
-    }
 }

@@ -11,7 +11,7 @@
   "logLevel": "info",
 
   // What a new account gets.
-  "freeStorageBytes": 20971520,
+  "freeStorageBytes": 52428800,
 
   "portal": {
     "listen": {"host": "0.0.0.0", "port": 8431},

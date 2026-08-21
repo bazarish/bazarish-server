@@ -4,6 +4,7 @@
 #include <bazarish/Address.hpp>
 #include <bazarish/Cms.hpp>
 #include <bazarish/Errors.hpp>
+#include <bazarish/Limits.hpp>
 #include <bazarish/Tokens.hpp>
 
 #include <nlohmann/json.hpp>
@@ -89,6 +90,14 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
     // success: no token spend, no second store.
     if (storage_.hasSeen(mailbox, messageId)) {
         return delivered();
+    }
+
+    // One message carries a message. Anything larger is a file, which travels
+    // client to client and never enters a mailbox - so the limit is the
+    // protocol's, not an operator's, and it is checked before any token is spent.
+    if (payload.size() > kMaxMessagePayloadBytes) {
+        return fail(ErrorCode::eMessageTooLarge,
+            "a message may carry at most " + std::to_string(kMaxMessagePayloadBytes) + " bytes");
     }
 
     if (deliveryClass == "contact") {

@@ -33,7 +33,7 @@ struct AccountApiOptions {
     Bytes serverCardDer;
     // Quota granted to a free subscription. The initial value: an operator can
     // change it while the node runs (see settings).
-    std::uint64_t defaultQuotaBytes = 10 * 1024 * 1024;
+    std::uint64_t defaultQuotaBytes = 50 * 1024 * 1024;
     // Maximum subscription validity the server accepts.
     std::int64_t maxTermSeconds = 14 * 24 * 3600;
     // Version string reported by /healthz.

@@ -141,7 +141,7 @@ struct NodeConfig {
     bazarish::ConfigView::Endpoint messaging;
     std::vector<std::string> operators;
     bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
-    std::uint64_t freeStorageBytes = 20 * 1024 * 1024;
+    std::uint64_t freeStorageBytes = 50 * 1024 * 1024;
     PortalConfig portal;
     RegistrationConfig registration;
 };

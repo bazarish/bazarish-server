@@ -6,6 +6,7 @@
 
 #include <bazarish/Auth.hpp>
 #include <bazarish/Cms.hpp>
+#include <bazarish/Limits.hpp>
 #include <bazarish/Tokens.hpp>
 
 #include <bazarish/HttpClient.hpp>
@@ -308,6 +309,18 @@ int main()
         const nlohmann::json result = sendAndPoll(port, bob, "bobdev", oversized);
         CHECK(result.at("status") == "failed");
         CHECK(result.at("error").at("code") == "CONTACT_REQUEST_TOO_LARGE");
+    }
+
+    // The protocol's own ceiling on one message, checked whatever the class and
+    // before a token is spent: anything bigger is a file, not a message.
+    {
+        const std::string huge = makeEnvelope(serverDest, sealingPublic,
+            {{"class", "contact"}, {"mailbox", alice.fingerprint()},
+                {"messageId", "req-huge"}},
+            Bytes(bazarish::kMaxMessagePayloadBytes + 1, 0x55));
+        const nlohmann::json result = sendAndPoll(port, bob, "bobdev", huge);
+        CHECK(result.at("status") == "failed");
+        CHECK(result.at("error").at("code") == "MESSAGE_TOO_LARGE");
     }
 
     // Quota exhaustion restores the consumed token (STORAGE_FULL is only

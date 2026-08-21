@@ -148,7 +148,12 @@
 
     function userDetail(user, onChanged) {
         var box = element("div", "detail");
-        box.appendChild(element("p", "detail-key", user.user));
+        var head = element("div", "detail-head");
+        head.appendChild(element("p", "detail-key", user.user));
+        head.appendChild(window.bazarishCopy.button("Copy key", function () {
+            return user.user;
+        }));
+        box.appendChild(head);
 
         var facts = element("ul", "facts");
         facts.appendChild(fact("approval", user.approval));

@@ -358,10 +358,30 @@ body.centred {
     border-radius: var(--bz-radius);
 }
 
+.detail-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem;
+    margin-bottom: 1rem;
+}
+
 .detail-key {
-    margin: 0 0 1rem;
+    flex: 1 1 20rem;
+    margin: 0;
     font-size: 0.85rem;
     overflow-wrap: anywhere;
+}
+
+/* Added by copy.js; a browser without scripts never sees it. */
+.btn-copy {
+    margin-top: 0.6rem;
+    padding: 0.35rem 0.75rem;
+    font-size: 0.65rem;
+}
+
+.detail-head .btn-copy {
+    margin-top: 0;
 }
 
 .quota-row {

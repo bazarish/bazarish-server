@@ -628,8 +628,11 @@ void HttpApi::setupRoutes()
                 = header != request.headers.end() ? header->second : std::string();
             nlohmann::json clients = nlohmann::json::array();
             for (const std::string& clientId : store.listClients(user)) {
-                clients.push_back(
-                    {{"clientId", clientId}, {"current", clientId == caller}});
+                // What this device still holds: the mail it has not acked. A
+                // device that stopped fetching is the one whose queue grows,
+                // which is what tells its owner which id to retire.
+                clients.push_back({{"clientId", clientId}, {"current", clientId == caller},
+                    {"queue", store.listPending(user, clientId).size()}});
             }
             return jsonResponse({{"clients", clients}});
         }));

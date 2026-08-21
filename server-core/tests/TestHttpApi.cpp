@@ -275,12 +275,26 @@ int main()
         CHECK(blob.status == 200);
         CHECK(Bytes(blob.body.begin(), blob.body.end()) == payload);
 
+        // The device list reports what each device still holds: fetching does
+        // not clear it, acking does.
+        const auto aliceQueue = [port, &alice]() {
+            const http::ClientResponse clients = call(port, "GET", "/v1/messaging/clients",
+                makeHeaders(alice, "GET", "/v1/messaging/clients", "", "alicedev"));
+            CHECK(clients.status == 200);
+            const nlohmann::json list = nlohmann::json::parse(clients.body).at("clients");
+            CHECK(list.size() == 1);
+            CHECK(list[0].at("clientId") == "alicedev");
+            return list[0].at("queue").get<std::size_t>();
+        };
+        CHECK(aliceQueue() == 1);
+
         const std::string ackBody = nlohmann::json{{"blobId", "msg-1"}}.dump();
         const http::ClientResponse acked = call(port, "POST", "/v1/messaging/ack",
             makeHeaders(alice, "POST", "/v1/messaging/ack", ackBody, "alicedev"), ackBody);
         CHECK(acked.status == 200);
         // Alice's only client acked: deleted immediately.
         CHECK(storage.usage(alice.fingerprint()) == 0);
+        CHECK(aliceQueue() == 0);
     }
 
     // A bogus token is rejected without detail.

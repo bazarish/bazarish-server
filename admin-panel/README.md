@@ -79,12 +79,12 @@ Requires CMake >= 3.20, C++20, OpenSSL >= 3.0. Uses the shared `common` library
 ## Run
 
 ```bash
-bazarish-admin-panel --config config.json --state /var/lib/bazarish/admin-panel \
-  --assets ./web
+bazarish-admin-panel --config config.json
 ```
 
-The listen address is the config's alone - there is no flag that overrides it, so
-there is never a question of which one won.
+The config is the only thing on the command line: the state directory, the web
+files, the listen address and the services all live in it, so there is never a
+question of which of two answers won.
 
 ```
 ```

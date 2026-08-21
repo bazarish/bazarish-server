@@ -18,6 +18,11 @@ compromise still must not reach the server. Sharing a repository only removes th
 per-component submodule bump and the per-component rebuild of the embedded I2P
 router.
 
+Every component takes exactly one flag: `--config <path>`. Values live in that
+file (JSON, comments allowed) rather than in unit files, so nothing is settable
+twice, and the admin panel can change a setting without disturbing the rest of
+the file. Each component ships a `config.example.json`.
+
 ## Building
 
 ```

@@ -34,17 +34,22 @@ ctest --test-dir build
 ## Run
 
 ```
-bazarish-service-node --state <dir> --server-card <path> [--listen <host> <port>]
-                      [--portal-listen <host> <port> --portal-assets <dir>]
+bazarish-service-node --config <path>
 ```
+
+Everything the node runs on is in that file (see `config.example.json`): its
+state directory, the server card, the addresses it listens on and reaches, the
+operator fingerprints, and what new accounts get. There are no value flags - one
+place to look, one place to change - and the admin panel edits the same file one
+value at a time, leaving the rest of it, comments included, untouched.
 
 The server card is produced by the messaging server and binds this node to it.
 The service node sits behind a [facade](https://github.com/bazarish/facade-http),
 which routes `/v1/account/*` to it.
 
-`--portal-listen` opens the browser-facing portal: one JS-free page where a user
+`portal.listen` opens the browser-facing portal: one JS-free page where a user
 proves their key and reads a captcha, which is the whole registration.
-`--portal-assets` points at the portal's web files (`portal/` in this
+`portal.assets` points at the portal's web files (`portal/` in this
 repository: page shell, stylesheet, logo, fonts) - edit them to restyle the
 portal without rebuilding. They are read once and served from memory, so a
 change takes effect on restart.

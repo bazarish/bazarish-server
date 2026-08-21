@@ -17,6 +17,9 @@
     var kMinQuotaMiB = 1;
     var kMaxQuotaMiB = 1024 * 1024;
     var kSecondsPerMs = 1000;
+    // A hold is the soft measure - the operator is stopping the account in order
+    // to say something - so the field starts with the plainest version of it.
+    var kDefaultHoldMessage = "Service for this account has been stopped.";
 
     var content = document.getElementById("content");
     var nav = document.getElementById("nav");
@@ -189,26 +192,39 @@
         return tags;
     }
 
-    // One labelled action with a line of its own to explain itself, so an
-    // irreversible one is never a bare button.
-    function action(box, label, kind, hint, run) {
-        var wrap = element("div", "action");
-        var button = element("button", "btn " + kind, label);
-        wrap.appendChild(button);
-        if (hint) {
-            wrap.appendChild(element("span", "action-hint", hint));
+    // A block of one subject, separated from its neighbours so a card of many
+    // controls reads as a few decisions rather than a pile of inputs.
+    function section(box, title) {
+        var block = element("section", "block");
+        if (title) {
+            block.appendChild(element("h3", "block-title", title));
         }
+        box.appendChild(block);
+        return block;
+    }
+
+    // One row of controls, then the sentence that says what they do.
+    function controls(block, hint) {
+        var row = element("div", "controls");
+        block.appendChild(row);
+        if (hint) {
+            block.appendChild(element("p", "hint", hint));
+        }
+        return row;
+    }
+
+    function actionButton(label, kind, run) {
+        var button = element("button", "btn " + kind, label);
         button.addEventListener("click", function () {
             button.disabled = true;
             run(function () {
                 button.disabled = false;
             });
         });
-        box.appendChild(wrap);
-        return wrap;
+        return button;
     }
 
-    function userDetail(user, onChanged, onError) {
+    function userDetail(user, onChanged, onError, onGone) {
         var box = element("div", "detail");
 
         var head = element("div", "detail-head");
@@ -235,39 +251,52 @@
         }
         facts.appendChild(fact("subscription",
             user.subscribed ? "until " + humanDate(user.notAfter) : "not redeemed yet"));
+        facts.appendChild(fact("address", user.dest || "none published"));
+        facts.appendChild(fact("delegation",
+            isDelegated(user) ? "until " + humanDate(user.transientExpires) : "none"));
+        // The mailbox and the devices live on the messaging server, so they come
+        // in after the row does.
+        var mailbox = fact("mailbox", "...");
+        var devices = fact("devices", "...");
+        facts.appendChild(mailbox);
+        facts.appendChild(devices);
+        api("GET", "/api/account?user=" + encodeURIComponent(user.user)).then(function (data) {
+            mailbox.lastChild.textContent = humanBytes(data.usedBytes) + " of "
+                + humanBytes(data.quotaBytes);
+            devices.lastChild.textContent = String(data.devices);
+        }).catch(function (error) {
+            mailbox.lastChild.textContent = "unknown (" + error.message + ")";
+            devices.lastChild.textContent = "unknown";
+        });
         // A registration that never became a served account is dropped; say when,
         // so "nothing happened here" has a date attached to it.
         if (user.sweepAt) {
             facts.appendChild(fact("dropped unless finished", humanDate(user.sweepAt)));
         }
-        facts.appendChild(fact("address", user.dest || "none published"));
-        facts.appendChild(fact("delegation",
-            isDelegated(user) ? "until " + humanDate(user.transientExpires) : "none"));
         box.appendChild(facts);
 
         if (user.dest) {
-            var addressRow = element("div", "action");
-            addressRow.appendChild(window.bazarishCopy.button("Copy address", function () {
-                return user.dest;
-            }));
-            box.appendChild(addressRow);
+            controls(section(box)).appendChild(
+                window.bazarishCopy.button("Copy address", function () {
+                    return user.dest;
+                }));
         }
 
         if (user.banned) {
-            action(box, "Lift the ban", "btn-quiet", "The key may register again.",
-                function (done) {
+            controls(section(box, "Ban"), "The key may register again.")
+                .appendChild(actionButton("Lift the ban", "btn-quiet", function (done) {
                     api("POST", "/api/unban", { user: user.user }).then(function () {
                         onChanged("Ban lifted.");
                     }).catch(function (error) {
                         done();
                         onError(error);
                     });
-                });
+                }));
             return box;
         }
 
-        box.appendChild(element("p", "field-label", "Storage quota"));
-        var quotaRow = element("div", "quota-row");
+        var quotaBlock = section(box, "Storage quota");
+        var quotaRow = controls(quotaBlock);
         var quota = element("input", "field quota-input");
         quota.type = "number";
         quota.min = String(kMinQuotaMiB);
@@ -275,94 +304,100 @@
         quota.step = "1";
         quota.value = String(Math.max(kMinQuotaMiB, Math.round(user.quotaBytes / kBytesPerMiB)));
         quotaRow.appendChild(quota);
-        quotaRow.appendChild(element("span", "quota-unit", "MB"));
-        var save = element("button", "btn btn-quiet", "Save");
-        quotaRow.appendChild(save);
-        box.appendChild(quotaRow);
-
-        save.addEventListener("click", function () {
+        quotaRow.appendChild(element("span", "unit", "MB"));
+        quotaRow.appendChild(actionButton("Save", "btn-quiet", function (done) {
             var megabytes = Number(quota.value);
             if (!Number.isFinite(megabytes) || megabytes < kMinQuotaMiB
                 || megabytes > kMaxQuotaMiB) {
+                done();
                 onError(new Error("A quota is a whole number of megabytes."));
                 return;
             }
-            save.disabled = true;
             api("PUT", "/api/quota", {
                 user: user.user,
                 quotaBytes: Math.round(megabytes) * kBytesPerMiB
             }).then(function () {
                 onChanged("Quota set to " + Math.round(megabytes) + " MB.");
             }).catch(function (error) {
-                save.disabled = false;
+                done();
                 onError(error);
             });
-        });
+        }));
 
         if (user.approval === "pending") {
-            action(box, "Approve", "", "The account is served from now on.", function (done) {
-                api("POST", "/api/approve", { user: user.user }).then(function () {
-                    onChanged("Approved.");
-                }).catch(function (error) {
-                    done();
-                    onError(error);
-                });
-            });
+            controls(section(box, "Approval"), "The account is served from now on.")
+                .appendChild(actionButton("Approve", "", function (done) {
+                    api("POST", "/api/approve", { user: user.user }).then(function () {
+                        onChanged("Approved.");
+                    }).catch(function (error) {
+                        done();
+                        onError(error);
+                    });
+                }));
         }
 
-        box.appendChild(element("p", "field-label", "Take out of service"));
+        var holdBlock = section(box, "Take out of service");
+        var holdRow = controls(holdBlock,
+            "The soft measure: the address is revoked, the account waits for you again, and its"
+            + " owner reads this line instead of the node-wide one.");
         var holdNote = element("input", "field");
         holdNote.type = "text";
-        holdNote.placeholder = "What its owner is told (optional)";
-        box.appendChild(holdNote);
-        action(box, "Undelegate", "btn-quiet",
-            "Revokes the address; the account waits for you again.", function (done) {
-                api("POST", "/api/undelegate", {
-                    user: user.user,
-                    message: holdNote.value.trim()
-                }).then(function () {
-                    onChanged("Undelegated. The account is on hold.");
-                }).catch(function (error) {
-                    done();
-                    onError(error);
-                });
+        holdNote.value = kDefaultHoldMessage;
+        holdRow.appendChild(holdNote);
+        holdRow.appendChild(actionButton("Undelegate", "btn-quiet", function (done) {
+            if (!holdNote.value.trim()) {
+                done();
+                onError(new Error("Say what you are stopping the account for."));
+                return;
+            }
+            api("POST", "/api/undelegate", {
+                user: user.user,
+                message: holdNote.value.trim()
+            }).then(function () {
+                onChanged("Undelegated. The account is on hold.");
+            }).catch(function (error) {
+                done();
+                onError(error);
             });
+        }));
 
-        box.appendChild(element("p", "field-label", "Remove"));
-        action(box, "Delete account", "btn-danger",
-            "Certificate, grants and address. The key may register again.", function (done) {
+        var removeBlock = section(box, "Remove");
+        controls(removeBlock,
+            "Deletes the certificate, the grants and the address. The key may register again.")
+            .appendChild(actionButton("Delete account", "btn-danger", function (done) {
                 if (!window.confirm("Delete this account? The key may register again.")) {
                     done();
                     return;
                 }
                 api("POST", "/api/delete", { user: user.user }).then(function () {
-                    onChanged("Account deleted.");
+                    onGone("Account deleted.");
                 }).catch(function (error) {
                     done();
                     onError(error);
                 });
-            });
+            }));
 
+        var banRow = controls(removeBlock,
+            "The same, and this key does not register here again.");
         var banReason = element("input", "field");
         banReason.type = "text";
         banReason.placeholder = "Reason shown to the key (default: Banned)";
-        box.appendChild(banReason);
-        action(box, "Ban key", "btn-danger",
-            "Deletes the account and refuses this key from now on.", function (done) {
-                if (!window.confirm("Ban this key? It will not register here again.")) {
-                    done();
-                    return;
-                }
-                api("POST", "/api/ban", {
-                    user: user.user,
-                    reason: banReason.value.trim()
-                }).then(function () {
-                    onChanged("Key banned.");
-                }).catch(function (error) {
-                    done();
-                    onError(error);
-                });
+        banRow.appendChild(banReason);
+        banRow.appendChild(actionButton("Ban key", "btn-danger", function (done) {
+            if (!window.confirm("Ban this key? It will not register here again.")) {
+                done();
+                return;
+            }
+            api("POST", "/api/ban", {
+                user: user.user,
+                reason: banReason.value.trim()
+            }).then(function () {
+                onGone("Key banned.");
+            }).catch(function (error) {
+                done();
+                onError(error);
             });
+        }));
 
         return box;
     }
@@ -444,6 +479,13 @@
                     reload();
                 }, function (error) {
                     say(error.message, "is-error");
+                }, function (message) {
+                    // The account this card was about is gone: leaving a card
+                    // open would put another account's one in its place.
+                    openUser = null;
+                    setHash("#/users");
+                    say(message);
+                    reload();
                 }));
             }
         }
@@ -522,8 +564,9 @@
                 : humanBytes(data.diskUsedBytes)));
             form.appendChild(totals);
 
-            form.appendChild(element("p", "field-label", "Registration"));
-            var modes = element("div", "toolbar");
+            var registration = section(form, "Registration");
+            var modes = controls(registration,
+                "Open: an account is served as soon as it registers. Moderated: it waits for you.");
             var moderated = data.requireApproval;
             var modeChips = {};
             [["open", false], ["moderated", true]].forEach(function (entry) {
@@ -539,50 +582,54 @@
                 modeChips[entry[0]] = chip;
                 modes.appendChild(chip);
             });
-            form.appendChild(modes);
-            form.appendChild(element("p", "muted",
-                "Open: an account is served as soon as it registers. Moderated: it waits for you."));
 
-            form.appendChild(element("p", "field-label", "Message to a waiting account"));
+            var waiting = section(form, "Message to a waiting account");
             var message = element("textarea", "field");
             message.value = data.registrationMessage || "";
             message.placeholder = "How to reach you";
-            form.appendChild(message);
+            controls(waiting,
+                "Shown to an account that is registered but not served yet - in the portal and in"
+                + " its client.").appendChild(message);
 
-            form.appendChild(element("p", "field-label",
-                "Keep an unfinished registration for"));
-            var ttlRow = element("div", "quota-row");
-            var ttl = element("input", "field quota-input");
-            ttl.type = "number";
-            ttl.min = "0";
-            ttl.step = "1";
-            ttl.value = String(data.registrationTtlDays);
-            ttlRow.appendChild(ttl);
-            ttlRow.appendChild(element("span", "quota-unit", "days (0: forever)"));
-            form.appendChild(ttlRow);
-            form.appendChild(element("p", "muted",
-                "An account waiting for you, or one registered at the portal that no client ever"
-                + " redeemed, is dropped after this."));
-
-            form.appendChild(element("p", "field-label", "Storage for a new account"));
-            var quotaRow = element("div", "quota-row");
+            var accounts = section(form, "New accounts");
+            var storageRow = controls(accounts);
+            storageRow.appendChild(element("span", "control-label", "Storage"));
             var quota = element("input", "field quota-input");
             quota.type = "number";
             quota.min = String(kMinQuotaMiB);
             quota.max = String(kMaxQuotaMiB);
             quota.step = "1";
             quota.value = String(Math.round(data.defaultQuotaBytes / kBytesPerMiB));
-            quotaRow.appendChild(quota);
-            quotaRow.appendChild(element("span", "quota-unit", "MB"));
+            storageRow.appendChild(quota);
+            storageRow.appendChild(element("span", "unit", "MB"));
+
+            var ttlRow = controls(accounts,
+                "An account waiting for you, or one registered at the portal that no client ever"
+                + " redeemed, is dropped after this.");
+            ttlRow.appendChild(element("span", "control-label", "Keep unfinished"));
+            var ttl = element("input", "field quota-input");
+            ttl.type = "number";
+            ttl.min = "0";
+            ttl.step = "1";
+            ttl.value = String(data.registrationTtlDays);
+            ttlRow.appendChild(ttl);
+            ttlRow.appendChild(element("span", "unit", "days (0: forever)"));
+
+            // One button for the whole form, on a line of its own: nothing above
+            // it takes effect until it is pressed.
+            var footer = element("div", "form-footer");
             var save = element("button", "btn", "Save settings");
-            quotaRow.appendChild(save);
-            form.appendChild(quotaRow);
+            footer.appendChild(save);
+            footer.appendChild(element("span", "hint", "Applies now and is written to the node's"
+                + " config, so a restart keeps it."));
+            form.appendChild(footer);
 
             save.addEventListener("click", function () {
                 var megabytes = Number(quota.value);
                 if (!Number.isFinite(megabytes) || megabytes < kMinQuotaMiB
                     || megabytes > kMaxQuotaMiB) {
-                    form.appendChild(notice("Storage is a whole number of megabytes.", "is-error"));
+                    footer.appendChild(notice("Storage is a whole number of megabytes.",
+                        "is-error"));
                     return;
                 }
                 save.disabled = true;
@@ -595,7 +642,7 @@
                     renderSettings();
                 }).catch(function (error) {
                     save.disabled = false;
-                    form.appendChild(notice(error.message, "is-error"));
+                    footer.appendChild(notice(error.message, "is-error"));
                 });
             });
         }).catch(function (error) {

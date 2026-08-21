@@ -103,6 +103,10 @@ private:
     // ban, if any, is not part of it - a ban outlives what it removed.
     void deleteAccount(const std::string& user);
 
+    // The address an account is served at, repairing the cached field when an
+    // older record carries only the certificate.
+    std::string destinationOf(const std::optional<SubscriptionStore::Subscription>& held);
+
     // What the operator has set, live.
     NodeSettings::Values settings() const { return settings_->get(); }
 

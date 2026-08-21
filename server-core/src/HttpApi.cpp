@@ -700,6 +700,30 @@ void HttpApi::setupRoutes()
                 });
         }));
 
+    // --- Operator-internal: one account, as this server sees it ---
+    //
+    // What the operator panel cannot get anywhere else: the mailbox as it stands
+    // (a quota is a promise, this is what is in it) and how many devices hold the
+    // account - a message is kept until every registered device has acked it, so
+    // a device nobody uses any more is mail nobody collects.
+    http_->get("/v1/messaging/account",
+        [this, &store, operatorRejection](
+            const bazarish::http::Request& request) -> bazarish::http::Response {
+            if (const std::optional<bazarish::http::Response> refused = operatorRejection(request);
+                refused.has_value()) {
+                return *refused;
+            }
+            const std::string user = request.query("user");
+            if (user.empty()) {
+                return errorResponse(400, ErrorCode::eDeliveryRejected, "no user named");
+            }
+            return jsonResponse({
+                {"devices", store.listClients(user).size()},
+                {"usedBytes", store.usage(user)},
+                {"quotaBytes", store.userQuota(user, options_.defaultQuotaBytes)},
+            });
+        });
+
     // --- Operator-internal: what the storage occupies ---
     //
     // The panel shows this next to the sum of the quotas: the two answer

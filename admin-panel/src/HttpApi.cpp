@@ -332,6 +332,26 @@ void HttpApi::registerRoutes()
             nlohmann::json{{"user", body.at("user")}}.dump());
     }));
 
+    // One account as the messaging server sees it: what its mailbox holds and how
+    // many devices are collecting it. Neither is known to the node.
+    http_->get("/api/account", api([this](
+                                   const http::Request& request, http::Response& response) {
+        const ServiceEntry* const core = serviceOfKind("server-core");
+        if (core == nullptr) {
+            sendError(response, 503, "no server-core configured in this panel");
+            return;
+        }
+        const JsonResult account = callJson(*core, identity_, "GET",
+            "/v1/messaging/account?user=" + urlEncoded(request.query("user")));
+        if (account.status == 0) {
+            bazarish::log::warn("server-core unreachable: {}", account.error);
+            sendError(response, 502,
+                account.error.empty() ? "server-core unreachable" : account.error);
+            return;
+        }
+        sendJson(response, account.body, account.status);
+    }));
+
     // The settings an operator turns, plus the two numbers that say whether they
     // still fit: what the quotas promise, and what the messaging server's disk
     // actually holds. The second is measured by the server that owns the disk.

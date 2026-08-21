@@ -221,6 +221,32 @@ void AccountApi::deleteAccount(const std::string& user)
     grants_.erase(user);
 }
 
+// The address an account is served at. It is cached beside the certificate, but
+// records written before that field existed carry only the certificate itself -
+// so the certificate answers, and the record is repaired on the way out.
+std::string AccountApi::destinationOf(const std::optional<SubscriptionStore::Subscription>& held)
+{
+    if (!held.has_value() || !held->dest.empty() || held->certificate.empty()) {
+        return held.has_value() ? held->dest : std::string();
+    }
+    SubscriptionCertificate cert;
+    try {
+        cert = SubscriptionCertificate::verify(held->certificate);
+    } catch (const std::exception& error) {
+        // One unreadable record must not take the whole listing down with it.
+        bazarish::log::warn("certificate of {} is unreadable: {}", log::redact(held->user),
+            error.what());
+        return {};
+    }
+    if (cert.dest.empty()) {
+        return {};
+    }
+    SubscriptionStore::Subscription repaired = *held;
+    repaired.dest = cert.dest;
+    store_.putSubscription(repaired);
+    return cert.dest;
+}
+
 nlohmann::json AccountApi::userRecord(
     const std::string& user, const std::optional<GrantStore::Approval>& approval)
 {
@@ -235,7 +261,7 @@ nlohmann::json AccountApi::userRecord(
         : (approval.has_value() ? approval->requestedAt : 0);
     return {
         {"user", user},
-        {"dest", held.has_value() ? held->dest : std::string()},
+        {"dest", destinationOf(held)},
         {"registeredAt", registeredAt},
         {"sweepAt", sweepDeadline(registeredAt, held.has_value(), approval, values)},
         {"banned", ban.has_value()},
@@ -345,9 +371,9 @@ void AccountApi::setupRoutes()
                 if (!query.empty()) {
                     const std::optional<SubscriptionStore::Subscription> held
                         = store_.getSubscription(user);
+                    const std::string dest = destinationOf(held);
                     const bool matches = lowercased(user).find(query) != std::string::npos
-                        || (held.has_value()
-                            && lowercased(held->dest).find(query) != std::string::npos);
+                        || lowercased(dest).find(query) != std::string::npos;
                     if (!matches) {
                         continue;
                     }
@@ -375,7 +401,12 @@ void AccountApi::setupRoutes()
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = nlohmann::json::parse(request.body);
             const std::string user = body.at("user").get<std::string>();
+            // A hold is the soft measure: the point of it is what the operator
+            // says, so an empty one is a refusal, not a silent nothing.
             const std::string message = body.value("message", std::string());
+            if (message.empty()) {
+                throw std::invalid_argument("a hold needs a message for the account's owner");
+            }
             if (!grants_.peekApproval(user).has_value()) {
                 respondError(response, 404, ErrorCode::eDeliveryRejected, "no such account");
                 return;

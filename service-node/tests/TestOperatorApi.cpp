@@ -217,6 +217,12 @@ int main()
         const std::string body = nlohmann::json{{"user", served},
             {"message", "Talk to the operator before this comes back."}}
                                      .dump();
+        // A hold with nothing to say is refused: saying something is the point.
+        CHECK(call(port, panel, "POST", "/v1/account/undelegate",
+                   nlohmann::json{{"user", served}}.dump())
+                  .status
+            == 400);
+
         const http::ClientResponse held
             = call(port, panel, "POST", "/v1/account/undelegate", body);
         CHECK(held.status == 200);

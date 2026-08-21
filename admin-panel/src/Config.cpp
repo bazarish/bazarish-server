@@ -10,8 +10,10 @@ namespace bazarish::admin {
 
 namespace {
 
-const char* const kKnownKinds[]
-    = {"server-core", "service-node", "facade", "alias-resolver"};
+// What a deployment is made of. The alias service is not here: it is one central
+// service for the whole project, not part of anyone's server, and an operator of
+// a server has nothing to do with it.
+const char* const kKnownKinds[] = {"server-core", "service-node", "facade"};
 
 bool isKnownKind(const std::string& kind)
 {
@@ -58,8 +60,12 @@ Config Config::fromJson(const std::string& text)
             config.listenPort = listen.at("port").get<int>();
         }
     }
-    if (json.contains("services")) {
-        for (const nlohmann::json& item : json.at("services")) {
+    // A fleet is a messaging server, the node bound to it and the facades in
+    // front. A config that just lists services is one fleet with no name, which
+    // is what a single deployment looks like.
+    const auto readServices = [](const nlohmann::json& list) {
+        std::vector<ServiceEntry> services;
+        for (const nlohmann::json& item : list) {
             ServiceEntry entry;
             entry.name = item.at("name").get<std::string>();
             entry.kind = item.at("kind").get<std::string>();
@@ -67,8 +73,23 @@ Config Config::fromJson(const std::string& text)
             if (!isKnownKind(entry.kind)) {
                 throw std::runtime_error("config: unknown service kind \"" + entry.kind + "\"");
             }
-            config.services.push_back(std::move(entry));
+            services.push_back(std::move(entry));
         }
+        return services;
+    };
+
+    if (json.contains("fleets")) {
+        for (const nlohmann::json& item : json.at("fleets")) {
+            Fleet fleet;
+            fleet.name = item.at("name").get<std::string>();
+            fleet.services = readServices(item.at("services"));
+            config.fleets.push_back(std::move(fleet));
+        }
+    } else if (json.contains("services")) {
+        Fleet fleet;
+        fleet.name = "server";
+        fleet.services = readServices(json.at("services"));
+        config.fleets.push_back(std::move(fleet));
     }
     return config;
 }

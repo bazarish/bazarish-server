@@ -1,7 +1,10 @@
 // Bazarish project (c) 2026
 #pragma once
 
+#include "Load.hpp"
+
 #include <cstdint>
+
 #include <bazarish/HttpServer.hpp>
 #include <condition_variable>
 #include <mutex>
@@ -64,6 +67,8 @@ private:
     const FacadeOptions options_;
     std::unique_ptr<bazarish::http::Server> http_;
     std::unique_ptr<bazarish::http::Server> ops_;
+    // What is passing through right now, for the operator panel.
+    Load load_;
     // listenAfterBind parks the caller's thread here until stop().
     std::mutex stopMutex_;
     std::condition_variable stopCv_;

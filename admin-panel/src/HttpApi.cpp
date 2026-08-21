@@ -137,11 +137,19 @@ HttpApi::HttpApi(Config config, const Identity& identity, HttpApiOptions options
 
 HttpApi::~HttpApi() = default;
 
-const ServiceEntry* HttpApi::serviceOfKind(const std::string& kind) const
+const ServiceEntry* HttpApi::serviceOfKind(const std::string& fleet, const std::string& kind) const
 {
-    for (const ServiceEntry& service : config_.services) {
-        if (service.kind == kind) {
-            return &service;
+    for (const Fleet& candidate : config_.fleets) {
+        if (!fleet.empty() && candidate.name != fleet) {
+            continue;
+        }
+        for (const ServiceEntry& service : candidate.services) {
+            if (service.kind == kind) {
+                return &service;
+            }
+        }
+        if (!fleet.empty()) {
+            return nullptr;  // named, and it has none of this kind
         }
     }
     return nullptr;
@@ -150,12 +158,12 @@ const ServiceEntry* HttpApi::serviceOfKind(const std::string& kind) const
 // Passes a call through to the service that owns the accounts, and hands its
 // answer back untouched. The panel holds no user state of its own: what it shows
 // is what the node says, one request ago.
-void HttpApi::proxyToNode(http::Response& response, const std::string& method,
-    const std::string& path, const std::string& body)
+void HttpApi::proxyToNode(const std::string& fleet, http::Response& response,
+    const std::string& method, const std::string& path, const std::string& body)
 {
-    const ServiceEntry* const node = serviceOfKind("service-node");
+    const ServiceEntry* const node = serviceOfKind(fleet, "service-node");
     if (node == nullptr) {
-        sendError(response, 503, "no service-node configured in this panel");
+        sendError(response, 503, "this deployment has no service node the panel can reach");
         return;
     }
     const JsonResult result = callJson(*node, identity_, method, path, body);
@@ -254,19 +262,29 @@ void HttpApi::registerRoutes()
     // Every service probed at once: one service being down must not hold the
     // page on the ones that are up.
     http_->get("/api/services", api([this](const http::Request&, http::Response& response) {
+        // Every service of every deployment at once: one being down must not hold
+        // the page on the ones that are up, and an operator watching two servers
+        // wants both on the same screen.
+        std::vector<std::pair<const Fleet*, const ServiceEntry*>> all;
+        for (const Fleet& fleet : config_.fleets) {
+            for (const ServiceEntry& service : fleet.services) {
+                all.emplace_back(&fleet, &service);
+            }
+        }
         std::vector<std::future<HealthResult>> probes;
-        probes.reserve(config_.services.size());
-        for (const ServiceEntry& service : config_.services) {
-            probes.push_back(std::async(
-                std::launch::async, [this, &service]() { return probeHealth(service, identity_); }));
+        probes.reserve(all.size());
+        for (const auto& [fleet, service] : all) {
+            probes.push_back(std::async(std::launch::async,
+                [this, service]() { return probeHealth(*service, identity_); }));
         }
         nlohmann::json services = nlohmann::json::array();
-        for (std::size_t i = 0; i < config_.services.size(); ++i) {
+        for (std::size_t i = 0; i < all.size(); ++i) {
             const HealthResult health = probes[i].get();
-            services.push_back({
-                {"name", config_.services[i].name},
-                {"kind", config_.services[i].kind},
-                {"url", config_.services[i].url},
+            services.push_back(nlohmann::json{
+                {"fleet", all[i].first->name},
+                {"name", all[i].second->name},
+                {"kind", all[i].second->kind},
+                {"url", all[i].second->url},
                 {"up", health.reachable},
                 {"status", health.status},
                 {"error", health.error},
@@ -275,9 +293,19 @@ void HttpApi::registerRoutes()
                 {"uptime", humanizeUptime(health.uptime)},
                 {"ramBytes", health.ramBytes},
                 {"ramPeakBytes", health.ramPeakBytes},
+                // A facade reports what it is carrying; the others report nothing
+                // here and the panel shows nothing for them.
+                {"requestsLastMinute", health.requestsLastMinute},
+                {"requestsLastHour", health.requestsLastHour},
+                {"requestsLastDay", health.requestsLastDay},
+                {"inFlight", health.inFlight},
             });
         }
-        sendJson(response, nlohmann::json{{"services", services}}.dump());
+        nlohmann::json fleets = nlohmann::json::array();
+        for (const Fleet& fleet : config_.fleets) {
+            fleets.push_back(fleet.name);
+        }
+        sendJson(response, nlohmann::json{{"services", services}, {"fleets", fleets}}.dump());
     }));
 
     // The account list, searched and paged by the node itself.
@@ -290,24 +318,24 @@ void HttpApi::registerRoutes()
         if (const std::string offset = request.query("offset"); !offset.empty()) {
             query += "&offset=" + urlEncoded(offset);
         }
-        proxyToNode(response, "GET", query, std::string());
+        proxyToNode(request.query("fleet"), response, "GET", query, std::string());
     }));
 
     http_->get("/api/user", api([this](const http::Request& request, http::Response& response) {
-        proxyToNode(
-            response, "GET", "/v1/account/user?user=" + urlEncoded(request.query("user")), {});
+        proxyToNode(request.query("fleet"), response, "GET",
+            "/v1/account/user?user=" + urlEncoded(request.query("user")), {});
     }));
 
     http_->post("/api/approve", api([this](const http::Request& request, http::Response& response) {
         const nlohmann::json body = nlohmann::json::parse(request.body);
-        proxyToNode(response, "POST", "/v1/account/approve",
+        proxyToNode(request.query("fleet"), response, "POST", "/v1/account/approve",
             nlohmann::json{{"user", body.at("user")}}.dump());
     }));
 
     http_->post("/api/undelegate", api([this](
                                        const http::Request& request, http::Response& response) {
         const nlohmann::json body = nlohmann::json::parse(request.body);
-        proxyToNode(response, "POST", "/v1/account/undelegate",
+        proxyToNode(request.query("fleet"), response, "POST", "/v1/account/undelegate",
             nlohmann::json{{"user", body.at("user")},
                 {"message", body.value("message", std::string())}}
                 .dump());
@@ -315,20 +343,20 @@ void HttpApi::registerRoutes()
 
     http_->post("/api/delete", api([this](const http::Request& request, http::Response& response) {
         const nlohmann::json body = nlohmann::json::parse(request.body);
-        proxyToNode(response, "DELETE",
+        proxyToNode(body.value("fleet", std::string()), response, "DELETE",
             "/v1/account/user?user=" + urlEncoded(body.at("user").get<std::string>()), {});
     }));
 
     http_->post("/api/ban", api([this](const http::Request& request, http::Response& response) {
         const nlohmann::json body = nlohmann::json::parse(request.body);
-        proxyToNode(response, "POST", "/v1/account/ban",
+        proxyToNode(request.query("fleet"), response, "POST", "/v1/account/ban",
             nlohmann::json{{"user", body.at("user")}, {"reason", body.value("reason", std::string())}}
                 .dump());
     }));
 
     http_->post("/api/unban", api([this](const http::Request& request, http::Response& response) {
         const nlohmann::json body = nlohmann::json::parse(request.body);
-        proxyToNode(response, "POST", "/v1/account/unban",
+        proxyToNode(request.query("fleet"), response, "POST", "/v1/account/unban",
             nlohmann::json{{"user", body.at("user")}}.dump());
     }));
 
@@ -336,7 +364,7 @@ void HttpApi::registerRoutes()
     // many devices are collecting it. Neither is known to the node.
     http_->get("/api/account", api([this](
                                    const http::Request& request, http::Response& response) {
-        const ServiceEntry* const core = serviceOfKind("server-core");
+        const ServiceEntry* const core = serviceOfKind(request.query("fleet"), "server-core");
         if (core == nullptr) {
             sendError(response, 503, "no server-core configured in this panel");
             return;
@@ -355,10 +383,11 @@ void HttpApi::registerRoutes()
     // The settings an operator turns, plus the two numbers that say whether they
     // still fit: what the quotas promise, and what the messaging server's disk
     // actually holds. The second is measured by the server that owns the disk.
-    http_->get("/api/settings", api([this](const http::Request&, http::Response& response) {
-        const ServiceEntry* const node = serviceOfKind("service-node");
+    http_->get("/api/settings", api([this](
+                                    const http::Request& request, http::Response& response) {
+        const ServiceEntry* const node = serviceOfKind(request.query("fleet"), "service-node");
         if (node == nullptr) {
-            sendError(response, 503, "no service-node configured in this panel");
+            sendError(response, 503, "this deployment has no service node the panel can reach");
             return;
         }
         const JsonResult settings = callJson(*node, identity_, "GET", "/v1/account/settings");
@@ -372,7 +401,8 @@ void HttpApi::registerRoutes()
         // zero: "no data" and "nothing stored" are not the same answer.
         merged["diskUsedBytes"] = nullptr;
         merged["diskError"] = "no server-core configured in this panel";
-        if (const ServiceEntry* const core = serviceOfKind("server-core"); core != nullptr) {
+        if (const ServiceEntry* const core = serviceOfKind(request.query("fleet"), "server-core");
+            core != nullptr) {
             const JsonResult disk = callJson(*core, identity_, "GET", "/v1/messaging/storage");
             if (disk.ok) {
                 merged["diskUsedBytes"] = nlohmann::json::parse(disk.body).at("usedBytes");
@@ -386,14 +416,14 @@ void HttpApi::registerRoutes()
     }));
 
     http_->put("/api/settings", api([this](const http::Request& request, http::Response& response) {
-        proxyToNode(response, "PUT", "/v1/account/settings", request.body);
+        proxyToNode(request.query("fleet"), response, "PUT", "/v1/account/settings", request.body);
     }));
 
     // The quota belongs to the node that grants it; the panel only carries the
     // operator's number over.
     http_->put("/api/quota", api([this](const http::Request& request, http::Response& response) {
         const nlohmann::json body = nlohmann::json::parse(request.body);
-        proxyToNode(response, "PUT", "/v1/account/quota",
+        proxyToNode(request.query("fleet"), response, "PUT", "/v1/account/quota",
             nlohmann::json{{"user", body.at("user")}, {"quotaBytes", body.at("quotaBytes")}}
                 .dump());
     }));

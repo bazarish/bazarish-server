@@ -57,12 +57,13 @@ private:
     // Binds on a chosen port (0 lets the kernel pick) and starts serving.
     int bindToAnyPort(const std::string& host, int port);
     void registerRoutes();
-    // The configured service of a kind ("service-node", "server-core", ...), or
-    // null when the fleet this panel was given has none.
-    const ServiceEntry* serviceOfKind(const std::string& kind) const;
-    // Signs a call to the service node and answers with its reply verbatim.
-    void proxyToNode(bazarish::http::Response& response, const std::string& method,
-        const std::string& path, const std::string& body);
+    // The service of a kind inside one fleet, or null when that fleet has none.
+    // A fleet named by nothing is the first one, which is what a single
+    // deployment always has.
+    const ServiceEntry* serviceOfKind(const std::string& fleet, const std::string& kind) const;
+    // Signs a call to a fleet's service node and answers with its reply verbatim.
+    void proxyToNode(const std::string& fleet, bazarish::http::Response& response,
+        const std::string& method, const std::string& path, const std::string& body);
 
     Config config_;
     const Identity& identity_;

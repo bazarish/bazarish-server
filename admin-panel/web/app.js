@@ -22,6 +22,10 @@
     var kDefaultHoldMessage = "Service for this account has been stopped.";
 
     var content = document.getElementById("content");
+    // The deployment the account views act on. Monitoring shows every one of
+    // them; Users and Settings always act on one, because a quota belongs to a
+    // server and not to a screen.
+    var fleet = window.localStorage.getItem("bazarish.fleet") || "";
     var nav = document.getElementById("nav");
     var pollTimer = null;
 
@@ -37,6 +41,14 @@
             return error.code ? error.message + " (" + error.code + ")" : error.message;
         }
         return "HTTP " + status;
+    }
+
+    // Every account call names the deployment it is about.
+    function withFleet(path) {
+        if (!fleet) {
+            return path;
+        }
+        return path + (path.indexOf("?") >= 0 ? "&" : "?") + "fleet=" + encodeURIComponent(fleet);
     }
 
     function api(method, path, body) {
@@ -111,6 +123,15 @@
 
     // --- monitoring -------------------------------------------------------
 
+    function humanCount(n) {
+        const value = Number(n) || 0;
+        if (value < 1000) {
+            return String(value);
+        }
+        return value < 1000000 ? (value / 1000).toFixed(1) + "k"
+            : (value / 1000000).toFixed(1) + "M";
+    }
+
     function serviceCard(service) {
         var card = element("div", "card");
         var head = element("div", "card-head");
@@ -127,6 +148,14 @@
             facts.appendChild(fact("uptime", service.uptime));
             facts.appendChild(fact("memory",
                 humanBytes(service.ramBytes) + " / " + humanBytes(service.ramPeakBytes) + " peak"));
+            // A facade is the way in, so what it is carrying is the load of the
+            // whole deployment as clients see it.
+            if (service.kind === "facade") {
+                facts.appendChild(fact("requests", humanCount(service.requestsLastMinute)
+                    + " / min  " + humanCount(service.requestsLastHour)
+                    + " / h  " + humanCount(service.requestsLastDay) + " / day"));
+                facts.appendChild(fact("in flight", String(service.inFlight)));
+            }
         } else {
             facts.appendChild(fact("error", (service.error || "no answer")
                 + (service.status ? " (HTTP " + service.status + ")" : "")));
@@ -138,21 +167,37 @@
 
     function renderMonitoring() {
         var box = view("monitoring");
-        var cards = element("div", "cards");
-        box.appendChild(cards);
+        var groups = element("div");
+        box.appendChild(groups);
 
         function load() {
             api("GET", "/api/services").then(function (data) {
-                cards.innerHTML = "";
+                groups.innerHTML = "";
                 if (!data.services.length) {
-                    cards.appendChild(element("p", "muted", "No services configured."));
+                    groups.appendChild(element("p", "muted", "No services configured."));
+                    return;
                 }
-                data.services.forEach(function (service) {
-                    cards.appendChild(serviceCard(service));
+                // One block per deployment: a server, the node bound to it and
+                // the facades in front of the pair.
+                data.fleets.forEach(function (name) {
+                    var mine = data.services.filter(function (service) {
+                        return service.fleet === name;
+                    });
+                    if (!mine.length) {
+                        return;
+                    }
+                    if (data.fleets.length > 1) {
+                        groups.appendChild(element("h2", "block-title", name));
+                    }
+                    var cards = element("div", "cards");
+                    mine.forEach(function (service) {
+                        cards.appendChild(serviceCard(service));
+                    });
+                    groups.appendChild(cards);
                 });
             }).catch(function (error) {
-                cards.innerHTML = "";
-                cards.appendChild(notice(error.message, "is-error"));
+                groups.innerHTML = "";
+                groups.appendChild(notice(error.message, "is-error"));
             });
         }
 
@@ -260,7 +305,7 @@
         var devices = fact("devices", "...");
         facts.appendChild(mailbox);
         facts.appendChild(devices);
-        api("GET", "/api/account?user=" + encodeURIComponent(user.user)).then(function (data) {
+        api("GET", withFleet("/api/account?user=" + encodeURIComponent(user.user))).then(function (data) {
             mailbox.lastChild.textContent = humanBytes(data.usedBytes) + " of "
                 + humanBytes(data.quotaBytes);
             devices.lastChild.textContent = String(data.devices);
@@ -285,7 +330,7 @@
         if (user.banned) {
             controls(section(box, "Ban"), "The key may register again.")
                 .appendChild(actionButton("Lift the ban", "btn-quiet", function (done) {
-                    api("POST", "/api/unban", { user: user.user }).then(function () {
+                    api("POST", withFleet("/api/unban"), { user: user.user }).then(function () {
                         onChanged("Ban lifted.");
                     }).catch(function (error) {
                         done();
@@ -313,7 +358,7 @@
                 onError(new Error("A quota is a whole number of megabytes."));
                 return;
             }
-            api("PUT", "/api/quota", {
+            api("PUT", withFleet("/api/quota"), {
                 user: user.user,
                 quotaBytes: Math.round(megabytes) * kBytesPerMiB
             }).then(function () {
@@ -335,7 +380,7 @@
                     : "The account is served from now on.")
                 .appendChild(actionButton(onHold ? "Return to service" : "Approve", "",
                     function (done) {
-                        api("POST", "/api/approve", { user: user.user }).then(function () {
+                        api("POST", withFleet("/api/approve"), { user: user.user }).then(function () {
                             onChanged(onHold ? "Back in service." : "Approved.");
                         }).catch(function (error) {
                             done();
@@ -362,7 +407,7 @@
                         onError(new Error("Say what you are stopping the account for."));
                         return;
                     }
-                    api("POST", "/api/undelegate", {
+                    api("POST", withFleet("/api/undelegate"), {
                         user: user.user,
                         message: holdNote.value.trim()
                     }).then(function () {
@@ -388,7 +433,7 @@
                     done();
                     return;
                 }
-                api("POST", "/api/delete", { user: user.user }).then(function () {
+                api("POST", withFleet("/api/delete"), { user: user.user }).then(function () {
                     onGone("Account deleted.");
                 }).catch(function (error) {
                     done();
@@ -407,7 +452,7 @@
                 done();
                 return;
             }
-            api("POST", "/api/ban", {
+            api("POST", withFleet("/api/ban"), {
                 user: user.user,
                 reason: banReason.value.trim()
             }).then(function () {
@@ -518,7 +563,7 @@
             var query = "/api/users?q=" + encodeURIComponent(search.value.trim())
                 + "&state=" + encodeURIComponent(state)
                 + "&limit=" + kPageSize + "&offset=" + offset;
-            api("GET", query).then(function (data) {
+            api("GET", withFleet(query)).then(function (data) {
                 loading = false;
                 total = data.total;
                 data.users.forEach(addRow);
@@ -652,7 +697,7 @@
                     return;
                 }
                 save.disabled = true;
-                api("PUT", "/api/settings", {
+                api("PUT", withFleet("/api/settings"), {
                     requireApproval: moderated,
                     registrationMessage: message.value.trim(),
                     registrationTtlDays: Math.max(0, Math.round(Number(ttl.value) || 0)),
@@ -685,6 +730,34 @@
         window.location.hash = value;
     }
 
+    // The deployment picker in the sidebar. With one deployment there is nothing
+    // to pick, so nothing is shown.
+    function renderFleetPicker(names) {
+        var slot = document.getElementById("fleets");
+        if (!slot) {
+            return;
+        }
+        slot.innerHTML = "";
+        if (!names || names.length < 2) {
+            fleet = names && names.length ? names[0] : "";
+            return;
+        }
+        if (names.indexOf(fleet) < 0) {
+            fleet = names[0];
+        }
+        slot.appendChild(element("p", "sidebar-note", "deployment"));
+        names.forEach(function (name) {
+            var chip = element("button", "chip" + (name === fleet ? " is-on" : ""), name);
+            chip.addEventListener("click", function () {
+                fleet = name;
+                window.localStorage.setItem("bazarish.fleet", fleet);
+                renderFleetPicker(names);
+                route();
+            });
+            slot.appendChild(chip);
+        });
+    }
+
     function route() {
         window.clearInterval(pollTimer);
         pollTimer = null;
@@ -695,6 +768,13 @@
         });
         views[name](parts[1]);
     }
+
+    // The deployments are learned from the same call monitoring makes.
+    api("GET", "/api/services").then(function (data) {
+        renderFleetPicker(data.fleets);
+    }).catch(function () {
+        // Nothing to pick from: the views will report the failure themselves.
+    });
 
     window.addEventListener("hashchange", function () {
         if (ownHashWrite) {

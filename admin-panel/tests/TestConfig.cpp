@@ -47,18 +47,21 @@ int main()
     CHECK(config.admins.front() == "abcd1234");
     CHECK(config.listenHost == "0.0.0.0");
     CHECK(config.listenPort == 9000);
-    CHECK(config.services.size() == 2);
-    CHECK(config.services[0].name == "core");
-    CHECK(config.services[0].kind == "server-core");
-    CHECK(config.services[0].url == "http://127.0.0.1:8420");
-    CHECK(config.services[1].kind == "facade");
+    // A plain list of services is one deployment, which is what a single server
+    // looks like.
+    CHECK(config.fleets.size() == 1);
+    CHECK(config.fleets[0].services.size() == 2);
+    CHECK(config.fleets[0].services[0].name == "core");
+    CHECK(config.fleets[0].services[0].kind == "server-core");
+    CHECK(config.fleets[0].services[0].url == "http://127.0.0.1:8420");
+    CHECK(config.fleets[0].services[1].kind == "facade");
 
     // Defaults applied when optional fields are omitted.
     const Config minimal = Config::fromJson(R"({"admin": "fp"})");
     CHECK(minimal.audience == "bazarish-admin-panel");
     CHECK(minimal.listenHost == "127.0.0.1");
     CHECK(minimal.listenPort == 8460);
-    CHECK(minimal.services.empty());
+    CHECK(minimal.fleets.empty());
 
     // Several operators, each with their own key.
     const Config shared = Config::fromJson(R"({"admin": ["one", "two"]})");
@@ -70,6 +73,24 @@ int main()
     // A missing or empty admin fingerprint is rejected.
     CHECK_THROWS(Config::fromJson(R"({"services": []})"));
     CHECK_THROWS(Config::fromJson(R"({"admin": ""})"));
+
+    // Several deployments, each with its own services: that is the unit that
+    // scales, because a subscription names one messaging server.
+    const Config many = Config::fromJson(R"({"admin": "fp", "fleets": [
+        {"name": "berlin", "services": [
+            {"name": "core", "kind": "server-core", "url": "http://10.0.0.1:8420"},
+            {"name": "node", "kind": "service-node", "url": "http://10.0.0.1:8421"}]},
+        {"name": "riga", "services": [
+            {"name": "core", "kind": "server-core", "url": "http://10.0.0.2:8420"}]}
+    ]})");
+    CHECK(many.fleets.size() == 2);
+    CHECK(many.fleets[0].name == "berlin");
+    CHECK(many.fleets[0].services.size() == 2);
+    CHECK(many.fleets[1].name == "riga");
+
+    // The alias service is central, not part of anyone's deployment.
+    CHECK_THROWS(Config::fromJson(R"({"admin": "fp", "services": [
+        {"name": "alias", "kind": "alias-resolver", "url": "http://127.0.0.1:8432"}]})"));
 
     // An unknown service kind is rejected (catches config typos).
     CHECK_THROWS(Config::fromJson(R"({"admin": "fp", "services": [

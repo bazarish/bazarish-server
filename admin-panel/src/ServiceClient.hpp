@@ -26,6 +26,12 @@ struct HealthResult {
     std::int64_t uptime = 0;
     std::uint64_t ramBytes = 0;
     std::uint64_t ramPeakBytes = 0;
+    // What a facade is carrying: the counts it samples for the panel. Zero for
+    // every other kind of service, which reports none of this.
+    std::uint64_t requestsLastMinute = 0;
+    std::uint64_t requestsLastHour = 0;
+    std::uint64_t requestsLastDay = 0;
+    std::uint64_t inFlight = 0;
 };
 
 // Every call is signed with the panel identity (hybrid request auth); the service

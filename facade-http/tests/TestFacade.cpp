@@ -1,5 +1,6 @@
 // Bazarish project (c) 2026
 #include "Facade.hpp"
+#include "Load.hpp"
 
 #include <bazarish/HttpClient.hpp>
 #include <bazarish/HttpServer.hpp>
@@ -74,8 +75,39 @@ http::Server::Options backendOptions()
 
 }  // namespace
 
+// What the panel reads off the ops socket: three counts and a gauge, and no
+// history behind them.
+void testLoadSample()
+{
+    bazarish::facade::Load load;
+    constexpr std::int64_t kNow = 1'700'000'000;
+    // In the order time hands them over: a ring keeps the newest and lets the
+    // rest fall out from under, which is the whole point of it.
+    load.record(kNow - 2 * 24 * 3600);  // two days ago: outside every window
+    load.record(kNow - 2 * 3600);       // two hours ago: inside the day only
+    load.record(kNow - 90);             // a minute and a half ago: day and hour
+    for (int i = 0; i < 3; ++i) {
+        load.record(kNow);
+    }
+
+    const bazarish::facade::Load::Sample sample = load.sample(kNow);
+    CHECK(sample.lastMinute == 3);
+    CHECK(sample.lastHour == 4);
+    CHECK(sample.lastDay == 5);
+    CHECK(sample.total == 6);
+    CHECK(sample.inFlight == 0);
+
+    {
+        const bazarish::facade::Load::InFlight one(load);
+        const bazarish::facade::Load::InFlight two(load);
+        CHECK(load.sample(kNow).inFlight == 2);
+    }
+    CHECK(load.sample(kNow).inFlight == 0);
+}
+
 int main()
 {
+    testLoadSample();
     http::Server messaging(backendOptions());
     http::Server account(backendOptions());
     installBackend(messaging, "messaging");

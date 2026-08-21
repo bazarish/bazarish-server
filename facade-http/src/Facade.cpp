@@ -21,6 +21,8 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <nlohmann/json.hpp>
+
 #include <memory>
 #include <optional>
 #include <string>
@@ -253,10 +255,14 @@ void Facade::setupRoutes()
     const auto handler = [this](const bazarish::http::Request& request,
                              bazarish::http::Responder respond)
         -> std::optional<bazarish::http::Response> {
+        load_.record(nowSeconds());
         const std::optional<Route> route = resolveRoute(options_, request);
         if (!route.has_value()) {
             return notFound();
         }
+        // The request is in flight until the backend answers and the reply goes
+        // out; the guard rides along with the coroutine below.
+        const auto inFlight = std::make_shared<Load::InFlight>(load_);
         bazarish::http::ClientRequest forwarded;
         forwarded.method = request.method;
         forwarded.target = route->target;
@@ -275,7 +281,7 @@ void Facade::setupRoutes()
         boost::asio::co_spawn(
             http_->executor(),
             [executor = http_->executor(), host = route->host, port = route->port,
-                forwarded = std::move(forwarded), respond]() -> boost::asio::awaitable<void> {
+                forwarded = std::move(forwarded), respond, inFlight]() -> boost::asio::awaitable<void> {
                 const bazarish::http::Response upstream = co_await bazarish::http::fetch(
                     executor, host, port, forwarded, std::chrono::seconds(kUpstreamTimeoutSeconds));
                 respond(upstream.status == 0 ? gatewayFailure() : upstream);
@@ -307,8 +313,17 @@ void Facade::setupOpsRoutes()
                 return {403, "application/json", {},
                     R"({"error":{"message":"operator authentication required"}})"};
             }
-            return {200, "application/json", {},
-                health::reportJson("facade", options_.version, startedAt_, nowSeconds())};
+            // The health report plus what this facade is carrying: three counts
+            // and a gauge, sampled now, kept nowhere.
+            const Load::Sample sample = load_.sample(nowSeconds());
+            nlohmann::json report = nlohmann::json::parse(
+                health::reportJson("facade", options_.version, startedAt_, nowSeconds()));
+            report["requestsLastMinute"] = sample.lastMinute;
+            report["requestsLastHour"] = sample.lastHour;
+            report["requestsLastDay"] = sample.lastDay;
+            report["requestsTotal"] = sample.total;
+            report["inFlight"] = sample.inFlight;
+            return {200, "application/json", {}, report.dump()};
         });
 }
 

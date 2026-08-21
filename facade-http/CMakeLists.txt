@@ -21,6 +21,7 @@ find_package(Threads REQUIRED)
 
 add_library(bazarish_facade_lib STATIC
     src/Facade.cpp
+    src/Load.cpp
     src/I2pFront.cpp
 )
 target_include_directories(bazarish_facade_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)

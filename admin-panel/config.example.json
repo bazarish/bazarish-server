@@ -5,10 +5,19 @@
   "state": "/var/lib/bazarish/admin-panel",
   "assets": "/opt/bazarish/bazarish-server/admin-panel/web",
   "listen": {"host": "127.0.0.1", "port": 8460},
-  "services": [
-    {"name": "server-core",    "kind": "server-core",    "url": "http://127.0.0.1:8420"},
-    {"name": "service-node",   "kind": "service-node",   "url": "http://127.0.0.1:8421"},
-    {"name": "facade",         "kind": "facade",         "url": "http://127.0.0.1:8429"},
-    {"name": "alias-resolver", "kind": "alias-resolver", "url": "http://127.0.0.1:8432"}
+
+  // One deployment: a messaging server, the node bound to it, and the facades in
+  // front of the pair. Add more entries to manage more of them from here; they
+  // only have to be reachable from this host (a private network, a VPN, a tunnel
+  // the operator set up - the panel does not care which).
+  "fleets": [
+    {
+      "name": "home",
+      "services": [
+        {"name": "server-core",  "kind": "server-core",  "url": "http://127.0.0.1:8420"},
+        {"name": "service-node", "kind": "service-node", "url": "http://127.0.0.1:8421"},
+        {"name": "facade",       "kind": "facade",       "url": "http://127.0.0.1:8429"}
+      ]
+    }
   ]
 }

@@ -130,6 +130,11 @@ HealthResult probeHealth(const ServiceEntry& service, const Identity& identity)
         out.uptime = body.value("uptime", static_cast<std::int64_t>(0));
         out.ramBytes = body.value("ramBytes", static_cast<std::uint64_t>(0));
         out.ramPeakBytes = body.value("ramPeakBytes", static_cast<std::uint64_t>(0));
+        // A facade adds what it is carrying; nobody else reports these.
+        out.requestsLastMinute = body.value("requestsLastMinute", static_cast<std::uint64_t>(0));
+        out.requestsLastHour = body.value("requestsLastHour", static_cast<std::uint64_t>(0));
+        out.requestsLastDay = body.value("requestsLastDay", static_cast<std::uint64_t>(0));
+        out.inFlight = body.value("inFlight", static_cast<std::uint64_t>(0));
         out.reachable = true;
     } catch (const std::exception& error) {
         out.error = std::string("bad health body: ") + error.what();

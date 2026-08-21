@@ -32,7 +32,6 @@ at panel startup) as an `--operator-fingerprint`. There is no shared secret.
 bazarish-server      ... --operator-fingerprint <panel-fp> --operator-fingerprint <service-node-fp>
 bazarish-service-node ... --operator-fingerprint <panel-fp>
 bazarish-facade-http  ... --operator-fingerprint <panel-fp> --ops-listen 127.0.0.1 8429
-bazarish-alias-resolver ... --operator-fingerprint <panel-fp>
 ```
 
 (The service node also signs its own quota/transient pushes, so server-core
@@ -63,8 +62,11 @@ that ops address, not with the published facade URL.
 ## Configuration
 
 See `config.example.json`: the authorised admin fingerprints (one string or a
-list), the listen address, and the list of services (name, kind, url) - no
-secrets. The `service-node` entry is the one the account views talk to.
+list), the listen address, and the deployments it manages - no secrets. Each
+deployment is a `server-core`, the `service-node` bound to it and its facades;
+several can be listed, and the account views act on the one chosen in the
+sidebar. The alias service is not here: it is one central service for the whole
+project, not part of an operator's server.
 
 ## Build & test
 

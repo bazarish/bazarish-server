@@ -115,6 +115,18 @@ body.centred {
     text-transform: uppercase;
 }
 
+.fleets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-bottom: 1.25rem;
+}
+
+.fleets .sidebar-note {
+    flex: 1 1 100%;
+    margin: 0 0 0.25rem;
+}
+
 .nav {
     margin: 0;
     padding: 0;

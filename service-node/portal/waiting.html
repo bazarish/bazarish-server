@@ -3,4 +3,11 @@
     <h2 class="panel-title">waiting for the operator</h2>
     <p class="panel-note">The account exists but is not served yet.</p>
     {{message}}
+    <ul class="facts">
+      <li><span>Storage</span>{{quota}}</li>
+      <li><span>Term</span>{{term}}, renewed by your client</li>
+    </ul>
+    <p class="field-label">Server descriptor</p>
+    <pre class="copy">{{descriptor}}</pre>
+    <p class="panel-note">Paste it into your client to connect it here.</p>
   </section>

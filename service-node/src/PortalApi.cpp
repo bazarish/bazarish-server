@@ -15,6 +15,7 @@
 #include <ctime>
 #include <exception>
 #include <iterator>
+#include <map>
 #include <optional>
 #include <utility>
 
@@ -396,24 +397,27 @@ std::string PortalApi::homePage(const std::string& user, const std::string& erro
     const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
     const std::string operatorNote = notice(options_.registrationMessage, "is-waiting");
 
+    // What the account is worth saying about, wherever it stands: a user waiting
+    // for an operator needs the terms and the descriptor as much as one already
+    // served.
+    const std::uint64_t quota
+        = subscription.has_value() ? subscription->quotaBytes : options_.defaultQuotaBytes;
+    const std::map<std::string, std::string> account = {
+        {"quota", htmlEscape(bytesHuman(quota))},
+        {"term", std::to_string(options_.freeSubscriptionTermSeconds / kSecondsPerDay) + " days"},
+        {"descriptor", htmlEscape(options_.serverDescriptor)},
+        {"message", operatorNote},
+    };
+
     std::string title;
     std::string content;
     if (approval.has_value() && approval->pending()) {
         title = "Waiting";
-        content = assets_.render("waiting.html", {{"message", operatorNote}});
+        content = assets_.render("waiting.html", account);
     } else if (subscription.has_value() || approval.has_value()) {
         title = "Registered";
-        const std::uint64_t quota
-            = subscription.has_value() ? subscription->quotaBytes : options_.defaultQuotaBytes;
         content = assets_.render(
-            options_.requiresApproval ? "registered-approval.html" : "registered.html",
-            {
-                {"quota", htmlEscape(bytesHuman(quota))},
-                {"term", std::to_string(options_.freeSubscriptionTermSeconds / kSecondsPerDay)
-                        + " days"},
-                {"descriptor", htmlEscape(options_.serverDescriptor)},
-                {"message", operatorNote},
-            });
+            options_.requiresApproval ? "registered-approval.html" : "registered.html", account);
     } else {
         title = "Register";
         const CaptchaChallenge challenge = captcha_.issue(nowSeconds());

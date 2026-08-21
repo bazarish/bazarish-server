@@ -345,6 +345,7 @@ int main(const int argc, const char** argv)
         portalOptions.sessionSecret = bazarish::toHex(bazarish::randomBytes(16));
         portalOptions.defaultQuotaBytes = options.defaultQuotaBytes;
         portalOptions.freeSubscriptionTermSeconds = options.maxTermSeconds;
+        portalOptions.requiresApproval = nodeConfig.registration.requireApproval;
         portalOptions.registrationMessage = nodeConfig.registration.message;
         portalOptions.assetsDirectory = portalAssets;
         try {

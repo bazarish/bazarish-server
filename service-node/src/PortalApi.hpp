@@ -40,6 +40,11 @@ struct PortalApiOptions {
     // without solving a captcha. Advertised to clients via the discovery
     // endpoint's freeRegistration.captcha flag, so the two cannot disagree.
     bool requireCaptcha = true;
+    // Whether an account this node registers still waits for an operator before
+    // it is served. The page has to say so at registration: the account is only
+    // marked pending once a client redeems the grant, and until then nothing
+    // else would tell the user their messages are not flowing yet.
+    bool requiresApproval = false;
     // Shown to a user whose account is created frozen on a moderated node: how
     // to reach the operator to finish registration. Empty on an open node.
     std::string registrationMessage;

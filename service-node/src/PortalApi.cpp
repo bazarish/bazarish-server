@@ -445,9 +445,16 @@ std::string PortalApi::homePage(const std::string& user, const std::string& erro
                 + notice(options_.registrationMessage, "is-waiting"));
     } else if (subscription.has_value() || approval.has_value()) {
         title = "Registered";
+        const std::string waiting = options_.requiresApproval
+            ? note("The operator approves accounts by hand: connect your client here, and it "
+                   "starts serving once they do.")
+                + notice(options_.registrationMessage, "is-waiting")
+            : std::string();
         body = panel("registered",
-            facts(subscription.has_value() ? subscription->quotaBytes : options_.defaultQuotaBytes,
-                options_.freeSubscriptionTermSeconds)
+            waiting
+                + facts(subscription.has_value() ? subscription->quotaBytes
+                                                 : options_.defaultQuotaBytes,
+                    options_.freeSubscriptionTermSeconds)
                 + descriptorBlock(options_.serverDescriptor));
     } else {
         title = "Register";

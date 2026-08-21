@@ -430,8 +430,11 @@ body.centred {
     margin-bottom: 0.75rem;
 }
 
+/* The fingerprint and the mark that copies it stand together. The key used to
+   stretch across the card, which pushed the mark to the far end and left it
+   beside nothing. */
 .detail-key {
-    flex: 1 1 18rem;
+    flex: 0 1 auto;
     margin: 0;
     font-size: 0.8rem;
     overflow-wrap: anywhere;

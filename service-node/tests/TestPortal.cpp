@@ -220,6 +220,17 @@ void testWebFlow()
     options.assetsDirectory = BAZARISH_PORTAL_ASSETS_DIR;
     options.requireCaptcha = true;
 
+    std::string deleted;
+    options.deleteAccount = [&](const std::string& user) {
+        deleted = user;
+        grants.erase(user);
+    };
+    // The mailbox figures come from the messaging server; the portal only shows
+    // what it is handed.
+    options.accountUsage = [](const std::string&) {
+        return PortalApiOptions::Usage{1024, 20 * 1024 * 1024, 2};
+    };
+
     PortalApi portal(options, captcha, grants);
     const int port = portal.bindToAnyPort("127.0.0.1");
     CHECK(port > 0);
@@ -281,12 +292,31 @@ void testWebFlow()
     CHECK(grant.has_value());
     CHECK(grant->quotaBytes == options.defaultQuotaBytes);
 
-    // Afterwards the page states the account and hands over the descriptor.
+    // Afterwards the page states the account and hands over the descriptor, with
+    // what the messaging server holds for it.
     const http::ClientResponse done = call(port, "GET", "/", {{"Cookie", "session=" + cookie}});
     CHECK(done.status == 200);
     CHECK(done.body.find("registered") != std::string::npos);
     CHECK(done.body.find(options.serverDescriptor) != std::string::npos);
     CHECK(done.body.find(StubCaptcha::kBody) == std::string::npos);
+    CHECK(done.body.find("1.0 KiB of 20 MiB") != std::string::npos);
+    CHECK(done.body.find("<span>Devices</span>2") != std::string::npos);
+
+    // An account's owner can end it from the browser: one page to confirm, one
+    // post to do it.
+    {
+        const http::ClientResponse asked
+            = postForm(port, "/delete", "", "session=" + cookie);
+        CHECK(asked.status == 200);
+        CHECK(asked.body.find("This cannot be undone") != std::string::npos);
+        CHECK(grants.peekSubscription(identity.fingerprint()).has_value());
+
+        const http::ClientResponse done
+            = postForm(port, "/delete", "confirm=yes", "session=" + cookie);
+        CHECK(done.status == 303);
+        CHECK(deleted == identity.fingerprint());
+        CHECK(!grants.peekSubscription(identity.fingerprint()).has_value());
+    }
 
     // A banned key is told so and gets nothing else: no captcha, no terms.
     {

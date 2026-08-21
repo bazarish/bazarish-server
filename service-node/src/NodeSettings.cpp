@@ -1,9 +1,10 @@
 // Bazarish project (c) 2026
 #include "NodeSettings.hpp"
 
+#include <bazarish/ConfigFile.hpp>
+
 #include <nlohmann/json.hpp>
 
-#include <fstream>
 #include <stdexcept>
 #include <utility>
 
@@ -13,31 +14,13 @@ namespace {
 
 namespace fs = std::filesystem;
 
-// How the config file spells the knobs, so a hand-edited file and a panel-edited
-// one are the same file.
+// How the config file spells the knobs, so a hand-edited file and a
+// panel-edited one are the same file.
 const char* const kRegistrationKey = "registration";
 const char* const kRequireApprovalKey = "requireApproval";
 const char* const kMessageKey = "message";
-const char* const kQuotaKey = "freeStorageBytes";
 const char* const kTtlDaysKey = "ttlDays";
-
-// The written file replaces the old one only once it is whole, so a crash
-// mid-write cannot leave a node without a config.
-void writeFileAtomic(const fs::path& path, const std::string& text)
-{
-    const fs::path temporary = path.string() + ".tmp";
-    {
-        std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
-        if (!out) {
-            throw std::runtime_error("cannot write " + temporary.string());
-        }
-        out << text;
-        if (!out) {
-            throw std::runtime_error("cannot write " + temporary.string());
-        }
-    }
-    fs::rename(temporary, path);
-}
+const char* const kQuotaKey = "freeStorageBytes";
 
 }  // namespace
 
@@ -65,21 +48,22 @@ void NodeSettings::persist(const Values& values) const
     if (configPath_.empty()) {
         throw std::runtime_error("this node was started without a config file to write to");
     }
-    // Patch the file rather than rewrite it: everything else in there is the
-    // operator's, and a setting the panel does not know about must survive.
-    nlohmann::json document = nlohmann::json::object();
-    if (fs::exists(configPath_)) {
-        std::ifstream in(configPath_);
-        if (!in) {
-            throw std::runtime_error("cannot read " + configPath_.string());
-        }
-        document = nlohmann::json::parse(in);
+    // One value at a time, patched into the file's own text: the rest of it -
+    // the operator's key order, their spacing, their comments, and settings this
+    // node has never heard of - comes back untouched.
+    ConfigFile file(configPath_);
+    if (values.requireApproval != values_.requireApproval) {
+        file.set({kRegistrationKey, kRequireApprovalKey}, values.requireApproval);
     }
-    document[kRegistrationKey][kRequireApprovalKey] = values.requireApproval;
-    document[kRegistrationKey][kMessageKey] = values.registrationMessage;
-    document[kRegistrationKey][kTtlDaysKey] = values.registrationTtlDays;
-    document[kQuotaKey] = values.defaultQuotaBytes;
-    writeFileAtomic(configPath_, document.dump(2) + "\n");
+    if (values.registrationMessage != values_.registrationMessage) {
+        file.set({kRegistrationKey, kMessageKey}, values.registrationMessage);
+    }
+    if (values.registrationTtlDays != values_.registrationTtlDays) {
+        file.set({kRegistrationKey, kTtlDaysKey}, values.registrationTtlDays);
+    }
+    if (values.defaultQuotaBytes != values_.defaultQuotaBytes) {
+        file.set({kQuotaKey}, values.defaultQuotaBytes);
+    }
 }
 
 }  // namespace bazarish::service

@@ -68,6 +68,43 @@ OperatorPush::OperatorPush(std::string baseUrl, const Identity& signer, std::str
 {
 }
 
+std::optional<OperatorPush::AccountUsage> OperatorPush::accountUsage(
+    const std::string& user) const
+{
+    if (baseUrl_.empty()) {
+        return std::nullopt;  // not configured
+    }
+    const std::string path = "/v1/messaging/account";
+    const HostPort hostPort = parseUrl(baseUrl_);
+    const auth::Headers signature = auth::signRequest(
+        signer_, static_cast<std::int64_t>(std::time(nullptr)), "GET", path, Bytes());
+    bazarish::http::ClientRequest ask;
+    ask.method = "GET";
+    ask.target = path + "?user=" + user;
+    ask.headers = std::map<std::string, std::string>(signature.begin(), signature.end());
+    bazarish::http::ClientOptions options;
+    options.connectTimeout = std::chrono::seconds(kConnectTimeoutSeconds);
+    options.readTimeout = std::chrono::seconds(kReadTimeoutSeconds);
+    const bazarish::http::ClientResponse response
+        = bazarish::http::request(hostPort.host, hostPort.port, ask, options);
+    if (response.status != 200) {
+        bazarish::log::warn("mailbox usage unavailable (HTTP {}): {}", response.status,
+            response.error.empty() ? response.body : response.error);
+        return std::nullopt;
+    }
+    try {
+        const nlohmann::json body = nlohmann::json::parse(response.body);
+        AccountUsage usage;
+        usage.usedBytes = body.at("usedBytes").get<std::uint64_t>();
+        usage.quotaBytes = body.at("quotaBytes").get<std::uint64_t>();
+        usage.devices = body.at("devices").get<std::size_t>();
+        return usage;
+    } catch (const std::exception& error) {
+        bazarish::log::warn("mailbox usage unreadable: {}", error.what());
+        return std::nullopt;
+    }
+}
+
 bool OperatorPush::put(const std::string& path, const std::string& bodyText) const
 {
     if (baseUrl_.empty()) {

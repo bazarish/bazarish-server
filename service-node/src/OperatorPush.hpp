@@ -2,6 +2,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 namespace bazarish {
@@ -28,6 +29,17 @@ public:
     // failure).
     bool publish(const std::string& user, const std::string& transientB64,
         std::int64_t expiresUnix) const;
+    // What the messaging server holds for a user: the mailbox as it stands and
+    // how many devices are collecting it. The node has neither number - it owns
+    // the account, the messaging server owns the mail. Nullopt when the server
+    // is not configured or did not answer.
+    struct AccountUsage {
+        std::uint64_t usedBytes = 0;
+        std::uint64_t quotaBytes = 0;
+        std::size_t devices = 0;
+    };
+    std::optional<AccountUsage> accountUsage(const std::string& user) const;
+
     // Sets the user's mailbox quota to what their subscription granted, so the
     // messaging server stops falling back to its own default and the two numbers
     // cannot drift apart.

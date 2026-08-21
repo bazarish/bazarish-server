@@ -270,6 +270,19 @@ textarea.field {
     color: var(--bz-ink-dim);
 }
 
+/* What cannot be undone does not look like what can. */
+.btn-danger {
+    background: transparent;
+    border-color: var(--bz-err-line);
+    color: var(--bz-err);
+}
+
+.btn-danger:hover {
+    background: var(--bz-err-bg);
+    border-color: var(--bz-err);
+    color: var(--bz-err);
+}
+
 .btn-quiet:hover {
     background: transparent;
     border-color: var(--bz-ink-faint);

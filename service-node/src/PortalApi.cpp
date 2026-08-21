@@ -363,6 +363,38 @@ void PortalApi::setupWebRoutes()
         redirectTo(response, "/");
     }));
 
+    // An account's owner can end it from a browser: the same teardown the client
+    // does on unsubscribe. Two steps, because the page has no script to ask
+    // "are you sure" with.
+    http_->post("/delete", filled([this, sessionUser](
+                               const http::Request& request, http::Response& response) {
+        const std::string user = sessionUser(request);
+        if (user.empty()) {
+            redirectTo(response, "/");
+            return;
+        }
+        if (request.param("confirm") != "yes") {
+            sendHtml(response,
+                assets_.render("page.html",
+                    {
+                        {"title", "Delete"},
+                        {"server", htmlEscape(options_.audience)},
+                        {"session", assets_.render("session.html",
+                                        {{"fingerprint", htmlEscape(user)}})},
+                        {"content", assets_.render("confirm-delete.html",
+                                        accountValues(user, grants_.peekSubscription(user)))},
+                    }));
+            return;
+        }
+        if (!options_.deleteAccount) {
+            sendHtml(response, homePage(user, "This portal cannot delete accounts."), 503);
+            return;
+        }
+        options_.deleteAccount(user);
+        response.headers["Set-Cookie"] = "session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0";
+        redirectTo(response, "/");
+    }));
+
     // Reading the captcha is the registration: there is no further step, and no
     // account area to move on to.
     http_->post("/register", filled([this, sessionUser](
@@ -386,6 +418,39 @@ void PortalApi::setupWebRoutes()
             options_.freeSubscriptionTermSeconds, nowSeconds());
         redirectTo(response, "/");
     }));
+}
+
+std::map<std::string, std::string> PortalApi::accountValues(
+    const std::string& user, const std::optional<GrantStore::SubscriptionGrant>& subscription)
+{
+    const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
+    const NodeSettings::Values values = settings();
+    const std::uint64_t granted
+        = subscription.has_value() ? subscription->quotaBytes : values.defaultQuotaBytes;
+    // The operator's own words for this account when they wrote any, the
+    // node-wide message otherwise.
+    const std::string note = approval.has_value() && !approval->message.empty()
+        ? approval->message
+        : values.registrationMessage;
+
+    std::string mailbox = "not known";
+    std::string devices = "not known";
+    if (options_.accountUsage) {
+        if (const std::optional<PortalApiOptions::Usage> usage = options_.accountUsage(user);
+            usage.has_value()) {
+            mailbox = bytesHuman(usage->usedBytes) + " of " + bytesHuman(usage->quotaBytes);
+            devices = std::to_string(usage->devices);
+        }
+    }
+
+    return {
+        {"quota", htmlEscape(bytesHuman(granted))},
+        {"term", std::to_string(options_.freeSubscriptionTermSeconds / kSecondsPerDay) + " days"},
+        {"descriptor", htmlEscape(options_.serverDescriptor)},
+        {"message", notice(note, "is-waiting")},
+        {"mailbox", htmlEscape(mailbox)},
+        {"devices", htmlEscape(devices)},
+    };
 }
 
 std::string PortalApi::homePage(const std::string& user, const std::string& error)
@@ -423,19 +488,8 @@ std::string PortalApi::homePage(const std::string& user, const std::string& erro
 
     const std::optional<GrantStore::SubscriptionGrant> subscription = grants_.peekSubscription(user);
     const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
-    const std::string operatorNote = notice(settings().registrationMessage, "is-waiting");
 
-    // What the account is worth saying about, wherever it stands: a user waiting
-    // for an operator needs the terms and the descriptor as much as one already
-    // served.
-    const std::uint64_t quota
-        = subscription.has_value() ? subscription->quotaBytes : settings().defaultQuotaBytes;
-    const std::map<std::string, std::string> account = {
-        {"quota", htmlEscape(bytesHuman(quota))},
-        {"term", std::to_string(options_.freeSubscriptionTermSeconds / kSecondsPerDay) + " days"},
-        {"descriptor", htmlEscape(options_.serverDescriptor)},
-        {"message", operatorNote},
-    };
+    const std::map<std::string, std::string> account = accountValues(user, subscription);
 
     std::string title;
     std::string content;

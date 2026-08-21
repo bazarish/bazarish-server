@@ -10,10 +10,13 @@
 #include <bazarish/PortalSession.hpp>
 
 #include <condition_variable>
+#include <functional>
+#include <optional>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <map>
 #include <string>
 
 namespace bazarish::http {
@@ -55,6 +58,20 @@ struct PortalApiOptions {
     // The live knobs, shared with the account API. When null (tests), the values
     // above are taken as the settings.
     std::shared_ptr<NodeSettings> settings;
+
+    // What the messaging server holds for an account - the mailbox and the
+    // devices collecting it - which the node does not know. Empty (or an empty
+    // answer) leaves the page saying so rather than inventing a number.
+    struct Usage {
+        std::uint64_t usedBytes = 0;
+        std::uint64_t quotaBytes = 0;
+        std::size_t devices = 0;
+    };
+    std::function<std::optional<Usage>(const std::string& user)> accountUsage;
+
+    // Tears an account down at its owner's request: the same end as unsubscribing
+    // from a client, reachable by someone who only has a browser.
+    std::function<void(const std::string& user)> deleteAccount;
 };
 
 // The service node's web portal (browser-facing). It exposes two faces on one
@@ -85,6 +102,9 @@ private:
     // The portal's one page, in whatever state the visitor is in. `error` is
     // shown on the step the visitor is standing on, empty when there is none.
     std::string homePage(const std::string& user, const std::string& error);
+    // The values an account page fills in, whatever state the account is in.
+    std::map<std::string, std::string> accountValues(const std::string& user,
+        const std::optional<GrantStore::SubscriptionGrant>& subscription);
 
     // What the operator has set, live.
     NodeSettings::Values settings() const { return settings_->get(); }

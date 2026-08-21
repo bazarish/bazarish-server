@@ -7,8 +7,18 @@
     <ul class="facts">
       <li><span>Storage</span>{{quota}}</li>
       <li><span>Term</span>{{term}}, renewed by your client</li>
+      <li><span>Mailbox</span>{{mailbox}}</li>
+      <li><span>Devices</span>{{devices}}</li>
     </ul>
     <p class="field-label">Server descriptor</p>
     <pre class="copy">{{descriptor}}</pre>
     <p class="panel-note">Paste it into your client to connect it here.</p>
+  </section>
+  <section class="panel">
+    <h2 class="panel-title">delete this account</h2>
+    <p class="panel-note">Everything this server holds for your key goes: the certificate, the
+      mailbox and the address. Your key is yours and can register again.</p>
+    <form method="post" action="/delete">
+      <button class="btn btn-danger" type="submit">Delete my account</button>
+    </form>
   </section>

@@ -358,6 +358,25 @@ int main(const int argc, const char** argv)
         portalOptions.registrationMessage = nodeConfig.registration.message;
         portalOptions.assetsDirectory = portalAssets;
         portalOptions.settings = settings;
+        // The mailbox and the devices belong to the messaging server; the portal
+        // asks it, signed as this node.
+        portalOptions.accountUsage = [&operatorPush](const std::string& user)
+            -> std::optional<bazarish::service::PortalApiOptions::Usage> {
+            const std::optional<bazarish::service::OperatorPush::AccountUsage> usage
+                = operatorPush.accountUsage(user);
+            if (!usage.has_value()) {
+                return std::nullopt;
+            }
+            return bazarish::service::PortalApiOptions::Usage{
+                usage->usedBytes, usage->quotaBytes, usage->devices};
+        };
+        // A user ending their own account: the same teardown unsubscribing does.
+        portalOptions.deleteAccount = [&store, &grants, &operatorPush](const std::string& user) {
+            store.deleteSubscription(user);
+            operatorPush.publish(user, std::string(), 0);
+            grants.erase(user);
+            bazarish::log::info("account deleted by its owner: {}", bazarish::log::redact(user));
+        };
         try {
             portal = std::make_unique<bazarish::service::PortalApi>(portalOptions, *captcha, grants);
         } catch (const std::exception& error) {

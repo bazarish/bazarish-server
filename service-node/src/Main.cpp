@@ -39,7 +39,8 @@ void printUsage()
     std::printf(
         "bazarish-service-node %s\n"
         "Usage: bazarish-service-node --state <dir> --server-card <path>\n"
-        "         [--listen <host> <port>] [--portal-listen <host> <port>]\n"
+        "         [--listen <host> <port>]\n"
+        "         [--portal-listen <host> <port> --portal-assets <dir>]\n"
         "         [--config <path>]\n"
         "         [--messaging <host> <port>]\n"
         "         [--operator-fingerprint <fp>]... [--log-level <error|warn|info|debug>]\n"
@@ -49,6 +50,8 @@ void printUsage()
         "The server card (produced by bazarish-server --i2p) binds this\n"
         "service node to its messaging server and is returned to clients on\n"
         "subscribe.\n"
+        "--portal-assets is the directory holding the portal's web files (page\n"
+        "shell, stylesheet, logo, fonts); edit them there to restyle the portal.\n"
         "--fingerprint prints this node's operator fingerprint (creating its\n"
         "identity if needed) and exits, so the messaging server can be started\n"
         "with --operator-fingerprint before this node runs.\n",
@@ -202,6 +205,7 @@ int main(const int argc, const char** argv)
     int port = kDefaultPort;
     std::string portalHost;
     int portalPort = 0;
+    fs::path portalAssets;
     fs::path configPath;
     std::string messagingHost;
     int messagingPort = 0;
@@ -217,6 +221,9 @@ int main(const int argc, const char** argv)
             portalHost = argv[i + 1];
             portalPort = std::atoi(argv[i + 2]);
             i += 3;
+        } else if (flag == "--portal-assets" && i + 1 < argc) {
+            portalAssets = argv[i + 1];
+            i += 2;
         } else if (flag == "--config" && i + 1 < argc) {
             configPath = argv[i + 1];
             i += 2;
@@ -319,6 +326,11 @@ int main(const int argc, const char** argv)
     static std::unique_ptr<bazarish::service::PortalApi> portal;
     static std::thread portalThread;
     if (portalPort > 0) {
+        if (portalAssets.empty()) {
+            bazarish::log::error("--portal-listen needs --portal-assets: the portal serves its "
+                                 "pages from files, not from the binary");
+            return 2;
+        }
         captcha = std::make_unique<bazarish::service::SelfHostedCaptcha>(
             bazarish::toHex(bazarish::randomBytes(16)), nodeConfig.portal.captchaLength,
             nodeConfig.portal.captchaTtlSeconds);
@@ -334,7 +346,13 @@ int main(const int argc, const char** argv)
         portalOptions.defaultQuotaBytes = options.defaultQuotaBytes;
         portalOptions.freeSubscriptionTermSeconds = options.maxTermSeconds;
         portalOptions.registrationMessage = nodeConfig.registration.message;
-        portal = std::make_unique<bazarish::service::PortalApi>(portalOptions, *captcha, grants);
+        portalOptions.assetsDirectory = portalAssets;
+        try {
+            portal = std::make_unique<bazarish::service::PortalApi>(portalOptions, *captcha, grants);
+        } catch (const std::exception& error) {
+            bazarish::log::error("portal not started: {}", error.what());
+            return 2;
+        }
         portalThread = std::thread(
             [portalHost, portalPort]() { portal->listen(portalHost, portalPort); });
         portalThread.detach();

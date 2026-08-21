@@ -1,5 +1,6 @@
 // Bazarish project (c) 2026
 #include "AccountApi.hpp"
+#include "PortalApi.hpp"
 #include <bazarish/Portal.hpp>
 #include "SubscriptionStore.hpp"
 
@@ -9,11 +10,13 @@
 #include <bazarish/HttpClient.hpp>
 #include <nlohmann/json.hpp>
 
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <map>
 #include <thread>
@@ -136,12 +139,161 @@ void testPortalDiscovery()
     fs::remove_all(root);
 }
 
+
+// A captcha the test can answer: what is under test here is the portal's flow,
+// not the drawing.
+class StubCaptcha : public Captcha {
+public:
+    static constexpr const char* kId = "stub-captcha-id";
+    static constexpr const char* kAnswer = "42";
+    static constexpr const char* kBody = "<svg id=\"stub-captcha\"></svg>";
+
+    std::string name() const override { return "stub"; }
+
+    CaptchaChallenge issue(std::int64_t) override
+    {
+        return CaptchaChallenge{kId, "image/svg+xml", kBody};
+    }
+
+    bool verify(const std::string& id, const std::string& answer, std::int64_t) override
+    {
+        return id == kId && answer == kAnswer;
+    }
+};
+
+std::string urlEncoded(const std::string& text)
+{
+    static const char* const kHexDigits = "0123456789ABCDEF";
+    std::string out;
+    for (const unsigned char c : text) {
+        if (std::isalnum(c) != 0 || c == '-' || c == '_' || c == '.' || c == '~') {
+            out.push_back(static_cast<char>(c));
+        } else {
+            out.push_back('%');
+            out.push_back(kHexDigits[c >> 4]);
+            out.push_back(kHexDigits[c & 0x0F]);
+        }
+    }
+    return out;
+}
+
+// One form post, as a browser sends it.
+http::ClientResponse postForm(const int port, const std::string& path, const std::string& body,
+    const std::string& cookie = {})
+{
+    http::ClientRequest request;
+    request.method = "POST";
+    request.target = path;
+    request.body = body;
+    request.contentType = "application/x-www-form-urlencoded";
+    if (!cookie.empty()) {
+        request.headers["Cookie"] = cookie;
+    }
+    return http::request("127.0.0.1", port, request, {});
+}
+
+std::string between(const std::string& text, const std::string& open, const std::string& close)
+{
+    const auto start = text.find(open);
+    CHECK(start != std::string::npos);
+    const auto from = start + open.size();
+    const auto end = text.find(close, from);
+    CHECK(end != std::string::npos);
+    return text.substr(from, end - from);
+}
+
+// The whole portal: prove a key, read a captcha, and that is the account. There
+// is no third step and no account area behind it.
+void testWebFlow()
+{
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / ("bazarish-portal-web-" + toHex(randomBytes(8)));
+    GrantStore grants(root);
+    StubCaptcha captcha;
+
+    const Identity identity = Identity::generate();
+    PortalApiOptions options;
+    options.audience = "service-node-fingerprint";
+    options.serverDescriptor = "bazarish-descriptor-for-the-test";
+    options.challengeSecret = toHex(randomBytes(16));
+    options.sessionSecret = toHex(randomBytes(16));
+    options.assetsDirectory = BAZARISH_PORTAL_ASSETS_DIR;
+    options.requireCaptcha = true;
+
+    PortalApi portal(options, captcha, grants);
+    const int port = portal.bindToAnyPort("127.0.0.1");
+    CHECK(port > 0);
+    std::thread portalThread([&portal]() { (void)portal.listenAfterBind(); });
+
+    http::ClientResponse page;
+    for (int attempt = 0; attempt < 200; ++attempt) {
+        page = call(port, "GET", "/");
+        if (page.status != 0) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    CHECK(page.status == 200);
+    // Signed out: the key step is the live one, and no captcha is given away.
+    CHECK(page.body.find("sign in with your key") != std::string::npos);
+    CHECK(page.body.find(StubCaptcha::kBody) == std::string::npos);
+
+    // The portal's own files are served beside the page.
+    const http::ClientResponse style = call(port, "GET", "/style.css");
+    CHECK(style.status == 200);
+    CHECK(style.contentType.find("text/css") != std::string::npos);
+    CHECK(call(port, "GET", "/../CMakeLists.txt").status == 404);
+
+    const std::string challenge = between(page.body, "<pre class=\"copy\">", "</pre>");
+    const std::string blob = signLoginBlob(identity, now(), challenge);
+    const http::ClientResponse signedIn = postForm(port, "/login",
+        "challenge=" + urlEncoded(challenge) + "&blob=" + urlEncoded(blob));
+    CHECK(signedIn.status == 303);
+    const std::string cookie = between(signedIn.headers.at("set-cookie") + ";", "session=", ";");
+    CHECK(!cookie.empty());
+
+    // Signed in and unregistered: the captcha is the page.
+    const http::ClientResponse asked = call(port, "GET", "/", {{"Cookie", "session=" + cookie}});
+    CHECK(asked.status == 200);
+    CHECK(asked.body.find(StubCaptcha::kBody) != std::string::npos);
+    CHECK(asked.body.find(identity.fingerprint()) != std::string::npos);
+
+    // A wrong code registers nobody.
+    const http::ClientResponse refused = postForm(port, "/register",
+        std::string("captchaId=") + StubCaptcha::kId + "&captchaAnswer=nope",
+        "session=" + cookie);
+    CHECK(refused.status == 403);
+    CHECK(!grants.peekSubscription(identity.fingerprint()).has_value());
+
+    // The right code is the registration itself.
+    const http::ClientResponse registered = postForm(port, "/register",
+        std::string("captchaId=") + StubCaptcha::kId + "&captchaAnswer=" + StubCaptcha::kAnswer,
+        "session=" + cookie);
+    CHECK(registered.status == 303);
+    const std::optional<GrantStore::SubscriptionGrant> grant
+        = grants.peekSubscription(identity.fingerprint());
+    CHECK(grant.has_value());
+    CHECK(grant->quotaBytes == options.defaultQuotaBytes);
+
+    // Afterwards the page states the account and hands over the descriptor.
+    const http::ClientResponse done = call(port, "GET", "/", {{"Cookie", "session=" + cookie}});
+    CHECK(done.status == 200);
+    CHECK(done.body.find("registered") != std::string::npos);
+    CHECK(done.body.find(options.serverDescriptor) != std::string::npos);
+    CHECK(done.body.find(StubCaptcha::kBody) == std::string::npos);
+
+    portal.stop();
+    portalThread.join();
+    fs::remove_all(root);
+}
+
 }  // namespace
 
 int main()
 {
     testLoginVerification();
     testPortalDiscovery();
+    testWebFlow();
     std::printf("TestPortal: all checks passed\n");
     return 0;
 }

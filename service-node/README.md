@@ -35,8 +35,16 @@ ctest --test-dir build
 
 ```
 bazarish-service-node --state <dir> --server-card <path> [--listen <host> <port>]
+                      [--portal-listen <host> <port> --portal-assets <dir>]
 ```
 
 The server card is produced by the messaging server and binds this node to it.
 The service node sits behind a [facade](https://github.com/bazarish/facade-http),
 which routes `/v1/account/*` to it.
+
+`--portal-listen` opens the browser-facing portal: one JS-free page where a user
+proves their key and reads a captcha, which is the whole registration.
+`--portal-assets` points at the portal's web files (`portal/` in this
+repository: page shell, stylesheet, logo, fonts) - edit them to restyle the
+portal without rebuilding. They are read once and served from memory, so a
+change takes effect on restart.

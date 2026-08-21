@@ -1,0 +1,368 @@
+/* The Bazarish service portal.
+   Everything the portal looks like is in this file - edit it to make the page
+   yours; the server reads it once at start, so restart the node to apply.
+   Colours and type follow the Bazarish brand kit (CC0). */
+
+@font-face {
+    font-family: "Roboto Mono";
+    src: url("RobotoMono-Regular.woff2") format("woff2");
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+@font-face {
+    font-family: "Roboto Mono";
+    src: url("RobotoMono-Bold.woff2") format("woff2");
+    font-weight: 700;
+    font-style: normal;
+    font-display: swap;
+}
+
+:root {
+    color-scheme: dark;
+
+    --bz-bg: #16191c;
+    --bz-deep: #0d0f11;
+    --bz-line: #262b2f;
+    --bz-line-2: #333a40;
+
+    --bz-ink: #d7dbd8;
+    --bz-ink-dim: #8b948c;
+    --bz-ink-faint: #5e676a;
+
+    --bz-green-dim: #1f7a14;
+    --bz-green: #39ff14;
+
+    --bz-accent: #f2f4f2;
+    --bz-on-accent: #11151a;
+
+    --bz-ok-bg: #0f2410;
+    --bz-warn: #ffb454;
+    --bz-warn-bg: #2a1e0a;
+    --bz-warn-line: #6b4e16;
+    --bz-err: #ff5b54;
+    --bz-err-bg: #2a1112;
+    --bz-err-line: #7a2b2b;
+
+    --bz-radius: 10px;
+    --bz-radius-sm: 6px;
+    --bz-font: "Roboto Mono", ui-monospace, "DejaVu Sans Mono", SFMono-Regular, Menlo, monospace;
+}
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    padding: clamp(1.5rem, 6vw, 4rem) 1rem;
+    background: var(--bz-bg);
+    color: var(--bz-ink);
+    font: 400 16px/1.6 var(--bz-font);
+}
+
+.screen {
+    width: 100%;
+    max-width: 38rem;
+}
+
+/* --- masthead --- */
+
+.masthead {
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid var(--bz-line);
+}
+
+.wordmark {
+    display: block;
+    height: 2rem;
+    width: auto;
+}
+
+.masthead-note {
+    margin: 0.75rem 0 0;
+    color: var(--bz-ink-dim);
+    font-size: 0.8rem;
+    letter-spacing: 0.04em;
+    /* Fingerprints are one long word and must not push the page sideways. */
+    overflow-wrap: anywhere;
+}
+
+/* --- steps: the page is the state of one short flow --- */
+
+.step {
+    padding: 1.75rem 0;
+    border-bottom: 1px solid var(--bz-line);
+}
+
+.step:last-of-type {
+    border-bottom: 0;
+}
+
+.step-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--bz-green-dim);
+}
+
+/* The brand's slash marks the step; it goes neon on the one you are on. */
+.step-title::before {
+    content: "/";
+    color: var(--bz-green-dim);
+}
+
+.step-note {
+    margin: 0.6rem 0 0;
+    color: var(--bz-ink-dim);
+    font-size: 0.85rem;
+    overflow-wrap: anywhere;
+}
+
+.step.is-active .step-title::before {
+    color: var(--bz-green);
+}
+
+.step.is-active .step-title::after {
+    content: "";
+    width: 0.5rem;
+    height: 0.85em;
+    background: var(--bz-green);
+    animation: bz-blink 1.05s steps(1) infinite;
+}
+
+@keyframes bz-blink {
+    50% {
+        opacity: 0;
+    }
+}
+
+.step.is-done .step-title,
+.step.is-done .step-title::before,
+.step.is-waiting .step-title,
+.step.is-waiting .step-title::before {
+    color: var(--bz-ink-faint);
+}
+
+.step.is-waiting .step-note {
+    color: var(--bz-ink-faint);
+}
+
+/* The end of the flow: done, and worth saying so. */
+.step.is-ready .step-title,
+.step.is-ready .step-title::before {
+    color: var(--bz-green-dim);
+}
+
+/* --- fields --- */
+
+.field-label {
+    display: block;
+    margin: 1.25rem 0 0.4rem;
+    font-size: 0.7rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--bz-ink-faint);
+}
+
+.field {
+    width: 100%;
+    padding: 0.7rem 0.8rem;
+    background: var(--bz-deep);
+    color: var(--bz-ink);
+    border: 1px solid var(--bz-line-2);
+    border-radius: var(--bz-radius-sm);
+    font: inherit;
+    font-size: 0.8rem;
+}
+
+textarea.field {
+    min-height: 6.5rem;
+    resize: vertical;
+    word-break: break-all;
+}
+
+.field:focus-visible,
+.btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--bz-bg), 0 0 0 4px var(--bz-green);
+}
+
+/* A block meant to be taken away: one click selects all of it. */
+.copy {
+    margin: 0;
+    padding: 0.75rem 0.9rem;
+    background: var(--bz-deep);
+    border: 1px solid var(--bz-line);
+    border-radius: var(--bz-radius-sm);
+    color: var(--bz-ink);
+    font-size: 0.75rem;
+    line-height: 1.7;
+    white-space: pre-wrap;
+    word-break: break-all;
+    user-select: all;
+}
+
+.hint {
+    margin: 0.4rem 0 0;
+    color: var(--bz-ink-faint);
+    font-size: 0.72rem;
+}
+
+/* --- the captcha: the one bright thing on the page --- */
+
+.captcha {
+    display: block;
+    width: fit-content;
+    max-width: 100%;
+    margin-top: 1.25rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--bz-deep);
+    border: 1px solid var(--bz-line-2);
+    border-radius: var(--bz-radius);
+    color: var(--bz-green);
+}
+
+.captcha svg {
+    display: block;
+    width: 19rem;
+    max-width: 100%;
+    height: auto;
+    filter: drop-shadow(0 0 6px rgba(57, 255, 20, 0.35));
+}
+
+.captcha-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 1rem;
+}
+
+.captcha-answer {
+    flex: 0 1 11rem;
+    text-align: center;
+    text-transform: uppercase;
+    letter-spacing: 0.3em;
+    font-size: 1rem;
+}
+
+.captcha-row .btn {
+    margin: 0;
+}
+
+/* --- buttons --- */
+
+.btn {
+    margin-top: 1.25rem;
+    padding: 0.65rem 1.2rem;
+    background: var(--bz-accent);
+    color: var(--bz-on-accent);
+    border: 1px solid var(--bz-accent);
+    border-radius: var(--bz-radius-sm);
+    font: inherit;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    cursor: pointer;
+}
+
+.btn:hover {
+    background: #ffffff;
+    border-color: #ffffff;
+}
+
+.btn-quiet {
+    background: transparent;
+    border-color: var(--bz-line-2);
+    color: var(--bz-ink-dim);
+}
+
+.btn-quiet:hover {
+    background: transparent;
+    border-color: var(--bz-ink-faint);
+    color: var(--bz-ink);
+}
+
+/* --- notices --- */
+
+.notice {
+    margin: 1.25rem 0 0;
+    padding: 0.7rem 0.9rem;
+    border: 1px solid var(--bz-green-dim);
+    border-radius: var(--bz-radius-sm);
+    background: var(--bz-ok-bg);
+    color: var(--bz-ink);
+    font-size: 0.85rem;
+}
+
+.notice.is-error {
+    background: var(--bz-err-bg);
+    border-color: var(--bz-err-line);
+    color: var(--bz-err);
+}
+
+.notice.is-waiting {
+    background: var(--bz-warn-bg);
+    border-color: var(--bz-warn-line);
+    color: var(--bz-warn);
+}
+
+/* --- facts: what the account gets --- */
+
+.facts {
+    margin: 1.25rem 0 0;
+    padding: 0;
+    list-style: none;
+    font-size: 0.8rem;
+}
+
+.facts li {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.25rem 1rem;
+    padding: 0.4rem 0;
+    border-bottom: 1px dashed var(--bz-line);
+    color: var(--bz-ink);
+}
+
+.facts li:last-child {
+    border-bottom: 0;
+}
+
+.facts span {
+    color: var(--bz-ink-faint);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    font-size: 0.7rem;
+    align-self: center;
+}
+
+/* --- colophon --- */
+
+.colophon {
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--bz-line);
+    color: var(--bz-ink-faint);
+    font-size: 0.7rem;
+    letter-spacing: 0.05em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .step.is-active .step-title::after {
+        animation: none;
+    }
+}

@@ -2,6 +2,7 @@
 #pragma once
 
 #include "GrantStore.hpp"
+#include "PortalAssets.hpp"
 
 #include <bazarish/Captcha.hpp>
 #include <bazarish/LoginChallenge.hpp>
@@ -9,6 +10,7 @@
 
 #include <condition_variable>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -41,16 +43,19 @@ struct PortalApiOptions {
     // Shown to a user whose account is created frozen on a moderated node: how
     // to reach the operator to finish registration. Empty on an open node.
     std::string registrationMessage;
+    // Where the portal's web files live (page shell, stylesheet, logo, fonts).
+    std::filesystem::path assetsDirectory;
 };
 
 // The service node's web portal (browser-facing). It exposes two faces on one
 // HTTP server, sharing all state:
 //   * a JSON API under /portal/* for programmatic clients (sign-in-with-key
 //     login, captcha, register);
-//   * a server-rendered, JS-free HTML site at / (login, cabinet, register) so a
-//     user can onboard from a plain browser. The private key never enters the
-//     browser: the login page shows a challenge the user signs in their client
-//     and pastes back.
+//   * a server-rendered, JS-free page at / so a user can onboard from a plain
+//     browser. The private key never enters the browser: the page shows a
+//     challenge the user signs in their client and pastes back.
+// There is no account area to visit afterwards: the page is a two-step flow -
+// prove the key, read the captcha - and the second step is the registration.
 class PortalApi {
 public:
     PortalApi(PortalApiOptions options, Captcha& captcha, GrantStore& grants);
@@ -65,10 +70,14 @@ private:
     // Binds on a chosen port (0 lets the kernel pick) and starts serving.
     int bindToAnyPort(const std::string& host, int port);
     void setupRoutes();
-    // Registers the browser-facing HTML routes on the same server.
+    // Registers the browser-facing routes (the page and its files).
     void setupWebRoutes();
+    // The portal's one page, in whatever state the visitor is in. `error` is
+    // shown on the step the visitor is standing on, empty when there is none.
+    std::string homePage(const std::string& user, const std::string& error);
 
     PortalApiOptions options_;
+    PortalAssets assets_;
     Captcha& captcha_;
     GrantStore& grants_;
     LoginChallenge login_;

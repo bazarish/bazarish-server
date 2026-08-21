@@ -24,6 +24,7 @@ add_library(bazarish_service_lib STATIC
     src/SubscriptionStore.cpp
     src/AccountApi.cpp
     src/PortalApi.cpp
+    src/PortalAssets.cpp
     src/GrantStore.cpp
     src/OperatorPush.cpp
 )
@@ -45,6 +46,9 @@ function(bazarish_service_add_test name)
     add_executable(${name} tests/${name}.cpp)
     target_link_libraries(${name} PRIVATE bazarish_service_lib)
     target_compile_options(${name} PRIVATE -Wall -Wextra -Werror)
+    # The portal's web files, for the tests that render a page.
+    target_compile_definitions(${name} PRIVATE
+        BAZARISH_PORTAL_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/portal")
     add_test(NAME ${name} COMMAND ${name})
 endfunction()
 

@@ -88,46 +88,61 @@ std::string htmlEscape(const std::string& s)
     return out;
 }
 
-// Wraps page body in the shared document shell. All styling is inline so the
-// portal pulls in no third-party resource (no CDN font/script to phone home).
-std::string htmlPage(const std::string& title, const std::string& body)
+// One step of the flow as markup. Which state a step is in is the whole page:
+// a visitor is either proving a key or reading a captcha, never both.
+enum class StepState { eActive, eDone, eReady, eWaiting };
+
+std::string stepClass(const StepState state)
 {
-    return "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">"
-           "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-           "<title>"
-        + htmlEscape(title)
-        + " — Bazarish</title><style>"
-          ":root{color-scheme:dark}"
-          "*{box-sizing:border-box}"
-          "body{margin:0;min-height:100vh;display:flex;justify-content:center;"
-          "align-items:flex-start;background:#14161a;color:#e6e8eb;"
-          "font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}"
-          "main{width:100%;max-width:34rem;margin:2.5rem 1rem;padding:1.75rem;"
-          "background:#1c1f24;border:1px solid #2a2f37;border-radius:14px}"
-          "h1{font-size:1.25rem;margin:0 0 1.25rem}h2{font-size:1.05rem;margin:1.5rem 0 .5rem}"
-          "a{color:#7cc0ff}label{display:block;margin:.75rem 0 .25rem;font-size:.9rem;color:#aeb4bd}"
-          "input,textarea{width:100%;padding:.6rem;background:#0f1115;color:#e6e8eb;"
-          "border:1px solid #333a44;border-radius:8px;font:inherit}"
-          "textarea{resize:vertical}"
-          "button{margin-top:1rem;padding:.6rem 1.1rem;background:#2f6feb;color:#fff;border:0;"
-          "border-radius:8px;font:inherit;cursor:pointer}button:hover{background:#3b7df0}"
-          "pre{background:#0f1115;border:1px solid #2a2f37;border-radius:8px;padding:.75rem;"
-          "overflow-x:auto;font-size:.85rem;white-space:pre-wrap;word-break:break-all}"
-          "code{font-size:.85rem;word-break:break-all}"
-          ".flash{background:#16331f;border:1px solid #2c6b3f;color:#bfe9cd;padding:.6rem .8rem;"
-          "border-radius:8px}.err{background:#3a1b1f;border:1px solid #7a2b34;color:#f3c2c8;"
-          "padding:.6rem .8rem;border-radius:8px}"
-          ".svc{border:1px solid #2a2f37;border-radius:10px;padding:.75rem 1rem;margin:.6rem 0}"
-          ".svc form{display:inline}.muted{color:#8b929c;font-size:.85rem}"
-          ".captcha{margin:.5rem 0;background:#fff;display:inline-block;border-radius:8px;padding:.25rem}"
-          "</style></head><body><main><h1>Bazarish portal</h1>"
-        + body + "</main></body></html>";
+    switch (state) {
+    case StepState::eActive:
+        return "is-active";
+    case StepState::eDone:
+        return "is-done";
+    case StepState::eReady:
+        return "is-ready";
+    case StepState::eWaiting:
+        return "is-waiting";
+    }
+    throw std::logic_error("unhandled step state");
+}
+
+std::string step(const StepState state, const std::string& title, const std::string& body)
+{
+    return "<section class=\"step " + stepClass(state) + "\"><h2 class=\"step-title\">"
+        + htmlEscape(title) + "</h2>" + body + "</section>";
+}
+
+std::string note(const std::string& text)
+{
+    return "<p class=\"step-note\">" + htmlEscape(text) + "</p>";
+}
+
+std::string hint(const std::string& text)
+{
+    return "<p class=\"hint\">" + htmlEscape(text) + "</p>";
+}
+
+std::string notice(const std::string& text, const std::string& kind)
+{
+    if (text.empty()) {
+        return {};
+    }
+    return "<p class=\"notice " + kind + "\">" + htmlEscape(text) + "</p>";
+}
+
+std::string label(const std::string& text, const std::string& forId)
+{
+    return "<label class=\"field-label\" for=\"" + forId + "\">" + htmlEscape(text) + "</label>";
 }
 
 void sendHtml(http::Response& response, const std::string& html, const int status = 200)
 {
     response.status = status;
     response.contentType = "text/html; charset=utf-8";
+    // Every page carries a single-use challenge or a single-use captcha, so a
+    // page served from a cache would be a page that no longer works.
+    response.headers["Cache-Control"] = "no-store";
     response.body = html;
 }
 
@@ -152,16 +167,29 @@ std::string bytesHuman(const std::uint64_t bytes)
     return buffer;
 }
 
-// Maps a post-redirect-get ?msg= code to a flash banner (empty if unknown).
-std::string flashBanner(const std::string& code)
+constexpr std::int64_t kSecondsPerDay = 24 * 3600;
+
+// A caption over a block that is read rather than filled in.
+std::string fieldLabel(const std::string& text)
 {
-    std::string text;
-    if (code == "registered") {
-        text = "Registered — open your client to redeem it.";
-    } else {
+    return "<p class=\"field-label\">" + htmlEscape(text) + "</p>";
+}
+
+// What the account is, in the two numbers a visitor needs.
+std::string facts(const std::uint64_t quotaBytes, const std::int64_t termSeconds)
+{
+    return "<ul class=\"facts\"><li><span>Storage</span>" + htmlEscape(bytesHuman(quotaBytes))
+        + "</li><li><span>Term</span>" + std::to_string(termSeconds / kSecondsPerDay)
+        + " days, renewed by your client</li></ul>";
+}
+
+std::string descriptorBlock(const std::string& descriptor)
+{
+    if (descriptor.empty()) {
         return {};
     }
-    return "<p class=\"flash\">" + htmlEscape(text) + "</p>";
+    return fieldLabel("Server descriptor") + "<pre class=\"copy\">" + htmlEscape(descriptor)
+        + "</pre><p class=\"step-note\">Paste this into your client to connect it here.</p>";
 }
 
 }  // namespace
@@ -170,6 +198,7 @@ namespace bazarish::service {
 
 PortalApi::PortalApi(PortalApiOptions options, Captcha& captcha, GrantStore& grants)
     : options_(std::move(options))
+    , assets_(options_.assetsDirectory)
     , captcha_(captcha)
     , grants_(grants)
     , login_(options_.challengeSecret, options_.audience)
@@ -321,106 +350,40 @@ void PortalApi::setupRoutes()
 
 void PortalApi::setupWebRoutes()
 {
-    // The logged-in user from the session cookie, or nullopt.
-    const auto webUser = [this](const http::Request& request) -> std::optional<std::string> {
+    // The portal's own files, answered from memory. Registering them one by one
+    // keeps the directory a site rather than a file share: only what the
+    // operator put there, and nothing above it, can be asked for.
+    for (const std::string& name : assets_.published()) {
+        const PortalAssets::File& file = assets_.file(name);
+        http_->get("/" + name, [&file](const http::Request&) {
+            http::Response response;
+            response.contentType = file.contentType;
+            response.body = file.body;
+            return response;
+        });
+    }
+
+    // The logged-in user from the session cookie, or an empty string.
+    const auto sessionUser = [this](const http::Request& request) -> std::string {
         try {
             return session_.verify(cookieValue(request, "session"), nowSeconds());
         } catch (const std::exception&) {
-            return std::nullopt;
+            return {};
         }
     };
 
-    // The sign-in-with-key page: a fresh challenge the user signs in their
-    // client (the key never touches the browser), then pastes the blob back.
-    const auto loginPage = [this]() {
-        const std::string challenge = login_.issue(nowSeconds());
-        const std::string body = "<p>Sign in with your key — your private key never enters the "
-                                 "browser. Copy this challenge, sign it in your Bazarish client "
-                                 "(Signature), and paste the result below.</p><pre>"
-            + htmlEscape(challenge)
-            + "</pre>"
-              "<form method=\"post\" action=\"/login\">"
-              "<input type=\"hidden\" name=\"challenge\" value=\""
-            + htmlEscape(challenge)
-            + "\"><label for=\"blob\">Signed blob</label>"
-              "<textarea id=\"blob\" name=\"blob\" rows=\"4\" required></textarea>"
-              "<button type=\"submit\">Sign in</button></form>";
-        return htmlPage("Sign in", body);
-    };
-
-    // The free-registration page; embeds the captcha SVG inline when required.
-    const auto registerPage = [this](const std::string& error) {
-        std::string body;
-        if (!error.empty()) {
-            body += "<p class=\"err\">" + htmlEscape(error) + "</p>";
-        }
-        body += "<h2>Free registration</h2><p class=\"muted\">A free subscription (quota "
-            + htmlEscape(bytesHuman(options_.defaultQuotaBytes))
-            + "). Once registered, redeem it from your client.</p>"
-              "<form method=\"post\" action=\"/register\">";
-        if (options_.requireCaptcha) {
-            const CaptchaChallenge challenge = captcha_.issue(nowSeconds());
-            body += "<div class=\"captcha\">" + challenge.body + "</div>"
-                    "<input type=\"hidden\" name=\"captchaId\" value=\""
-                + htmlEscape(challenge.id)
-                + "\"><label for=\"ca\">Enter the code</label>"
-                  "<input id=\"ca\" name=\"captchaAnswer\" autocomplete=\"off\" required>";
-        }
-        body += "<button type=\"submit\">Register</button></form><p><a href=\"/\">Back</a></p>";
-        return htmlPage("Register", body);
-    };
-
-    // The cabinet: balance, subscription state and the offered services.
-    const auto cabinet = [this](const std::string& userId, const std::string& msg) {
-        std::string body = flashBanner(msg);
-        body += "<p class=\"muted\">Signed in as <code>" + htmlEscape(userId) + "</code></p>";
-
-        // The server descriptor: paste it into a client to connect it here. Shown
-        // as a legible string (no base64) so it can be checked at a glance.
-        if (!options_.serverDescriptor.empty()) {
-            body += "<h2>Server descriptor</h2>"
-                    "<p class=\"muted\">Paste this into your client to connect it to this "
-                    "server.</p><pre>"
-                + htmlEscape(options_.serverDescriptor) + "</pre>";
-        }
-
-        body += "<h2>Subscription</h2>";
-        const std::optional<GrantStore::SubscriptionGrant> sub = grants_.peekSubscription(userId);
-        const std::optional<GrantStore::Approval> approval = grants_.peekApproval(userId);
-        if (approval.has_value() && approval->pending()) {
-            body += "<p class=\"err\">Awaiting operator approval — your account exists but is "
-                    "not served yet.</p>";
-            if (!options_.registrationMessage.empty()) {
-                body += "<p>" + htmlEscape(options_.registrationMessage) + "</p>";
-            }
-        } else if (approval.has_value()) {
-            body += "<p>Active (quota " + htmlEscape(bytesHuman(options_.defaultQuotaBytes))
-                + ").</p>";
-        } else if (sub.has_value()) {
-            body += "<p>Registered (quota " + htmlEscape(bytesHuman(sub->quotaBytes))
-                + ") — open your client to redeem it.</p>";
-        } else {
-            body += "<p class=\"muted\">No subscription yet.</p>"
-                    "<p><a href=\"/register\">Register</a></p>";
-        }
-
-        body += "<form method=\"post\" action=\"/logout\"><button type=\"submit\">Sign out</button></form>";
-        return htmlPage("Portal", body);
-    };
-
-    // Home: the cabinet when logged in, otherwise the login page.
-    http_->get("/", filled([webUser, loginPage, cabinet](
+    http_->get("/", filled([this, sessionUser](
                         const http::Request& request, http::Response& response) {
-        const std::optional<std::string> user = webUser(request);
-        if (!user.has_value()) {
-            sendHtml(response, loginPage());
-            return;
+        const std::string user = sessionUser(request);
+        // A node that asks for no captcha has nothing left to ask: proving the
+        // key is the registration, so it happens as the key is proven instead of
+        // behind a button that would only repeat the question.
+        if (!user.empty() && !options_.requireCaptcha
+            && !grants_.peekSubscription(user).has_value()) {
+            grants_.grantSubscription(user, options_.defaultQuotaBytes,
+                options_.freeSubscriptionTermSeconds, nowSeconds());
         }
-        sendHtml(response, cabinet(*user, request.query("msg")));
-    }));
-
-    http_->get("/login", filled([loginPage](const http::Request&, http::Response& response) {
-        sendHtml(response, loginPage());
+        sendHtml(response, homePage(user, std::string()));
     }));
 
     http_->post("/login", filled([this](const http::Request& request, http::Response& response) {
@@ -431,47 +394,112 @@ void PortalApi::setupWebRoutes()
             response.headers["Set-Cookie"]
                 = "session=" + token + "; HttpOnly; SameSite=Strict; Path=/";
             redirectTo(response, "/");
-        } catch (const std::exception&) {
+        } catch (const std::exception& error) {
+            bazarish::log::debug("portal sign-in refused: {}", error.what());
             sendHtml(response,
-                htmlPage("Sign in",
-                    "<p class=\"err\">Sign-in failed — the challenge or blob was invalid or "
-                    "expired.</p><p><a href=\"/login\">Try again</a></p>"),
+                homePage(std::string(),
+                    "That signature did not check out. Sign the challenge below and paste the "
+                    "result again."),
                 401);
         }
     }));
 
     http_->post("/logout", filled([](const http::Request&, http::Response& response) {
         response.headers["Set-Cookie"] = "session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0";
-        redirectTo(response, "/login");
+        redirectTo(response, "/");
     }));
 
-    http_->get("/register", filled([webUser, registerPage](
-                                const http::Request& request, http::Response& response) {
-        if (!webUser(request).has_value()) {
-            redirectTo(response, "/login");
-            return;
-        }
-        sendHtml(response, registerPage(std::string()));
-    }));
-
-    http_->post("/register", filled([this, webUser, registerPage](
+    // Reading the captcha is the registration: there is no further step, and no
+    // account area to move on to.
+    http_->post("/register", filled([this, sessionUser](
                                  const http::Request& request, http::Response& response) {
-        const std::optional<std::string> user = webUser(request);
-        if (!user.has_value()) {
-            redirectTo(response, "/login");
+        const std::string user = sessionUser(request);
+        if (user.empty()) {
+            redirectTo(response, "/");
             return;
         }
         if (options_.requireCaptcha
-            && !captcha_.verify(request.param("captchaId"),
-                request.param("captchaAnswer"), nowSeconds())) {
-            sendHtml(response, registerPage("Captcha failed — try again."), 403);
+            && !captcha_.verify(
+                request.param("captchaId"), request.param("captchaAnswer"), nowSeconds())) {
+            sendHtml(response, homePage(user, "That is not the code. Here is another one."), 403);
             return;
         }
-        grants_.grantSubscription(*user, options_.defaultQuotaBytes,
+        grants_.grantSubscription(user, options_.defaultQuotaBytes,
             options_.freeSubscriptionTermSeconds, nowSeconds());
-        redirectTo(response, "/?msg=registered");
+        redirectTo(response, "/");
     }));
+}
 
+std::string PortalApi::homePage(const std::string& user, const std::string& error)
+{
+    const bool signedIn = !user.empty();
+
+    std::string title;
+    std::string keyStep;
+    if (signedIn) {
+        keyStep = step(StepState::eDone, "your key",
+            note("Signed in as " + user)
+                + "<form method=\"post\" action=\"/logout\">"
+                  "<button class=\"btn btn-quiet\" type=\"submit\">Sign out</button></form>");
+    } else {
+        title = "Sign in";
+        const std::string challenge = login_.issue(nowSeconds());
+        keyStep = step(StepState::eActive, "sign in with your key",
+            note("Your key stays in your client. Copy the challenge, sign it there "
+                 "(the Signature button), and paste the result back.")
+                + notice(error, "is-error") + fieldLabel("Challenge")
+                + "<pre class=\"copy\">" + htmlEscape(challenge) + "</pre>"
+                + hint("Click the block to select all of it.")
+                + "<form method=\"post\" action=\"/login\">"
+                  "<input type=\"hidden\" name=\"challenge\" value=\""
+                + htmlEscape(challenge) + "\">" + label("Signed blob", "blob")
+                + "<textarea class=\"field\" id=\"blob\" name=\"blob\" required autofocus>"
+                  "</textarea>"
+                  "<button class=\"btn\" type=\"submit\">Sign in</button></form>");
+    }
+
+    std::string accountStep;
+    const std::optional<GrantStore::SubscriptionGrant> subscription
+        = signedIn ? grants_.peekSubscription(user) : std::nullopt;
+    const std::optional<GrantStore::Approval> approval
+        = signedIn ? grants_.peekApproval(user) : std::nullopt;
+
+    if (!signedIn) {
+        accountStep = step(StepState::eWaiting, "register",
+            note("One captcha, and this server carries your messages. The account is free: "
+                 + bytesHuman(options_.defaultQuotaBytes) + " of storage, renewed from your "
+                 "client."));
+    } else if (approval.has_value() && approval->pending()) {
+        title = "Waiting";
+        accountStep = step(StepState::eWaiting, "waiting for the operator",
+            note("Your account exists but is not served yet.")
+                + notice(options_.registrationMessage, "is-waiting"));
+    } else if (subscription.has_value() || approval.has_value()) {
+        title = "Registered";
+        accountStep = step(StepState::eReady, "registered",
+            note("Open your client and connect it here - it will pick the account up.")
+                + facts(subscription.has_value() ? subscription->quotaBytes
+                                                 : options_.defaultQuotaBytes,
+                      options_.freeSubscriptionTermSeconds)
+                + descriptorBlock(options_.serverDescriptor));
+    } else {
+        title = "Register";
+        const CaptchaChallenge challenge = captcha_.issue(nowSeconds());
+        accountStep = step(StepState::eActive, "register",
+            note("Read the code and type it in. That is the whole registration: "
+                 + bytesHuman(options_.defaultQuotaBytes) + " of storage, free.")
+                + notice(error, "is-error") + "<div class=\"captcha\">" + challenge.body
+                + "</div><form method=\"post\" action=\"/register\">"
+                  "<input type=\"hidden\" name=\"captchaId\" value=\""
+                + htmlEscape(challenge.id) + "\">" + label("The code", "answer")
+                + "<div class=\"captcha-row\">"
+                  "<input class=\"field captcha-answer\" id=\"answer\" name=\"captchaAnswer\" "
+                  "autocomplete=\"off\" autocapitalize=\"characters\" required autofocus>"
+                  "<button class=\"btn\" type=\"submit\">Register</button></div></form>");
+    }
+
+    return assets_.page(htmlEscape(title) + " - bazarish",
+        "messaging server " + htmlEscape(options_.audience), keyStep + accountStep);
 }
 
 }  // namespace bazarish::service

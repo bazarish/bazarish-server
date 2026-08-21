@@ -84,10 +84,16 @@
         return node;
     }
 
-    function fact(label, value) {
+    // One labelled value, with whatever belongs beside it (a copy mark, say).
+    function fact(label, value, beside) {
         var row = element("li");
-        row.appendChild(element("span", null, label));
-        row.appendChild(element("b", null, value));
+        row.appendChild(element("span", "fact-label", label));
+        var side = element("span", "fact-value");
+        side.appendChild(element("b", null, value));
+        if (beside) {
+            side.appendChild(beside);
+        }
+        row.appendChild(side);
         return row;
     }
 
@@ -274,9 +280,9 @@
 
         var head = element("div", "detail-head");
         head.appendChild(element("p", "detail-key", user.user));
-        head.appendChild(window.bazarishCopy.button("Copy key", function () {
+        head.appendChild(window.bazarishCopy.icon(function () {
             return user.user;
-        }));
+        }, "Copy the fingerprint"));
         box.appendChild(head);
 
         var facts = element("ul", "facts");
@@ -296,7 +302,10 @@
         }
         facts.appendChild(fact("subscription",
             user.subscribed ? "until " + humanDate(user.notAfter) : "not redeemed yet"));
-        facts.appendChild(fact("address", user.dest || "none published"));
+        facts.appendChild(fact("address", user.dest || "none published",
+            user.dest ? window.bazarishCopy.icon(function () {
+                return user.dest;
+            }, "Copy the address") : null));
         facts.appendChild(fact("delegation",
             isDelegated(user) ? "until " + humanDate(user.transientExpires) : "none"));
         // The mailbox and the devices live on the messaging server, so they come
@@ -319,13 +328,6 @@
             facts.appendChild(fact("dropped unless finished", humanDate(user.sweepAt)));
         }
         box.appendChild(facts);
-
-        if (user.dest) {
-            controls(section(box)).appendChild(
-                window.bazarishCopy.button("Copy address", function () {
-                    return user.dest;
-                }));
-        }
 
         if (user.banned) {
             controls(section(box, "Ban"), "The key may register again.")

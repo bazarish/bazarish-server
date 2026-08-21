@@ -256,7 +256,9 @@ body.centred {
     border-bottom: 0;
 }
 
-.facts span {
+/* The label is the small capitals; the value beside it is left alone - it is a
+   fingerprint or an address, and shouting it does not help anyone read it. */
+.facts .fact-label {
     color: var(--bz-ink-faint);
     letter-spacing: 0.1em;
     text-transform: uppercase;
@@ -435,7 +437,61 @@ body.centred {
     overflow-wrap: anywhere;
 }
 
-/* Added by copy.js; a browser without scripts never sees it. */
+/* A copy mark beside the value it copies. Added by copy.js; a browser without
+   scripts never sees it. */
+.fact-value {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-width: 0;
+    justify-content: flex-end;
+    text-align: right;
+}
+
+.icon-copy {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.35rem;
+    height: 1.35rem;
+    padding: 0;
+    background: transparent;
+    border: 1px solid var(--bz-line-2);
+    border-radius: var(--bz-radius-sm);
+    color: var(--bz-ink-dim);
+    cursor: pointer;
+}
+
+.icon-copy svg {
+    width: 0.8rem;
+    height: 0.8rem;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.4;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.icon-copy:hover {
+    color: var(--bz-ink);
+    border-color: var(--bz-ink-faint);
+}
+
+.icon-copy.is-done {
+    color: var(--bz-green);
+    border-color: var(--bz-green-dim);
+}
+
+.icon-copy.is-failed {
+    color: var(--bz-err);
+    border-color: var(--bz-err-line);
+}
+
+.detail-head .icon-copy {
+    margin: 0;
+}
+
 .btn-copy {
     margin: 0;
     padding: 0.35rem 0.7rem;

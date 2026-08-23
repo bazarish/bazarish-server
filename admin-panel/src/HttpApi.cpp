@@ -41,19 +41,6 @@ http::Handler filled(Filler handler)
     };
 }
 
-std::string cookieValue(const http::Request& request, const std::string& name)
-{
-    const std::string cookies = request.header("Cookie");
-    const std::string key = name + "=";
-    const auto pos = cookies.find(key);
-    if (pos == std::string::npos) {
-        return {};
-    }
-    const auto start = pos + key.size();
-    const auto end = cookies.find(';', start);
-    return cookies.substr(start, end == std::string::npos ? std::string::npos : end - start);
-}
-
 void sendHtml(http::Response& response, const std::string& html, const int status = 200)
 {
     response.status = status;
@@ -189,7 +176,7 @@ void HttpApi::registerRoutes()
     }
 
     const auto signedIn = [this](const http::Request& request) {
-        return sessions_.valid(cookieValue(request, kCookieName), nowSeconds());
+        return sessions_.valid(request.cookie(kCookieName), nowSeconds());
     };
 
     // Signing in needs no scripts and no backend: the panel verifies the blob
@@ -227,7 +214,7 @@ void HttpApi::registerRoutes()
     }));
 
     http_->post("/logout", filled([this](const http::Request& request, http::Response& response) {
-        sessions_.destroy(cookieValue(request, kCookieName));
+        sessions_.destroy(request.cookie(kCookieName));
         response.headers["Set-Cookie"]
             = std::string(kCookieName) + "=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0";
         redirectTo(response, "/login");

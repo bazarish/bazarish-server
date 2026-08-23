@@ -47,20 +47,6 @@ void respondJson(http::Response& response, const nlohmann::json& body)
     response.body = body.dump();
 }
 
-// Reads one cookie value from the request's Cookie header.
-std::string cookieValue(const http::Request& request, const std::string& name)
-{
-    const std::string cookies = request.header("Cookie");
-    const std::string key = name + "=";
-    const auto pos = cookies.find(key);
-    if (pos == std::string::npos) {
-        return {};
-    }
-    const auto start = pos + key.size();
-    const auto end = cookies.find(';', start);
-    return cookies.substr(start, end == std::string::npos ? std::string::npos : end - start);
-}
-
 // Escapes a string for safe interpolation into HTML text or a quoted attribute.
 std::string htmlEscape(const std::string& s)
 {
@@ -237,7 +223,7 @@ void PortalApi::setupRoutes()
     // The logged-in user, from the session cookie.
     http_->get("/portal/me", filled([this](const http::Request& request, http::Response& response) {
         try {
-            const std::string userId = session_.verify(cookieValue(request, "session"), nowSeconds());
+            const std::string userId = session_.verify(request.cookie("session"), nowSeconds());
             respondJson(response, {{"userId", userId}});
         } catch (const std::exception&) {
             response.status = 401;
@@ -262,7 +248,7 @@ void PortalApi::setupRoutes()
         "/portal/register", filled([this](const http::Request& request, http::Response& response) {
             std::string userId;
             try {
-                userId = session_.verify(cookieValue(request, "session"), nowSeconds());
+                userId = session_.verify(request.cookie("session"), nowSeconds());
             } catch (const std::exception&) {
                 response.status = 401;
                 respondJson(response, {{"error", "not authenticated"}});
@@ -320,7 +306,7 @@ void PortalApi::setupWebRoutes()
     // The logged-in user from the session cookie, or an empty string.
     const auto sessionUser = [this](const http::Request& request) -> std::string {
         try {
-            return session_.verify(cookieValue(request, "session"), nowSeconds());
+            return session_.verify(request.cookie("session"), nowSeconds());
         } catch (const std::exception&) {
             return {};
         }

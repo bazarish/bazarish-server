@@ -26,16 +26,14 @@ class Server;
 namespace bazarish::service {
 
 struct AccountApiOptions {
-    // The messaging server this service node belongs to; subscription
-    // certificates must name it.
+    // The messaging server this service node belongs to.
     std::string serverFingerprint;
-    // The server card returned to clients on subscribe (DER).
+    // The server card the node hands its own clients (DER). It names the server,
+    // so it is never part of what a contact can fetch.
     Bytes serverCardDer;
-    // Quota granted to a free subscription. The initial value: an operator can
-    // change it while the node runs (see settings).
+    // Quota granted to a new account. The initial value: an operator can change
+    // it while the node runs (see settings).
     std::uint64_t defaultQuotaBytes = 50 * 1024 * 1024;
-    // Maximum subscription validity the server accepts.
-    std::int64_t maxTermSeconds = 14 * 24 * 3600;
     // Version string reported by /healthz.
     std::string version;
     // Fingerprints authorised to call /healthz (the admin panel). The caller
@@ -105,7 +103,7 @@ private:
 
     // The address an account is served at, repairing the cached field when an
     // older record carries only the certificate.
-    std::string destinationOf(const std::optional<SubscriptionStore::Subscription>& held);
+    std::string destinationOf(const std::optional<SubscriptionStore::Account>& held);
 
     // What the operator has set, live.
     NodeSettings::Values settings() const { return settings_->get(); }

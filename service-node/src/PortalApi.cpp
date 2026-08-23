@@ -276,12 +276,11 @@ void PortalApi::setupRoutes()
                 }
             }
             grants_.grantSubscription(userId, settings().defaultQuotaBytes,
-                options_.freeSubscriptionTermSeconds, nowSeconds());
+                nowSeconds());
             respondJson(response,
                 {
                     {"ok", true},
                     {"quotaBytes", settings().defaultQuotaBytes},
-                    {"termSeconds", options_.freeSubscriptionTermSeconds},
                 });
         }));
 
@@ -321,7 +320,7 @@ void PortalApi::setupWebRoutes()
         if (!user.empty() && !options_.requireCaptcha && !grants_.peekBan(user).has_value()
             && !grants_.peekSubscription(user).has_value()) {
             grants_.grantSubscription(user, settings().defaultQuotaBytes,
-                options_.freeSubscriptionTermSeconds, nowSeconds());
+                nowSeconds());
         }
         sendHtml(response, homePage(user, std::string()));
     }));
@@ -401,7 +400,7 @@ void PortalApi::setupWebRoutes()
             return;
         }
         grants_.grantSubscription(user, settings().defaultQuotaBytes,
-            options_.freeSubscriptionTermSeconds, nowSeconds());
+            nowSeconds());
         redirectTo(response, "/");
     }));
 }
@@ -431,7 +430,6 @@ std::map<std::string, std::string> PortalApi::accountValues(
 
     return {
         {"quota", htmlEscape(bytesHuman(granted))},
-        {"term", std::to_string(options_.freeSubscriptionTermSeconds / kSecondsPerDay) + " days"},
         {"descriptor", htmlEscape(options_.serverDescriptor)},
         {"message", notice(note, "is-waiting")},
         {"mailbox", htmlEscape(mailbox)},

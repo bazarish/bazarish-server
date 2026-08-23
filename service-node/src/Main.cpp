@@ -26,6 +26,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <set>
 #include <thread>
 
 namespace {
@@ -119,12 +120,14 @@ struct PortalConfig {
 // Who may be served on this node. Open registration serves an account the
 // moment it is created; approval registration creates it frozen and waits for
 // the operator. `message` is what a frozen user is shown - how to reach the
-// operator to finish registration - and `ttlDays` is how long a never-approved
-// account is kept before it is deleted.
+// operator to finish registration - and `idleDeleteDays` is how long an account
+// is kept with no destination delegated here before it is deleted. That covers
+// a client that stopped running, a registration nobody redeemed and an account
+// no operator approved: the delegation is the only sign of life a server has.
 struct RegistrationConfig {
     bool requireApproval = false;
     std::string message;
-    std::int64_t ttlDays = 7;
+    std::int64_t idleDeleteDays = 180;
 };
 
 // The node's own config. Nothing here is for sale - the only knobs are the
@@ -199,8 +202,8 @@ NodeConfig loadNodeConfig(const fs::path& path)
         config.registration.requireApproval
             = registration.value("requireApproval", config.registration.requireApproval);
         config.registration.message = registration.value("message", std::string());
-        config.registration.ttlDays
-            = registration.value("ttlDays", config.registration.ttlDays);
+        config.registration.idleDeleteDays
+            = registration.value("idleDeleteDays", config.registration.idleDeleteDays);
     }
     return config;
 }
@@ -291,7 +294,7 @@ int main(const int argc, const char** argv)
     const auto settings = std::make_shared<bazarish::service::NodeSettings>(configPath,
         bazarish::service::NodeSettings::Values{nodeConfig.registration.requireApproval,
             nodeConfig.registration.message, nodeConfig.freeStorageBytes,
-            nodeConfig.registration.ttlDays});
+            nodeConfig.registration.idleDeleteDays});
     options.settings = settings;
     options.defaultQuotaBytes = nodeConfig.freeStorageBytes;
     options.portalMessage = nodeConfig.portal.message;
@@ -315,15 +318,14 @@ int main(const int argc, const char** argv)
                 bazarish::log::redact(user));
         }
     };
-    // Quotas the messaging server may have missed: an account that subscribed
-    // before this node started pushing them would be served the messaging
-    // server's own default until its next renewal, and the user would see a
-    // figure nobody promised. Pushing them at start costs one request each.
-    for (const bazarish::service::SubscriptionStore::Subscription& subscription :
-        store.allSubscriptions()) {
-        if (!operatorPush.publishQuota(subscription.user, subscription.quotaBytes)) {
+    // Quotas the messaging server may have missed: an account registered before
+    // this node started pushing them would be served the messaging server's own
+    // default, and the user would see a figure nobody promised. Pushing them at
+    // start costs one request each.
+    for (const bazarish::service::SubscriptionStore::Account& account : store.allAccounts()) {
+        if (!operatorPush.publishQuota(account.user, account.quotaBytes)) {
             bazarish::log::warn("quota for {} not reconciled at start",
-                bazarish::log::redact(subscription.user));
+                bazarish::log::redact(account.user));
         }
     }
 
@@ -354,7 +356,6 @@ int main(const int argc, const char** argv)
         portalOptions.challengeSecret = bazarish::toHex(bazarish::randomBytes(16));
         portalOptions.sessionSecret = bazarish::toHex(bazarish::randomBytes(16));
         portalOptions.defaultQuotaBytes = options.defaultQuotaBytes;
-        portalOptions.freeSubscriptionTermSeconds = options.maxTermSeconds;
         portalOptions.requiresApproval = nodeConfig.registration.requireApproval;
         portalOptions.registrationMessage = nodeConfig.registration.message;
         portalOptions.assetsDirectory = portalAssets;
@@ -373,7 +374,7 @@ int main(const int argc, const char** argv)
         };
         // A user ending their own account: the same teardown unsubscribing does.
         portalOptions.deleteAccount = [&store, &grants, &operatorPush](const std::string& user) {
-            store.deleteSubscription(user);
+            store.deleteAccount(user);
             operatorPush.publish(user, std::string(), 0);
             grants.erase(user);
             bazarish::log::info("account deleted by its owner: {}", bazarish::log::redact(user));
@@ -390,39 +391,58 @@ int main(const int argc, const char** argv)
         bazarish::log::info("portal on {}:{}", portalHost, portalPort);
     }
 
-    // A moderated node accumulates accounts nobody ever approves. Sweep them so a
-    // dead registration does not sit there forever holding a fingerprint.
+    // An account lives while its owner keeps a destination delegated here. One
+    // that stopped - a client nobody runs any more, a registration nobody
+    // redeemed, an account no operator approved - is dropped after the idle
+    // window, so a dead account does not hold a fingerprint and a quota forever.
     static std::thread sweepThread;
-    sweepThread = std::thread([&grants, &store, settings]() {
+    sweepThread = std::thread([&grants, &store, settings, revoke = options.publishI2pTransient]() {
         constexpr std::int64_t kSecondsPerDay = 24 * 3600;
         while (true) {
             std::this_thread::sleep_for(std::chrono::hours(1));
-            const std::int64_t ttlDays = settings->get().registrationTtlDays;
-            if (ttlDays <= 0) {
+            const std::int64_t idleDays = settings->get().idleDeleteDays;
+            if (idleDays <= 0) {
                 continue;  // the operator keeps them forever
             }
-            const std::int64_t ttlSeconds = ttlDays * kSecondsPerDay;
+            const std::int64_t idleSeconds = idleDays * kSecondsPerDay;
             const std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
+            // Registrations that never became accounts are known to the grant
+            // store only; served accounts are known to both.
+            std::set<std::string> users;
             for (const std::string& user : grants.allUsers()) {
-                const std::optional<bazarish::service::GrantStore::Approval> approval
-                    = grants.peekApproval(user);
-                const std::optional<bazarish::service::GrantStore::SubscriptionGrant> grant
-                    = grants.peekSubscription(user);
-                // An account waiting for an operator who never came, and a portal
-                // registration no client ever redeemed: neither is a served
-                // account, and neither should hold a fingerprint forever.
+                users.insert(user);
+            }
+            for (const auto& account : store.allAccounts()) {
+                users.insert(account.user);
+            }
+            for (const std::string& user : users) {
+                const std::optional<bazarish::service::SubscriptionStore::Account> account
+                    = store.getAccount(user);
                 std::int64_t since = 0;
-                if (approval.has_value() && approval->pending()) {
+                if (account.has_value() && account->delegatedAt != 0) {
+                    since = account->delegatedAt;
+                } else if (account.has_value() && account->registeredAt != 0) {
+                    since = account->registeredAt;
+                } else if (const std::optional<bazarish::service::GrantStore::Approval> approval
+                    = grants.peekApproval(user);
+                    approval.has_value()) {
                     since = approval->requestedAt;
-                } else if (!approval.has_value() && grant.has_value()) {
+                } else if (const std::optional<bazarish::service::GrantStore::SubscriptionGrant>
+                        grant
+                    = grants.peekSubscription(user);
+                    grant.has_value()) {
                     since = grant->grantedAt;
                 }
-                if (since == 0 || since + ttlSeconds > now) {
+                if (since == 0 || since + idleSeconds > now) {
                     continue;
                 }
-                grants.erase(user);
-                store.deleteSubscription(user);
-                bazarish::log::info("swept unfinished registration {}", user.substr(0, 12));
+                // A ban outlives the account it removed, so only the account goes.
+                if (revoke) {
+                    (void)revoke(user, std::string(), 0);
+                }
+                grants.erase(user);  // a ban is stored apart and stays
+                store.deleteAccount(user);
+                bazarish::log::info("swept idle account {}", user.substr(0, 12));
             }
         }
     });

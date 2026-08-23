@@ -19,7 +19,7 @@ namespace fs = std::filesystem;
 const char* const kRegistrationKey = "registration";
 const char* const kRequireApprovalKey = "requireApproval";
 const char* const kMessageKey = "message";
-const char* const kTtlDaysKey = "ttlDays";
+const char* const kIdleDaysKey = "idleDeleteDays";
 const char* const kQuotaKey = "freeStorageBytes";
 
 }  // namespace
@@ -58,8 +58,8 @@ void NodeSettings::persist(const Values& values) const
     if (values.registrationMessage != values_.registrationMessage) {
         file.set({kRegistrationKey, kMessageKey}, values.registrationMessage);
     }
-    if (values.registrationTtlDays != values_.registrationTtlDays) {
-        file.set({kRegistrationKey, kTtlDaysKey}, values.registrationTtlDays);
+    if (values.idleDeleteDays != values_.idleDeleteDays) {
+        file.set({kRegistrationKey, kIdleDaysKey}, values.idleDeleteDays);
     }
     if (values.defaultQuotaBytes != values_.defaultQuotaBytes) {
         file.set({kQuotaKey}, values.defaultQuotaBytes);

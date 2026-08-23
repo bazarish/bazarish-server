@@ -136,9 +136,9 @@ void federationServeFrame(const std::string& headerLine,
             const Key& key = sealingKey != nullptr ? *sealingKey : engine.sealingKey();
             const CardFetchQuery query
                 = cardFetchQueryFromJson(nlohmann::json::parse(cms::unseal(sealedQuery, key)));
-            const std::optional<Bytes> certDer = getCard(query.fingerprint);
-            if (certDer) {
-                const std::string responseJson = toJson(CardFetchResponse{*certDer}).dump();
+            const std::optional<Bytes> cardDer = getCard(query.fingerprint, query.keyDer);
+            if (cardDer) {
+                const std::string responseJson = toJson(CardFetchResponse{*cardDer}).dump();
                 const Bytes sealedResponse = cms::seal(Bytes(responseJson.begin(), responseJson.end()),
                     Key::fromPublicDer(query.responseKeyDer));
                 writeReply(nlohmann::json({{"ok", true}, {"sealed", toBase64(sealedResponse)}}).dump());

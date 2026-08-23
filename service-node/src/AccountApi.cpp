@@ -99,26 +99,19 @@ std::size_t parsedCount(const std::string& text, const std::size_t fallback)
     }
 }
 
-// When the node will drop this account if nothing changes. Two registrations
-// never become served accounts: one waiting for an operator who never approves
-// it, and one the portal issued that no client ever redeemed. Both are swept
-// after the same lifetime; an account that is served is not swept at all.
-std::int64_t sweepDeadline(const std::int64_t registeredAt, const bool subscribed,
-    const std::optional<bazarish::service::GrantStore::Approval>& approval,
-    const bazarish::service::NodeSettings::Values& settings)
+// When the node will drop this account if nothing changes. One rule covers every
+// case: an account lives while it keeps a destination delegated here, so the
+// clock runs from the last delegation - or from registration, for one that never
+// delegated at all (a portal registration no client redeemed, or an account
+// still waiting for an operator).
+std::int64_t sweepDeadline(
+    const std::int64_t idleSince, const bazarish::service::NodeSettings::Values& settings)
 {
     constexpr std::int64_t kSecondsPerDay = 24 * 3600;
-    if (settings.registrationTtlDays <= 0 || registeredAt == 0) {
-        return 0;
+    if (settings.idleDeleteDays <= 0 || idleSince == 0) {
+        return 0;  // the operator keeps them forever
     }
-    const bool waitingForOperator = approval.has_value() && approval->pending();
-    const bool neverRedeemed = !subscribed && !approval.has_value();
-    if (!waitingForOperator && !neverRedeemed) {
-        return 0;
-    }
-    const std::int64_t from
-        = waitingForOperator ? approval->requestedAt : registeredAt;
-    return from + settings.registrationTtlDays * kSecondsPerDay;
+    return idleSince + settings.idleDeleteDays * kSecondsPerDay;
 }
 
 // What a waiting account's owner is told: the operator's own words for this
@@ -217,53 +210,61 @@ void AccountApi::revokeDestination(const std::string& user)
 void AccountApi::deleteAccount(const std::string& user)
 {
     revokeDestination(user);
-    store_.deleteSubscription(user);
+    store_.deleteAccount(user);
     grants_.erase(user);
 }
 
-// The address an account is served at. It is cached beside the certificate, but
-// records written before that field existed carry only the certificate itself -
-// so the certificate answers, and the record is repaired on the way out.
-std::string AccountApi::destinationOf(const std::optional<SubscriptionStore::Subscription>& held)
+// The address an account is served at. It is cached beside the card, but a
+// record written before the user published routing carries none - the card
+// answers, and the record is repaired on the way out.
+std::string AccountApi::destinationOf(const std::optional<SubscriptionStore::Account>& held)
 {
-    if (!held.has_value() || !held->dest.empty() || held->certificate.empty()) {
+    if (!held.has_value() || !held->dest.empty() || held->card.empty()) {
         return held.has_value() ? held->dest : std::string();
     }
-    SubscriptionCertificate cert;
+    ContactCard card;
     try {
-        cert = SubscriptionCertificate::verify(held->certificate);
+        card = ContactCard::verify(held->card);
     } catch (const std::exception& error) {
         // One unreadable record must not take the whole listing down with it.
-        bazarish::log::warn("certificate of {} is unreadable: {}", log::redact(held->user),
+        bazarish::log::warn("card of {} is unreadable: {}", log::redact(held->user),
             error.what());
         return {};
     }
-    if (cert.dest.empty()) {
+    if (card.dest.empty()) {
         return {};
     }
-    SubscriptionStore::Subscription repaired = *held;
-    repaired.dest = cert.dest;
-    store_.putSubscription(repaired);
-    return cert.dest;
+    SubscriptionStore::Account repaired = *held;
+    repaired.dest = card.dest;
+    store_.putAccount(repaired);
+    return card.dest;
 }
 
 nlohmann::json AccountApi::userRecord(
     const std::string& user, const std::optional<GrantStore::Approval>& approval)
 {
-    const std::optional<SubscriptionStore::Subscription> held = store_.getSubscription(user);
+    const std::optional<SubscriptionStore::Account> held = store_.getAccount(user);
     const std::optional<GrantStore::SubscriptionGrant> grant = grants_.peekSubscription(user);
     const std::optional<GrantStore::Transient> transient = grants_.peekTransient(user);
     const std::optional<GrantStore::Ban> ban = grants_.peekBan(user);
     const NodeSettings::Values values = settings();
     // The portal registers the account; a client redeems it later, or never. The
     // first date is the one an operator asks about when nothing else happened.
-    const std::int64_t registeredAt = grant.has_value() ? grant->grantedAt
-        : (approval.has_value() ? approval->requestedAt : 0);
+    const std::int64_t registeredAt = held.has_value() && held->registeredAt != 0
+        ? held->registeredAt
+        : (grant.has_value() ? grant->grantedAt
+                             : (approval.has_value() ? approval->requestedAt : 0));
+    // An account lives while it keeps a destination delegated here; the sweep
+    // counts from the last delegation, or from registration when there never was
+    // one.
+    const std::int64_t idleSince
+        = held.has_value() && held->delegatedAt != 0 ? held->delegatedAt : registeredAt;
     return {
         {"user", user},
         {"dest", destinationOf(held)},
         {"registeredAt", registeredAt},
-        {"sweepAt", sweepDeadline(registeredAt, held.has_value(), approval, values)},
+        {"delegatedAt", held.has_value() ? held->delegatedAt : 0},
+        {"sweepAt", sweepDeadline(idleSince, values)},
         {"banned", ban.has_value()},
         {"banReason", ban.has_value() ? ban->reason : std::string()},
         {"holdMessage", approval.has_value() ? approval->message : std::string()},
@@ -271,8 +272,7 @@ nlohmann::json AccountApi::userRecord(
             held.has_value() ? held->quotaBytes
                              : (grant.has_value() ? grant->quotaBytes
                                                  : settings().defaultQuotaBytes)},
-        {"subscribed", held.has_value()},
-        {"notAfter", held.has_value() ? held->notAfter : 0},
+        {"registered", held.has_value()},
         {"grantPending", grant.has_value()},
         {"approval",
             !approval.has_value() ? "none" : (approval->pending() ? "pending" : "approved")},
@@ -369,8 +369,8 @@ void AccountApi::setupRoutes()
                 // An operator searches with whatever they were given: the key
                 // fingerprint or the address it is served at.
                 if (!query.empty()) {
-                    const std::optional<SubscriptionStore::Subscription> held
-                        = store_.getSubscription(user);
+                    const std::optional<SubscriptionStore::Account> held
+                        = store_.getAccount(user);
                     const std::string dest = destinationOf(held);
                     const bool matches = lowercased(user).find(query) != std::string::npos
                         || lowercased(dest).find(query) != std::string::npos;
@@ -422,7 +422,7 @@ void AccountApi::setupRoutes()
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const std::string user = request.query("user");
             if (!grants_.peekApproval(user).has_value()
-                && !store_.getSubscription(user).has_value()) {
+                && !store_.getAccount(user).has_value()) {
                 respondError(response, 404, ErrorCode::eDeliveryRejected, "no such account");
                 return;
             }
@@ -461,8 +461,8 @@ void AccountApi::setupRoutes()
             std::size_t accounts = 0;
             for (const std::string& user : grants_.allUsers()) {
                 ++accounts;
-                const std::optional<SubscriptionStore::Subscription> held
-                    = store_.getSubscription(user);
+                const std::optional<SubscriptionStore::Account> held
+                    = store_.getAccount(user);
                 const std::optional<GrantStore::SubscriptionGrant> grant
                     = grants_.peekSubscription(user);
                 allocated += held.has_value() ? held->quotaBytes
@@ -474,7 +474,7 @@ void AccountApi::setupRoutes()
                     {"requireApproval", values.requireApproval},
                     {"registrationMessage", values.registrationMessage},
                     {"defaultQuotaBytes", values.defaultQuotaBytes},
-                    {"registrationTtlDays", values.registrationTtlDays},
+                    {"idleDeleteDays", values.idleDeleteDays},
                     {"accounts", accounts},
                     {"allocatedBytes", allocated},
                 });
@@ -491,9 +491,9 @@ void AccountApi::setupRoutes()
                 values.registrationMessage
                     = body.at("registrationMessage").get<std::string>();
             }
-            if (body.contains("registrationTtlDays")) {
-                values.registrationTtlDays = body.at("registrationTtlDays").get<std::int64_t>();
-                if (values.registrationTtlDays < 0) {
+            if (body.contains("idleDeleteDays")) {
+                values.idleDeleteDays = body.at("idleDeleteDays").get<std::int64_t>();
+                if (values.idleDeleteDays < 0) {
                     throw std::invalid_argument("a lifetime cannot be negative");
                 }
             }
@@ -516,7 +516,7 @@ void AccountApi::setupRoutes()
                     {"requireApproval", values.requireApproval},
                     {"registrationMessage", values.registrationMessage},
                     {"defaultQuotaBytes", values.defaultQuotaBytes},
-                    {"registrationTtlDays", values.registrationTtlDays},
+                    {"idleDeleteDays", values.idleDeleteDays},
                 });
         })));
 
@@ -525,7 +525,7 @@ void AccountApi::setupRoutes()
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const std::string user = request.query("user");
             const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
-            if (!approval.has_value() && !store_.getSubscription(user).has_value()) {
+            if (!approval.has_value() && !store_.getAccount(user).has_value()) {
                 respondError(response, 404, ErrorCode::eDeliveryRejected, "no such account");
                 return;
             }
@@ -540,23 +540,23 @@ void AccountApi::setupRoutes()
             const std::string user = body.at("user").get<std::string>();
             const auto quotaBytes = body.at("quotaBytes").get<std::uint64_t>();
             const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
-            const std::optional<SubscriptionStore::Subscription> held
-                = store_.getSubscription(user);
+            const std::optional<SubscriptionStore::Account> held
+                = store_.getAccount(user);
             if (!approval.has_value() && !held.has_value()) {
                 respondError(response, 404, ErrorCode::eDeliveryRejected, "no such account");
                 return;
             }
             if (held.has_value()) {
-                SubscriptionStore::Subscription updated = *held;
+                SubscriptionStore::Account updated = *held;
                 updated.quotaBytes = quotaBytes;
-                store_.putSubscription(updated);
+                store_.putAccount(updated);
             }
             // A grant not yet redeemed carries the quota the certificate will be
             // checked against, so it has to move with it.
             if (const std::optional<GrantStore::SubscriptionGrant> grant
                 = grants_.peekSubscription(user);
                 grant.has_value()) {
-                grants_.grantSubscription(user, quotaBytes, grant->termSeconds, grant->grantedAt);
+                grants_.grantSubscription(user, quotaBytes, grant->grantedAt);
             }
             if (options_.publishQuota) {
                 options_.publishQuota(user, quotaBytes);
@@ -576,146 +576,106 @@ void AccountApi::setupRoutes()
             respondJson(response, {{"ok", true}});
         })));
 
-    // Validates and stores a subscription certificate. Shared by subscribe
-    // and renew - renewal is simply a fresh certificate.
-    const auto handleSubscribe
-        = [this](const http::Request& request, http::Response& response,
-              const std::string& user) {
-              const nlohmann::json body = nlohmann::json::parse(request.body);
-              const Bytes der = fromBase64(body.at("cert").get<std::string>());
+    // Takes the user's signed contact card: the routing their contacts fetch.
+    // This is also what turns a portal registration into an account - the first
+    // authenticated call redeems the grant - and it can be repeated whenever the
+    // routing changes. There is no term: an account lives while its owner keeps
+    // a destination delegated here.
+    http_->post("/v1/account/card",
+        filled(authenticated([this](const http::Request& request, http::Response& response,
+                          const std::string& user) {
+            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const Bytes der = fromBase64(body.at("card").get<std::string>());
 
-              SubscriptionCertificate cert;
-              try {
-                  cert = SubscriptionCertificate::verify(der);
-              } catch (const std::exception& error) {
-                  respondError(response, 400, ErrorCode::eDeliveryRejected,
-                      std::string("invalid subscription certificate: ") + error.what());
-                  return;
-              }
-              if (cert.user != user) {
-                  respondError(response, 403, ErrorCode::eDeliveryRejected,
-                      "certificate does not name the authenticated user");
-                  return;
-              }
-              if (cert.server != options_.serverFingerprint) {
-                  respondError(response, 400, ErrorCode::eDeliveryRejected,
-                      "certificate names a different server");
-                  return;
-              }
-              const std::int64_t now = nowSeconds();
-              if (cert.isExpired(now)) {
-                  respondError(response, 400, ErrorCode::eSubscriptionExpired,
-                      "certificate is already expired");
-                  return;
-              }
-              if (cert.notAfter - cert.issuedAt > options_.maxTermSeconds) {
-                  respondError(response, 400, ErrorCode::eSubscriptionTermTooLong,
-                      "requested term exceeds the server maximum of "
-                          + std::to_string(options_.maxTermSeconds) + " seconds");
-                  return;
-              }
+            ContactCard card;
+            try {
+                card = ContactCard::verify(der);
+            } catch (const std::exception& error) {
+                respondError(response, 400, ErrorCode::eDeliveryRejected,
+                    std::string("invalid contact card: ") + error.what());
+                return;
+            }
+            if (card.user != user) {
+                respondError(response, 403, ErrorCode::eDeliveryRejected,
+                    "card does not name the authenticated user");
+                return;
+            }
+            if (const std::optional<GrantStore::Ban> ban = grants_.peekBan(user);
+                ban.has_value()) {
+                respondError(response, 403, ErrorCode::eDeliveryRejected, ban->reason);
+                return;
+            }
 
-              // Registration is authorised on the service portal, which records a
-              // pending grant. The Client redeems it here with its user-signed
-              // certificate; the grant supplies the quota and bounds the term.
-              // Without a grant the only certificate accepted is a re-issue of
-              // one already held: the user publishes its routing this way once
-              // its destination exists (the destination can only be delegated
-              // after the account exists, so the first certificate never carries
-              // it) or once an operator approves a moderated account. A re-issue
-              // grants nothing - same term, same quota - so it consumes no grant.
-              const std::optional<GrantStore::SubscriptionGrant> grant
-                  = grants_.peekSubscription(cert.user);
-              const std::optional<SubscriptionStore::Subscription> held
-                  = store_.getSubscription(cert.user);
-              std::uint64_t effectiveQuota = 0;
-              if (grant.has_value()) {
-                  if (cert.notAfter - cert.issuedAt > grant->termSeconds) {
-                      respondError(response, 400, ErrorCode::eSubscriptionTermTooLong,
-                          "requested term exceeds the granted term");
-                      return;
-                  }
-                  grants_.takeSubscription(cert.user);  // consume the one-shot grant
-                  effectiveQuota = grant->quotaBytes;
-              } else if (held.has_value() && cert.notAfter <= held->notAfter) {
-                  effectiveQuota = held->quotaBytes;
-              } else {
-                  respondError(response, 403, ErrorCode::eDeliveryRejected,
-                      "no pending subscription grant — register on the service portal first");
-                  return;
-              }
+            const std::int64_t now = nowSeconds();
+            const std::optional<GrantStore::SubscriptionGrant> grant
+                = grants_.peekSubscription(user);
+            const std::optional<SubscriptionStore::Account> held = store_.getAccount(user);
+            std::uint64_t quota = 0;
+            if (grant.has_value()) {
+                grants_.takeSubscription(user);  // consume the one-shot grant
+                quota = grant->quotaBytes;
+            } else if (held.has_value()) {
+                quota = held->quotaBytes;  // re-publishing routing grants nothing
+            } else {
+                respondError(response, 403, ErrorCode::eDeliveryRejected,
+                    "no pending registration - register on the service portal first");
+                return;
+            }
 
-              if (const std::optional<GrantStore::Ban> ban = grants_.peekBan(cert.user);
-                  ban.has_value()) {
-                  respondError(response, 403, ErrorCode::eDeliveryRejected, ban->reason);
-                  return;
-              }
+            SubscriptionStore::Account record;
+            record.user = user;
+            record.registeredAt
+                = held.has_value() && held->registeredAt != 0 ? held->registeredAt : now;
+            record.quotaBytes = quota;
+            record.dest = card.dest;
+            record.delegatedAt = held.has_value() ? held->delegatedAt : 0;
+            record.card = der;
+            store_.putAccount(record);
+            // The granted quota is this node's to set: push it so the messaging
+            // server serves the number the portal promised, not its own default.
+            if (options_.publishQuota) {
+                options_.publishQuota(user, quota);
+            }
 
-              SubscriptionStore::Subscription record;
-              record.user = cert.user;
-              record.issuedAt = cert.issuedAt;
-              record.notAfter = cert.notAfter;
-              record.quotaBytes = effectiveQuota;
-              record.dest = cert.dest;
-              record.certificate = der;
-              store_.putSubscription(record);
-              // The granted quota is this node's to set: push it so the messaging
-              // server serves the number the portal promised, not its own default.
-              if (options_.publishQuota) {
-                  options_.publishQuota(cert.user, effectiveQuota);
-              }
+            // On an open server the account is servable at once; on a moderated
+            // one this only starts the approval clock. Re-publishing keeps the
+            // original request time, so a pending account cannot outlive its
+            // deadline by publishing again.
+            grants_.recordRegistration(user, now, !settings().requireApproval);
+            const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
+            const bool pending = approval.has_value() && approval->pending();
 
-              // On an open server the account is servable at once; on a moderated
-              // one this only starts the approval clock. Renewal keeps the
-              // original request time, so a pending account cannot outlive its
-              // deadline by renewing.
-              grants_.recordRegistration(
-                  cert.user, now, !settings().requireApproval);
-              const std::optional<GrantStore::Approval> approval
-                  = grants_.peekApproval(cert.user);
-              const bool pending = approval.has_value() && approval->pending();
+            respondJson(response,
+                {
+                    {"quotaBytes", quota},
+                    {"serverCard", toBase64(options_.serverCardDer)},
+                    {"approval", pending ? "pending" : "approved"},
+                    {"registrationMessage",
+                        pending ? holdMessageFor(approval, settings()) : std::string()},
+                });
+        })));
 
-              respondJson(response,
-                  {
-                      {"notAfter", cert.notAfter},
-                      {"quotaBytes", effectiveQuota},
-                      {"maxTermSeconds", options_.maxTermSeconds},
-                      {"serverCard", toBase64(options_.serverCardDer)},
-                      {"approval", pending ? "pending" : "approved"},
-                      {"registrationMessage",
-                          pending ? holdMessageFor(approval, settings()) : std::string()},
-                  });
-          };
-
-    http_->post("/v1/account/subscribe", filled(authenticated(handleSubscribe)));
-    http_->post("/v1/account/renew", filled(authenticated(handleSubscribe)));
-
-    http_->get("/v1/account/subscription",
+    // What the account stands at: the quota it holds and whether it is served.
+    http_->get("/v1/account/status",
         filled(authenticated([this](const http::Request&, http::Response& response,
                           const std::string& user) {
-            const std::optional<SubscriptionStore::Subscription> record
-                = store_.getSubscription(user);
-            if (!record.has_value() || record->notAfter < nowSeconds()) {
-                respondError(response, 404, ErrorCode::eSubscriptionExpired,
-                    "no active subscription");
+            const std::optional<SubscriptionStore::Account> record = store_.getAccount(user);
+            if (!record.has_value()) {
+                respondError(response, 404, ErrorCode::eClientUnregistered, "no account");
                 return;
             }
             respondJson(response,
-                {{"notAfter", record->notAfter}, {"quotaBytes", record->quotaBytes}});
+                {{"quotaBytes", record->quotaBytes}, {"delegatedAt", record->delegatedAt}});
         })));
 
-    // Unsubscribing tears the account down, it does not merely stop renewing:
-    // the destination is revoked and the grants (including the approval) are
+    // Closing an account tears it down, it does not merely stop delegating: the
+    // destination is revoked and the grants (including the approval) are
     // dropped, so nothing about the account outlives it. Coming back means
     // registering again.
-    http_->del("/v1/account/subscription",
+    http_->del("/v1/account/registration",
         filled(authenticated([this](const http::Request&, http::Response& response,
                           const std::string& user) {
-            store_.deleteSubscription(user);
-            if (options_.publishI2pTransient) {
-                options_.publishI2pTransient(user, std::string(), 0);
-            }
-            grants_.erase(user);
+            deleteAccount(user);
             respondJson(response, {{"ok", true}});
         })));
 
@@ -787,28 +747,47 @@ void AccountApi::setupRoutes()
                 });
         })));
 
-    // Contact lookup by fingerprint: returns the user's subscription
-    // certificate, which carries the serving server and the sealing prekey a
-    // first-contact sender uses to E2E-encrypt the contact request. Like
-    // alias resolution this is unauthenticated (a user must be reachable to
-    // be messaged); a sealed-relay variant that hides the lookup from the
-    // requester's own server is future federation work.
-    http_->get("/v1/account/contact",
+    // The contact card a peer fetches, answered only to someone who already
+    // holds the descriptor: the query carries its `key` - the per-user serving
+    // key this node handed out - and a wrong key is refused exactly like an
+    // unknown user. Without that, asking by fingerprint would tell anyone which
+    // server hosts whom.
+    //
+    // Reached from the messaging server, which unseals the peer's query on the
+    // user's own destination; nothing about this answer names the server.
+    http_->get("/v1/account/card",
         filled([this](const http::Request& request, http::Response& response) {
             const std::string user = request.query("user");
-            const std::optional<SubscriptionStore::Subscription> subscription
-                = store_.getSubscription(user);
-            if (!subscription.has_value()) {
-                respondError(response, 404, ErrorCode::eSubscriptionExpired,
-                    "no active subscription for this user");
+            const std::string key = request.query("key");
+            const std::optional<SubscriptionStore::Account> account
+                = user.empty() ? std::nullopt : store_.getAccount(user);
+            bool known = account.has_value() && !account->card.empty();
+            if (known) {
+                ContactCard card;
+                try {
+                    card = ContactCard::verify(account->card);
+                } catch (const std::exception& error) {
+                    bazarish::log::warn("card of {} is unreadable: {}", log::redact(user),
+                        error.what());
+                    known = false;
+                }
+                // The url alphabet, because this travels in a query string
+                // where a '+' from plain base64 would arrive as a space.
+                if (known && (card.servingSealingKeyDer.empty()
+                        || toBase64Url(card.servingSealingKeyDer) != key)) {
+                    known = false;
+                }
+            }
+            if (!known) {
+                // One answer for "not here" and "that is not the key I issued",
+                // so nothing is learnt by asking. A caller holding a descriptor
+                // that no longer matches learns exactly what is true: it is out
+                // of date.
+                respondError(response, 404, ErrorCode::eClientUnregistered,
+                    "that descriptor is out of date");
                 return;
             }
-            respondJson(response,
-                {
-                    {"user", user},
-                    {"subscriptionCert", toBase64(subscription->certificate)},
-                    {"serverCard", toBase64(options_.serverCardDer)},
-                });
+            respondJson(response, {{"user", user}, {"card", toBase64(account->card)}});
         }));
 
     // Onboarding discovery: where to register and on what terms. Unauthenticated

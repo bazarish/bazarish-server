@@ -38,26 +38,29 @@ int main()
 
     const std::string alice = makeUser(0x01);
 
-    // Subscriptions.
-    CHECK(!store.getSubscription(alice).has_value());
-    SubscriptionStore::Subscription sub{
-        alice, 1000, 2000, 10485760, "destination.b32.i2p", Bytes{0xaa, 0xbb}};
-    store.putSubscription(sub);
-    const auto loaded = store.getSubscription(alice);
+    // Accounts.
+    CHECK(!store.getAccount(alice).has_value());
+    SubscriptionStore::Account account{
+        alice, 1000, 10485760, "destination.b32.i2p", 1500, Bytes{0xaa, 0xbb}};
+    store.putAccount(account);
+    const auto loaded = store.getAccount(alice);
     CHECK(loaded.has_value());
     CHECK(loaded->user == alice);
-    CHECK(loaded->notAfter == 2000);
+    CHECK(loaded->registeredAt == 1000);
     CHECK(loaded->quotaBytes == 10485760);
-    CHECK(loaded->certificate == (Bytes{0xaa, 0xbb}));
-    // The address is kept beside the certificate so a listing can show it.
+    CHECK(loaded->card == (Bytes{0xaa, 0xbb}));
+    // The address is kept beside the card so a listing can show it.
     CHECK(loaded->dest == "destination.b32.i2p");
-    store.deleteSubscription(alice);
-    CHECK(!store.getSubscription(alice).has_value());
+    // The only clock an account has: when it last delegated a destination.
+    CHECK(loaded->delegatedAt == 1500);
+    store.deleteAccount(alice);
+    CHECK(!store.getAccount(alice).has_value());
 
     // Persistence across instances.
-    store.putSubscription(sub);
+    store.putAccount(account);
     SubscriptionStore reopened(root);
-    CHECK(reopened.getSubscription(alice).has_value());
+    CHECK(reopened.getAccount(alice).has_value());
+    CHECK(reopened.allAccounts().size() == 1);
 
     std::filesystem::remove_all(root);
     return 0;

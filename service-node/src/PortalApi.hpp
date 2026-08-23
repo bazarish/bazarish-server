@@ -40,7 +40,6 @@ struct PortalApiOptions {
     // nothing on this node is for sale. The initial value; an operator can
     // change it while the node runs (see settings).
     std::uint64_t defaultQuotaBytes = 50 * 1024 * 1024;
-    std::int64_t freeSubscriptionTermSeconds = 14 * 24 * 3600;
     // When false, registration is open to any logged-in (sign-in-with-key) user
     // without solving a captcha. Advertised to clients via the discovery
     // endpoint's freeRegistration.captcha flag, so the two cannot disagree.

@@ -19,10 +19,12 @@ public:
         bool requireApproval = false;
         std::string registrationMessage;
         std::uint64_t defaultQuotaBytes = 0;
-        // How long a registration that never turned into a served account is
-        // kept before the node drops it: an account waiting for approval, and a
-        // portal registration no client ever redeemed. 0 keeps them forever.
-        std::int64_t registrationTtlDays = 0;
+        // How long an account is kept without a delegated destination before
+        // the node drops it. The delegation is the only sign of life a server
+        // has, so this one number covers a client that stopped running, a
+        // registration nobody redeemed and an account no operator approved.
+        // 0 keeps them forever.
+        std::int64_t idleDeleteDays = 0;
     };
 
     NodeSettings(std::filesystem::path configPath, Values initial);

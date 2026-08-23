@@ -57,49 +57,56 @@ SubscriptionStore::SubscriptionStore(const fs::path& root)
     fs::create_directories(root_ / "subscriptions");
 }
 
-fs::path SubscriptionStore::subscriptionPath(const std::string& user) const
+fs::path SubscriptionStore::accountPath(const std::string& user) const
 {
     return root_ / "subscriptions" / (user + ".json");
 }
 
-void SubscriptionStore::putSubscription(const Subscription& subscription)
+void SubscriptionStore::putAccount(const Account& account)
 {
-    requireUser(subscription.user);
+    requireUser(account.user);
     const std::lock_guard<std::mutex> lock(mutex_);
     const nlohmann::json body = {
-        {"user", subscription.user},
-        {"issuedAt", subscription.issuedAt},
-        {"notAfter", subscription.notAfter},
-        {"quotaBytes", subscription.quotaBytes},
-        {"dest", subscription.dest},
-        {"cert", toBase64(subscription.certificate)},
+        {"user", account.user},
+        {"registeredAt", account.registeredAt},
+        {"quotaBytes", account.quotaBytes},
+        {"dest", account.dest},
+        {"delegatedAt", account.delegatedAt},
+        {"card", toBase64(account.card)},
     };
-    writeFileAtomic(subscriptionPath(subscription.user), body.dump());
+    writeFileAtomic(accountPath(account.user), body.dump());
 }
 
-std::optional<SubscriptionStore::Subscription> SubscriptionStore::getSubscription(
-    const std::string& user)
+namespace {
+
+SubscriptionStore::Account accountFromJson(const nlohmann::json& body)
+{
+    SubscriptionStore::Account account;
+    account.user = body.at("user").get<std::string>();
+    account.registeredAt = body.at("registeredAt").get<std::int64_t>();
+    account.quotaBytes = body.at("quotaBytes").get<std::uint64_t>();
+    account.dest = body.value("dest", std::string());
+    account.delegatedAt = body.value("delegatedAt", std::int64_t{0});
+    account.card = fromBase64(body.value("card", std::string()));
+    return account;
+}
+
+}  // namespace
+
+std::optional<SubscriptionStore::Account> SubscriptionStore::getAccount(const std::string& user)
 {
     requireUser(user);
     const std::lock_guard<std::mutex> lock(mutex_);
-    const fs::path path = subscriptionPath(user);
+    const fs::path path = accountPath(user);
     if (!fs::exists(path)) {
         return std::nullopt;
     }
-    const nlohmann::json body = readJsonFile(path);
-    Subscription subscription;
-    subscription.user = body.at("user").get<std::string>();
-    subscription.issuedAt = body.at("issuedAt").get<std::int64_t>();
-    subscription.notAfter = body.at("notAfter").get<std::int64_t>();
-    subscription.quotaBytes = body.at("quotaBytes").get<std::uint64_t>();
-    subscription.dest = body.value("dest", std::string());
-    subscription.certificate = fromBase64(body.at("cert").get<std::string>());
-    return subscription;
+    return accountFromJson(readJsonFile(path));
 }
 
-std::vector<SubscriptionStore::Subscription> SubscriptionStore::allSubscriptions() const
+std::vector<SubscriptionStore::Account> SubscriptionStore::allAccounts() const
 {
-    std::vector<Subscription> out;
+    std::vector<Account> out;
     const std::lock_guard<std::mutex> lock(mutex_);
     std::error_code ec;
     std::filesystem::directory_iterator entries(root_ / "subscriptions", ec);
@@ -111,30 +118,21 @@ std::vector<SubscriptionStore::Subscription> SubscriptionStore::allSubscriptions
             continue;
         }
         try {
-            std::ifstream in(entry.path(), std::ios::binary);
-            const std::string text(
-                (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-            const nlohmann::json record = nlohmann::json::parse(text);
-            Subscription subscription;
-            subscription.user = record.at("user").get<std::string>();
-            subscription.issuedAt = record.at("issuedAt").get<std::int64_t>();
-            subscription.notAfter = record.at("notAfter").get<std::int64_t>();
-            subscription.quotaBytes = record.at("quotaBytes").get<std::uint64_t>();
-            out.push_back(std::move(subscription));
+            out.push_back(accountFromJson(readJsonFile(entry.path())));
         } catch (const std::exception& error) {
-            bazarish::log::warn("subscription record {} unreadable: {}",
+            bazarish::log::warn("account record {} unreadable: {}",
                 entry.path().filename().string(), error.what());
         }
     }
     return out;
 }
 
-void SubscriptionStore::deleteSubscription(const std::string& user)
+void SubscriptionStore::deleteAccount(const std::string& user)
 {
     requireUser(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     std::error_code ignored;
-    fs::remove(subscriptionPath(user), ignored);
+    fs::remove(accountPath(user), ignored);
 }
 
 }  // namespace bazarish::service

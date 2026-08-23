@@ -33,11 +33,10 @@ int main()
         GrantStore grants(root);
         CHECK(!grants.peekSubscription(user).has_value());
 
-        grants.grantSubscription(user, 5ULL * 1024 * 1024 * 1024, 30 * 24 * 3600, 1000);
+        grants.grantSubscription(user, 5ULL * 1024 * 1024 * 1024, 1000);
         const std::optional<GrantStore::SubscriptionGrant> peeked = grants.peekSubscription(user);
         CHECK(peeked.has_value());
         CHECK(peeked->quotaBytes == 5ULL * 1024 * 1024 * 1024);
-        CHECK(peeked->termSeconds == 30 * 24 * 3600);
         CHECK(peeked->grantedAt == 1000);
     }
     {

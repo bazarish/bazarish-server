@@ -89,7 +89,6 @@ int main()
     AccountApiOptions options;
     options.serverFingerprint = "server-fp";
     options.defaultQuotaBytes = 20 * 1024 * 1024;
-    options.maxTermSeconds = 14 * 24 * 3600;
     options.operatorFingerprints = {panel.fingerprint()};
     std::string quotaUser;
     std::uint64_t quotaPushed = 0;
@@ -120,7 +119,7 @@ int main()
     grants.recordRegistration(served, now, true);
     grants.recordRegistration(waitingOne, now, false);
     grants.recordRegistration(waitingTwo, now, false);
-    grants.grantSubscription(served, options.defaultQuotaBytes, options.maxTermSeconds, now);
+    grants.grantSubscription(served, options.defaultQuotaBytes, now);
     // The listing is in fingerprint order, so paging is checked against that.
     std::vector<std::string> inOrder = {served, waitingOne, waitingTwo};
     std::sort(inOrder.begin(), inOrder.end());

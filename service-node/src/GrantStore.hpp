@@ -21,7 +21,6 @@ class GrantStore {
 public:
     struct SubscriptionGrant {
         std::uint64_t quotaBytes = 0;
-        std::int64_t termSeconds = 0;
         std::int64_t grantedAt = 0;
     };
 
@@ -35,10 +34,11 @@ public:
 
     explicit GrantStore(std::filesystem::path root);
 
-    // Grants (or refreshes) a pending subscription for the user - the quota and
-    // maximum term the node will then accept on the user's submitted cert.
+    // Grants (or refreshes) a pending registration for the user: the quota the
+    // account gets when a client redeems it by publishing its card. Registration
+    // has no term - the account lives while a destination is delegated for it.
     void grantSubscription(const std::string& user, std::uint64_t quotaBytes,
-        std::int64_t termSeconds, std::int64_t now);
+        std::int64_t now);
 
     // The pending subscription grant without consuming it (UI / checks).
     std::optional<SubscriptionGrant> peekSubscription(const std::string& user);

@@ -33,7 +33,11 @@ struct FederationDeliverResult {
 
 // Looks up a local user's contact card (subscription certificate DER) by
 // fingerprint for the federation card fetch; nullopt when the user is unknown.
-using GetCardFn = std::function<std::optional<Bytes>(const std::string& fingerprint)>;
+// Looks up a local user's contact card. The key is the one from the descriptor
+// the asker holds; a wrong key must read exactly like an unknown user, so this
+// returns nothing in both cases and the caller cannot tell them apart.
+using GetCardFn
+    = std::function<std::optional<Bytes>(const std::string& fingerprint, const Bytes& keyDer)>;
 
 struct FederationFetchResult {
     bool ok = false;

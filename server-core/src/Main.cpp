@@ -283,11 +283,16 @@ int main(const int argc, const char** argv)
         // --service-node is set (else CARD_UNKNOWN).
         bazarish::server::GetCardFn getCard;
         if (!serviceNodeUrl.empty()) {
-            getCard = [serviceNodeUrl](const std::string& fp) -> std::optional<bazarish::Bytes> {
+            getCard = [serviceNodeUrl](const std::string& fp,
+                          const bazarish::Bytes& keyDer) -> std::optional<bazarish::Bytes> {
                 const ServiceNodeAddress node = parseServiceNodeUrl(serviceNodeUrl);
                 bazarish::http::ClientRequest lookup;
                 lookup.method = "GET";
-                lookup.target = "/v1/account/contact?user=" + fp;
+                // The node answers only when the key matches the one it issued
+                // for that destination, and refuses a wrong key exactly like an
+                // unknown user.
+                lookup.target
+                    = "/v1/account/card?user=" + fp + "&key=" + bazarish::toBase64Url(keyDer);
                 bazarish::http::ClientOptions options;
                 options.connectTimeout = std::chrono::seconds(kServiceNodeTimeoutSeconds);
                 options.readTimeout = std::chrono::seconds(kServiceNodeTimeoutSeconds);
@@ -298,7 +303,7 @@ int main(const int argc, const char** argv)
                 }
                 try {
                     const nlohmann::json body = nlohmann::json::parse(res.body);
-                    return bazarish::fromBase64(body.at("subscriptionCert").get<std::string>());
+                    return bazarish::fromBase64(body.at("card").get<std::string>());
                 } catch (const std::exception&) {
                     return std::nullopt;
                 }

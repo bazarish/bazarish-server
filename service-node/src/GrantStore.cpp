@@ -68,8 +68,8 @@ fs::path GrantStore::grantPath(const std::string& user) const
     return root_ / "grants" / (user + ".json");
 }
 
-void GrantStore::grantSubscription(const std::string& user, const std::uint64_t quotaBytes,
-    const std::int64_t termSeconds, const std::int64_t now)
+void GrantStore::grantSubscription(
+    const std::string& user, const std::uint64_t quotaBytes, const std::int64_t now)
 {
     requireUser(user);
     const std::lock_guard<std::mutex> lock(mutex_);
@@ -80,7 +80,6 @@ void GrantStore::grantSubscription(const std::string& user, const std::uint64_t 
     }
     body["subscription"] = {
         {"quotaBytes", quotaBytes},
-        {"termSeconds", termSeconds},
         {"grantedAt", now},
     };
     writeFileAtomic(path, body.dump());
@@ -101,7 +100,6 @@ std::optional<GrantStore::SubscriptionGrant> GrantStore::peekSubscription(const 
     const nlohmann::json& grant = body.at("subscription");
     SubscriptionGrant result;
     result.quotaBytes = grant.at("quotaBytes").get<std::uint64_t>();
-    result.termSeconds = grant.at("termSeconds").get<std::int64_t>();
     result.grantedAt = grant.at("grantedAt").get<std::int64_t>();
     return result;
 }

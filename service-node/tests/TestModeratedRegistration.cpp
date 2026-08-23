@@ -84,7 +84,6 @@ int main()
     options.serverFingerprint = serverFp;
     options.serverCardDer = cardDer;
     options.defaultQuotaBytes = 20 * 1024 * 1024;
-    options.maxTermSeconds = 14 * 24 * 3600;
     options.operatorFingerprints = {panel.fingerprint()};
     options.registration = AccountApiOptions::Registration::eApproval;
     options.registrationMessage = "write to admin@example.i2p to finish registration";
@@ -106,12 +105,11 @@ int main()
     // The account is created exactly as on an open node - only frozen.
     {
         grants.grantSubscription(
-            alice.fingerprint(), options.defaultQuotaBytes, options.maxTermSeconds, now);
-        const Bytes cert
-            = SubscriptionCertificate::issue(alice, serverFp, now, now + 3 * 24 * 3600);
-        const std::string body = nlohmann::json{{"cert", toBase64(cert)}}.dump();
-        const http::ClientResponse result = call(port, "POST", "/v1/account/subscribe",
-            makeHeaders(alice, "POST", "/v1/account/subscribe", body), body);
+            alice.fingerprint(), options.defaultQuotaBytes, now);
+        const Bytes card = ContactCard::issue(alice);
+        const std::string body = nlohmann::json{{"card", toBase64(card)}}.dump();
+        const http::ClientResponse result = call(port, "POST", "/v1/account/card",
+            makeHeaders(alice, "POST", "/v1/account/card", body), body);
         CHECK(result.status == 200);
         const nlohmann::json reply = nlohmann::json::parse(result.body);
         CHECK(reply.at("approval") == "pending");

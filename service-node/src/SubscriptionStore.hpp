@@ -12,38 +12,43 @@
 
 namespace bazarish::service {
 
-// Persistent user-management state for one service node: subscriptions. The
-// service node owns the limit (quota) and the certificates; content usage
-// lives on the messaging server.
+// Persistent user-management state for one service node: the accounts it serves.
+// An account has no term - registration opens an unbounded channel - so what is
+// kept is the quota this node granted, the user's published contact card, and
+// when the user last delegated a destination. That last one is the only clock:
+// an account that stops delegating is swept.
 //
 // Layout under the root directory:
-//   subscriptions/<fingerprint>.json   {user, issuedAt, notAfter, quotaBytes, cert}
+//   subscriptions/<fingerprint>.json   {user, registeredAt, quotaBytes, dest,
+//                                       delegatedAt, card}
 class SubscriptionStore {
 public:
-    struct Subscription {
+    struct Account {
         std::string user;
-        std::int64_t issuedAt = 0;
-        std::int64_t notAfter = 0;
+        std::int64_t registeredAt = 0;
         std::uint64_t quotaBytes = 0;
-        // The I2P destination the user published in this certificate, kept out
-        // of it so a listing can show and search addresses without verifying a
-        // certificate per row. Empty until the user publishes routing.
+        // The I2P destination the user published in their card, kept out of it
+        // so a listing can show and search addresses without verifying a
+        // signature per row. Empty until the user publishes routing.
         std::string dest;
-        // The hybrid-signed subscription certificate (DER).
-        Bytes certificate;
+        // When the server last held a delegation for that destination. Zero
+        // means the user has never delegated one.
+        std::int64_t delegatedAt = 0;
+        // The hybrid-signed contact card (DER), as published by the user.
+        Bytes card;
     };
 
     explicit SubscriptionStore(const std::filesystem::path& root);
 
-    void putSubscription(const Subscription& subscription);
-    std::optional<Subscription> getSubscription(const std::string& user);
-    // Every subscription on file, for the reconciliation this node owes the
-    // messaging server at start (quotas it may have missed).
-    std::vector<Subscription> allSubscriptions() const;
-    void deleteSubscription(const std::string& user);
+    void putAccount(const Account& account);
+    std::optional<Account> getAccount(const std::string& user);
+    // Every account on file, for the reconciliation this node owes the messaging
+    // server at start (quotas it may have missed) and for the idle sweep.
+    std::vector<Account> allAccounts() const;
+    void deleteAccount(const std::string& user);
 
 private:
-    std::filesystem::path subscriptionPath(const std::string& user) const;
+    std::filesystem::path accountPath(const std::string& user) const;
 
     std::filesystem::path root_;
     mutable std::mutex mutex_;

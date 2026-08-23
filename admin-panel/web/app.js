@@ -300,14 +300,15 @@
         if (user.approval === "approved") {
             facts.appendChild(fact("approved", humanDate(user.approvedAt)));
         }
-        facts.appendChild(fact("subscription",
-            user.subscribed ? "until " + humanDate(user.notAfter) : "not redeemed yet"));
+        facts.appendChild(fact("account",
+            user.registered ? "registered" : "not redeemed yet"));
         facts.appendChild(fact("address", user.dest || "none published",
             user.dest ? window.bazarishCopy.icon(function () {
                 return user.dest;
             }, "Copy the address") : null));
         facts.appendChild(fact("delegation",
-            isDelegated(user) ? "until " + humanDate(user.transientExpires) : "none"));
+            isDelegated(user) ? "until " + humanDate(user.transientExpires)
+                : (user.delegatedAt ? "lapsed, last " + humanDate(user.delegatedAt) : "none")));
         // The mailbox and the devices live on the messaging server, so they come
         // in after the row does.
         var mailbox = fact("mailbox", "...");
@@ -322,10 +323,10 @@
             mailbox.lastChild.textContent = "unknown (" + error.message + ")";
             devices.lastChild.textContent = "unknown";
         });
-        // A registration that never became a served account is dropped; say when,
-        // so "nothing happened here" has a date attached to it.
+        // An account lives while it keeps delegating; say when this one runs out
+        // if nothing changes, so "idle" has a date attached to it.
         if (user.sweepAt) {
-            facts.appendChild(fact("dropped unless finished", humanDate(user.sweepAt)));
+            facts.appendChild(fact("deleted unless it delegates", humanDate(user.sweepAt)));
         }
         box.appendChild(facts);
 
@@ -670,14 +671,15 @@
             storageRow.appendChild(element("span", "unit", "MB"));
 
             var ttlRow = controls(accounts,
-                "An account waiting for you, or one registered at the portal that no client ever"
-                + " redeemed, is dropped after this.");
-            ttlRow.appendChild(element("span", "control-label", "Keep unfinished"));
+                "An account with no destination delegated here for this long is deleted -"
+                + " a client nobody runs, a registration nobody redeemed, an account nobody"
+                + " approved. The number is the node's; this only carries it over.");
+            ttlRow.appendChild(element("span", "control-label", "Delete when idle for"));
             var ttl = element("input", "field quota-input");
             ttl.type = "number";
             ttl.min = "0";
             ttl.step = "1";
-            ttl.value = String(data.registrationTtlDays);
+            ttl.value = String(data.idleDeleteDays);
             ttlRow.appendChild(ttl);
             ttlRow.appendChild(element("span", "unit", "days (0: forever)"));
 
@@ -702,7 +704,7 @@
                 api("PUT", withFleet("/api/settings"), {
                     requireApproval: moderated,
                     registrationMessage: message.value.trim(),
-                    registrationTtlDays: Math.max(0, Math.round(Number(ttl.value) || 0)),
+                    idleDeleteDays: Math.max(0, Math.round(Number(ttl.value) || 0)),
                     defaultQuotaBytes: Math.round(megabytes) * kBytesPerMiB
                 }).then(function () {
                     renderSettings();

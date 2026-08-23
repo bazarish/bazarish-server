@@ -759,8 +759,17 @@ void AccountApi::setupRoutes()
         filled([this](const http::Request& request, http::Response& response) {
             const std::string user = request.query("user");
             const std::string key = request.query("key");
-            const std::optional<SubscriptionStore::Account> account
-                = user.empty() ? std::nullopt : store_.getAccount(user);
+            std::optional<SubscriptionStore::Account> account;
+            try {
+                account = user.empty() ? std::nullopt : store_.getAccount(user);
+            } catch (const std::exception& error) {
+                // A record this node cannot read is one it cannot serve a card
+                // from, and it must look exactly like every other miss: any
+                // answer that stands out turns this into the enumeration oracle
+                // the key check exists to close.
+                bazarish::log::warn("account record of {} is unreadable: {}", log::redact(user),
+                    error.what());
+            }
             bool known = account.has_value() && !account->card.empty();
             if (known) {
                 ContactCard card;

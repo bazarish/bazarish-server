@@ -116,10 +116,9 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
     }
 
     if (deliveryClass == "contact") {
-        if (payload.size() > options_.contactRequestLimitBytes) {
+        if (payload.size() > kMaxContactRequestBytes) {
             return fail(ErrorCode::eContactRequestTooLarge,
-                "contact request exceeds " + std::to_string(options_.contactRequestLimitBytes)
-                    + " bytes");
+                "contact request exceeds " + std::to_string(kMaxContactRequestBytes) + " bytes");
         }
     } else {
         if (token.size() != kDeliveryTokenSize

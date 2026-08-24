@@ -172,9 +172,6 @@ int main(const int argc, const char** argv)
     const int port = listen.port;
     const bool enableI2p = config.flag("i2p.enabled", true);
     bazarish::server::DeliveryEngineOptions engineOptions;
-    engineOptions.contactRequestLimitBytes
-        = static_cast<std::uint64_t>(config.number("contactRequestLimitBytes",
-            static_cast<std::int64_t>(engineOptions.contactRequestLimitBytes)));
     const std::vector<std::string> operatorFingerprints = config.list("operators");
     const std::string serviceNodeUrl = config.text("serviceNode");
     bazarish::i2p::Privacy privacy = bazarish::i2p::Privacy::eMax;

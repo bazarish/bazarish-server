@@ -133,7 +133,6 @@ int main()
 
     DeliveryEngineOptions engineOptions;
     engineOptions.defaultQuotaBytes = 1024;
-    engineOptions.contactRequestLimitBytes = 256;
     DeliveryEngine engine(storage, serverFp, Key::fromPrivatePem(serverSealing.privatePem()),
         engineOptions);
     HttpApiOptions httpOptions;
@@ -324,7 +323,7 @@ int main()
         const std::string oversized = makeEnvelope(serverDest, sealingPublic,
             {{"class", "contact"}, {"mailbox", alice.fingerprint()},
                 {"messageId", "req-2"}},
-            Bytes(300, 0x55));
+            Bytes(bazarish::kMaxContactRequestBytes + 1, 0x55));
         const nlohmann::json result = sendAndPoll(port, alice, "alicedev", oversized);
         CHECK(result.at("status") == "failed");
         CHECK(result.at("error").at("code") == "CONTACT_REQUEST_TOO_LARGE");

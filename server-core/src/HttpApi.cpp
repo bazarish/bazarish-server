@@ -805,6 +805,39 @@ void HttpApi::setupRoutes()
             }
         });
 
+    // Rotating a user's serving sealing key. Operator-signed, like the other
+    // node-to-server pushes; two phases, because the key only comes into force
+    // when the user has signed it into a contact card their contacts can read.
+    http_->put("/v1/messaging/serving-key",
+        [this, operatorRejection](const bazarish::http::Request& request) -> bazarish::http::Response {
+            if (const std::optional<bazarish::http::Response> refused = operatorRejection(request);
+                refused.has_value()) {
+                return *refused;
+            }
+            if (!options_.prepareServingKey || !options_.commitServingKey) {
+                return errorResponse(503, ErrorCode::eDeliveryRejected,
+                    "per-user destinations not available");
+            }
+            try {
+                const nlohmann::json body = nlohmann::json::parse(request.body);
+                const std::string user = body.at("user").get<std::string>();
+                const std::string phase = body.at("phase").get<std::string>();
+                if (phase == "prepare") {
+                    return jsonResponse({{"servingKey", options_.prepareServingKey(user)}});
+                }
+                if (phase == "commit") {
+                    if (!options_.commitServingKey(user)) {
+                        return errorResponse(409, ErrorCode::eDeliveryRejected,
+                            "no prepared serving key for this user");
+                    }
+                    return jsonResponse({{"ok", true}});
+                }
+                return errorResponse(400, ErrorCode::eDeliveryRejected, "unknown phase");
+            } catch (const std::exception& error) {
+                return errorResponse(400, ErrorCode::eDeliveryRejected, error.what());
+            }
+        });
+
     // --- Token hashes ---
 
     http_->post("/v1/messaging/tokens",

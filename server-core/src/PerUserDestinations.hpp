@@ -78,6 +78,16 @@ public:
     // server holds. Stable across renewals. Null when the user has none.
     std::shared_ptr<Key> servingKeyFor(const std::string& userFp) const;
 
+    // Mints a replacement serving sealing key and holds it aside without putting
+    // it into service: the key in use keeps serving until commitServingKey, so a
+    // rotation that is never finished changes nothing. Returns the new key's
+    // public half (base64 SPKI), which the user signs into a fresh contact card.
+    std::string prepareServingKey(const std::string& userFp);
+    // Puts the prepared key into service and forgets the old one, from which
+    // moment an envelope sealed to the old key is refused. False when there is
+    // nothing prepared (a commit for a rotation that was never started).
+    bool commitServingKey(const std::string& userFp);
+
     // userFp's personal destination address (the master b32), learned once the
     // destination publishes. Empty when the user has none or it is not up yet.
     std::string destinationFor(const std::string& userFp) const;
@@ -101,6 +111,9 @@ private:
         // The destination's own serving sealing key (private half held here; its
         // public half is surfaced to the user). The accept loop unseals with it.
         std::shared_ptr<Key> sealingKey;
+        // A replacement minted but not yet in service: the user has to sign it
+        // into a card first, and until they do the key above keeps serving.
+        std::shared_ptr<Key> pendingSealingKey;
         // The destination's own federation signing key (per-user): it signs the
         // delivered-acks this destination sends, so the signer is bound to the
         // destination, never the server root identity. Stable across renewals.

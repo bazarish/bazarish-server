@@ -11,6 +11,7 @@
 #include <ctime>
 #include <exception>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <system_error>
 #include <thread>
@@ -134,8 +135,16 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
                     }
                     try {
                         const std::string sender = peer;
+                        // Snapshotted per request under the lock: a rotation
+                        // replaces this key while the loop is running, and the
+                        // loop must serve with whichever one is in force now.
+                        std::shared_ptr<Key> serving;
+                        {
+                            const std::lock_guard<std::mutex> lock(mutex_);
+                            serving = raw->sealingKey;
+                        }
                         federationServeOnce(*stream, engine_, nowSeconds(), peer, limiter_,
-                            raw->sealingKey.get(), userFp, getCard_,
+                            serving.get(), userFp, getCard_,
                             // Ack a stored delivery from THIS per-user dest back to
                             // the sender's serving dest.
                             [this, endpoint, sender, signingKey = raw->signingKey](
@@ -268,6 +277,68 @@ void PerUserDestinations::provision(const std::string& userFp, const std::string
     }
     teardownLocked(userFp);
     bringUp(userFp, transientB64, expiresUnix, sealingKeyPem, signingKeyPem);
+}
+
+namespace {
+
+// Reads a destination record, hands it to `edit`, and writes it back. The record
+// is the destination: a rotation that is not written down is one the next start
+// knows nothing about.
+void rewriteRecord(const std::filesystem::path& file,
+    const std::function<void(nlohmann::json&)>& edit)
+{
+    nlohmann::json record = nlohmann::json::object();
+    {
+        std::ifstream in(file, std::ios::binary);
+        const std::string text(
+            (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        if (!text.empty()) {
+            record = nlohmann::json::parse(text);
+        }
+    }
+    edit(record);
+    const std::string text = record.dump();
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    out.write(text.data(), static_cast<std::streamsize>(text.size()));
+    out.close();
+    if (!out) {
+        throw std::runtime_error("cannot persist the destination record for " + file.string());
+    }
+}
+
+}  // namespace
+
+std::string PerUserDestinations::prepareServingKey(const std::string& userFp)
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const auto found = dests_.find(userFp);
+    if (found == dests_.end()) {
+        throw std::runtime_error("no destination to rotate a serving key for");
+    }
+    const Key fresh = Key::generateSealing();
+    rewriteRecord(pathFor(userFp), [&fresh](nlohmann::json& record) {
+        record["pendingSealingKey"] = fresh.privatePem();
+    });
+    found->second->pendingSealingKey = std::make_shared<Key>(Key::fromPrivatePem(fresh.privatePem()));
+    return toBase64(found->second->pendingSealingKey->publicDer());
+}
+
+bool PerUserDestinations::commitServingKey(const std::string& userFp)
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const auto found = dests_.find(userFp);
+    if (found == dests_.end() || !found->second->pendingSealingKey) {
+        return false;
+    }
+    const std::string pem = found->second->pendingSealingKey->privatePem();
+    rewriteRecord(pathFor(userFp), [&pem](nlohmann::json& record) {
+        record["sealingKey"] = pem;
+        record.erase("pendingSealingKey");
+    });
+    found->second->sealingKey = found->second->pendingSealingKey;
+    found->second->pendingSealingKey.reset();
+    bazarish::log::info("serving key rotated for {}", bazarish::log::redact(userFp));
+    return true;
 }
 
 void PerUserDestinations::revoke(const std::string& userFp)

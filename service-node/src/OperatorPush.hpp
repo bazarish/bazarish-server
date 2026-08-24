@@ -45,14 +45,24 @@ public:
     // cannot drift apart.
     bool publishQuota(const std::string& user, std::uint64_t quotaBytes) const;
 
+    // Rotating a user's serving sealing key on the messaging server, in the two
+    // phases the switch needs: the prepared key is returned (base64 SPKI) for the
+    // user to sign into a card, and only the commit puts it in force. Nullopt /
+    // false when the server did not answer or had nothing prepared.
+    std::optional<std::string> prepareServingKey(const std::string& user) const;
+    bool commitServingKey(const std::string& user) const;
+
 private:
-    // One signed PUT of a JSON body to the messaging server.
+    // One signed PUT of a JSON body to the messaging server; the answer's body
+    // when it was accepted, nothing when it was not.
+    std::optional<std::string> putBody(const std::string& path, const std::string& bodyText) const;
     bool put(const std::string& path, const std::string& bodyText) const;
 
     std::string baseUrl_;  // http://host:port, empty disables
     const Identity& signer_;
     std::string destPath_;
     std::string quotaPath_;
+    std::string servingKeyPath_ = "/v1/messaging/serving-key";
 };
 
 }  // namespace bazarish::service

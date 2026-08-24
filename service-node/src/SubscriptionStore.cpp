@@ -73,6 +73,8 @@ void SubscriptionStore::putAccount(const Account& account)
         {"dest", account.dest},
         {"delegatedAt", account.delegatedAt},
         {"view", account.view},
+        {"pendingView", account.pendingView},
+        {"pendingServingKey", account.pendingServingKey},
         {"card", toBase64(account.card)},
     };
     writeFileAtomic(accountPath(account.user), body.dump());
@@ -89,6 +91,8 @@ SubscriptionStore::Account accountFromJson(const nlohmann::json& body)
     account.dest = body.value("dest", std::string());
     account.delegatedAt = body.value("delegatedAt", std::int64_t{0});
     account.view = body.value("view", std::string());
+    account.pendingView = body.value("pendingView", std::string());
+    account.pendingServingKey = body.value("pendingServingKey", std::string());
     account.card = fromBase64(body.value("card", std::string()));
     return account;
 }

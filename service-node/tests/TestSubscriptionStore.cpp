@@ -42,7 +42,7 @@ int main()
     CHECK(!store.getAccount(alice).has_value());
     SubscriptionStore::Account account{
         alice, 1000, 10485760, "destination.b32.i2p", 1500, "0123456789abcdef0123456789abcdef",
-        Bytes{0xaa, 0xbb}};
+        /*pendingView=*/{}, /*pendingServingKey=*/{}, Bytes{0xaa, 0xbb}};
     store.putAccount(account);
     const auto loaded = store.getAccount(alice);
     CHECK(loaded.has_value());

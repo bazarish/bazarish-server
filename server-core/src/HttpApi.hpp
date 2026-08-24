@@ -85,6 +85,12 @@ struct HttpApiOptions {
         provisionI2pDest;
     // Tears down a user's personal destination (grant lapsed/revoked).
     std::function<void(const std::string& user)> revokeI2pDest;
+    // Rotating a user's serving sealing key, in two steps so the switch is the
+    // user's to make: prepare mints a replacement and returns its public half
+    // (base64 SPKI) while the key in use keeps serving, commit puts it in force
+    // once the user has signed it into a card. Empty disables the endpoint.
+    std::function<std::string(const std::string& user)> prepareServingKey;
+    std::function<bool(const std::string& user)> commitServingKey;
     // Resolves the caller's assigned destination + serving key. A send is
     // delivered locally only when its toDest equals the caller's own assigned
     // destination (same i2p destination); every other toDest - including a

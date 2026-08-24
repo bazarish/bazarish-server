@@ -38,6 +38,13 @@ public:
         // descriptor carries and what a card lookup must hand back. Rotating it
         // retires every descriptor already out there.
         std::string view;
+        // A replacement capability minted for a rotation in progress: it becomes
+        // the view above only when the user commits the rotation with a card that
+        // carries the new serving key, so an abandoned rotation retires nothing.
+        std::string pendingView;
+        // The serving key the messaging server prepared for that same rotation
+        // (base64 SPKI), so the commit can check the card carries exactly it.
+        std::string pendingServingKey;
         // The hybrid-signed contact card (DER), as published by the user.
         Bytes card;
     };

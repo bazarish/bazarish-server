@@ -62,6 +62,13 @@ struct AccountApiOptions {
     // hand to the same number).
     std::function<void(const std::string& user, std::uint64_t quotaBytes)> publishQuota;
 
+    // Rotating the serving sealing key the messaging server holds for a user's
+    // destination. Two phases: prepare mints a replacement and returns its public
+    // half, commit puts it in force. The old key keeps serving until the commit,
+    // so a rotation the user never finishes changes nothing.
+    std::function<std::optional<std::string>(const std::string& user)> prepareServingKey;
+    std::function<bool(const std::string& user)> commitServingKey;
+
     // How an account becomes servable. eOpen: live the moment it is created.
     // eApproval: the account is created but stays frozen - its destination is
     // never brought up, so it can neither send nor receive - until an operator

@@ -309,6 +309,12 @@ int main(const int argc, const char** argv)
                                       const std::int64_t expiresUnix) {
         return operatorPush.publish(user, transientB64, expiresUnix);
     };
+    options.prepareServingKey = [&operatorPush](const std::string& user) {
+        return operatorPush.prepareServingKey(user);
+    };
+    options.commitServingKey = [&operatorPush](const std::string& user) {
+        return operatorPush.commitServingKey(user);
+    };
     options.publishQuota = [&operatorPush](const std::string& user,
                                const std::uint64_t quotaBytes) {
         if (!operatorPush.publishQuota(user, quotaBytes)) {

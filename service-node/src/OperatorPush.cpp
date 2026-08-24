@@ -107,8 +107,14 @@ std::optional<OperatorPush::AccountUsage> OperatorPush::accountUsage(
 
 bool OperatorPush::put(const std::string& path, const std::string& bodyText) const
 {
+    return putBody(path, bodyText).has_value();
+}
+
+std::optional<std::string> OperatorPush::putBody(
+    const std::string& path, const std::string& bodyText) const
+{
     if (baseUrl_.empty()) {
-        return false;  // not configured
+        return std::nullopt;  // not configured
     }
     for (int attempt = 1; attempt <= kPushAttempts; ++attempt) {
         try {
@@ -129,12 +135,12 @@ bool OperatorPush::put(const std::string& path, const std::string& bodyText) con
             const bazarish::http::ClientResponse response
                 = bazarish::http::request(hostPort.host, hostPort.port, push, options);
             if (response.status == 200) {
-                return true;
+                return response.body;
             }
             if (response.status > 0 && response.status < kFirstServerErrorStatus) {
                 bazarish::log::warn("operator push to {}{} refused with {}: {}", baseUrl_, path,
                     response.status, response.body);
-                return false;  // a refusal, not a hiccup: retrying changes nothing
+                return std::nullopt;  // a refusal, not a hiccup: retrying changes nothing
             }
             bazarish::log::warn("operator push to {}{} did not land (attempt {}/{}): {}", baseUrl_,
                 path, attempt, kPushAttempts,
@@ -147,13 +153,30 @@ bool OperatorPush::put(const std::string& path, const std::string& bodyText) con
             std::this_thread::sleep_for(std::chrono::seconds(kRetryDelaySeconds));
         }
     }
-    return false;
+    return std::nullopt;
 }
 
 bool OperatorPush::publishQuota(const std::string& user, const std::uint64_t quotaBytes) const
 {
     const nlohmann::json body = {{"user", user}, {"quotaBytes", quotaBytes}};
     return put(quotaPath_, body.dump());
+}
+
+std::optional<std::string> OperatorPush::prepareServingKey(const std::string& user) const
+{
+    const nlohmann::json body = {{"user", user}, {"phase", "prepare"}};
+    const std::optional<std::string> answer = putBody(servingKeyPath_, body.dump());
+    if (!answer.has_value()) {
+        return std::nullopt;
+    }
+    const nlohmann::json parsed = nlohmann::json::parse(*answer);
+    return parsed.at("servingKey").get<std::string>();
+}
+
+bool OperatorPush::commitServingKey(const std::string& user) const
+{
+    const nlohmann::json body = {{"user", user}, {"phase", "commit"}};
+    return put(servingKeyPath_, body.dump());
 }
 
 bool OperatorPush::publish(const std::string& user, const std::string& transientB64,

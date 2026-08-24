@@ -436,6 +436,12 @@ int main(const int argc, const char** argv)
         httpOptions.revokeI2pDest = [&perUserDests](const std::string& user) {
             perUserDests->revoke(user);
         };
+        httpOptions.prepareServingKey = [&perUserDests](const std::string& user) {
+            return perUserDests->prepareServingKey(user);
+        };
+        httpOptions.commitServingKey = [&perUserDests](const std::string& user) {
+            return perUserDests->commitServingKey(user);
+        };
     }
     bazarish::server::HttpApi api(
         storage, engine, httpOptions, std::move(remoteDeliver), std::move(remoteFetch));

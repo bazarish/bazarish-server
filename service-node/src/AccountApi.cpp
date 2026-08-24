@@ -773,6 +773,90 @@ void AccountApi::setupRoutes()
     //
     // Reached from the messaging server, which unseals the peer's query on the
     // user's own destination; nothing about this answer names the server.
+    // Rotating the serving key and the view together. Two calls, because the
+    // switch has to be the user's: this node prepares, the user signs the
+    // prepared key into a card, and only the commit puts either in force. A
+    // rotation that stops halfway leaves the account exactly as it was.
+    http_->post("/v1/account/serving-key",
+        filled(authenticated([this](const http::Request& request, http::Response& response,
+                          const std::string& user) {
+            (void)request;
+            const std::optional<SubscriptionStore::Account> held = store_.getAccount(user);
+            if (!held.has_value()) {
+                respondError(response, 403, ErrorCode::eDeliveryRejected, "no account here");
+                return;
+            }
+            if (!options_.prepareServingKey) {
+                respondError(response, 503, ErrorCode::eDeliveryRejected,
+                    "the messaging server cannot rotate serving keys");
+                return;
+            }
+            const std::optional<std::string> prepared = options_.prepareServingKey(user);
+            if (!prepared.has_value()) {
+                respondError(response, 503, ErrorCode::eDeliveryRejected,
+                    "the messaging server did not prepare a key");
+                return;
+            }
+            SubscriptionStore::Account record = *held;
+            record.pendingServingKey = *prepared;
+            record.pendingView = toHex(randomBytes(kViewCapabilityBytes));
+            store_.putAccount(record);
+            respondJson(response,
+                {{"servingKey", record.pendingServingKey}, {"view", record.pendingView}});
+        })));
+
+    http_->post("/v1/account/serving-key/commit",
+        filled(authenticated([this](const http::Request& request, http::Response& response,
+                          const std::string& user) {
+            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const std::optional<SubscriptionStore::Account> held = store_.getAccount(user);
+            if (!held.has_value() || held->pendingServingKey.empty()) {
+                respondError(response, 409, ErrorCode::eDeliveryRejected,
+                    "no rotation is in progress");
+                return;
+            }
+            const Bytes der = fromBase64(body.at("card").get<std::string>());
+            ContactCard card;
+            try {
+                card = ContactCard::verify(der);
+            } catch (const std::exception& error) {
+                respondError(response, 400, ErrorCode::eDeliveryRejected,
+                    std::string("invalid contact card: ") + error.what());
+                return;
+            }
+            if (card.user != user) {
+                respondError(response, 403, ErrorCode::eDeliveryRejected,
+                    "card does not name the authenticated user");
+                return;
+            }
+            // The card has to carry the key that was prepared, or the commit would
+            // put a key into force that nobody can read the card for.
+            if (toBase64(card.servingSealingKeyDer) != held->pendingServingKey) {
+                respondError(response, 400, ErrorCode::eDeliveryRejected,
+                    "the card does not carry the prepared serving key");
+                return;
+            }
+            // The card and the capability go in first: until the messaging server
+            // commits, the old key still serves, so a card nobody can use yet is
+            // harmless - while the reverse would refuse every contact.
+            SubscriptionStore::Account record = *held;
+            record.card = der;
+            record.dest = card.dest;
+            record.view = held->pendingView;
+            record.pendingView.clear();
+            record.pendingServingKey.clear();
+            store_.putAccount(record);
+            if (!options_.commitServingKey || !options_.commitServingKey(user)) {
+                // Put back what was there: a stored card whose key never came into
+                // force is a card that refuses every message sent to it.
+                store_.putAccount(*held);
+                respondError(response, 503, ErrorCode::eDeliveryRejected,
+                    "the messaging server did not take the new key - nothing was changed");
+                return;
+            }
+            respondJson(response, {{"ok", true}, {"view", record.view}});
+        })));
+
     http_->get("/v1/account/card",
         filled([this](const http::Request& request, http::Response& response) {
             const std::string user = request.query("user");

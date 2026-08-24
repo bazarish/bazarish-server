@@ -5,6 +5,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <chrono>
 #include <fstream>
 #include <stdexcept>
 #include <system_error>
@@ -356,6 +357,32 @@ void DiskStorage::purgeExpired(const std::int64_t receivedBefore)
             }
         }
         (void)user;
+    }
+}
+
+void DiskStorage::purgeTokensRegisteredBefore(const std::int64_t registeredBefore)
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    if (!fs::exists(root_ / "users")) {
+        return;
+    }
+    for (const fs::directory_entry& userEntry : fs::directory_iterator(root_ / "users")) {
+        const fs::path tokens = userEntry.path() / "tokens";
+        for (const std::string& hash : listDirectoryNames(tokens)) {
+            std::error_code ec;
+            // A token hash is an empty file, so its write time is when it was
+            // registered - there is nothing inside to read a date from.
+            const fs::file_time_type written = fs::last_write_time(tokens / hash, ec);
+            if (ec) {
+                continue;
+            }
+            const auto age = std::chrono::duration_cast<std::chrono::seconds>(
+                fs::file_time_type::clock::now() - written);
+            if (static_cast<std::int64_t>(age.count()) > registeredBefore) {
+                std::error_code ignored;
+                fs::remove(tokens / hash, ignored);
+            }
+        }
     }
 }
 

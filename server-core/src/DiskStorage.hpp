@@ -40,6 +40,7 @@ public:
     bool hasSeen(const std::string& user, const std::string& messageId) override;
     void markSeen(const std::string& user, const std::string& messageId,
         std::int64_t receivedAt) override;
+    void purgeTokensRegisteredBefore(std::int64_t registeredBefore) override;
     bool allowContactRequest(
         const std::string& user, std::int64_t now, std::size_t maxPerMinute) override;
     std::vector<PendingEntry> listPending(const std::string& user,

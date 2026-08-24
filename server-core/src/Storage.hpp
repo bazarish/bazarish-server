@@ -82,9 +82,14 @@ public:
         std::int64_t receivedAt)
         = 0;
 
-    // Counts one tokenless contact request against the recipient's own minute
-    // window and says whether it fits. The window is per mailbox, because that is
-    // the one thing the sender cannot change by rotating destinations.
+    // Counts one tokenless contact request against the destination's own minute
+    // window and says whether it fits. Keyed by the destination's owner, not by
+    // the mailbox the envelope named, so the answer never depends on a guess.
+    // Drops token hashes registered before this instant. Tokens are one-time and
+    // may wait years to be spent, so the horizon is long; this only stops an
+    // abandoned mailbox's hashes from living forever.
+    virtual void purgeTokensRegisteredBefore(std::int64_t registeredBefore) = 0;
+
     virtual bool allowContactRequest(
         const std::string& user, std::int64_t now, std::size_t maxPerMinute)
         = 0;

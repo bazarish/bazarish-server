@@ -78,6 +78,17 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
     // Expose the parsed id so the caller can acknowledge it (even a dedup hit).
     outcome.messageId = messageId;
 
+    // The tokenless path is bounded on the destination this arrived on - not on
+    // the mailbox the envelope names. That is what lets the refusal be explicit:
+    // the answer cannot depend on whether the named mailbox is the right one, so
+    // it says nothing about who is served here, and a real contact request is
+    // told to come back instead of vanishing.
+    if (!owner.empty() && deliveryClass == kContactDeliveryClass
+        && !storage_.allowContactRequest(owner, now, kContactRequestsPerMinute)) {
+        return fail(ErrorCode::eContactRateLimited,
+            "this address is taking too many contact requests right now - try again shortly");
+    }
+
     // The destination this arrived on belongs to one user, and only their mail
     // belongs in it. Anything else is dropped here - before the dedup and the
     // seen-cache, which must not be touched: marking a foreign messageId seen
@@ -119,14 +130,6 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
         if (payload.size() > kMaxContactRequestBytes) {
             return fail(ErrorCode::eContactRequestTooLarge,
                 "contact request exceeds " + std::to_string(kMaxContactRequestBytes) + " bytes");
-        }
-        // The tokenless path is the only way a stranger writes into a mailbox, so
-        // it is bounded on the recipient - the one thing a stranger cannot rotate.
-        // Real contact requests are a handful in an account's life; over the cap
-        // the delivery is answered like any other and stored nowhere, because a
-        // refusal would say whether this mailbox is here at all.
-        if (!storage_.allowContactRequest(mailbox, now, kContactRequestsPerMinute)) {
-            return delivered();
         }
     } else {
         if (token.size() != kDeliveryTokenSize

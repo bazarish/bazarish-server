@@ -208,6 +208,11 @@ void HttpApi::mailboxJanitorLoop()
         }  // release jobsMutex_ before touching storage (it takes its own lock)
         try {
             storage_.purgeExpired(nowSeconds() - options_.mailboxRetentionSeconds);
+            // Token hashes outlive mail by design (a contact may write years
+            // later), but not forever.
+            constexpr std::int64_t kSecondsPerDay = 24 * 3600;
+            storage_.purgeTokensRegisteredBefore(
+                bazarish::kTokenHashRetentionDays * kSecondsPerDay);
         } catch (const std::exception& error) {
             // Best-effort housekeeping; a sweep failure must never crash the node -
             // but a sweep that never succeeds fills the disk, so it is reported.

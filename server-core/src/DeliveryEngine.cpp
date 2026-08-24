@@ -64,9 +64,9 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
         deliveryClass = inner.at("class").get<std::string>();
         mailbox = inner.at("mailbox").get<std::string>();
         messageId = inner.at("messageId").get<std::string>();
-        if (deliveryClass == "content") {
+        if (deliveryClass == kContentDeliveryClass) {
             token = fromBase64(inner.at("token").get<std::string>());
-        } else if (deliveryClass != "contact") {
+        } else if (deliveryClass != kContactDeliveryClass) {
             return fail(ErrorCode::eDeliveryRejected, "unknown delivery class");
         }
         if (!isFingerprint(mailbox)) {
@@ -84,7 +84,7 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
     // would let anyone censor a real message by delivering its id to the wrong
     // destination first.
     if (!owner.empty() && mailbox != owner) {
-        if (deliveryClass == "contact") {
+        if (deliveryClass == kContactDeliveryClass) {
             // Tokenless, so there is nothing to fail on: answering anything but
             // "delivered" would say whose destination this is. It goes nowhere.
             return delivered();
@@ -115,10 +115,18 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
             "a message may carry at most " + std::to_string(kMaxMessagePayloadBytes) + " bytes");
     }
 
-    if (deliveryClass == "contact") {
+    if (deliveryClass == kContactDeliveryClass) {
         if (payload.size() > kMaxContactRequestBytes) {
             return fail(ErrorCode::eContactRequestTooLarge,
                 "contact request exceeds " + std::to_string(kMaxContactRequestBytes) + " bytes");
+        }
+        // The tokenless path is the only way a stranger writes into a mailbox, so
+        // it is bounded on the recipient - the one thing a stranger cannot rotate.
+        // Real contact requests are a handful in an account's life; over the cap
+        // the delivery is answered like any other and stored nowhere, because a
+        // refusal would say whether this mailbox is here at all.
+        if (!storage_.allowContactRequest(mailbox, now, kContactRequestsPerMinute)) {
+            return delivered();
         }
     } else {
         if (token.size() != kDeliveryTokenSize

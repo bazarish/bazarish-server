@@ -234,6 +234,24 @@ void DiskStorage::markSeen(const std::string& user, const std::string& messageId
     writeFileAtomic(dir / messageId, text.data(), text.size());
 }
 
+bool DiskStorage::allowContactRequest(
+    const std::string& user, const std::int64_t now, const std::size_t maxPerMinute)
+{
+    requireUser(user);
+    constexpr std::int64_t kWindowSeconds = 60;
+    const std::lock_guard<std::mutex> lock(mutex_);
+    Window& window = contactWindows_[user];
+    if (now - window.start >= kWindowSeconds) {
+        window.start = now;
+        window.count = 0;
+    }
+    if (window.count >= maxPerMinute) {
+        return false;
+    }
+    ++window.count;
+    return true;
+}
+
 std::vector<Storage::PendingEntry> DiskStorage::listPending(const std::string& user,
     const std::string& clientId)
 {

@@ -4,6 +4,7 @@
 #include "Storage.hpp"
 
 #include <filesystem>
+#include <map>
 #include <mutex>
 
 namespace bazarish::server {
@@ -39,6 +40,8 @@ public:
     bool hasSeen(const std::string& user, const std::string& messageId) override;
     void markSeen(const std::string& user, const std::string& messageId,
         std::int64_t receivedAt) override;
+    bool allowContactRequest(
+        const std::string& user, std::int64_t now, std::size_t maxPerMinute) override;
     std::vector<PendingEntry> listPending(const std::string& user,
         const std::string& clientId) override;
     Bytes getBlob(const std::string& user, const std::string& blobId) override;
@@ -51,6 +54,15 @@ public:
     std::uint64_t userQuota(const std::string& user, std::uint64_t fallback) override;
 
 private:
+    // One minute window per mailbox for the tokenless path. In memory: a restart
+    // forgives whatever was counted, which is the right way round - a restart
+    // must not lock a mailbox out of receiving contact requests.
+    struct Window {
+        std::int64_t start = 0;
+        std::size_t count = 0;
+    };
+    std::map<std::string, Window> contactWindows_;
+
     std::filesystem::path userDir(const std::string& user) const;
     std::uint64_t usageLocked(const std::string& user) const;
     void deleteIfFullyAcked(const std::string& user, const std::string& blobId);

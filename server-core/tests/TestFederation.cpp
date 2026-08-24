@@ -5,6 +5,7 @@
 #include "DiskStorage.hpp"
 
 #include <bazarish/Cms.hpp>
+#include <bazarish/Limits.hpp>
 #include <bazarish/Resolve.hpp>
 #include <bazarish/Tokens.hpp>
 
@@ -228,6 +229,25 @@ int main()
         const Bytes sealedHome
             = makeSealed(Key::fromPublicDer(destKey.publicDer()), "contact", alice, "fdest-2", {});
         CHECK(!roundTrip(engine, sealedHome, Bytes(50, 0x55)).delivered);
+    }
+
+    // The tokenless path is bounded on the recipient: past the minute's cap a
+    // contact request is answered exactly like a delivered one and stored
+    // nowhere, so a stranger rotating destinations cannot fill a mailbox and
+    // cannot tell that they were stopped.
+    {
+        const std::string stranger = toBase32(Bytes(32, 0x44));
+        const Bytes payload(64, 0x41);
+        std::size_t stored = 0;
+        for (std::size_t i = 0; i < bazarish::kContactRequestsPerMinute + 2; ++i) {
+            const std::string id = "cap-" + std::to_string(i);
+            const FederationDeliverResult result = roundTrip(engine,
+                makeSealed(sealingPublic, "contact", stranger, id, {}), payload, nullptr,
+                stranger);
+            CHECK(result.delivered);  // every one of them says the same thing
+            stored = storage.listPending(stranger, "dev").size();
+        }
+        CHECK(stored == bazarish::kContactRequestsPerMinute);
     }
 
     // A destination belongs to one user, and only their mail belongs in it.

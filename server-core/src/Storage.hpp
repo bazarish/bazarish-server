@@ -82,6 +82,13 @@ public:
         std::int64_t receivedAt)
         = 0;
 
+    // Counts one tokenless contact request against the recipient's own minute
+    // window and says whether it fits. The window is per mailbox, because that is
+    // the one thing the sender cannot change by rotating destinations.
+    virtual bool allowContactRequest(
+        const std::string& user, std::int64_t now, std::size_t maxPerMinute)
+        = 0;
+
     // Blobs not yet acked by this client.
     virtual std::vector<PendingEntry> listPending(const std::string& user,
         const std::string& clientId)

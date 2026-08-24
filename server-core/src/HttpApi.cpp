@@ -9,6 +9,7 @@
 #include <bazarish/Auth.hpp>
 #include <bazarish/Crypto.hpp>
 #include <bazarish/Errors.hpp>
+#include <bazarish/Limits.hpp>
 #include <bazarish/Health.hpp>
 #include <bazarish/I2pAddress.hpp>
 
@@ -874,6 +875,42 @@ void HttpApi::setupRoutes()
             }
             const nlohmann::json body = nlohmann::json::parse(request.body);
             store.ackBlob(user, body.at("blobId").get<std::string>(), clientId);
+            return jsonResponse({{"ok", true}});
+        }));
+
+    // One device of an account writing to the account's own other devices. It is
+    // the only write into a mailbox that needs no token and no destination: the
+    // caller is the mailbox owner, proved by the signature on this very request,
+    // so there is no stranger to gate and nothing to federate. That also keeps it
+    // out of the tokenless contact budget, which exists to bound strangers.
+    //
+    // The payload stays sealed to the account's own sealing key; this server
+    // stores ciphertext, exactly as it does for mail from anyone else.
+    http_->post("/v1/messaging/self",
+        authenticated([this, requireClient, clientUnregistered](
+                          const bazarish::http::Request& request,
+                          const std::string& user) -> bazarish::http::Response {
+            if (requireClient(request, user).empty()) {
+                return clientUnregistered();
+            }
+            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const std::string messageId = body.at("messageId").get<std::string>();
+            const Bytes payload = fromBase64(body.at("payload").get<std::string>());
+            if (payload.size() > bazarish::kMaxMessagePayloadBytes) {
+                return errorResponse(413, ErrorCode::eMessageTooLarge,
+                    "a message may carry at most "
+                        + std::to_string(bazarish::kMaxMessagePayloadBytes) + " bytes");
+            }
+            const Storage::PutResult result = storage_.putBlob(user, messageId, payload,
+                kDeviceDeliveryClass, nowSeconds(),
+                storage_.userQuota(user, options_.defaultQuotaBytes));
+            if (result == Storage::PutResult::eQuotaExceeded) {
+                return errorResponse(507, ErrorCode::eStorageFull, "your storage is full");
+            }
+            // Wake whichever of the account's devices is holding a poll open.
+            if (result == Storage::PutResult::eStored) {
+                wakeUser(user);
+            }
             return jsonResponse({{"ok", true}});
         }));
 

@@ -3,6 +3,7 @@
 
 #include <bazarish/Auth.hpp>
 #include <bazarish/Certificates.hpp>
+#include <bazarish/Descriptor.hpp>
 #include <bazarish/Errors.hpp>
 #include <bazarish/Health.hpp>
 #include <bazarish/HttpServer.hpp>
@@ -629,9 +630,11 @@ void AccountApi::setupRoutes()
             record.quotaBytes = quota;
             record.dest = card.dest;
             record.delegatedAt = held.has_value() ? held->delegatedAt : 0;
-            record.servingKey = card.servingSealingKeyDer.empty()
-                ? std::string()
-                : toBase64Url(card.servingSealingKeyDer);
+            // Issued once and kept: a descriptor already shared must keep
+            // working, and the client puts this in every invite it makes.
+            record.view = held.has_value() && !held->view.empty()
+                ? held->view
+                : toHex(randomBytes(kViewCapabilityBytes));
             record.card = der;
             store_.putAccount(record);
             // The granted quota is this node's to set: push it so the messaging
@@ -651,6 +654,7 @@ void AccountApi::setupRoutes()
             respondJson(response,
                 {
                     {"quotaBytes", quota},
+                    {"view", record.view},
                     {"serverCard", toBase64(options_.serverCardDer)},
                     {"approval", pending ? "pending" : "approved"},
                     {"registrationMessage",
@@ -761,7 +765,7 @@ void AccountApi::setupRoutes()
     http_->get("/v1/account/card",
         filled([this](const http::Request& request, http::Response& response) {
             const std::string user = request.query("user");
-            const std::string key = request.query("key");
+            const std::string view = request.query("view");
             std::optional<SubscriptionStore::Account> account;
             try {
                 account = user.empty() ? std::nullopt : store_.getAccount(user);
@@ -773,11 +777,12 @@ void AccountApi::setupRoutes()
                 bazarish::log::warn("account record of {} is unreadable: {}", log::redact(user),
                     error.what());
             }
-            // The key is compared against the one stored beside the card, never
-            // against one parsed out of it: verifying a hybrid signature only
-            // when the user exists would answer the question by how long it took.
+            // The capability is compared against the one stored beside the card,
+            // and nothing is verified before it matches: work that only happens
+            // for a user this node has would answer the question by how long it
+            // took.
             const bool known = account.has_value() && !account->card.empty()
-                && !account->servingKey.empty() && account->servingKey == key;
+                && !account->view.empty() && account->view == view;
             if (!known) {
                 // One answer for "not here" and "that is not the key I issued",
                 // so nothing is learnt by asking. A caller holding a descriptor

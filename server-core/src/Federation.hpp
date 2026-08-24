@@ -2,6 +2,8 @@
 #pragma once
 
 #include "DeliveryEngine.hpp"
+
+#include <bazarish/Resolve.hpp>
 #include "FederationRateLimiter.hpp"
 
 #include <bazarish/Bytes.hpp>
@@ -33,11 +35,12 @@ struct FederationDeliverResult {
 
 // Looks up a local user's contact card (subscription certificate DER) by
 // fingerprint for the federation card fetch; nullopt when the user is unknown.
-// Looks up a local user's contact card. The key is the one from the descriptor
-// the asker holds; a wrong key must read exactly like an unknown user, so this
-// returns nothing in both cases and the caller cannot tell them apart.
-using GetCardFn
-    = std::function<std::optional<Bytes>(const std::string& fingerprint, const Bytes& keyDer)>;
+// Looks up a local user's contact card. The view is the capability from the
+// descriptor the asker holds; a wrong one must read exactly like an unknown
+// user, so this returns nothing in both cases and the caller cannot tell them
+// apart.
+using GetCardFn = std::function<std::optional<Bytes>(
+    const std::string& fingerprint, const std::string& view)>;
 
 struct FederationFetchResult {
     bool ok = false;
@@ -95,6 +98,11 @@ std::string buildFederationDeliverHeader(const Bytes& sealed, std::size_t payloa
 FederationDeliverResult parseFederationDeliverReply(const std::string& line);
 std::string buildFederationFetchHeader(const std::string& op, const Bytes& sealed);
 FederationFetchResult parseFederationFetchReply(const std::string& line);
+// The card fetch rides the same fetch frame, but its request and answer travel
+// in the clear: the query names the fingerprint and hands back the descriptor's
+// view capability, and the answer is the card itself. Nothing is sealed because
+// the stream already is - and no relayed path is allowed, so there is no third
+// party to hide it from.
 // Serves one already-read request header: reads the deliver payload via
 // readPayload(len) when needed, runs the engine / card lookup, and writes the
 // reply line via writeReply. sealingKey null => the engine's default key.

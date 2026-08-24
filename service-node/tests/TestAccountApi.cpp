@@ -5,6 +5,7 @@
 
 #include <bazarish/Auth.hpp>
 #include <bazarish/Certificates.hpp>
+#include <bazarish/Descriptor.hpp>
 #include <bazarish/Cms.hpp>
 #include <bazarish/Crypto.hpp>
 
@@ -173,11 +174,14 @@ int main()
         CHECK(result.status == 200);
         CHECK(nlohmann::json::parse(result.body).at("quotaBytes") == options.defaultQuotaBytes);
 
-        // The card is answered only to someone holding the descriptor: the key
-        // from it comes back with the query.
-        const std::string keyParam = toBase64Url(servingKey);
+        // The card is answered only to someone holding the descriptor: the view
+        // capability from it comes back with the query. The node issued it when
+        // the account was created and reported it with the publish.
+        const std::string view
+            = nlohmann::json::parse(result.body).at("view").get<std::string>();
+        CHECK(view.size() == bazarish::kViewCapabilityChars);
         const http::ClientResponse looked = call(port, "GET",
-            "/v1/account/card?user=" + alice.fingerprint() + "&key=" + keyParam);
+            "/v1/account/card?user=" + alice.fingerprint() + "&view=" + view);
         CHECK(looked.status == 200);
         const ContactCard fetched = ContactCard::verify(
             fromBase64(nlohmann::json::parse(looked.body).at("card").get<std::string>()));
@@ -188,9 +192,10 @@ int main()
         // A wrong key and an unknown user are refused identically, so asking
         // teaches nothing about who is served here.
         const http::ClientResponse wrongKey = call(port, "GET",
-            "/v1/account/card?user=" + alice.fingerprint() + "&key=" + toBase64Url(Bytes{0x01}));
+            "/v1/account/card?user=" + alice.fingerprint()
+                + "&view=ffffffffffffffffffffffffffffffff");
         const http::ClientResponse unknown = call(port, "GET",
-            "/v1/account/card?user=" + mallory.fingerprint() + "&key=" + keyParam);
+            "/v1/account/card?user=" + mallory.fingerprint() + "&view=" + view);
         CHECK(wrongKey.status == 404);
         CHECK(unknown.status == 404);
         CHECK(wrongKey.body == unknown.body);

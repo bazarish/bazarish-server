@@ -281,15 +281,14 @@ int main(const int argc, const char** argv)
         bazarish::server::GetCardFn getCard;
         if (!serviceNodeUrl.empty()) {
             getCard = [serviceNodeUrl](const std::string& fp,
-                          const bazarish::Bytes& keyDer) -> std::optional<bazarish::Bytes> {
+                          const std::string& view) -> std::optional<bazarish::Bytes> {
                 const ServiceNodeAddress node = parseServiceNodeUrl(serviceNodeUrl);
                 bazarish::http::ClientRequest lookup;
                 lookup.method = "GET";
-                // The node answers only when the key matches the one it issued
-                // for that destination, and refuses a wrong key exactly like an
-                // unknown user.
-                lookup.target
-                    = "/v1/account/card?user=" + fp + "&key=" + bazarish::toBase64Url(keyDer);
+                // The node answers only when the view capability matches the one
+                // it issued for that account, and refuses a wrong one exactly
+                // like an unknown user.
+                lookup.target = "/v1/account/card?user=" + fp + "&view=" + view;
                 bazarish::http::ClientOptions options;
                 options.connectTimeout = std::chrono::seconds(kServiceNodeTimeoutSeconds);
                 options.readTimeout = std::chrono::seconds(kServiceNodeTimeoutSeconds);

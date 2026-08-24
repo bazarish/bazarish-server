@@ -34,11 +34,10 @@ public:
         // When the server last held a delegation for that destination. Zero
         // means the user has never delegated one.
         std::int64_t delegatedAt = 0;
-        // The serving key from that card (base64url), kept beside it so a card
-        // lookup can check the key it was asked with before it verifies
-        // anything: a signature verify that only happens for a user this node
-        // has is a timing answer to "do you have them?".
-        std::string servingKey;
+        // The card-read capability this node issued for the account: what a
+        // descriptor carries and what a card lookup must hand back. Rotating it
+        // retires every descriptor already out there.
+        std::string view;
         // The hybrid-signed contact card (DER), as published by the user.
         Bytes card;
     };

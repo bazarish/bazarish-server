@@ -128,20 +128,17 @@ void federationServeFrame(const std::string& headerLine,
     }
 
     if (op == "card") {
-        // First-contact card fetch: unseal the query with this destination's
-        // serving key, look up the requested user's contact card, and seal the
-        // response to the query's ephemeral response key.
-        const Bytes sealedQuery = fromBase64(header.at("sealed").get<std::string>());
+        // First-contact card fetch. The query names the fingerprint and returns
+        // the descriptor's view capability; both it and the answer travel in the
+        // clear, because this only ever arrives over a direct I2P stream, which
+        // is already encrypted and authenticated to this destination.
         if (getCard) {
-            const Key& key = sealingKey != nullptr ? *sealingKey : engine.sealingKey();
-            const CardFetchQuery query
-                = cardFetchQueryFromJson(nlohmann::json::parse(cms::unseal(sealedQuery, key)));
-            const std::optional<Bytes> cardDer = getCard(query.fingerprint, query.keyDer);
+            const Bytes queryBytes = fromBase64(header.at("sealed").get<std::string>());
+            const CardFetchQuery query = cardFetchQueryFromJson(nlohmann::json::parse(queryBytes));
+            const std::optional<Bytes> cardDer = getCard(query.fingerprint, query.view);
             if (cardDer) {
-                const std::string responseJson = toJson(CardFetchResponse{*cardDer}).dump();
-                const Bytes sealedResponse = cms::seal(Bytes(responseJson.begin(), responseJson.end()),
-                    Key::fromPublicDer(query.responseKeyDer));
-                writeReply(nlohmann::json({{"ok", true}, {"sealed", toBase64(sealedResponse)}}).dump());
+                writeReply(
+                    nlohmann::json({{"ok", true}, {"sealed", toBase64(*cardDer)}}).dump());
                 return;
             }
         }

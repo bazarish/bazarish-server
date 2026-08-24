@@ -112,19 +112,21 @@ FederationDeliverResult roundTrip(DeliveryEngine& engine, const Bytes& sealed, c
 
 // Runs one client card fetch against an in-thread server (socketpair), with a
 // stub card lookup. servingKey == nullptr uses the engine's home sealing key.
-FederationFetchResult roundTripCard(DeliveryEngine& engine, const Bytes& sealedQuery,
-    const Key* const servingKey, const GetCardFn& getCard)
+FederationFetchResult roundTripCard(
+    DeliveryEngine& engine, const CardFetchQuery& query, const GetCardFn& getCard)
 {
     int fds[2];
     CHECK(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0);
     SocketStream serverStream(fds[0]);
     SocketStream clientStream(fds[1]);
 
-    std::thread serverThread([&engine, &serverStream, servingKey, &getCard]() {
-        federationServeOnce(serverStream, engine, kNow, std::string(), nullptr, servingKey,
+    std::thread serverThread([&engine, &serverStream, &getCard]() {
+        federationServeOnce(serverStream, engine, kNow, std::string(), nullptr, nullptr,
             std::string(), getCard);
     });
-    const FederationFetchResult result = federationSendFetch(clientStream, "card", sealedQuery);
+    const std::string queryText = toJson(query).dump();
+    const FederationFetchResult result = federationSendFetch(
+        clientStream, "card", Bytes(queryText.begin(), queryText.end()));
     serverThread.join();
     return result;
 }
@@ -256,49 +258,38 @@ int main()
     // Card fetch: a query sealed to the server's serving key returns the user's
     // contact card sealed to the query's ephemeral response key.
     {
-        const Key ephemeral = Key::generateSealing();
         const Bytes cardDer(200, 0x5a);  // opaque contact card
-        const Bytes servingKey{0x11, 0x22, 0x33};
-        // The lookup answers only for the key it issued, and says the same
-        // nothing for a wrong key as for a user it does not have.
+        const std::string view = "0123456789abcdef0123456789abcdef";
+        // The lookup answers only for the capability it issued, and says the
+        // same nothing for a wrong one as for a user it does not have.
         const GetCardFn getCard
-            = [&](const std::string& fp, const Bytes& keyDer) -> std::optional<Bytes> {
-            if (fp == alice && keyDer == servingKey) {
+            = [&](const std::string& fp, const std::string& asked) -> std::optional<Bytes> {
+            if (fp == alice && asked == view) {
                 return cardDer;
             }
             return std::nullopt;
         };
 
-        const CardFetchQuery query{alice, servingKey, ephemeral.publicDer()};
-        const std::string queryJson = toJson(query).dump();
-        const Bytes sealedQuery = cms::seal(Bytes(queryJson.begin(), queryJson.end()), sealingPublic);
-
-        const FederationFetchResult ok = roundTripCard(engine, sealedQuery, nullptr, getCard);
+        const FederationFetchResult ok = roundTripCard(engine, CardFetchQuery{alice, view}, getCard);
         CHECK(ok.ok);
-        const CardFetchResponse resp
-            = cardFetchResponseFromJson(nlohmann::json::parse(cms::unseal(ok.sealed, ephemeral)));
-        CHECK(resp.cardDer == cardDer);
+        CHECK(ok.sealed == cardDer);
 
         // An unknown user collapses into CARD_UNKNOWN.
-        const CardFetchQuery missing{toBase32(Bytes(32, 0x77)), servingKey, ephemeral.publicDer()};
-        const std::string missingJson = toJson(missing).dump();
-        const Bytes sealedMissing
-            = cms::seal(Bytes(missingJson.begin(), missingJson.end()), sealingPublic);
-        const FederationFetchResult unknown = roundTripCard(engine, sealedMissing, nullptr, getCard);
+        const FederationFetchResult unknown
+            = roundTripCard(engine, CardFetchQuery{toBase32(Bytes(32, 0x77)), view}, getCard);
         CHECK(!unknown.ok);
         CHECK(unknown.errorCode == "CARD_UNKNOWN");
 
-        // A right user with the wrong key is refused exactly the same way, so
-        // asking teaches nothing about who is served here.
-        const CardFetchQuery wrongKey{alice, Bytes{0x99}, ephemeral.publicDer()};
-        const std::string wrongJson = toJson(wrongKey).dump();
-        const Bytes sealedWrong = cms::seal(Bytes(wrongJson.begin(), wrongJson.end()), sealingPublic);
-        const FederationFetchResult refused = roundTripCard(engine, sealedWrong, nullptr, getCard);
+        // A right user with the wrong capability is refused exactly the same
+        // way, so asking teaches nothing about who is served here.
+        const FederationFetchResult refused = roundTripCard(
+            engine, CardFetchQuery{alice, "ffffffffffffffffffffffffffffffff"}, getCard);
         CHECK(!refused.ok);
         CHECK(refused.errorCode == unknown.errorCode);
 
         // No card lookup wired -> CARD_UNKNOWN.
-        const FederationFetchResult noFn = roundTripCard(engine, sealedQuery, nullptr, GetCardFn{});
+        const FederationFetchResult noFn
+            = roundTripCard(engine, CardFetchQuery{alice, view}, GetCardFn{});
         CHECK(!noFn.ok);
         CHECK(noFn.errorCode == "CARD_UNKNOWN");
     }

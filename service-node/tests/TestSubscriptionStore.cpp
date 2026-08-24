@@ -41,7 +41,8 @@ int main()
     // Accounts.
     CHECK(!store.getAccount(alice).has_value());
     SubscriptionStore::Account account{
-        alice, 1000, 10485760, "destination.b32.i2p", 1500, Bytes{0xaa, 0xbb}};
+        alice, 1000, 10485760, "destination.b32.i2p", 1500, "serving-key-b64url",
+        Bytes{0xaa, 0xbb}};
     store.putAccount(account);
     const auto loaded = store.getAccount(alice);
     CHECK(loaded.has_value());
@@ -49,6 +50,8 @@ int main()
     CHECK(loaded->registeredAt == 1000);
     CHECK(loaded->quotaBytes == 10485760);
     CHECK(loaded->card == (Bytes{0xaa, 0xbb}));
+    // Kept beside the card so a lookup can check a key without verifying one.
+    CHECK(loaded->servingKey == "serving-key-b64url");
     // The address is kept beside the card so a listing can show it.
     CHECK(loaded->dest == "destination.b32.i2p");
     // The only clock an account has: when it last delegated a destination.

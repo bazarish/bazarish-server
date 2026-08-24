@@ -86,6 +86,15 @@ Backend routeOf(const std::string& path)
     if (startsWith(path, "/v1/auth/")) {
         return Backend::eMessaging;
     }
+    // The card lookup is not a clearnet endpoint. It answers only to a caller
+    // holding the descriptor's key - but the key travels in every descriptor, so
+    // forwarding this would let anyone test a contact they already know against
+    // every facade they know: "is this user served here?". The messaging server
+    // reaches it directly over the private channel, which is the only caller
+    // that needs it.
+    if (startsWith(path, "/v1/account/card")) {
+        return Backend::eNone;
+    }
     if (startsWith(path, "/v1/account/")) {
         return Backend::eAccount;
     }

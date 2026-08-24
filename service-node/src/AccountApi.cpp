@@ -629,6 +629,9 @@ void AccountApi::setupRoutes()
             record.quotaBytes = quota;
             record.dest = card.dest;
             record.delegatedAt = held.has_value() ? held->delegatedAt : 0;
+            record.servingKey = card.servingSealingKeyDer.empty()
+                ? std::string()
+                : toBase64Url(card.servingSealingKeyDer);
             record.card = der;
             store_.putAccount(record);
             // The granted quota is this node's to set: push it so the messaging
@@ -770,23 +773,11 @@ void AccountApi::setupRoutes()
                 bazarish::log::warn("account record of {} is unreadable: {}", log::redact(user),
                     error.what());
             }
-            bool known = account.has_value() && !account->card.empty();
-            if (known) {
-                ContactCard card;
-                try {
-                    card = ContactCard::verify(account->card);
-                } catch (const std::exception& error) {
-                    bazarish::log::warn("card of {} is unreadable: {}", log::redact(user),
-                        error.what());
-                    known = false;
-                }
-                // The url alphabet, because this travels in a query string
-                // where a '+' from plain base64 would arrive as a space.
-                if (known && (card.servingSealingKeyDer.empty()
-                        || toBase64Url(card.servingSealingKeyDer) != key)) {
-                    known = false;
-                }
-            }
+            // The key is compared against the one stored beside the card, never
+            // against one parsed out of it: verifying a hybrid signature only
+            // when the user exists would answer the question by how long it took.
+            const bool known = account.has_value() && !account->card.empty()
+                && !account->servingKey.empty() && account->servingKey == key;
             if (!known) {
                 // One answer for "not here" and "that is not the key I issued",
                 // so nothing is learnt by asking. A caller holding a descriptor

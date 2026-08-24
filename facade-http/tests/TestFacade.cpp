@@ -183,6 +183,22 @@ int main()
         CHECK(result.status == 404);
     }
 
+    // The card lookup is never exposed through the facade. It answers only to a
+    // caller holding the descriptor's key - and every contact holds one, so a
+    // clearnet route would let them test that descriptor against every facade
+    // they know until one says yes. Only the messaging server calls it, over the
+    // private channel.
+    {
+        const http::ClientResponse result = call(facadePort, "GET",
+            "/s/secret123/v1/account/card?user=alice&key=AAAA");
+        CHECK(result.status == 404);
+        // The same bare 404 the facade gives any path it does not carry: the
+        // refusal must not read as "there is something here".
+        const http::ClientResponse unknown
+            = call(facadePort, "GET", "/s/secret123/v1/other/thing");
+        CHECK(result.body == unknown.body);
+    }
+
     // The operator quota endpoint is never exposed through the facade.
     {
         const http::ClientResponse result

@@ -175,7 +175,7 @@ std::size_t DiskStorage::tokenHashCount(const std::string& user)
 
 Storage::PutResult DiskStorage::putBlob(const std::string& user, const std::string& blobId,
     const Bytes& data, const std::string& deliveryClass, const std::int64_t receivedAt,
-    const std::uint64_t quotaBytes)
+    const std::uint64_t quotaBytes, const std::string& alreadyAcked)
 {
     requireUser(user);
     requireSafeId(blobId);
@@ -193,10 +193,17 @@ Storage::PutResult DiskStorage::putBlob(const std::string& user, const std::stri
     fs::create_directories(blobs);
     fs::create_directories(meta);
 
+    nlohmann::json acked = nlohmann::json::array();
+    if (!alreadyAcked.empty()) {
+        // The device that wrote this does not need it back, and mail is deleted
+        // only once every device has acked: without this the writer's own copy
+        // would sit in the mailbox until it fetched and acked itself.
+        acked.push_back(alreadyAcked);
+    }
     const nlohmann::json metaBody = {
         {"receivedAt", receivedAt},
         {"class", deliveryClass},
-        {"acked", nlohmann::json::array()},
+        {"acked", acked},
     };
     const std::string metaText = metaBody.dump();
     // Write the meta record first: a blob without meta would be invisible

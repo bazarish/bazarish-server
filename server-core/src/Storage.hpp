@@ -62,9 +62,11 @@ public:
         bool operator==(const PendingEntry&) const = default;
     };
 
+    // alreadyAcked names a client that must not be waited for: the device that
+    // wrote the blob in the first place. Mail from a stranger names nobody.
     virtual PutResult putBlob(const std::string& user, const std::string& blobId,
         const Bytes& data, const std::string& deliveryClass, std::int64_t receivedAt,
-        std::uint64_t quotaBytes)
+        std::uint64_t quotaBytes, const std::string& alreadyAcked = {})
         = 0;
     virtual bool hasBlob(const std::string& user, const std::string& blobId) = 0;
 

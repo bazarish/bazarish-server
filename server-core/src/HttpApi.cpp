@@ -898,6 +898,7 @@ void HttpApi::setupRoutes()
             if (requireClient(request, user).empty()) {
                 return clientUnregistered();
             }
+            const std::string caller = requireClient(request, user);
             const nlohmann::json body = nlohmann::json::parse(request.body);
             const std::string messageId = body.at("messageId").get<std::string>();
             const Bytes payload = fromBase64(body.at("payload").get<std::string>());
@@ -906,9 +907,16 @@ void HttpApi::setupRoutes()
                     "a message may carry at most "
                         + std::to_string(bazarish::kMaxMessagePayloadBytes) + " bytes");
             }
+            // Nobody to tell: an account with one device is talking to itself,
+            // and the disk should not carry that conversation.
+            if (storage_.listClients(user).size() <= 1) {
+                return jsonResponse({{"ok", true}, {"stored", false}});
+            }
+            // The writer is counted as having read it, so the blob is deleted as
+            // soon as the account's other devices have.
             const Storage::PutResult result = storage_.putBlob(user, messageId, payload,
                 kDeviceDeliveryClass, nowSeconds(),
-                storage_.userQuota(user, options_.defaultQuotaBytes));
+                storage_.userQuota(user, options_.defaultQuotaBytes), caller);
             if (result == Storage::PutResult::eQuotaExceeded) {
                 return errorResponse(507, ErrorCode::eStorageFull, "your storage is full");
             }

@@ -140,10 +140,11 @@ int main()
     // No retries in tests: a federated (unreachable) send should reach its terminal
     // "failed" at once instead of looping for minutes.
     httpOptions.deliveryMaxRounds = 1;
-    // Routing is by destination. The tests assign every user the same
-    // destination (serverDest, a valid .b32.i2p host) with the server's sealing
-    // key, so a send to serverDest is a same-destination local delivery; a send
-    // to any other destination federates (unreachable here).
+    // Routing is by destination, and a destination belongs to one user - so a
+    // delivery to serverDest is only ever local when the sender is the user it
+    // was assigned to. Every user here is assigned serverDest, which makes a
+    // send to oneself the local path and a send to a peer federate (unreachable
+    // here), exactly as it does in a deployment where each user has their own.
     const auto serverServingKey
         = std::make_shared<Key>(Key::fromPrivatePem(serverSealing.privatePem()));
     httpOptions.assignDestination = [serverDest, serverServingKey](const std::string&) {
@@ -247,17 +248,21 @@ int main()
     }
     CHECK(storage.tokenHashCount(alice.fingerprint()) == 2);
 
-    // Bob delivers a message to Alice through the full local pipeline.
+    // A delivery through the full local pipeline. The local path is the
+    // same-destination one, and a destination belongs to one user - so what runs
+    // here is Alice's own device delivering into Alice's mailbox, which is what
+    // that path carries in a deployment (device sync). Mail for anyone else
+    // reaches a mailbox by dialling its owner's destination, never this way.
     const Bytes payload = {'e', '2', 'e', '-', 'b', 'l', 'o', 'b'};
     const std::string envelope = makeEnvelope(serverDest, sealingPublic,
         {{"class", "content"}, {"mailbox", alice.fingerprint()}, {"token", toBase64(token1)},
             {"messageId", "msg-1"}},
         payload);
-    CHECK(sendAndPoll(port, bob, "bobdev", envelope).at("status") == "delivered");
+    CHECK(sendAndPoll(port, alice, "alicedev", envelope).at("status") == "delivered");
     CHECK(storage.tokenHashCount(alice.fingerprint()) == 1);
 
     // An identical retry is deduplicated and consumes no second token.
-    CHECK(sendAndPoll(port, bob, "bobdev", envelope).at("status") == "delivered");
+    CHECK(sendAndPoll(port, alice, "alicedev", envelope).at("status") == "delivered");
     CHECK(storage.tokenHashCount(alice.fingerprint()) == 1);
 
     // Alice sees the message, fetches it and acks it away.
@@ -303,7 +308,7 @@ int main()
             {{"class", "content"}, {"mailbox", alice.fingerprint()},
                 {"token", toBase64(generateDeliveryToken())}, {"messageId", "msg-2"}},
             payload);
-        const nlohmann::json result = sendAndPoll(port, bob, "bobdev", bad);
+        const nlohmann::json result = sendAndPoll(port, alice, "alicedev", bad);
         CHECK(result.at("status") == "failed");
         CHECK(result.at("error").at("code") == "DELIVERY_REJECTED");
     }
@@ -314,13 +319,13 @@ int main()
             {{"class", "contact"}, {"mailbox", alice.fingerprint()},
                 {"messageId", "req-1"}},
             Bytes(200, 0x55));
-        CHECK(sendAndPoll(port, bob, "bobdev", request).at("status") == "delivered");
+        CHECK(sendAndPoll(port, alice, "alicedev", request).at("status") == "delivered");
 
         const std::string oversized = makeEnvelope(serverDest, sealingPublic,
             {{"class", "contact"}, {"mailbox", alice.fingerprint()},
                 {"messageId", "req-2"}},
             Bytes(300, 0x55));
-        const nlohmann::json result = sendAndPoll(port, bob, "bobdev", oversized);
+        const nlohmann::json result = sendAndPoll(port, alice, "alicedev", oversized);
         CHECK(result.at("status") == "failed");
         CHECK(result.at("error").at("code") == "CONTACT_REQUEST_TOO_LARGE");
     }
@@ -332,7 +337,7 @@ int main()
             {{"class", "contact"}, {"mailbox", alice.fingerprint()},
                 {"messageId", "req-huge"}},
             Bytes(bazarish::kMaxMessagePayloadBytes + 1, 0x55));
-        const nlohmann::json result = sendAndPoll(port, bob, "bobdev", huge);
+        const nlohmann::json result = sendAndPoll(port, alice, "alicedev", huge);
         CHECK(result.at("status") == "failed");
         CHECK(result.at("error").at("code") == "MESSAGE_TOO_LARGE");
     }
@@ -344,7 +349,7 @@ int main()
             {{"class", "content"}, {"mailbox", alice.fingerprint()},
                 {"token", toBase64(token2)}, {"messageId", "msg-3"}},
             Bytes(2000, 0x77));
-        const nlohmann::json result = sendAndPoll(port, bob, "bobdev", big);
+        const nlohmann::json result = sendAndPoll(port, alice, "alicedev", big);
         CHECK(result.at("status") == "failed");
         CHECK(result.at("error").at("code") == "STORAGE_FULL");
         CHECK(storage.tokenHashCount(alice.fingerprint()) == 1);

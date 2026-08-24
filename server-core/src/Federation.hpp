@@ -97,11 +97,13 @@ std::string buildFederationFetchHeader(const std::string& op, const Bytes& seale
 FederationFetchResult parseFederationFetchReply(const std::string& line);
 // Serves one already-read request header: reads the deliver payload via
 // readPayload(len) when needed, runs the engine / card lookup, and writes the
-// reply line via writeReply. sealingKey null => the engine's home key.
+// reply line via writeReply. sealingKey null => the engine's default key.
+// owner is the user whose destination this arrived on; mail for anyone else is
+// not stored (see DeliveryEngine::deliver).
 void federationServeFrame(const std::string& headerLine,
     const std::function<Bytes(std::size_t)>& readPayload,
     const std::function<void(const std::string&)>& writeReply, DeliveryEngine& engine,
-    std::int64_t now, const Key* sealingKey, const GetCardFn& getCard,
+    std::int64_t now, const Key* sealingKey, const std::string& owner, const GetCardFn& getCard,
     const OnDeliveredFn& onDelivered = {}, const OnAckFn& onAck = {});
 
 // Client side: send one deliver request and read the result.
@@ -129,8 +131,9 @@ FederationFetchResult federationSendFetch(Stream& stream, const std::string& op,
 template <class Stream>
 void federationServeOnce(Stream& stream, DeliveryEngine& engine, const std::int64_t now,
     const std::string& peerDest = std::string(), FederationRateLimiter* const limiter = nullptr,
-    const Key* const sealingKey = nullptr, const GetCardFn& getCard = {},
-    const OnDeliveredFn& onDelivered = {}, const OnAckFn& onAck = {})
+    const Key* const sealingKey = nullptr, const std::string& owner = std::string(),
+    const GetCardFn& getCard = {}, const OnDeliveredFn& onDelivered = {},
+    const OnAckFn& onAck = {})
 {
     if (limiter != nullptr && !limiter->allow(peerDest, now)) {
         return;  // over the per-peer rate limit: drop without serving
@@ -146,7 +149,7 @@ void federationServeOnce(Stream& stream, DeliveryEngine& engine, const std::int6
             return payload;
         },
         [&stream](const std::string& line) { detail::writeFederationHeaderLine(stream, line); },
-        engine, now, sealingKey, getCard, onDelivered, onAck);
+        engine, now, sealingKey, owner, getCard, onDelivered, onAck);
 }
 
 }  // namespace bazarish::server

@@ -33,7 +33,8 @@ const Key& DeliveryEngine::sealingKey() const
 }
 
 DeliveryEngine::Outcome DeliveryEngine::deliver(
-    const Bytes& sealed, const Bytes& payload, const std::int64_t now, const Key& sealingKey)
+    const Bytes& sealed, const Bytes& payload, const std::int64_t now, const Key& sealingKey,
+    const std::string& owner)
 {
     Outcome outcome;
     const auto fail = [&outcome](const ErrorCode code, const std::string& message) {
@@ -76,6 +77,20 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
     }
     // Expose the parsed id so the caller can acknowledge it (even a dedup hit).
     outcome.messageId = messageId;
+
+    // The destination this arrived on belongs to one user, and only their mail
+    // belongs in it. Anything else is dropped here - before the dedup and the
+    // seen-cache, which must not be touched: marking a foreign messageId seen
+    // would let anyone censor a real message by delivering its id to the wrong
+    // destination first.
+    if (!owner.empty() && mailbox != owner) {
+        if (deliveryClass == "contact") {
+            // Tokenless, so there is nothing to fail on: answering anything but
+            // "delivered" would say whose destination this is. It goes nowhere.
+            return delivered();
+        }
+        return fail(ErrorCode::eDeliveryRejected, "delivery rejected");
+    }
 
     // Dedup before anything else: a retry of a delivered message must
     // succeed without consuming a second token.

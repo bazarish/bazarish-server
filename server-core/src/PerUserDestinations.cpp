@@ -135,7 +135,7 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
                     try {
                         const std::string sender = peer;
                         federationServeOnce(*stream, engine_, nowSeconds(), peer, limiter_,
-                            raw->sealingKey.get(), getCard_,
+                            raw->sealingKey.get(), userFp, getCard_,
                             // Ack a stored delivery from THIS per-user dest back to
                             // the sender's serving dest.
                             [this, endpoint, sender, signingKey = raw->signingKey](

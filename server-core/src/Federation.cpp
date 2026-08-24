@@ -73,8 +73,8 @@ FederationFetchResult parseFederationFetchReply(const std::string& line)
 void federationServeFrame(const std::string& headerLine,
     const std::function<Bytes(std::size_t)>& readPayload,
     const std::function<void(const std::string&)>& writeReply, DeliveryEngine& engine,
-    const std::int64_t now, const Key* const sealingKey, const GetCardFn& getCard,
-    const OnDeliveredFn& onDelivered, const OnAckFn& onAck)
+    const std::int64_t now, const Key* const sealingKey, const std::string& owner,
+    const GetCardFn& getCard, const OnDeliveredFn& onDelivered, const OnAckFn& onAck)
 {
     const nlohmann::json header = nlohmann::json::parse(headerLine);
     const std::string op = header.at("op").get<std::string>();
@@ -84,8 +84,8 @@ void federationServeFrame(const std::string& headerLine,
         const std::size_t length = header.at("len").get<std::size_t>();
         const Bytes payload = readPayload(length);
 
-        const DeliveryEngine::Outcome outcome = engine.deliver(
-            sealed, payload, now, sealingKey != nullptr ? *sealingKey : engine.sealingKey());
+        const DeliveryEngine::Outcome outcome = engine.deliver(sealed, payload, now,
+            sealingKey != nullptr ? *sealingKey : engine.sealingKey(), owner);
         nlohmann::json reply = {{"delivered", outcome.delivered}};
         if (!outcome.delivered) {
             reply["errorCode"] = outcome.errorCode;

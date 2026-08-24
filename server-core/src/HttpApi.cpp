@@ -336,7 +336,8 @@ void HttpApi::runDeliveryJob(const DeliveryJob& job)
         const std::int64_t now = nowSeconds();
         if (job.senderServingKey && !job.senderDest.empty() && job.toDest == job.senderDest) {
             const DeliveryEngine::Outcome outcome
-                = engine_.deliver(job.sealed, job.payload, now, *job.senderServingKey);
+                = engine_.deliver(
+                    job.sealed, job.payload, now, *job.senderServingKey, job.senderUser);
             attempt.status = outcome.delivered ? "delivered" : "failed";
             attempt.errorCode = outcome.errorCode;
             attempt.errorMessage = outcome.errorMessage;
@@ -948,7 +949,7 @@ void HttpApi::setupRoutes()
             {
                 const std::lock_guard<std::mutex> lock(jobsMutex_);
                 jobs_.push_back(DeliveryJob{
-                    attemptId, toDest, sealed, payload, sender.dest, sender.servingKey});
+                    attemptId, toDest, sealed, payload, sender.dest, user, sender.servingKey});
             }
             jobsCv_.notify_all();
             return jsonResponse({{"attemptId", attemptId}, {"status", "pending"}});

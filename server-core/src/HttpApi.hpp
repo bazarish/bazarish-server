@@ -202,6 +202,9 @@ private:
         Bytes sealed;
         Bytes payload;
         std::string senderDest;
+        // The user that destination belongs to: on the same-destination
+        // short-circuit it is also the only mailbox this delivery may name.
+        std::string senderUser;
         std::shared_ptr<Key> senderServingKey;
     };
 

@@ -49,14 +49,21 @@ public:
     // sealed is the CMS envelope addressed to the serving sealing key of the
     // destination it arrived on; payload is the opaque E2E blob. The caller
     // (each accept loop / the local send path) supplies the sealing key for
-    // that destination - a home/pool/per-user destination each has its own (see
-    // docs-main api/InviteAnonymity.md). now is unix seconds.
-    Outcome deliver(
-        const Bytes& sealed, const Bytes& payload, std::int64_t now, const Key& sealingKey);
+    // that destination - every per-user destination has its own (see docs-main
+    // api/InviteAnonymity.md). now is unix seconds.
+    //
+    // owner is the user that destination belongs to. Mail addressed to anyone
+    // else does not belong here: a tokenless contact request is answered exactly
+    // as a delivered one and dropped without touching anything (refusing it
+    // would answer "whose destination is this?"), and a content delivery is
+    // refused like any other bad admission. Empty owner disables the check, for
+    // callers that do not operate a destination.
+    Outcome deliver(const Bytes& sealed, const Bytes& payload, std::int64_t now,
+        const Key& sealingKey, const std::string& owner = {});
 
     const std::string& serverFingerprint() const;
-    // The home destination's serving sealing key (also the default for callers
-    // that operate only the home destination).
+    // The default serving sealing key, for callers that operate no destination
+    // of their own.
     const Key& sealingKey() const;
 
 private:

@@ -94,15 +94,15 @@ Bytes makeSealed(const Key& sealingPublic, const std::string& kind,
 // the same SocketStream wraps both ends, so the federation protocol is
 // exercised without I2P.
 FederationDeliverResult roundTrip(DeliveryEngine& engine, const Bytes& sealed, const Bytes& payload,
-    const Key* const servingKey = nullptr)
+    const Key* const servingKey = nullptr, const std::string& owner = std::string())
 {
     int fds[2];
     CHECK(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0);
     SocketStream serverStream(fds[0]);
     SocketStream clientStream(fds[1]);
 
-    std::thread serverThread([&engine, &serverStream, servingKey]() {
-        federationServeOnce(serverStream, engine, kNow, std::string(), nullptr, servingKey);
+    std::thread serverThread([&engine, &serverStream, servingKey, owner]() {
+        federationServeOnce(serverStream, engine, kNow, std::string(), nullptr, servingKey, owner);
     });
     const FederationDeliverResult result
         = federationSendDeliver(clientStream, sealed, payload);
@@ -121,8 +121,8 @@ FederationFetchResult roundTripCard(DeliveryEngine& engine, const Bytes& sealedQ
     SocketStream clientStream(fds[1]);
 
     std::thread serverThread([&engine, &serverStream, servingKey, &getCard]() {
-        federationServeOnce(
-            serverStream, engine, kNow, std::string(), nullptr, servingKey, getCard);
+        federationServeOnce(serverStream, engine, kNow, std::string(), nullptr, servingKey,
+            std::string(), getCard);
     });
     const FederationFetchResult result = federationSendFetch(clientStream, "card", sealedQuery);
     serverThread.join();
@@ -226,6 +226,31 @@ int main()
         const Bytes sealedHome
             = makeSealed(Key::fromPublicDer(destKey.publicDer()), "contact", alice, "fdest-2", {});
         CHECK(!roundTrip(engine, sealedHome, Bytes(50, 0x55)).delivered);
+    }
+
+    // A destination belongs to one user, and only their mail belongs in it.
+    // Mail for anyone else is answered exactly like a delivered one - refusing
+    // would say whose destination this is - and stored nowhere. The seen-cache
+    // must not be touched either, or delivering a real messageId to the wrong
+    // destination first would censor it at the right one.
+    {
+        const std::string stranger = toBase32(Bytes(32, 0x33));
+        const Bytes payload(64, 0x41);
+        const Bytes sealedForStranger
+            = makeSealed(sealingPublic, "contact", stranger, "wrong-dest", {});
+        const FederationDeliverResult answered
+            = roundTrip(engine, sealedForStranger, payload, nullptr, alice);
+        CHECK(answered.delivered);  // says nothing
+        CHECK(storage.listPending(stranger, "dev").empty());
+        CHECK(storage.usage(stranger) == 0);
+
+        // The same id delivered to its own destination still lands: nothing was
+        // marked seen by the drop above.
+        const FederationDeliverResult real = roundTrip(engine,
+            makeSealed(sealingPublic, "contact", stranger, "wrong-dest", {}), payload, nullptr,
+            stranger);
+        CHECK(real.delivered);
+        CHECK(storage.listPending(stranger, "dev").size() == 1);
     }
 
     // Card fetch: a query sealed to the server's serving key returns the user's

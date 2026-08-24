@@ -7,6 +7,7 @@
 #include <bazarish/Errors.hpp>
 #include <bazarish/Health.hpp>
 #include <bazarish/HttpServer.hpp>
+#include <bazarish/Limits.hpp>
 #include <bazarish/Log.hpp>
 
 #include <nlohmann/json.hpp>

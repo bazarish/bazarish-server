@@ -76,7 +76,7 @@ std::string pathOf(const std::string& target)
     return target.substr(0, target.find('?'));
 }
 
-Backend routeOf(const std::string& path)
+Backend routeOf(const std::string& method, const std::string& path)
 {
     if (startsWith(path, "/v1/messaging/")) {
         return Backend::eMessaging;
@@ -86,13 +86,14 @@ Backend routeOf(const std::string& path)
     if (startsWith(path, "/v1/auth/")) {
         return Backend::eMessaging;
     }
-    // The card lookup is not a clearnet endpoint. It answers only to a caller
-    // holding the descriptor's key - but the key travels in every descriptor, so
-    // forwarding this would let anyone test a contact they already know against
-    // every facade they know: "is this user served here?". The messaging server
-    // reaches it directly over the private channel, which is the only caller
-    // that needs it.
-    if (startsWith(path, "/v1/account/card")) {
+    // The card LOOKUP is not a clearnet endpoint. It answers to any caller
+    // holding the descriptor's view capability, so forwarding it would let
+    // anyone test a contact they already know against every facade they know:
+    // "is this user served here?". The messaging server reaches it directly over
+    // the private channel, which is the only caller that needs it. Publishing a
+    // card is the opposite: the account's own signed call, and the only way a
+    // client can register at all - it keeps going through.
+    if (method == "GET" && startsWith(path, "/v1/account/card")) {
         return Backend::eNone;
     }
     if (startsWith(path, "/v1/account/")) {
@@ -123,7 +124,7 @@ std::optional<Route> resolveRoute(
     }
 
     Route route;
-    route.backend = routeOf(pathOf(target));
+    route.backend = routeOf(request.method, pathOf(target));
     route.target = target;
     switch (route.backend) {
     case Backend::eMessaging:

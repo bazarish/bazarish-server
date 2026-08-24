@@ -199,6 +199,18 @@ int main()
         CHECK(result.body == unknown.body);
     }
 
+    // Publishing a card is the same path with a different method, and it is the
+    // one call that turns a portal registration into an account: blocking it by
+    // path alone left every client unable to register at all.
+    {
+        const http::ClientResponse result = call(facadePort, "POST",
+            "/s/secret123/v1/account/card", {}, R"({"card":"AAAA"})");
+        CHECK(result.status == 200);
+        const nlohmann::json reply = nlohmann::json::parse(result.body);
+        CHECK(reply.at("backend") == "account");
+        CHECK(reply.at("path") == "/v1/account/card");
+    }
+
     // The operator quota endpoint is never exposed through the facade.
     {
         const http::ClientResponse result

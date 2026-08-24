@@ -700,7 +700,7 @@ void HttpApi::setupRoutes()
 
     // The authenticated caller's own mailbox storage: bytes currently held and the
     // effective quota (their override, else the server default). Lets a client show
-    // "used / free / total" for its server-core mailbox in per-profile settings.
+    // "used / free / total" for its server-core mailbox in per-account settings.
     http_->get("/v1/messaging/storage-usage",
         authenticated([this](const bazarish::http::Request&, const std::string& user)
                           -> bazarish::http::Response {

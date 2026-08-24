@@ -10,6 +10,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <condition_variable>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -55,8 +56,16 @@ public:
     void revoke(const std::string& userFp);
 
     // Re-provisions every persisted, non-expired transient. Called once at
-    // startup so paid destinations come back after a restart.
+    // startup so delegated destinations come back after a restart, and served
+    // until the delegation they were handed with runs out.
     void reloadPersisted(std::int64_t now);
+
+    // Takes down every destination whose delegation has run out and forgets it.
+    // A transient is a term, not a gift: past its end the server has no leave to
+    // operate the address, and an address left up is one the user believes is
+    // theirs. Returns how many were taken down. Runs on its own from a sweeper
+    // thread; exposed for the tests.
+    std::size_t sweepExpired(std::int64_t now);
 
     // Wires the contact-card lookup served for op "card" on every per-user
     // destination's accept loop. Set before reloadPersisted/provision. Unset
@@ -131,6 +140,9 @@ private:
         std::int64_t expiresUnix, const std::string& sealingKeyPem,
         const std::string& signingKeyPem);
     void teardownLocked(const std::string& userFp);
+    // Starts the expiry sweeper once; called from reloadPersisted, which every
+    // server runs at start.
+    void startSweeper();
     std::filesystem::path pathFor(const std::string& userFp) const;
     std::filesystem::path destsDir() const;
 
@@ -145,6 +157,12 @@ private:
     OnAckFn onAck_;
     mutable std::mutex mutex_;
     std::map<std::string, std::unique_ptr<Destination>> dests_;
+    // Watches for delegations running out. Sleeps on stopCv_, so shutdown is
+    // immediate rather than one sweep interval away.
+    std::thread sweeper_;
+    std::condition_variable stopCv_;
+    std::mutex stopMutex_;
+    bool stopping_ = false;
 };
 
 }  // namespace bazarish::server

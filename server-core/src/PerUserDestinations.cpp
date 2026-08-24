@@ -54,6 +54,14 @@ PerUserDestinations::PerUserDestinations(bazarish::i2p::Router* const router,
 
 PerUserDestinations::~PerUserDestinations()
 {
+    {
+        const std::lock_guard<std::mutex> lock(stopMutex_);
+        stopping_ = true;
+    }
+    stopCv_.notify_all();
+    if (sweeper_.joinable()) {
+        sweeper_.join();
+    }
     const std::lock_guard<std::mutex> lock(mutex_);
     for (auto& entry : dests_) {
         entry.second->running = false;
@@ -308,6 +316,33 @@ void rewriteRecord(const std::filesystem::path& file,
 
 }  // namespace
 
+std::size_t PerUserDestinations::sweepExpired(const std::int64_t now)
+{
+    std::vector<std::string> lapsed;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto& [userFp, dest] : dests_) {
+            if (dest->expiresUnix > 0 && dest->expiresUnix <= now) {
+                lapsed.push_back(userFp);
+            }
+        }
+        for (const std::string& userFp : lapsed) {
+            std::error_code ec;
+            std::filesystem::remove(pathFor(userFp), ec);
+            if (ec) {
+                // Left behind, the record brings the address back at the next
+                // start - the one thing this sweep exists to prevent.
+                bazarish::log::warn("lapsed destination record for {} not removed: {}",
+                    bazarish::log::redact(userFp), ec.message());
+            }
+            teardownLocked(userFp);
+            bazarish::log::info("delegation for {} ran out: destination taken down",
+                bazarish::log::redact(userFp));
+        }
+    }
+    return lapsed.size();
+}
+
 std::string PerUserDestinations::prepareServingKey(const std::string& userFp)
 {
     const std::lock_guard<std::mutex> lock(mutex_);
@@ -341,6 +376,33 @@ bool PerUserDestinations::commitServingKey(const std::string& userFp)
     return true;
 }
 
+// How often the delegations are checked for having run out. They are measured in
+// days, so this only has to be far finer than that.
+constexpr std::chrono::minutes kExpirySweepInterval{10};
+
+void PerUserDestinations::startSweeper()
+{
+    if (sweeper_.joinable()) {
+        return;
+    }
+    sweeper_ = std::thread([this]() {
+        for (;;) {
+            std::unique_lock<std::mutex> lock(stopMutex_);
+            if (stopCv_.wait_for(lock, kExpirySweepInterval, [this]() { return stopping_; })) {
+                return;
+            }
+            lock.unlock();
+            try {
+                sweepExpired(nowSeconds());
+            } catch (const std::exception& error) {
+                // Housekeeping must not take the server down, but one that never
+                // runs leaves addresses up past their term, so it is reported.
+                bazarish::log::warn("destination expiry sweep failed: {}", error.what());
+            }
+        }
+    });
+}
+
 void PerUserDestinations::revoke(const std::string& userFp)
 {
     const std::lock_guard<std::mutex> lock(mutex_);
@@ -357,6 +419,7 @@ void PerUserDestinations::revoke(const std::string& userFp)
 
 void PerUserDestinations::reloadPersisted(const std::int64_t now)
 {
+    startSweeper();
     const std::lock_guard<std::mutex> lock(mutex_);
     std::error_code ec;
     if (!std::filesystem::exists(destsDir(), ec)) {

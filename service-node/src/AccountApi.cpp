@@ -629,7 +629,12 @@ void AccountApi::setupRoutes()
             record.registeredAt
                 = held.has_value() && held->registeredAt != 0 ? held->registeredAt : now;
             record.quotaBytes = quota;
-            record.dest = card.dest;
+            // Registration publishes a card before there is anywhere to be
+            // reached: it carries no destination, and taking that as "the address
+            // is gone" wiped an address the account had been serving at - which is
+            // what the panel then reported. Only a card that names one replaces it;
+            // giving the address up is the revoke, which says so.
+            record.dest = card.dest.empty() && held.has_value() ? held->dest : card.dest;
             record.delegatedAt = held.has_value() ? held->delegatedAt : 0;
             // Issued once and kept: a descriptor already shared must keep
             // working, and the client puts this in every invite it makes.
@@ -739,6 +744,18 @@ void AccountApi::setupRoutes()
                 return;
             }
             grants_.setI2pTransient(user, expiresUnix, now);
+            // Giving the address up is said here, and nowhere else: the account
+            // record stops naming one, so the panel and the sweep both read the
+            // same thing.
+            if (transient.empty()) {
+                if (const std::optional<SubscriptionStore::Account> held
+                    = store_.getAccount(user);
+                    held.has_value() && !held->dest.empty()) {
+                    SubscriptionStore::Account record = *held;
+                    record.dest.clear();
+                    store_.putAccount(record);
+                }
+            }
             respondJson(response, {{"ok", true}});
         })));
 

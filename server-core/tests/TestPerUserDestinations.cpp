@@ -137,6 +137,24 @@ int main()
         CHECK(reloaded.servingKeyFor(alice)->publicDer() == aliceServing);
     }
 
+    // A delegation is a term, not a gift: once it runs out the destination comes
+    // down and its record goes with it, so a restart does not raise it again.
+    {
+        PerUserDestinations dests(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
+        dests.provision(alice, "transient-lapsing", kNow + 100);
+        CHECK(dests.size() == 1);
+        CHECK(dests.sweepExpired(kNow) == 0);  // still within its term
+        CHECK(dests.size() == 1);
+        CHECK(dests.sweepExpired(kNow + 101) == 1);
+        CHECK(dests.size() == 0);
+        CHECK(!std::filesystem::exists(root / "i2p-user-dests" / alice));
+    }
+    {
+        PerUserDestinations reloaded(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
+        reloaded.reloadPersisted(kNow);
+        CHECK(reloaded.size() == 0);  // nothing left to bring back
+    }
+
     std::printf("TestPerUserDestinations OK\n");
     return 0;
 }

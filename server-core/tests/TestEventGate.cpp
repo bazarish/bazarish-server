@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #include "EventGate.hpp"
 
+#include <utility>
+
 #include <boost/asio/io_context.hpp>
 
 #include <atomic>

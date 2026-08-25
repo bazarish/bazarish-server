@@ -21,6 +21,11 @@ const char* const kRequireApprovalKey = "requireApproval";
 const char* const kMessageKey = "message";
 const char* const kIdleDaysKey = "idleDeleteDays";
 const char* const kQuotaKey = "freeStorageBytes";
+const char* const kPortalKey = "portal";
+const char* const kPortalMessageKey = "message";
+const char* const kCaptchaKey = "captcha";
+const char* const kCaptchaEnabledKey = "enabled";
+const char* const kFacadesKey = "facades";
 
 }  // namespace
 
@@ -63,6 +68,15 @@ void NodeSettings::persist(const Values& values) const
     }
     if (values.defaultQuotaBytes != values_.defaultQuotaBytes) {
         file.set({kQuotaKey}, values.defaultQuotaBytes);
+    }
+    if (values.portalMessage != values_.portalMessage) {
+        file.set({kPortalKey, kPortalMessageKey}, values.portalMessage);
+    }
+    if (values.requireCaptcha != values_.requireCaptcha) {
+        file.set({kPortalKey, kCaptchaKey, kCaptchaEnabledKey}, values.requireCaptcha);
+    }
+    if (values.facades != values_.facades) {
+        file.set({kPortalKey, kFacadesKey}, values.facades);
     }
 }
 

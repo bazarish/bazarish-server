@@ -292,9 +292,14 @@ int main(const int argc, const char** argv)
     // the config file the node was started with, so what an operator changes in
     // the panel is what the node reads at the next start.
     const auto settings = std::make_shared<bazarish::service::NodeSettings>(configPath,
-        bazarish::service::NodeSettings::Values{nodeConfig.registration.requireApproval,
-            nodeConfig.registration.message, nodeConfig.freeStorageBytes,
-            nodeConfig.registration.idleDeleteDays});
+        bazarish::service::NodeSettings::Values{
+            .requireApproval = nodeConfig.registration.requireApproval,
+            .registrationMessage = nodeConfig.registration.message,
+            .portalMessage = nodeConfig.portal.message,
+            .requireCaptcha = nodeConfig.portal.captchaEnabled,
+            .facades = nodeConfig.portal.facades,
+            .defaultQuotaBytes = nodeConfig.freeStorageBytes,
+            .idleDeleteDays = nodeConfig.registration.idleDeleteDays});
     options.settings = settings;
     options.defaultQuotaBytes = nodeConfig.freeStorageBytes;
     options.portalMessage = nodeConfig.portal.message;

@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #include "PortalApi.hpp"
 
+#include <bazarish/ServerDescriptor.hpp>
+
 
 #include <bazarish/HttpServer.hpp>
 #include <bazarish/Log.hpp>
@@ -130,8 +132,12 @@ PortalApi::PortalApi(PortalApiOptions options, Captcha& captcha, GrantStore& gra
     , settings_(options_.settings
               ? options_.settings
               : std::make_shared<NodeSettings>(std::filesystem::path(),
-                    NodeSettings::Values{options_.requiresApproval, options_.registrationMessage,
-                        options_.defaultQuotaBytes}))
+                    NodeSettings::Values{.requireApproval = options_.requiresApproval,
+                        .registrationMessage = options_.registrationMessage,
+                        .portalMessage = {},
+                        .requireCaptcha = options_.requireCaptcha,
+                        .facades = {},
+                        .defaultQuotaBytes = options_.defaultQuotaBytes}))
     , assets_(options_.assetsDirectory)
     , captcha_(captcha)
     , grants_(grants)
@@ -260,7 +266,7 @@ void PortalApi::setupRoutes()
                 respondJson(response, {{"error", "banned"}, {"message", ban->reason}});
                 return;
             }
-            if (options_.requireCaptcha) {
+            if (settings().requireCaptcha) {
                 const nlohmann::json body = nlohmann::json::parse(request.body, nullptr, false);
                 if (body.is_discarded() || !body.contains("captchaId")
                     || !body.contains("captchaAnswer")) {
@@ -317,7 +323,7 @@ void PortalApi::setupWebRoutes()
         // A node that asks for no captcha has nothing left to ask: proving the
         // key is the registration, so it happens as the key is proven instead of
         // behind a button that would only repeat the question.
-        if (!user.empty() && !options_.requireCaptcha && !grants_.peekBan(user).has_value()
+        if (!user.empty() && !settings().requireCaptcha && !grants_.peekBan(user).has_value()
             && !grants_.peekSubscription(user).has_value()) {
             grants_.grantSubscription(user, settings().defaultQuotaBytes,
                 nowSeconds());
@@ -393,7 +399,7 @@ void PortalApi::setupWebRoutes()
             sendHtml(response, homePage(user, std::string()), 403);
             return;
         }
-        if (options_.requireCaptcha
+        if (settings().requireCaptcha
             && !captcha_.verify(
                 request.param("captchaId"), request.param("captchaAnswer"), nowSeconds())) {
             sendHtml(response, homePage(user, "That is not the code. Here is another one."), 403);
@@ -430,7 +436,12 @@ std::map<std::string, std::string> PortalApi::accountValues(
 
     return {
         {"quota", htmlEscape(bytesHuman(granted))},
-        {"descriptor", htmlEscape(options_.serverDescriptor)},
+        // Built from the facades the operator keeps, so the panel and the page
+        // can never show different ways in.
+        {"descriptor",
+            htmlEscape(settings().facades.empty()
+                    ? options_.serverDescriptor
+                    : encodeServerDescriptor({options_.audience, settings().facades}))},
         {"message", notice(note, "is-waiting")},
         {"mailbox", htmlEscape(mailbox)},
         {"devices", htmlEscape(devices)},

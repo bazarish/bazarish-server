@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <mutex>
 #include <string>
+#include <vector>
 
 namespace bazarish::service {
 
@@ -18,6 +19,17 @@ public:
     struct Values {
         bool requireApproval = false;
         std::string registrationMessage;
+        // What a client is told when it reaches a server it has no account on:
+        // the operator's own words about this node and how to get one.
+        std::string portalMessage;
+        // Whether registering means solving a captcha on the portal. With it
+        // off, a client registers itself the moment it connects - there is no
+        // page to visit and nothing to type.
+        bool requireCaptcha = true;
+        // Where clients reach this server. The descriptor a user pastes is these
+        // plus the server's fingerprint, so the operator edits the list and not
+        // the string.
+        std::vector<std::string> facades;
         std::uint64_t defaultQuotaBytes = 0;
         // How long an account is kept without a delegated destination before
         // the node drops it. The delegation is the only sign of life a server

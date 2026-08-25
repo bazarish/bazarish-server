@@ -650,6 +650,44 @@
                 modes.appendChild(chip);
             });
 
+            var how = controls(registration,
+                "Captcha: a person registers on the portal. No captcha: a client registers"
+                + " itself the moment it connects, and nobody visits a page.");
+            var captcha = data.requireCaptcha !== false;
+            var captchaChips = {};
+            [["captcha", true], ["no captcha", false]].forEach(function (entry) {
+                var chip = element("button", "chip" + (entry[1] === captcha ? " is-on" : ""),
+                    entry[0]);
+                chip.addEventListener("click", function () {
+                    captcha = entry[1];
+                    Object.keys(captchaChips).forEach(function (key) {
+                        captchaChips[key].className = "chip"
+                            + ((key === "captcha") === captcha ? " is-on" : "");
+                    });
+                });
+                captchaChips[entry[0]] = chip;
+                how.appendChild(chip);
+            });
+
+            var greeting = section(form, "What a new client is told");
+            var portalMessage = element("textarea", "field");
+            portalMessage.value = data.portalMessage || "";
+            portalMessage.placeholder = "What this server is, and what registering here means";
+            controls(greeting,
+                "Shown by a client that reaches this server without an account here.")
+                .appendChild(portalMessage);
+
+            var reach = section(form, "How clients reach this server");
+            var facades = element("textarea", "field field-tall");
+            facades.value = (data.facades || []).join("\n");
+            facades.placeholder = "http://<b32>.b32.i2p/<base path>\nhttp://host:port/<base path>";
+            controls(reach,
+                "One facade URL per line, in the order a client tries them. The descriptor"
+                + " below is built from them and is what a user pastes into their client.")
+                .appendChild(facades);
+            var descriptor = element("pre", "copy", data.descriptor || "");
+            controls(reach).appendChild(descriptor);
+
             var waiting = section(form, "Message to a waiting account");
             var message = element("textarea", "field");
             message.value = data.registrationMessage || "";
@@ -701,8 +739,21 @@
                     return;
                 }
                 save.disabled = true;
+                var facadeList = facades.value.split("\n").map(function (line) {
+                    return line.trim();
+                }).filter(function (line) {
+                    return line.length > 0;
+                });
+                if (facadeList.length === 0) {
+                    footer.appendChild(notice("A server with no facade cannot be reached.",
+                        "is-error"));
+                    return;
+                }
                 api("PUT", withFleet("/api/settings"), {
                     requireApproval: moderated,
+                    requireCaptcha: captcha,
+                    portalMessage: portalMessage.value.trim(),
+                    facades: facadeList,
                     registrationMessage: message.value.trim(),
                     idleDeleteDays: Math.max(0, Math.round(Number(ttl.value) || 0)),
                     defaultQuotaBytes: Math.round(megabytes) * kBytesPerMiB

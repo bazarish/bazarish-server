@@ -4,6 +4,7 @@
 #include <bazarish/Auth.hpp>
 #include <bazarish/Certificates.hpp>
 #include <bazarish/Descriptor.hpp>
+#include <bazarish/ServerDescriptor.hpp>
 #include <bazarish/Errors.hpp>
 #include <bazarish/Health.hpp>
 #include <bazarish/HttpServer.hpp>
@@ -139,10 +140,13 @@ AccountApi::AccountApi(
     : settings_(options.settings ? options.settings
                                  : std::make_shared<NodeSettings>(std::filesystem::path(),
                                        NodeSettings::Values{
-                                           options.registration
+                                           .requireApproval = options.registration
                                                == AccountApiOptions::Registration::eApproval,
-                                           options.registrationMessage,
-                                           options.defaultQuotaBytes}))
+                                           .registrationMessage = options.registrationMessage,
+                                           .portalMessage = options.portalMessage,
+                                           .requireCaptcha = options.freeRegistrationCaptcha,
+                                           .facades = {},
+                                           .defaultQuotaBytes = options.defaultQuotaBytes}))
     , store_(store)
     , grants_(grants)
     , options_(options)
@@ -475,6 +479,11 @@ void AccountApi::setupRoutes()
                 {
                     {"requireApproval", values.requireApproval},
                     {"registrationMessage", values.registrationMessage},
+                    {"portalMessage", values.portalMessage},
+                    {"requireCaptcha", values.requireCaptcha},
+                    {"facades", values.facades},
+                    {"descriptor",
+                        encodeServerDescriptor({options_.serverFingerprint, values.facades})},
                     {"defaultQuotaBytes", values.defaultQuotaBytes},
                     {"idleDeleteDays", values.idleDeleteDays},
                     {"accounts", accounts},
@@ -492,6 +501,25 @@ void AccountApi::setupRoutes()
             if (body.contains("registrationMessage")) {
                 values.registrationMessage
                     = body.at("registrationMessage").get<std::string>();
+            }
+            if (body.contains("portalMessage")) {
+                values.portalMessage = body.at("portalMessage").get<std::string>();
+            }
+            if (body.contains("requireCaptcha")) {
+                values.requireCaptcha = body.at("requireCaptcha").get<bool>();
+            }
+            if (body.contains("facades")) {
+                std::vector<std::string> facades;
+                for (const nlohmann::json& entry : body.at("facades")) {
+                    std::string url = entry.get<std::string>();
+                    if (!url.empty()) {
+                        facades.push_back(std::move(url));
+                    }
+                }
+                if (facades.empty()) {
+                    throw std::invalid_argument("a server with no facade cannot be reached");
+                }
+                values.facades = std::move(facades);
             }
             if (body.contains("idleDeleteDays")) {
                 values.idleDeleteDays = body.at("idleDeleteDays").get<std::int64_t>();
@@ -907,6 +935,38 @@ void AccountApi::setupRoutes()
             respondJson(response, {{"user", user}, {"card", toBase64(account->card)}});
         }));
 
+    // Registering without a page to visit. Only when the operator asks for no
+    // captcha: a captcha is a person's proof that they are one, and a client
+    // cannot stand in for it. The account is granted exactly what the portal
+    // grants, approval included, so the two doors lead to the same place.
+    http_->post("/v1/account/registration",
+        filled(authenticated([this](const http::Request&, http::Response& response,
+                          const std::string& user) {
+            if (settings().requireCaptcha) {
+                respondError(response, 403, ErrorCode::eDeliveryRejected,
+                    "this server registers on its portal");
+                return;
+            }
+            if (const std::optional<GrantStore::Ban> ban = grants_.peekBan(user);
+                ban.has_value()) {
+                respondError(response, 403, ErrorCode::eDeliveryRejected, ban->reason);
+                return;
+            }
+            const NodeSettings::Values values = settings();
+            const std::int64_t now = nowSeconds();
+            // Exactly what the portal's register button does, so an account that
+            // came this way is indistinguishable from one that came that way.
+            if (!store_.getAccount(user).has_value()
+                && !grants_.peekSubscription(user).has_value()) {
+                grants_.grantSubscription(user, values.defaultQuotaBytes, now);
+            }
+            respondJson(response,
+                {{"ok", true}, {"quotaBytes", values.defaultQuotaBytes},
+                    {"requiresApproval", values.requireApproval},
+                    {"message", values.requireApproval ? values.registrationMessage
+                                                       : std::string()}});
+        })));
+
     // Onboarding discovery: where to register and on what terms. Unauthenticated
     // - the client shows the message and link(s); registration happens on the
     // portal, not here. Nothing on this node is for sale, so there is no service
@@ -919,11 +979,12 @@ void AccountApi::setupRoutes()
             }
             respondJson(response,
                 {
-                    {"message", options_.portalMessage},
+                    {"message", settings().portalMessage.empty() ? options_.portalMessage
+                                                                : settings().portalMessage},
                     {"links", links},
                     {"registration",
                         {
-                            {"captcha", options_.freeRegistrationCaptcha},
+                            {"captcha", settings().requireCaptcha},
                             {"requiresApproval",
                                 settings().requireApproval},
                             {"message", settings().registrationMessage},

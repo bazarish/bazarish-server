@@ -9,6 +9,8 @@
 #include <bazarish/Log.hpp>
 #include <bazarish/HttpServer.hpp>
 
+#include <utility>
+
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 

@@ -17,6 +17,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -64,6 +65,12 @@ struct HttpApiOptions {
     // bounds mail for a device that never returns (or a user with no registered
     // clients). 0 disables the sweep.
     std::int64_t mailboxRetentionSeconds = 30 * 24 * 3600;
+    // How long an accepted send that has not been delivered yet is kept and
+    // retried. A recipient can be offline for days - their client renews a
+    // delegation only while it runs - and until this runs out the envelope stays on
+    // this server rather than being dropped with the sender told it was accepted.
+    // 0 disables the spool, leaving only the immediate rounds below.
+    std::int64_t outboundRetentionSeconds = 7 * 24 * 3600;
     // Background delivery (store-and-forward) retry policy for a recipient whose
     // I2P leaseset is momentarily unpublished: how many federation rounds before
     // giving up. The first rounds retry immediately, then the backoff grows (see
@@ -204,6 +211,9 @@ private:
     // short-circuit.
     struct DeliveryJob {
         std::string attemptId;
+        // The spooled copy this job is delivering; empty for a job with none
+        // (a retry of an entry already removed).
+        std::string spoolId;
         std::string toDest;
         Bytes sealed;
         Bytes payload;
@@ -221,6 +231,12 @@ private:
     std::optional<bazarish::http::Response> authenticateRequest(
         const bazarish::http::Request& request, std::string* outUser);
     void deliveryWorkerLoop();
+    // Re-queues spooled sends whose next attempt is due, and gives up on the ones
+    // that have been waiting past the retention window.
+    void outboundSpoolLoop();
+    // Takes a spooled send out of flight: removed when it is done with, kept with a
+    // longer wait when it is not.
+    void releaseSpooled(const std::string& spoolId, bool keep, std::int64_t now);
     void runDeliveryJob(const DeliveryJob& job);
     void setAttempt(const std::string& attemptId, const Attempt& attempt);
     // Updates only the live federation phase of an existing, still-pending attempt
@@ -257,6 +273,11 @@ private:
     std::vector<std::thread> deliveryWorkers_;
     // Background mailbox TTL sweep; shares stopping_/jobsCv_ for shutdown.
     std::thread janitorThread_;
+    // Re-queues what the spool still holds; shares stopping_/jobsCv_ for shutdown.
+    std::thread spoolThread_;
+    // Spool entries currently queued or in flight, so a due entry is not picked up
+    // twice while a worker is already carrying it.
+    std::set<std::string> spoolInFlight_;
     bool stopping_ = false;
 
     auth::ReplayCache replayCache_;

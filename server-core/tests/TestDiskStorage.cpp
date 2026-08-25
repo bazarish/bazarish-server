@@ -169,11 +169,45 @@ int main()
               storage.userQuota(dave, kQuota))
         == Storage::PutResult::eQuotaExceeded);
 
+    // --- The outbound spool: what this server has accepted and not delivered ---
+    Storage::OutboundEntry outbound;
+    outbound.toDest = "somewhere.b32.i2p";
+    outbound.sealed = Bytes{9, 8, 7};
+    outbound.payload = Bytes(64, 'p');
+    outbound.senderDest = "mine.b32.i2p";
+    outbound.senderUser = alice;
+    outbound.queuedAt = kNow;
+    outbound.nextAttemptAt = kNow;
+    const std::string spoolId = storage.queueOutbound(outbound);
+    CHECK(!spoolId.empty());
+    {
+        const std::vector<Storage::OutboundEntry> queued = storage.listOutbound();
+        CHECK(queued.size() == 1);
+        CHECK(queued.front().id == spoolId);
+        CHECK(queued.front().sealed == outbound.sealed);
+        CHECK(queued.front().payload == outbound.payload);
+        CHECK(queued.front().senderUser == alice);
+        CHECK(queued.front().attempts == 0);
+    }
+    // A spent round is recorded, and the entry waits rather than disappearing.
+    storage.updateOutbound(spoolId, 3, kNow + 600);
+    {
+        const std::vector<Storage::OutboundEntry> queued = storage.listOutbound();
+        CHECK(queued.size() == 1);
+        CHECK(queued.front().attempts == 3);
+        CHECK(queued.front().nextAttemptAt == kNow + 600);
+    }
+
     // --- Persistence across instances ---
     DiskStorage reopened(root);
     CHECK(reopened.usage(alice) == 100);
     CHECK(reopened.getBlob(alice, "msg4") == blob);
     CHECK(reopened.userQuota(dave, kQuota) == 8);  // override persisted
+    // A restart must not lose a send that has not been delivered yet.
+    CHECK(reopened.listOutbound().size() == 1);
+    CHECK(reopened.listOutbound().front().payload == outbound.payload);
+    reopened.removeOutbound(spoolId);
+    CHECK(reopened.listOutbound().empty());
 
     std::filesystem::remove_all(root);
     return 0;

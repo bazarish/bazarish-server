@@ -50,6 +50,23 @@ std::int64_t nowSeconds()
 // no pause to catch a tunnel that is about to finish building, then the wait
 // grows so a longer outage is not hammered: rounds 0-2 immediate, rounds 3-5 one
 // second, then +1s per round capped at five seconds.
+// How often the spool looks for sends whose next attempt is due.
+constexpr std::chrono::seconds kSpoolPollInterval{60};
+// The gap before the next run of rounds, doubling from a minute to an hour: a
+// recipient who is away is away for a while, and a spool that asks every minute
+// for days is only noise on the network.
+constexpr std::int64_t kSpoolBackoffFirstSeconds = 60;
+constexpr std::int64_t kSpoolBackoffMaxSeconds = 3600;
+
+std::chrono::seconds spoolBackoff(const int attempts)
+{
+    std::int64_t seconds = kSpoolBackoffFirstSeconds;
+    for (int i = 1; i < attempts && seconds < kSpoolBackoffMaxSeconds; ++i) {
+        seconds *= 2;
+    }
+    return std::chrono::seconds{std::min(seconds, kSpoolBackoffMaxSeconds)};
+}
+
 std::chrono::seconds retryBackoff(int round)
 {
     int seconds = 0;
@@ -119,6 +136,10 @@ HttpApi::HttpApi(Storage& storage, DeliveryEngine& engine, const HttpApiOptions 
     // Mailbox TTL backstop sweep (skipped entirely when retention is disabled).
     if (options_.mailboxRetentionSeconds > 0) {
         janitorThread_ = std::thread([this]() { mailboxJanitorLoop(); });
+    }
+    // Sends accepted but not delivered - including whatever a restart interrupted.
+    if (options_.outboundRetentionSeconds > 0) {
+        spoolThread_ = std::thread([this]() { outboundSpoolLoop(); });
     }
 }
 
@@ -191,6 +212,9 @@ void HttpApi::stopWorkers()
     if (janitorThread_.joinable()) {
         janitorThread_.join();
     }
+    if (spoolThread_.joinable()) {
+        spoolThread_.join();
+    }
 }
 
 void HttpApi::mailboxJanitorLoop()
@@ -230,6 +254,9 @@ void HttpApi::wakeUser(const std::string& user)
 
 void HttpApi::setAttempt(const std::string& attemptId, const Attempt& attempt)
 {
+    if (attemptId.empty()) {
+        return;  // a spool retry: nobody is polling it any more
+    }
     std::string settledFor;
     {
         const std::lock_guard<std::mutex> lock(attemptsMutex_);
@@ -369,6 +396,9 @@ void HttpApi::runDeliveryJob(const DeliveryJob& job)
         }
         const bool transient = attempt.status == "failed" && attempt.errorCode == unreachableCode;
         if (!transient) {
+            // Delivered, or refused for a reason retrying cannot change: either way
+            // this server is done carrying it.
+            releaseSpooled(job.spoolId, /*keep=*/false, 0);
             attempt.completedAt = now;
             setAttempt(job.attemptId, attempt);
             return;
@@ -395,10 +425,97 @@ void HttpApi::runDeliveryJob(const DeliveryJob& job)
     // (green). completedAt is set so the attempt prunes normally. A true failure
     // (token rejected, too large, refused) is terminal above and is the only path
     // to a red "failed".
+    // The envelope itself stays spooled: the recipient may simply be offline, and
+    // the retry rounds above span half a minute where a client can be away for
+    // days. The spool keeps trying with a widening gap until it is delivered or the
+    // retention window runs out.
+    releaseSpooled(job.spoolId, /*keep=*/true, nowSeconds());
     Attempt unconfirmed;
     unconfirmed.status = "unconfirmed";
     unconfirmed.completedAt = nowSeconds();
     setAttempt(job.attemptId, unconfirmed);
+}
+
+void HttpApi::releaseSpooled(
+    const std::string& spoolId, const bool keep, const std::int64_t now)
+{
+    if (spoolId.empty()) {
+        return;
+    }
+    {
+        const std::lock_guard<std::mutex> lock(jobsMutex_);
+        spoolInFlight_.erase(spoolId);
+    }
+    try {
+        if (!keep) {
+            storage_.removeOutbound(spoolId);
+            return;
+        }
+        // Count this whole run of rounds as one attempt, and wait longer before the
+        // next: a recipient who is away stays away for minutes at a time, and there
+        // is nothing to gain from asking every few seconds for days.
+        int attempts = 0;
+        for (const Storage::OutboundEntry& entry : storage_.listOutbound()) {
+            if (entry.id == spoolId) {
+                attempts = entry.attempts + 1;
+                break;
+            }
+        }
+        storage_.updateOutbound(spoolId, attempts, now + spoolBackoff(attempts).count());
+    } catch (const std::exception& error) {
+        // The send is still in the spool either way; the loop picks it up again.
+        bazarish::log::warn("outbound spool not updated: {}", error.what());
+    }
+}
+
+void HttpApi::outboundSpoolLoop()
+{
+    for (;;) {
+        {
+            std::unique_lock<std::mutex> lock(jobsMutex_);
+            if (jobsCv_.wait_for(lock, kSpoolPollInterval, [this]() { return stopping_; })) {
+                return;
+            }
+        }  // release jobsMutex_ before touching storage (it takes its own lock)
+        try {
+            const std::int64_t now = nowSeconds();
+            for (const Storage::OutboundEntry& entry : storage_.listOutbound()) {
+                if (entry.queuedAt + options_.outboundRetentionSeconds < now) {
+                    // Given up on: said out loud, because from here on nobody is
+                    // carrying this message any more.
+                    bazarish::log::warn(
+                        "undelivered send to {} given up on after {} attempts over {} s",
+                        bazarish::log::redact(entry.toDest), entry.attempts,
+                        now - entry.queuedAt);
+                    storage_.removeOutbound(entry.id);
+                    continue;
+                }
+                if (entry.nextAttemptAt > now) {
+                    continue;  // not due yet
+                }
+                // The destination this account sends from, as it stands now: a
+                // rotation since the send was accepted must not send it from an
+                // address that no longer exists.
+                const DestinationAssignment sender = options_.assignDestination
+                    ? options_.assignDestination(entry.senderUser)
+                    : DestinationAssignment{};
+                {
+                    const std::lock_guard<std::mutex> lock(jobsMutex_);
+                    if (stopping_ || !spoolInFlight_.insert(entry.id).second) {
+                        continue;  // already queued or in a worker's hands
+                    }
+                    // A retry carries no attempt id: the client stopped polling long
+                    // ago, and a read receipt is what confirms it now.
+                    jobs_.push_back(DeliveryJob{std::string(), entry.id, entry.toDest,
+                        entry.sealed, entry.payload, entry.senderDest, entry.senderUser,
+                        sender.servingKey});
+                }
+                jobsCv_.notify_all();
+            }
+        } catch (const std::exception& error) {
+            bazarish::log::warn("outbound spool sweep failed: {}", error.what());
+        }
+    }
 }
 
 std::optional<bazarish::http::Response> HttpApi::authenticateRequest(
@@ -1029,10 +1146,29 @@ void HttpApi::setupRoutes()
                     messageIdToAttempt_[messageId] = attemptId;
                 }
             }
+            // Spooled before it is queued: the recipient may be offline for far
+            // longer than the rounds below, and an envelope held only in memory is
+            // one the sender was told had been accepted and that nobody has any
+            // more.
+            std::string spoolId;
+            if (options_.outboundRetentionSeconds > 0) {
+                Storage::OutboundEntry entry;
+                entry.toDest = toDest;
+                entry.sealed = sealed;
+                entry.payload = payload;
+                entry.senderDest = sender.dest;
+                entry.senderUser = user;
+                entry.queuedAt = now;
+                entry.nextAttemptAt = now;
+                spoolId = storage_.queueOutbound(entry);
+            }
             {
                 const std::lock_guard<std::mutex> lock(jobsMutex_);
-                jobs_.push_back(DeliveryJob{
-                    attemptId, toDest, sealed, payload, sender.dest, user, sender.servingKey});
+                if (!spoolId.empty()) {
+                    spoolInFlight_.insert(spoolId);
+                }
+                jobs_.push_back(DeliveryJob{attemptId, spoolId, toDest, sealed, payload,
+                    sender.dest, user, sender.servingKey});
             }
             jobsCv_.notify_all();
             return jsonResponse({{"attemptId", attemptId}, {"status", "pending"}});

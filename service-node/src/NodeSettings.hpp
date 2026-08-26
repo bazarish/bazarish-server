@@ -26,10 +26,14 @@ public:
         // off, a client registers itself the moment it connects - there is no
         // page to visit and nothing to type.
         bool requireCaptcha = true;
-        // Where clients reach this server. The descriptor a user pastes is these
+        // Where clients reach this server: I2P addresses, because that is the only
+        // way a client ever talks to it. The descriptor a user pastes is these
         // plus the server's fingerprint, so the operator edits the list and not
         // the string.
         std::vector<std::string> facades;
+        // Where a client with no I2P router yet fetches a slice of netdb to start
+        // from. Clearnet addresses, and nothing else is served on them.
+        std::vector<std::string> reseeds;
         std::uint64_t defaultQuotaBytes = 0;
         // How long an account is kept without a delegated destination before
         // the node drops it. The delegation is the only sign of life a server

@@ -26,6 +26,7 @@ const char* const kPortalMessageKey = "message";
 const char* const kCaptchaKey = "captcha";
 const char* const kCaptchaEnabledKey = "enabled";
 const char* const kFacadesKey = "facades";
+const char* const kReseedsKey = "reseeds";
 
 }  // namespace
 
@@ -77,6 +78,9 @@ void NodeSettings::persist(const Values& values) const
     }
     if (values.facades != values_.facades) {
         file.set({kPortalKey, kFacadesKey}, values.facades);
+    }
+    if (values.reseeds != values_.reseeds) {
+        file.set({kPortalKey, kReseedsKey}, values.reseeds);
     }
 }
 

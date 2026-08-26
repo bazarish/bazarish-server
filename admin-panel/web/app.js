@@ -97,6 +97,13 @@
         return row;
     }
 
+    // What decides which list an address belongs in: the host, not the scheme.
+    function isI2pUrl(url) {
+        var withoutScheme = url.replace(/^[a-zA-Z]+:\/\//, "");
+        var host = withoutScheme.split(/[:/]/)[0];
+        return /\.b32\.i2p$/.test(host);
+    }
+
     function humanBytes(bytes) {
         var units = ["B", "KiB", "MiB", "GiB", "TiB"];
         var value = Number(bytes) || 0;
@@ -688,13 +695,22 @@
             var reach = section(form, "How clients reach this server");
             var facades = element("textarea", "field field-tall");
             facades.value = (data.facades || []).join("\n");
-            facades.placeholder = "http://<b32>.b32.i2p/<base path>\nhttp://host:port/<base path>";
+            facades.placeholder = "http://<b32>.b32.i2p/<base path>";
             controls(reach,
-                "One facade URL per line, in the order a client tries them. The descriptor"
-                + " below is built from them and is what a user pastes into their client.")
-                .appendChild(facades);
+                "Facades, one per line, in the order a client tries them. Clients talk to this"
+                + " server over I2P and nothing else, so every one of these is a .b32.i2p"
+                + " address.").appendChild(facades);
+            var reseeds = element("textarea", "field field-tall");
+            reseeds.value = (data.reseeds || []).join("\n");
+            reseeds.placeholder = "https://host:port/<base path>";
+            controls(reach,
+                "Reseeds, one per line: clearnet addresses where a client with no I2P router"
+                + " yet fetches a slice of the network database to start from. They carry"
+                + " nothing else, and a client that has a router never asks them again.")
+                .appendChild(reseeds);
             var descriptor = element("pre", "copy", data.descriptor || "");
-            controls(reach).appendChild(descriptor);
+            controls(reach, "Built from both lists. This is what a user pastes into their client.")
+                .appendChild(descriptor);
 
             var waiting = section(form, "Message to a waiting account");
             var message = element("textarea", "field");
@@ -755,6 +771,29 @@
                 if (facadeList.length === 0) {
                     footer.appendChild(notice("A server with no facade cannot be reached.",
                         "is-error"));
+                    save.disabled = false;
+                    return;
+                }
+                var reseedList = reseeds.value.split("\n").map(function (line) {
+                    return line.trim();
+                }).filter(function (line) {
+                    return line.length > 0;
+                });
+                // Said here as well as at the node, so the mistake is caught where
+                // it is being made rather than after a round trip.
+                var wrongFacade = facadeList.filter(function (url) { return !isI2pUrl(url); });
+                if (wrongFacade.length > 0) {
+                    footer.appendChild(notice("A facade must be a .b32.i2p address: "
+                        + wrongFacade[0], "is-error"));
+                    save.disabled = false;
+                    return;
+                }
+                var wrongReseed = reseedList.filter(isI2pUrl);
+                if (wrongReseed.length > 0) {
+                    footer.appendChild(notice("A reseed must not be a .b32.i2p address - it is"
+                        + " what a client without a router asks first: " + wrongReseed[0],
+                        "is-error"));
+                    save.disabled = false;
                     return;
                 }
                 api("PUT", withFleet("/api/settings"), {
@@ -762,6 +801,7 @@
                     requireCaptcha: captcha,
                     portalMessage: portalMessage.value.trim(),
                     facades: facadeList,
+                    reseeds: reseedList,
                     registrationMessage: message.value.trim(),
                     idleDeleteDays: Math.max(0, Math.round(Number(ttl.value) || 0)),
                     defaultQuotaBytes: Math.round(megabytes) * kBytesPerMiB

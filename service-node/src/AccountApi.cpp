@@ -146,6 +146,7 @@ AccountApi::AccountApi(
                                            .portalMessage = options.portalMessage,
                                            .requireCaptcha = options.freeRegistrationCaptcha,
                                            .facades = {},
+                                           .reseeds = {},
                                            .defaultQuotaBytes = options.defaultQuotaBytes}))
     , store_(store)
     , grants_(grants)
@@ -482,8 +483,10 @@ void AccountApi::setupRoutes()
                     {"portalMessage", values.portalMessage},
                     {"requireCaptcha", values.requireCaptcha},
                     {"facades", values.facades},
+                    {"reseeds", values.reseeds},
                     {"descriptor",
-                        encodeServerDescriptor({options_.serverFingerprint, values.facades})},
+                        encodeServerDescriptor(
+                            {options_.serverFingerprint, values.facades, values.reseeds})},
                     {"defaultQuotaBytes", values.defaultQuotaBytes},
                     {"idleDeleteDays", values.idleDeleteDays},
                     {"accounts", accounts},
@@ -512,14 +515,41 @@ void AccountApi::setupRoutes()
                 std::vector<std::string> facades;
                 for (const nlohmann::json& entry : body.at("facades")) {
                     std::string url = entry.get<std::string>();
-                    if (!url.empty()) {
-                        facades.push_back(std::move(url));
+                    if (url.empty()) {
+                        continue;
                     }
+                    // A facade is where clients talk to this server, and they talk
+                    // over I2P and nothing else. A clearnet address here would be
+                    // an address no client will ever use.
+                    if (!bazarish::isI2pFacadeUrl(url)
+                        && !bazarish::allowFacadeWithoutI2pForDevPurposes()) {
+                        throw std::invalid_argument(
+                            "a facade must be a .b32.i2p address: " + url);
+                    }
+                    facades.push_back(std::move(url));
                 }
                 if (facades.empty()) {
                     throw std::invalid_argument("a server with no facade cannot be reached");
                 }
                 values.facades = std::move(facades);
+            }
+            if (body.contains("reseeds")) {
+                std::vector<std::string> reseeds;
+                for (const nlohmann::json& entry : body.at("reseeds")) {
+                    std::string url = entry.get<std::string>();
+                    if (url.empty()) {
+                        continue;
+                    }
+                    // A reseed is what a client asks BEFORE it has a router. An
+                    // I2P address here could never be reached at that moment.
+                    if (bazarish::isI2pFacadeUrl(url)
+                        && !bazarish::allowFacadeWithoutI2pForDevPurposes()) {
+                        throw std::invalid_argument(
+                            "a reseed must not be a .b32.i2p address: " + url);
+                    }
+                    reseeds.push_back(std::move(url));
+                }
+                values.reseeds = std::move(reseeds);
             }
             if (body.contains("idleDeleteDays")) {
                 values.idleDeleteDays = body.at("idleDeleteDays").get<std::int64_t>();

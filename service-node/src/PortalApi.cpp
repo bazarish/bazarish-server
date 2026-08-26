@@ -137,6 +137,7 @@ PortalApi::PortalApi(PortalApiOptions options, Captcha& captcha, GrantStore& gra
                         .portalMessage = {},
                         .requireCaptcha = options_.requireCaptcha,
                         .facades = {},
+                        .reseeds = {},
                         .defaultQuotaBytes = options_.defaultQuotaBytes}))
     , assets_(options_.assetsDirectory)
     , captcha_(captcha)
@@ -441,7 +442,8 @@ std::map<std::string, std::string> PortalApi::accountValues(
         {"descriptor",
             htmlEscape(settings().facades.empty()
                     ? options_.serverDescriptor
-                    : encodeServerDescriptor({options_.audience, settings().facades}))},
+                    : encodeServerDescriptor(
+                        {options_.audience, settings().facades, settings().reseeds}))},
         {"message", notice(note, "is-waiting")},
         {"mailbox", htmlEscape(mailbox)},
         {"devices", htmlEscape(devices)},

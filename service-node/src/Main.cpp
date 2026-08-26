@@ -109,9 +109,13 @@ bazarish::Identity loadOrCreateIdentity(const fs::path& stateDir)
 struct PortalConfig {
     std::string message;
     std::vector<std::string> links;
-    // This server's facade URLs, shown in the cabinet as the server descriptor a
-    // client pastes to connect (client failover order).
+    // This server's facade URLs - I2P addresses, where clients talk to it - shown
+    // in the cabinet as part of the server descriptor a client pastes to connect
+    // (client failover order).
     std::vector<std::string> facades;
+    // Clearnet addresses a client with no router yet asks for a slice of netdb.
+    // They carry nothing else.
+    std::vector<std::string> reseeds;
     bool captchaEnabled = true;
     int captchaLength = 5;
     std::int64_t captchaTtlSeconds = 300;
@@ -147,6 +151,10 @@ struct NodeConfig {
     std::uint64_t freeStorageBytes = 50 * 1024 * 1024;
     PortalConfig portal;
     RegistrationConfig registration;
+    // Lets the two address lists hold each other's kind - a clearnet facade, an
+    // I2P reseed. Nonsense in a deployment, and exactly what a stand on a LAN
+    // needs. The client has a switch by the same name.
+    bool allowFacadeWithoutI2pForDevPurposes = false;
 };
 
 NodeConfig loadNodeConfig(const fs::path& path)
@@ -190,6 +198,9 @@ NodeConfig loadNodeConfig(const fs::path& path)
         if (portal.contains("facades")) {
             config.portal.facades = portal.at("facades").get<std::vector<std::string>>();
         }
+        if (portal.contains("reseeds")) {
+            config.portal.reseeds = portal.at("reseeds").get<std::vector<std::string>>();
+        }
         if (portal.contains("captcha")) {
             const nlohmann::json& captcha = portal.at("captcha");
             config.portal.captchaEnabled = captcha.value("enabled", true);
@@ -197,6 +208,8 @@ NodeConfig loadNodeConfig(const fs::path& path)
             config.portal.captchaTtlSeconds = captcha.value("ttlSeconds", std::int64_t{300});
         }
     }
+    config.allowFacadeWithoutI2pForDevPurposes
+        = doc.value("allowFacadeWithoutI2pForDevPurposes", false);
     if (doc.contains("registration")) {
         const nlohmann::json& registration = doc.at("registration");
         config.registration.requireApproval
@@ -287,6 +300,10 @@ int main(const int argc, const char** argv)
     options.serverFingerprint = card.server;
     options.serverCardDer = cardDer;
     options.version = kVersion;
+    if (nodeConfig.allowFacadeWithoutI2pForDevPurposes) {
+        bazarish::setAllowFacadeWithoutI2pForDevPurposes(true);
+        bazarish::log::warn("facades and reseeds may hold each other's kind: development only");
+    }
     options.operatorFingerprints = operatorFingerprints;
     // One live set of knobs for the account API and the portal, written back to
     // the config file the node was started with, so what an operator changes in
@@ -298,6 +315,7 @@ int main(const int argc, const char** argv)
             .portalMessage = nodeConfig.portal.message,
             .requireCaptcha = nodeConfig.portal.captchaEnabled,
             .facades = nodeConfig.portal.facades,
+            .reseeds = nodeConfig.portal.reseeds,
             .defaultQuotaBytes = nodeConfig.freeStorageBytes,
             .idleDeleteDays = nodeConfig.registration.idleDeleteDays});
     options.settings = settings;
@@ -362,7 +380,7 @@ int main(const int argc, const char** argv)
         // The server descriptor a client pastes to connect: this server's
         // fingerprint plus its configured facade URLs, shown in the cabinet.
         portalOptions.serverDescriptor = bazarish::encodeServerDescriptor(
-            {card.server, nodeConfig.portal.facades});
+            {card.server, nodeConfig.portal.facades, nodeConfig.portal.reseeds});
         portalOptions.requireCaptcha = nodeConfig.portal.captchaEnabled;
         portalOptions.challengeSecret = bazarish::toHex(bazarish::randomBytes(16));
         portalOptions.sessionSecret = bazarish::toHex(bazarish::randomBytes(16));

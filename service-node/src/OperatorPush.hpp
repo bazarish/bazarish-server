@@ -40,6 +40,12 @@ public:
     };
     std::optional<AccountUsage> accountUsage(const std::string& user) const;
 
+    // Tells the messaging server the account is gone, so it drops the mailbox
+    // and everything else it held for that fingerprint. The node owns the
+    // account and the messaging server owns the mail: a deletion has to reach
+    // both, or the mail outlives the account that could have collected it.
+    bool forgetMailbox(const std::string& user) const;
+
     // Sets the user's mailbox quota to what their subscription granted, so the
     // messaging server stops falling back to its own default and the two numbers
     // cannot drift apart.
@@ -53,8 +59,11 @@ public:
     bool commitServingKey(const std::string& user) const;
 
 private:
-    // One signed PUT of a JSON body to the messaging server; the answer's body
-    // when it was accepted, nothing when it was not.
+    // One signed request to the messaging server; the answer's body when it was
+    // accepted, nothing when it was not. target carries the query string, path
+    // is what the signature covers.
+    std::optional<std::string> send(const std::string& method, const std::string& path,
+        const std::string& target, const std::string& bodyText) const;
     std::optional<std::string> putBody(const std::string& path, const std::string& bodyText) const;
     bool put(const std::string& path, const std::string& bodyText) const;
 
@@ -63,6 +72,7 @@ private:
     std::string destPath_;
     std::string quotaPath_;
     std::string servingKeyPath_ = "/v1/messaging/serving-key";
+    std::string accountPath_ = "/v1/messaging/account";
 };
 
 }  // namespace bazarish::service

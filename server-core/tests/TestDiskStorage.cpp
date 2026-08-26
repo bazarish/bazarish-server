@@ -81,7 +81,8 @@ int main()
     // One-time: the second consume of the same hash fails.
     CHECK(!storage.consumeTokenHash(alice, deliveryTokenHash(token1)));
     CHECK(storage.tokenHashCount(alice) == 1);
-    storage.deleteTokenHashes(alice, {deliveryTokenHash(token2)});
+    // The other one is spent the same way, and a spent hash is gone for good.
+    CHECK(storage.consumeTokenHash(alice, deliveryTokenHash(token2)));
     CHECK(storage.tokenHashCount(alice) == 0);
     CHECK(!storage.consumeTokenHash(alice, deliveryTokenHash(token2)));
 
@@ -149,12 +150,13 @@ int main()
     CHECK(storage.hasSeen(bob, "nonce-fresh"));   // kept
     CHECK(!storage.hasSeen(bob, "nonce-stale"));  // aged out on the blob horizon
 
-    // --- purgeUser drops content (and replay markers) but keeps the registry ---
-    storage.purgeUser(bob);
+    // --- forgetUser leaves nothing behind: the account is gone, not emptied ---
+    storage.forgetUser(bob);
     CHECK(storage.usage(bob) == 0);
     CHECK(storage.listPending(bob, "bclient").empty());
     CHECK(!storage.hasSeen(bob, "nonce-fresh"));
-    CHECK(storage.isClientRegistered(bob, "bclient"));
+    CHECK(!storage.isClientRegistered(bob, "bclient"));
+    CHECK(storage.tokenHashCount(bob) == 0);
 
     // --- Per-user storage quota override ---
     const std::string dave = makeUser(0x42);

@@ -531,6 +531,30 @@ void HttpApi::setupRoutes()
             });
         });
 
+    // --- Operator-internal: an account is gone ---
+    //
+    // The node owns the account and this server owns the mail, so a deletion has
+    // to be told to both. Everything held for the user goes at once - mail,
+    // replay markers, token hashes, devices, quota - because an account that no
+    // longer exists must not keep a mailbox that answers for it. Idempotent: a
+    // user with nothing here is already in the state this asks for.
+    http_->del("/v1/messaging/account",
+        [this, &store, operatorRejection](
+            const bazarish::http::Request& request) -> bazarish::http::Response {
+            if (const std::optional<bazarish::http::Response> refused = operatorRejection(request);
+                refused.has_value()) {
+                return *refused;
+            }
+            const std::string user = request.query("user");
+            if (user.empty()) {
+                return errorResponse(400, ErrorCode::eDeliveryRejected, "no user named");
+            }
+            store.forgetUser(user);
+            bazarish::log::info("mailbox of {} dropped: the account was deleted",
+                bazarish::log::redact(user));
+            return jsonResponse({{"ok", true}});
+        });
+
     // --- Operator-internal: what the storage occupies ---
     //
     // The panel shows this next to the sum of the quotas: the two answer
@@ -653,21 +677,6 @@ void HttpApi::setupRoutes()
                 hashes.push_back(std::move(hash));
             }
             store.registerTokenHashes(user, hashes);
-            return jsonResponse({{"ok", true}});
-        }));
-
-    http_->del("/v1/messaging/tokens",
-        authenticated([&store, requireClient, clientUnregistered](const bazarish::http::Request& request,
-                          const std::string& user) -> bazarish::http::Response {
-            if (requireClient(request, user).empty()) {
-                return clientUnregistered();
-            }
-            const nlohmann::json body = nlohmann::json::parse(request.body);
-            std::vector<Bytes> hashes;
-            for (const nlohmann::json& entry : body.at("hashes")) {
-                hashes.push_back(fromBase64(entry.get<std::string>()));
-            }
-            store.deleteTokenHashes(user, hashes);
             return jsonResponse({{"ok", true}});
         }));
 

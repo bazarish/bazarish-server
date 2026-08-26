@@ -82,9 +82,6 @@ public:
     // being served.
     void hold(const std::string& user, const std::string& message, std::int64_t now);
 
-    // Accounts still awaiting approval, oldest request first.
-    std::vector<std::string> pendingUsers();
-
     // Every account this node has a record of, in fingerprint order. The operator
     // surface lists and searches over this: an account exists here from the
     // moment it registers, before any certificate is submitted.

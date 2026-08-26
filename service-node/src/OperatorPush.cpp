@@ -113,6 +113,18 @@ bool OperatorPush::put(const std::string& path, const std::string& bodyText) con
 std::optional<std::string> OperatorPush::putBody(
     const std::string& path, const std::string& bodyText) const
 {
+    return send("PUT", path, path, bodyText);
+}
+
+bool OperatorPush::forgetMailbox(const std::string& user) const
+{
+    return send("DELETE", accountPath_, accountPath_ + "?user=" + user, std::string())
+        .has_value();
+}
+
+std::optional<std::string> OperatorPush::send(const std::string& method, const std::string& path,
+    const std::string& target, const std::string& bodyText) const
+{
     if (baseUrl_.empty()) {
         return std::nullopt;  // not configured
     }
@@ -121,11 +133,11 @@ std::optional<std::string> OperatorPush::putBody(
             const HostPort hostPort = parseUrl(baseUrl_);
             // Signed per attempt: the signature covers a timestamp.
             const auth::Headers signature = auth::signRequest(signer_,
-                static_cast<std::int64_t>(std::time(nullptr)), "PUT", path,
+                static_cast<std::int64_t>(std::time(nullptr)), method, path,
                 Bytes(bodyText.begin(), bodyText.end()));
             bazarish::http::ClientRequest push;
-            push.method = "PUT";
-            push.target = path;
+            push.method = method;
+            push.target = target;
             push.headers = std::map<std::string, std::string>(signature.begin(), signature.end());
             push.body = bodyText;
             push.contentType = "application/json";

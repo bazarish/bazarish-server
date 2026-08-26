@@ -128,13 +128,15 @@ int main()
         CHECK(pubCalls == 0);
     }
 
-    // The operator sees the account waiting.
+    // The operator sees the account waiting, in the listing the panel uses.
     {
-        const http::ClientResponse result = call(port, "GET", "/v1/account/pending", makeHeaders(panel, "GET", "/v1/account/pending", ""));
+        const http::ClientResponse result = call(port, "GET", "/v1/account/users?state=pending",
+            makeHeaders(panel, "GET", "/v1/account/users", ""));
         CHECK(result.status == 200);
-        const nlohmann::json pending = nlohmann::json::parse(result.body).at("pending");
-        CHECK(pending.size() == 1);
-        CHECK(pending.at(0).at("user") == alice.fingerprint());
+        const nlohmann::json users = nlohmann::json::parse(result.body).at("users");
+        CHECK(users.size() == 1);
+        CHECK(users.at(0).at("user") == alice.fingerprint());
+        CHECK(users.at(0).at("approval") == "pending");
     }
 
     // Approval is operator-only.
@@ -157,8 +159,9 @@ int main()
         CHECK(result.status == 200);
         CHECK(pubCalls == 1);
 
-        const http::ClientResponse pending = call(port, "GET", "/v1/account/pending", makeHeaders(panel, "GET", "/v1/account/pending", ""));
-        CHECK(nlohmann::json::parse(pending.body).at("pending").empty());
+        const http::ClientResponse pending = call(port, "GET", "/v1/account/users?state=pending",
+            makeHeaders(panel, "GET", "/v1/account/users", ""));
+        CHECK(nlohmann::json::parse(pending.body).at("users").empty());
     }
 
     api.stop();

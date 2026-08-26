@@ -157,15 +157,6 @@ bool DiskStorage::consumeTokenHash(const std::string& user, const Bytes& hash)
     return fs::remove(userDir(user) / "tokens" / toHex(hash), error) && !error;
 }
 
-void DiskStorage::deleteTokenHashes(const std::string& user, const std::vector<Bytes>& hashes)
-{
-    requireUser(user);
-    const std::lock_guard<std::mutex> lock(mutex_);
-    for (const Bytes& hash : hashes) {
-        std::error_code ignored;
-        fs::remove(userDir(user) / "tokens" / toHex(hash), ignored);
-    }
-}
 
 std::size_t DiskStorage::tokenHashCount(const std::string& user)
 {
@@ -328,14 +319,15 @@ void DiskStorage::ackBlob(const std::string& user, const std::string& blobId,
 }
 
 
-void DiskStorage::purgeUser(const std::string& user)
+void DiskStorage::forgetUser(const std::string& user)
 {
     requireUser(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     std::error_code ignored;
-    fs::remove_all(userDir(user) / "blobs", ignored);
-    fs::remove_all(userDir(user) / "meta", ignored);
-    fs::remove_all(userDir(user) / "seen", ignored);
+    // The whole directory: mail, replay markers, token hashes, devices and the
+    // quota override. Half of it left behind would keep answering for a user
+    // whose account is gone.
+    fs::remove_all(userDir(user), ignored);
 }
 
 void DiskStorage::purgeExpired(const std::int64_t receivedBefore)

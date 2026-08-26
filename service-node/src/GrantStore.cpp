@@ -262,33 +262,6 @@ void GrantStore::unban(const std::string& user)
     fs::remove(banPath(user), ignored);
 }
 
-std::vector<std::string> GrantStore::pendingUsers()
-{
-    const std::lock_guard<std::mutex> lock(mutex_);
-    std::vector<std::pair<std::int64_t, std::string>> found;
-    for (const fs::directory_entry& entry : fs::directory_iterator(root_ / "grants")) {
-        if (entry.path().extension() != ".json") {
-            continue;
-        }
-        const nlohmann::json body = readJsonFile(entry.path());
-        if (!body.contains("approval")) {
-            continue;
-        }
-        const nlohmann::json& approval = body.at("approval");
-        if (approval.at("approvedAt").get<std::int64_t>() != 0) {
-            continue;
-        }
-        found.emplace_back(
-            approval.at("requestedAt").get<std::int64_t>(), entry.path().stem().string());
-    }
-    std::sort(found.begin(), found.end());
-    std::vector<std::string> users;
-    users.reserve(found.size());
-    for (const auto& [requestedAt, user] : found) {
-        users.push_back(user);
-    }
-    return users;
-}
 
 std::vector<std::string> GrantStore::allUsers() const
 {

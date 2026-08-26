@@ -98,6 +98,13 @@ int main()
         ++pubCalls;
         return pubAccepts;
     };
+    // Deleting an account has to reach the messaging server too, or its mail
+    // outlives the account that could have collected it.
+    std::string forgottenMailbox;
+    options.forgetMailbox = [&forgottenMailbox](const std::string& user) {
+        forgottenMailbox = user;
+        return true;
+    };
     // Capture quota pushes: the granted quota must reach the messaging server,
     // else it would answer the user with its own unrelated default.
     std::string quotaUser;
@@ -258,10 +265,7 @@ int main()
         CHECK(pubCalls == 4);  // + the revoke the teardown performs
         CHECK(pubTransient.empty());
         CHECK(!grants.peekApproval(alice.fingerprint()).has_value());
-
-        const http::ClientResponse status = call(port, "GET", "/v1/account/status",
-            makeHeaders(alice, "GET", "/v1/account/status", ""));
-        CHECK(status.status == 404);
+        CHECK(forgottenMailbox == alice.fingerprint());
 
         const std::string body
             = nlohmann::json{{"transient", "after-closing"}, {"expiresUnix", now + 3600}}.dump();

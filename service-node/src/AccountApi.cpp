@@ -217,6 +217,13 @@ void AccountApi::revokeDestination(const std::string& user)
 void AccountApi::deleteAccount(const std::string& user)
 {
     revokeDestination(user);
+    // The mail is the messaging server's, so it has to be told separately. Told
+    // before the local record goes: while the record is here the deletion can be
+    // asked for again, and after it there is nothing left to ask with.
+    if (options_.forgetMailbox && !options_.forgetMailbox(user)) {
+        bazarish::log::warn("mailbox of {} was not dropped: the messaging server refused it",
+            log::redact(user));
+    }
     store_.deleteAccount(user);
     grants_.erase(user);
 }
@@ -348,17 +355,6 @@ void AccountApi::setupRoutes()
             }
         };
     };
-
-    http_->get("/v1/account/pending",
-        filled(operatorOnly([this](const http::Request&, http::Response& response) {
-            nlohmann::json users = nlohmann::json::array();
-            for (const std::string& user : grants_.pendingUsers()) {
-                const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
-                users.push_back({{"user", user},
-                    {"requestedAt", approval.has_value() ? approval->requestedAt : 0}});
-            }
-            respondJson(response, {{"pending", users}});
-        })));
 
     // The operator's view of the accounts on this node: everything the panel
     // lists, searches and edits. The search runs here rather than in the browser -
@@ -724,19 +720,6 @@ void AccountApi::setupRoutes()
                     {"registrationMessage",
                         pending ? holdMessageFor(approval, settings()) : std::string()},
                 });
-        })));
-
-    // What the account stands at: the quota it holds and whether it is served.
-    http_->get("/v1/account/status",
-        filled(authenticated([this](const http::Request&, http::Response& response,
-                          const std::string& user) {
-            const std::optional<SubscriptionStore::Account> record = store_.getAccount(user);
-            if (!record.has_value()) {
-                respondError(response, 404, ErrorCode::eClientUnregistered, "no account");
-                return;
-            }
-            respondJson(response,
-                {{"quotaBytes", record->quotaBytes}, {"delegatedAt", record->delegatedAt}});
         })));
 
     // Closing an account tears it down, it does not merely stop delegating: the

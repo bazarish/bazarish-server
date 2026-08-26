@@ -332,6 +332,8 @@ int main(const int argc, const char** argv)
                                       const std::int64_t expiresUnix) {
         return operatorPush.publish(user, transientB64, expiresUnix);
     };
+    options.forgetMailbox
+        = [&operatorPush](const std::string& user) { return operatorPush.forgetMailbox(user); };
     options.prepareServingKey = [&operatorPush](const std::string& user) {
         return operatorPush.prepareServingKey(user);
     };

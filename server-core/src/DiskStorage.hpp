@@ -31,7 +31,6 @@ public:
 
     void registerTokenHashes(const std::string& user, const std::vector<Bytes>& hashes) override;
     bool consumeTokenHash(const std::string& user, const Bytes& hash) override;
-    void deleteTokenHashes(const std::string& user, const std::vector<Bytes>& hashes) override;
     std::size_t tokenHashCount(const std::string& user) override;
 
     PutResult putBlob(const std::string& user, const std::string& blobId, const Bytes& data,
@@ -49,7 +48,7 @@ public:
     Bytes getBlob(const std::string& user, const std::string& blobId) override;
     void ackBlob(const std::string& user, const std::string& blobId,
         const std::string& clientId) override;
-    void purgeUser(const std::string& user) override;
+    void forgetUser(const std::string& user) override;
     void purgeExpired(std::int64_t receivedBefore) override;
     std::uint64_t usage(const std::string& user) override;
     void setUserQuota(const std::string& user, std::uint64_t quotaBytes) override;

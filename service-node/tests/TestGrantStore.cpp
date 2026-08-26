@@ -68,15 +68,10 @@ int main()
         CHECK(approval->requestedAt == 2000);
         CHECK(approval->pending());
 
-        std::vector<std::string> pending = grants.pendingUsers();
-        CHECK(pending.size() == 1);
-        CHECK(pending.front() == moderated);
-
         grants.approve(moderated, 3000);
         approval = grants.peekApproval(moderated);
         CHECK(!approval->pending());
         CHECK(approval->approvedAt == 3000);
-        CHECK(grants.pendingUsers().empty());
 
         // Approving twice keeps the first timestamp.
         grants.approve(moderated, 4000);
@@ -91,7 +86,6 @@ int main()
         const std::string open = Identity::generate().fingerprint();
         grants.recordRegistration(open, 5000, true);
         CHECK(!grants.peekApproval(open)->pending());
-        CHECK(grants.pendingUsers().empty());
         grants.erase(open);
     }
 

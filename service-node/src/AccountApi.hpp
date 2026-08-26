@@ -56,6 +56,13 @@ struct AccountApiOptions {
         std::int64_t expiresUnix)>
         publishI2pTransient;
 
+    // Tells the messaging server an account is gone, so the mailbox and
+    // everything else held for that fingerprint goes with it. Empty = no push
+    // (tests, or a node with no messaging server configured). Returns whether
+    // the messaging server took it: a deletion it refused leaves mail behind,
+    // and that is worth a line in the log rather than silence.
+    std::function<bool(const std::string& user)> forgetMailbox;
+
     // Pushes the quota a subscription grants to the messaging server, which
     // stores the mail and would otherwise answer the user with its own default.
     // Empty = no push (tests, or a deployment where the two are configured by

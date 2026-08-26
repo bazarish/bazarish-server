@@ -328,6 +328,40 @@ int main()
         CHECK(health.contains("ramPeakBytes"));
     }
 
+    // An account deleted on the node takes its mailbox with it: everything this
+    // server held for the fingerprint goes, and only an operator can ask.
+    {
+        const std::string path = "/v1/messaging/account?user=" + alice.fingerprint();
+        const Bytes payload = {'l', 'a', 's', 't'};
+        CHECK(engine
+                  .deliver(sealEnvelope(sealingPublic,
+                               {{"class", "content"}, {"mailbox", alice.fingerprint()},
+                                   {"token", toBase64(token2)}, {"deliveryId", "msg-last"}}),
+                      payload, kNow, engineSealing, alice.fingerprint())
+                  .delivered);
+        CHECK(storage.usage(alice.fingerprint()) > 0);
+
+        // Unsigned, and signed by somebody who is not an operator.
+        CHECK(call(port, "DELETE", path).status == 403);
+        CHECK(call(port, "DELETE", path,
+                   makeHeaders(Identity::generate(), "DELETE", "/v1/messaging/account", "", ""))
+                  .status
+            == 403);
+
+        const http::ClientResponse deleted = call(port, "DELETE", path,
+            makeHeaders(operatorIdentity, "DELETE", "/v1/messaging/account", "", ""));
+        CHECK(deleted.status == 200);
+        CHECK(storage.usage(alice.fingerprint()) == 0);
+        CHECK(storage.listClients(alice.fingerprint()).empty());
+        CHECK(storage.tokenHashCount(alice.fingerprint()) == 0);
+        // Idempotent: a fingerprint this server holds nothing for is already in
+        // the state the deletion asks for.
+        CHECK(call(port, "DELETE", path,
+                   makeHeaders(operatorIdentity, "DELETE", "/v1/messaging/account", "", ""))
+                  .status
+            == 200);
+    }
+
     api.stop();
     serverThread.join();
     std::filesystem::remove_all(root);

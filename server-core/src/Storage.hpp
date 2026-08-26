@@ -38,7 +38,6 @@ public:
     // Atomically consumes the hash. Returns false when it was not present
     // (never registered or already consumed).
     virtual bool consumeTokenHash(const std::string& user, const Bytes& hash) = 0;
-    virtual void deleteTokenHashes(const std::string& user, const std::vector<Bytes>& hashes) = 0;
     virtual std::size_t tokenHashCount(const std::string& user) = 0;
 
     // --- Pending content ---
@@ -106,8 +105,11 @@ public:
     virtual void ackBlob(const std::string& user, const std::string& blobId,
         const std::string& clientId)
         = 0;
-    // Drops all pending content of the user (subscription expiry).
-    virtual void purgeUser(const std::string& user) = 0;
+    // Drops everything this server holds for the user: pending content, replay
+    // markers, token hashes, the device registry and any quota override. What an
+    // account being deleted means here - after it, the fingerprint is a stranger
+    // again.
+    virtual void forgetUser(const std::string& user) = 0;
     // TTL sweep: removes blobs received strictly before the threshold.
     virtual void purgeExpired(std::int64_t receivedBefore) = 0;
     // Current pending-content usage in bytes.

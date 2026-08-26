@@ -18,6 +18,7 @@ namespace bazarish::server {
 //   users/<fingerprint>/meta/<blobId>.json   {"receivedAt": ..., "class": ..., "acked": [...]}
 //   users/<fingerprint>/seen/<messageId>     admitted-messageId marker (receivedAt text)
 //   outbound/<id>.json                       a send accepted and not delivered yet
+//   users/<fingerprint>/undelivered/<msgId>  a send given up on, until the sender asks
 //
 // Token consumption maps to unlink(), which the filesystem makes atomic.
 // A single coarse mutex serializes mutations; revisit when profiling says so.
@@ -60,6 +61,9 @@ public:
     std::vector<OutboundEntry> listOutbound() override;
     void updateOutbound(const std::string& id, int attempts, std::int64_t nextAttemptAt) override;
     void removeOutbound(const std::string& id) override;
+    void noteUndelivered(const std::string& user, const std::string& messageId) override;
+    std::vector<std::string> listUndelivered(const std::string& user) override;
+    void clearUndelivered(const std::string& user, const std::string& messageId) override;
 
 private:
     // One minute window per mailbox for the tokenless path. In memory: a restart

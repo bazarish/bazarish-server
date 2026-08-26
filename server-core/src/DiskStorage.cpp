@@ -336,6 +336,7 @@ std::string DiskStorage::queueOutbound(const OutboundEntry& entry)
     fs::create_directories(dir);
     const std::string id = entry.id.empty() ? toHex(randomBytes(kOutboundIdBytes)) : entry.id;
     const nlohmann::json record = {
+        {"messageId", entry.messageId},
         {"toDest", entry.toDest},
         {"sealed", toBase64(entry.sealed)},
         {"payload", toBase64(entry.payload)},
@@ -361,6 +362,7 @@ std::vector<Storage::OutboundEntry> DiskStorage::listOutbound()
         const nlohmann::json record = readJsonFile(root_ / "outbound" / name);
         OutboundEntry entry;
         entry.id = name.substr(0, name.size() - std::string(".json").size());
+        entry.messageId = record.value("messageId", std::string());
         entry.toDest = record.value("toDest", std::string());
         entry.sealed = fromBase64(record.value("sealed", std::string()));
         entry.payload = fromBase64(record.value("payload", std::string()));
@@ -400,6 +402,32 @@ void DiskStorage::removeOutbound(const std::string& id)
     const std::lock_guard<std::mutex> lock(mutex_);
     std::error_code ignored;
     fs::remove(root_ / "outbound" / (id + ".json"), ignored);
+}
+
+void DiskStorage::noteUndelivered(const std::string& user, const std::string& messageId)
+{
+    requireUser(user);
+    requireSafeId(messageId);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const fs::path dir = userDir(user) / "undelivered";
+    fs::create_directories(dir);
+    writeFileAtomic(dir / messageId, "", 0);
+}
+
+std::vector<std::string> DiskStorage::listUndelivered(const std::string& user)
+{
+    requireUser(user);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    return listDirectoryNames(userDir(user) / "undelivered");
+}
+
+void DiskStorage::clearUndelivered(const std::string& user, const std::string& messageId)
+{
+    requireUser(user);
+    requireSafeId(messageId);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    std::error_code ignored;
+    fs::remove(userDir(user) / "undelivered" / messageId, ignored);
 }
 
 void DiskStorage::purgeUser(const std::string& user)

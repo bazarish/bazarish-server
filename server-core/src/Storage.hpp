@@ -130,6 +130,9 @@ public:
     // cannot read what it is holding.
     struct OutboundEntry {
         std::string id;
+        // The delivery messageId this envelope carries: what the sender's client
+        // knows the message by, and how it is told the send did not happen.
+        std::string messageId;
         std::string toDest;
         Bytes sealed;
         Bytes payload;
@@ -150,6 +153,12 @@ public:
     virtual void updateOutbound(
         const std::string& id, int attempts, std::int64_t nextAttemptAt) = 0;
     virtual void removeOutbound(const std::string& id) = 0;
+
+    // A send this server gave up on, kept until the sender's client has been told.
+    // Held per sender so the client asks only about its own.
+    virtual void noteUndelivered(const std::string& user, const std::string& messageId) = 0;
+    virtual std::vector<std::string> listUndelivered(const std::string& user) = 0;
+    virtual void clearUndelivered(const std::string& user, const std::string& messageId) = 0;
 };
 
 }  // namespace bazarish::server

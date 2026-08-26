@@ -198,6 +198,18 @@ int main()
         CHECK(queued.front().nextAttemptAt == kNow + 600);
     }
 
+    // --- A send given up on is reported to its sender exactly once ---
+    CHECK(storage.listUndelivered(alice).empty());
+    storage.noteUndelivered(alice, "msg-lost");
+    {
+        const std::vector<std::string> undelivered = storage.listUndelivered(alice);
+        CHECK(undelivered.size() == 1);
+        CHECK(undelivered.front() == "msg-lost");
+    }
+    CHECK(storage.listUndelivered(bob).empty());  // one sender's, not everyone's
+    storage.clearUndelivered(alice, "msg-lost");
+    CHECK(storage.listUndelivered(alice).empty());
+
     // --- Persistence across instances ---
     DiskStorage reopened(root);
     CHECK(reopened.usage(alice) == 100);

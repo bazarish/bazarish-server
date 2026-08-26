@@ -52,11 +52,11 @@ std::int64_t nowSeconds()
 // second, then +1s per round capped at five seconds.
 // How often the spool looks for sends whose next attempt is due.
 constexpr std::chrono::seconds kSpoolPollInterval{60};
-// The gap before the next run of rounds, doubling from a minute to an hour: a
-// recipient who is away is away for a while, and a spool that asks every minute
-// for days is only noise on the network.
+// The gap before the next run of rounds, doubling from a minute to ten: inside the
+// retention window that is a handful of tries, spread out enough not to hammer a
+// destination that is republishing.
 constexpr std::int64_t kSpoolBackoffFirstSeconds = 60;
-constexpr std::int64_t kSpoolBackoffMaxSeconds = 3600;
+constexpr std::int64_t kSpoolBackoffMaxSeconds = 600;
 
 std::chrono::seconds spoolBackoff(const int attempts)
 {
@@ -481,12 +481,16 @@ void HttpApi::outboundSpoolLoop()
             const std::int64_t now = nowSeconds();
             for (const Storage::OutboundEntry& entry : storage_.listOutbound()) {
                 if (entry.queuedAt + options_.outboundRetentionSeconds < now) {
-                    // Given up on: said out loud, because from here on nobody is
-                    // carrying this message any more.
+                    // Given up on. The sender is told which message it was, so it
+                    // shows the failure and can send it again whenever it likes -
+                    // rather than this node carrying other people's mail for days.
                     bazarish::log::warn(
                         "undelivered send to {} given up on after {} attempts over {} s",
                         bazarish::log::redact(entry.toDest), entry.attempts,
                         now - entry.queuedAt);
+                    if (!entry.messageId.empty() && !entry.senderUser.empty()) {
+                        storage_.noteUndelivered(entry.senderUser, entry.messageId);
+                    }
                     storage_.removeOutbound(entry.id);
                     continue;
                 }
@@ -993,6 +997,27 @@ void HttpApi::setupRoutes()
 
     // --- Pending content ---
 
+    // Sends this server carried as far as it could and then gave up on. The client
+    // asks on every sync, shows them as failed, and clears each one as it takes it -
+    // so a message is reported once and the decision to send it again is the user's.
+    http_->get("/v1/messaging/undelivered",
+        authenticated([&store](const bazarish::http::Request& request,
+                          const std::string& user) -> bazarish::http::Response {
+            (void)request;
+            nlohmann::json ids = nlohmann::json::array();
+            for (const std::string& messageId : store.listUndelivered(user)) {
+                ids.push_back(messageId);
+            }
+            return jsonResponse({{"undelivered", ids}});
+        }));
+
+    http_->del(R"(/v1/messaging/undelivered/([A-Za-z0-9_-]+))",
+        authenticated([&store](const bazarish::http::Request& request,
+                          const std::string& user) -> bazarish::http::Response {
+            store.clearUndelivered(user, request.captures.at(0));
+            return jsonResponse({{"ok", true}});
+        }));
+
     http_->get("/v1/messaging/pending",
         authenticated([&store, requireClient, clientUnregistered](const bazarish::http::Request& request,
                           const std::string& user) -> bazarish::http::Response {
@@ -1153,6 +1178,7 @@ void HttpApi::setupRoutes()
             std::string spoolId;
             if (options_.outboundRetentionSeconds > 0) {
                 Storage::OutboundEntry entry;
+                entry.messageId = messageId;
                 entry.toDest = toDest;
                 entry.sealed = sealed;
                 entry.payload = payload;

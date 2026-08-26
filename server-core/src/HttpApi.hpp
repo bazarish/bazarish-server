@@ -65,12 +65,13 @@ struct HttpApiOptions {
     // bounds mail for a device that never returns (or a user with no registered
     // clients). 0 disables the sweep.
     std::int64_t mailboxRetentionSeconds = 30 * 24 * 3600;
-    // How long an accepted send that has not been delivered yet is kept and
-    // retried. A recipient can be offline for days - their client renews a
-    // delegation only while it runs - and until this runs out the envelope stays on
-    // this server rather than being dropped with the sender told it was accepted.
-    // 0 disables the spool, leaving only the immediate rounds below.
-    std::int64_t outboundRetentionSeconds = 7 * 24 * 3600;
+    // How long an accepted send that has not been delivered yet is retried before
+    // this server gives up on it. Long enough to ride out a recipient whose address
+    // is republishing, short enough not to leave the node carrying other people's
+    // mail: past this the sender is told the recipient could not be reached and
+    // decides for itself whether to send it again. 0 disables the spool, leaving
+    // only the immediate rounds below.
+    std::int64_t outboundRetentionSeconds = 3600;
     // Background delivery (store-and-forward) retry policy for a recipient whose
     // I2P leaseset is momentarily unpublished: how many federation rounds before
     // giving up. The first rounds retry immediately, then the backoff grows (see

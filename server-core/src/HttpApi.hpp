@@ -65,18 +65,17 @@ struct HttpApiOptions {
     // bounds mail for a device that never returns (or a user with no registered
     // clients). 0 disables the sweep.
     std::int64_t mailboxRetentionSeconds = 30 * 24 * 3600;
-    // How long an accepted send that has not been delivered yet is retried before
-    // this server gives up on it. Long enough to ride out a recipient whose address
-    // is republishing, short enough not to leave the node carrying other people's
-    // mail: past this the sender is told the recipient could not be reached and
-    // decides for itself whether to send it again. 0 disables the spool, leaving
-    // only the immediate rounds below.
-    std::int64_t outboundRetentionSeconds = 3600;
-    // Background delivery (store-and-forward) retry policy for a recipient whose
-    // I2P leaseset is momentarily unpublished: how many federation rounds before
-    // giving up. The first rounds retry immediately, then the backoff grows (see
-    // retryBackoff): rounds 0-2 immediate, 3-5 one second, then +1s capped at 5s.
-    int deliveryMaxRounds = 12;
+    // Whether an accepted send that could not be delivered is spooled and retried
+    // at all. The schedule itself - eight attempts, ten seconds to sixteen minutes
+    // apart - is the protocol's, not an operator's: past it the sender is told the
+    // recipient could not be reached and decides for itself whether to send again.
+    bool spoolUndelivered = true;
+    // How many federation rounds one delivery run makes before handing the send
+    // back to the spool. These are the immediate ones - a leaseset that is a moment
+    // from being published - and they are few on purpose: waiting is the spool's
+    // job, and its schedule starts ten seconds later rather than after half a
+    // minute of hammering.
+    int deliveryMaxRounds = 3;
     // Fingerprints of the identities authorised to call the operator-internal
     // endpoints (quota, per-user destination) and /healthz. The caller proves
     // possession by signing the request (hybrid auth); no shared secret. The

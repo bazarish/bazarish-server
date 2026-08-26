@@ -485,6 +485,52 @@ int main()
         CHECK(health.contains("ramPeakBytes"));
     }
 
+    // A send this server is still carrying: its sender sees which attempt it is on,
+    // and nobody else sees it at all.
+    {
+        Storage::OutboundEntry entry;
+        entry.messageId = "waiting-one";
+        entry.toDest = "elsewhere.b32.i2p";
+        entry.sealed = Bytes{1, 2, 3};
+        entry.payload = Bytes{4, 5, 6};
+        entry.senderUser = alice.fingerprint();
+        entry.attempts = 6;
+        storage.queueOutbound(entry);
+
+        const http::ClientResponse mine = call(port, "GET", "/v1/messaging/outbound",
+            makeHeaders(alice, "GET", "/v1/messaging/outbound", "", "alicedev"));
+        CHECK(mine.status == 200);
+        const nlohmann::json waiting = nlohmann::json::parse(mine.body).at("outbound");
+        CHECK(waiting.size() == 1);
+        CHECK(waiting.at(0).at("messageId") == "waiting-one");
+        CHECK(waiting.at(0).at("attempts") == 6);
+        CHECK(waiting.at(0).at("of") == 8);
+
+        const http::ClientResponse theirs = call(port, "GET", "/v1/messaging/outbound",
+            makeHeaders(bob, "GET", "/v1/messaging/outbound", "", "bobdev"));
+        CHECK(theirs.status == 200);
+        CHECK(nlohmann::json::parse(theirs.body).at("outbound").empty());
+    }
+
+    // A send given up on is reported to its sender once, and clearing it is that
+    // sender's to do.
+    {
+        storage.noteUndelivered(alice.fingerprint(), "gave-up-on-this");
+        const http::ClientResponse mine = call(port, "GET", "/v1/messaging/undelivered",
+            makeHeaders(alice, "GET", "/v1/messaging/undelivered", "", "alicedev"));
+        CHECK(mine.status == 200);
+        const nlohmann::json ids = nlohmann::json::parse(mine.body).at("undelivered");
+        CHECK(ids.size() == 1);
+        CHECK(ids.at(0) == "gave-up-on-this");
+
+        const http::ClientResponse cleared = call(port, "DELETE",
+            "/v1/messaging/undelivered/gave-up-on-this",
+            makeHeaders(alice, "DELETE", "/v1/messaging/undelivered/gave-up-on-this", "",
+                "alicedev"));
+        CHECK(cleared.status == 200);
+        CHECK(storage.listUndelivered(alice.fingerprint()).empty());
+    }
+
     api.stop();
     serverThread.join();
     std::filesystem::remove_all(root);

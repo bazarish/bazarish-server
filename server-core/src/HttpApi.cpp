@@ -16,6 +16,7 @@
 #include <bazarish/HttpServer.hpp>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <condition_variable>
@@ -52,19 +53,18 @@ std::int64_t nowSeconds()
 // second, then +1s per round capped at five seconds.
 // How often the spool looks for sends whose next attempt is due.
 constexpr std::chrono::seconds kSpoolPollInterval{60};
-// The gap before the next run of rounds, doubling from a minute to ten: inside the
-// retention window that is a handful of tries, spread out enough not to hammer a
-// destination that is republishing.
-constexpr std::int64_t kSpoolBackoffFirstSeconds = 60;
-constexpr std::int64_t kSpoolBackoffMaxSeconds = 600;
+// The gaps between attempts at a recipient this server could not reach, in
+// seconds. It starts short so a passing I2P hiccup costs seconds rather than
+// minutes, and doubles so a recipient who is simply away is not hammered; after
+// the last one the send is given up on and its sender told.
+constexpr std::array<std::int64_t, 8> kSpoolBackoffSeconds{10, 20, 40, 60, 120, 240, 480, 960};
 
 std::chrono::seconds spoolBackoff(const int attempts)
 {
-    std::int64_t seconds = kSpoolBackoffFirstSeconds;
-    for (int i = 1; i < attempts && seconds < kSpoolBackoffMaxSeconds; ++i) {
-        seconds *= 2;
-    }
-    return std::chrono::seconds{std::min(seconds, kSpoolBackoffMaxSeconds)};
+    const std::size_t index
+        = std::min<std::size_t>(static_cast<std::size_t>(std::max(attempts, 1)) - 1,
+            kSpoolBackoffSeconds.size() - 1);
+    return std::chrono::seconds{kSpoolBackoffSeconds.at(index)};
 }
 
 std::chrono::seconds retryBackoff(int round)
@@ -138,7 +138,7 @@ HttpApi::HttpApi(Storage& storage, DeliveryEngine& engine, const HttpApiOptions 
         janitorThread_ = std::thread([this]() { mailboxJanitorLoop(); });
     }
     // Sends accepted but not delivered - including whatever a restart interrupted.
-    if (options_.outboundRetentionSeconds > 0) {
+    if (options_.spoolUndelivered) {
         spoolThread_ = std::thread([this]() { outboundSpoolLoop(); });
     }
 }
@@ -480,7 +480,7 @@ void HttpApi::outboundSpoolLoop()
         try {
             const std::int64_t now = nowSeconds();
             for (const Storage::OutboundEntry& entry : storage_.listOutbound()) {
-                if (entry.queuedAt + options_.outboundRetentionSeconds < now) {
+                if (entry.attempts >= static_cast<int>(kSpoolBackoffSeconds.size())) {
                     // Given up on. The sender is told which message it was, so it
                     // shows the failure and can send it again whenever it likes -
                     // rather than this node carrying other people's mail for days.
@@ -997,6 +997,24 @@ void HttpApi::setupRoutes()
 
     // --- Pending content ---
 
+    // What this server is still trying to deliver for this sender, and how far
+    // along each one is: the client shows the attempt count on the message itself
+    // so a send that is taking a while says what is happening to it.
+    http_->get("/v1/messaging/outbound",
+        authenticated([&store](const bazarish::http::Request& request,
+                          const std::string& user) -> bazarish::http::Response {
+            (void)request;
+            nlohmann::json waiting = nlohmann::json::array();
+            for (const Storage::OutboundEntry& entry : store.listOutbound()) {
+                if (entry.senderUser != user || entry.messageId.empty()) {
+                    continue;
+                }
+                waiting.push_back({{"messageId", entry.messageId}, {"attempts", entry.attempts},
+                    {"of", static_cast<int>(kSpoolBackoffSeconds.size())}});
+            }
+            return jsonResponse({{"outbound", waiting}});
+        }));
+
     // Sends this server carried as far as it could and then gave up on. The client
     // asks on every sync, shows them as failed, and clears each one as it takes it -
     // so a message is reported once and the decision to send it again is the user's.
@@ -1176,7 +1194,7 @@ void HttpApi::setupRoutes()
             // one the sender was told had been accepted and that nobody has any
             // more.
             std::string spoolId;
-            if (options_.outboundRetentionSeconds > 0) {
+            if (options_.spoolUndelivered) {
                 Storage::OutboundEntry entry;
                 entry.messageId = messageId;
                 entry.toDest = toDest;

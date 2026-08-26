@@ -3,7 +3,6 @@
 
 #include "DeliveryEngine.hpp"
 #include "Federation.hpp"
-#include "I2pFederation.hpp"
 
 #include <bazarish/Bytes.hpp>
 #include <bazarish/I2p.hpp>

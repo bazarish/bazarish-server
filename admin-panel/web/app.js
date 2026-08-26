@@ -169,13 +169,6 @@
                     + "/h  " + humanCount(service.requestsLastDay) + "/day"));
                 facts.appendChild(fact("in flight", String(service.inFlight)));
             }
-            // A contact-card lookup dials from a warm destination, so an empty pool
-            // is a server whose lookups are waiting on tunnel builds.
-            if (service.kind === "server-core" && service.warmPoolTarget) {
-                facts.appendChild(fact("lookup pool",
-                    String(service.warmPoolReady) + " ready / " + String(service.warmPoolTarget)
-                        + " target"));
-            }
         } else {
             facts.appendChild(fact("error", (service.error || "no answer")
                 + (service.status ? " (HTTP " + service.status + ")" : "")));

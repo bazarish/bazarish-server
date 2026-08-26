@@ -1,11 +1,9 @@
 // Bazarish project (c) 2026
 #include "DeliveryEngine.hpp"
 #include "DiskStorage.hpp"
-#include "WarmDestPool.hpp"
 #include "FederationRateLimiter.hpp"
 #include "EventGate.hpp"
 #include "HttpApi.hpp"
-#include "I2pFederation.hpp"
 #include "PerUserDestinations.hpp"
 
 #include <bazarish/Certificates.hpp>
@@ -192,17 +190,6 @@ int main(const int argc, const char** argv)
     // I2P ceiling. Operators on a constrained uplink can lower it.
     const int tunnelQuantity = static_cast<int>(
         config.number("i2p.tunnelQuantity", bazarish::i2p::kMaxTunnelQuantity));
-    // Warm pool of single-use transient outbound dests. What is left dialing out
-    // from here is discovery - a card or alias fetch on behalf of a client - so it
-    // is sized for lookups, not for a server's worth of conversations: outgoing
-    // mail is carried by the clients themselves, each from a destination of its
-    // own. It starts at warmPoolStart, shrinks no further than warmPoolMin when
-    // nobody asks, and doubles under load up to warmPoolMax, the operator's
-    // ceiling.
-    const std::size_t warmPoolMin = static_cast<std::size_t>(config.number("i2p.warmPoolMin", 2));
-    const std::size_t warmPoolStart
-        = static_cast<std::size_t>(config.number("i2p.warmPoolStart", 4));
-    const std::size_t warmPoolMax = static_cast<std::size_t>(config.number("i2p.warmPoolMax", 16));
     // Inbound deliveries per peer dest per 60s.
     const std::size_t federationRateLimit
         = static_cast<std::size_t>(config.number("federationRateLimit", 240));
@@ -261,10 +248,7 @@ int main(const int argc, const char** argv)
     std::unique_ptr<bazarish::server::FederationRateLimiter> federationLimiter;
     // Declared before `federation` so it OUTLIVES it (federation holds a raw pointer
     // to the pool); the router, declared earlier, outlives the pool's warmer thread.
-    std::unique_ptr<bazarish::server::WarmDestPool> warmPool;
-    std::unique_ptr<bazarish::server::I2pFetch> discovery;
     std::unique_ptr<bazarish::server::PerUserDestinations> perUserDests;
-    bazarish::server::RemoteFetchFn remoteFetch;
     std::vector<std::string> endpoints;
     if (enableI2p) {
         bazarish::log::info("starting embedded I2P router (building tunnels)...");
@@ -314,29 +298,6 @@ int main(const int argc, const char** argv)
             };
         }
 
-
-        // Warm pool of single-use transient dests: a card/resolve fetch always
-        // dials from a fresh one-time dest (anonymous, never reused), and the pool
-        // just hides the tunnel build. With --warm-pool-max 0 each fetch builds
-        // its own and waits for it.
-        if (warmPoolMax > 0) {
-            bazarish::server::WarmDestPool::Options warmOptions;
-            warmOptions.minSize = std::min(warmPoolMin, warmPoolMax);
-            warmOptions.startSize = std::min(warmPoolStart, warmPoolMax);
-            warmOptions.maxSize = warmPoolMax;
-            warmOptions.privacy = privacy;
-            // Narrow tunnels: one delivery at a time rides each of these, and the
-            // pool holds dozens of them.
-            warmOptions.tunnelQuantity = kWarmPoolTunnelQuantity;
-            warmPool = std::make_unique<bazarish::server::WarmDestPool>(*router, warmOptions);
-            warmPool->start();
-            bazarish::log::info("warm one-time dest pool up (start {}, {}..{})",
-                warmOptions.startSize, warmOptions.minSize, warmOptions.maxSize);
-        }
-        // Discovery (card/resolve) dials from a one-time dest. There is no shared
-        // server address to dial from, because there is none at all.
-        discovery = std::make_unique<bazarish::server::I2pFetch>(*router, warmPool.get());
-        remoteFetch = discovery->asRemoteFetchFn();
 
         // The destinations the users own: client-owned offline keys operated as
         // each user's federation destination. Restore any persisted ones.
@@ -428,25 +389,7 @@ int main(const int argc, const char** argv)
             return perUserDests->commitServingKey(user);
         };
     }
-    // What the operator watches in real time: how many warm destinations are ready
-    // to look someone up from, and what the pool is aiming at. A pool that is
-    // always empty is a server whose lookups are waiting on tunnel builds.
-    {
-        bazarish::server::WarmDestPool* const pool = warmPool.get();
-        httpOptions.statusExtras = [pool]() -> std::string {
-            nlohmann::json extras = nlohmann::json::object();
-            if (pool != nullptr) {
-                const bazarish::server::WarmDestPool::Stats stats = pool->stats();
-                extras["warmPoolReady"] = stats.ready;
-                extras["warmPoolTarget"] = stats.target;
-                extras["warmPoolHits"] = stats.hits;
-                extras["warmPoolMisses"] = stats.misses;
-            }
-            return extras.dump();
-        };
-    }
-
-    bazarish::server::HttpApi api(storage, engine, httpOptions, std::move(remoteFetch));
+    bazarish::server::HttpApi api(storage, engine, httpOptions);
 
     // The long-poll face is a route on the same server now, so there is one port,
     // one parser and one set of limits.

@@ -85,12 +85,10 @@ bazarish::auth::Headers collectAuthHeaders(const bazarish::http::Request& reques
 
 namespace bazarish::server {
 
-HttpApi::HttpApi(Storage& storage, DeliveryEngine& engine, const HttpApiOptions options,
-    RemoteFetchFn remoteFetch)
+HttpApi::HttpApi(Storage& storage, DeliveryEngine& engine, const HttpApiOptions options)
     : storage_(storage)
     , engine_(engine)
     , options_(options)
-    , remoteFetch_(std::move(remoteFetch))
     , startedAt_(nowSeconds())
 {
     // Mailbox TTL backstop sweep (skipped entirely when retention is disabled).
@@ -266,7 +264,7 @@ void HttpApi::setupRoutes()
             }
             return {200, "application/json", {},
                 health::reportJson("server-core", options_.version, startedAt_, nowSeconds(),
-                    options_.statusExtras ? options_.statusExtras() : std::string())};
+                    std::string())};
         });
 
     // Wraps a handler with request authentication and uniform error
@@ -759,39 +757,6 @@ void HttpApi::setupRoutes()
             return jsonResponse({{"ok", true}});
         }));
 
-    // First-contact discovery proxy (fallback for a client without its own I2P transport):
-    // relay a sealed fetch (op "card" to a serving server, "resolve" to the
-    // central resolver) to toDest over I2P and return the sealed response. The
-    // server moves opaque bytes - the client sealed the query and verifies the
-    // response (see docs-main api/FederatedResolve.md).
-    http_->post("/v1/messaging/fetch",
-        authenticated([this](const bazarish::http::Request& request,
-                          const std::string& user) -> bazarish::http::Response {
-            (void)user;
-            const nlohmann::json body = nlohmann::json::parse(request.body);
-            const std::string toDest = body.at("toDest").get<std::string>();
-            validateB32I2pHost(toDest);
-            const std::string op = body.at("op").get<std::string>();
-            if (op != "card" && op != "resolve") {
-                return errorResponse(400, ErrorCode::eDeliveryRejected, "unsupported fetch op");
-            }
-            const Bytes sealed = fromBase64(body.at("sealed").get<std::string>());
-            if (!remoteFetch_) {
-                return errorResponse(400, ErrorCode::eDeliveryRejected, "no federation transport");
-            }
-            const RemoteFetchResult result = remoteFetch_(toDest, op, sealed);
-            if (!result.reachable) {
-                return errorResponse(400, ErrorCode::eRecipientServerUnreachable,
-                    "destination could not be reached");
-            }
-            nlohmann::json reply = {{"ok", result.ok}};
-            if (result.ok) {
-                reply["sealed"] = toBase64(result.sealed);
-            } else if (!result.errorCode.empty()) {
-                reply["errorCode"] = result.errorCode;
-            }
-            return jsonResponse(reply);
-        }));
 }
 
 }  // namespace bazarish::server

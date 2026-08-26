@@ -56,10 +56,6 @@ struct HttpApiOptions {
     // bounds mail for a device that never returns (or a user with no registered
     // clients). 0 disables the sweep.
     std::int64_t mailboxRetentionSeconds = 30 * 24 * 3600;
-    // What only this service can report, added to its /healthz body: the warm pool
-    // an operator watches to see whether a lookup has a destination to leave from.
-    // Empty when nothing is wired.
-    std::function<std::string()> statusExtras;
     // Fingerprints of the identities authorised to call the operator-internal
     // endpoints (quota, per-user destination) and /healthz. The caller proves
     // possession by signing the request (hybrid auth); no shared secret. The
@@ -105,29 +101,13 @@ struct HttpApiOptions {
     int maxEventWaitSeconds = 30;
 };
 
-// Result of relaying a sealed fetch (card / resolve) to a destination.
-struct RemoteFetchResult {
-    bool reachable = false;
-    bool ok = false;
-    Bytes sealed;
-    std::string errorCode;
-    std::string errorMessage;
-};
-
-// Relays a sealed fetch request (op "card" or "resolve") to a destination over
-// I2P and returns the sealed response - the proxy fallback for a client without
-// its own I2P transport. The default (no transport wired) reports unreachable.
-using RemoteFetchFn = std::function<RemoteFetchResult(
-    const std::string& toDest, const std::string& op, const Bytes& sealed)>;
-
 // The /v1/messaging/* HTTP API: client registry, token hashes, pending fetch/ack
 // and the write a device makes into its own account's mailbox. Outgoing mail is
 // not here: a client delivers its own, dialling the recipient's destination
 // itself, so this server is never asked who its users write to.
 class HttpApi {
 public:
-    HttpApi(Storage& storage, DeliveryEngine& engine, HttpApiOptions options,
-        RemoteFetchFn remoteFetch = {});
+    HttpApi(Storage& storage, DeliveryEngine& engine, HttpApiOptions options);
     // What a waiting client is parked on. Without it the event route is not
     // registered at all and clients fall back to polling.
     void setEventGate(EventGate* gate) { eventGate_ = gate; }
@@ -158,7 +138,6 @@ private:
     Storage& storage_;
     DeliveryEngine& engine_;
     const HttpApiOptions options_;
-    RemoteFetchFn remoteFetch_;
 
     std::unique_ptr<bazarish::http::Server> http_;
     EventGate* eventGate_ = nullptr;

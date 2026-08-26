@@ -151,22 +151,7 @@ int main()
     };
     httpOptions.revokeI2pDest = [&](const std::string& user) { revokedUser = user; };
 
-    // Stub federation fetch relay (proxy fallback): record the op + toDest and
-    // return a canned sealed response.
-    std::string relayedOp;
-    std::string relayedToDest;
-    RemoteFetchFn remoteFetchStub = [&relayedOp, &relayedToDest](const std::string& toDest,
-                                        const std::string& op, const Bytes& sealed) {
-        relayedToDest = toDest;
-        relayedOp = op;
-        (void)sealed;
-        RemoteFetchResult result;
-        result.reachable = true;
-        result.ok = true;
-        result.sealed = Bytes{0xAB, 0xCD};
-        return result;
-    };
-    HttpApi api(storage, engine, httpOptions, std::move(remoteFetchStub));
+    HttpApi api(storage, engine, httpOptions);
 
     const int port = api.bindToAnyPort("127.0.0.1");
     CHECK(port > 0);
@@ -275,34 +260,6 @@ int main()
         CHECK(body.at("dest").get<std::string>() == serverDest);
         CHECK(body.at("servingKey").get<std::string>() == toBase64(serverServingKey->publicDer()));
         CHECK(body.at("state").get<std::string>() == "home");
-    }
-
-    // First-contact discovery relay: a sealed fetch is forwarded to toDest over
-    // the (stubbed) federation transport and the sealed response is returned.
-    {
-        const std::string body
-            = nlohmann::json(
-                  {{"toDest", serverDest}, {"op", "card"}, {"sealed", toBase64(Bytes{1, 2, 3})}})
-                  .dump();
-        const http::ClientResponse result = call(port, "POST", "/v1/messaging/fetch",
-            makeHeaders(bob, "POST", "/v1/messaging/fetch", body, "bobdev"), body);
-        CHECK(result.status == 200);
-        const nlohmann::json reply = nlohmann::json::parse(result.body);
-        CHECK(reply.at("ok").get<bool>());
-        CHECK(fromBase64(reply.at("sealed").get<std::string>()) == (Bytes{0xAB, 0xCD}));
-        CHECK(relayedOp == "card");
-        CHECK(relayedToDest == serverDest);
-    }
-
-    // A non-.b32.i2p toDest in a fetch is refused (the .b32.i2p invariant).
-    {
-        const std::string body
-            = nlohmann::json(
-                  {{"toDest", "stats.i2p"}, {"op", "card"}, {"sealed", toBase64(Bytes{1})}})
-                  .dump();
-        const http::ClientResponse result = call(port, "POST", "/v1/messaging/fetch",
-            makeHeaders(bob, "POST", "/v1/messaging/fetch", body, "bobdev"), body);
-        CHECK(result.status == 400);
     }
 
     // Per-user I2P destination endpoint (operator signature): auth + dispatch.

@@ -16,8 +16,8 @@ namespace bazarish::server {
 // Identifier conventions enforced by implementations:
 //   user    - a key fingerprint (52 chars base32);
 //   clientId, blobId - [a-z0-9_-], length 1..64. blobId is the
-//   client-generated messageId, which makes putBlob deduplication the
-//   messageId deduplication required by the delivery flow.
+//   client-generated deliveryId, which makes putBlob deduplication the
+//   deliveryId deduplication required by the delivery flow.
 class Storage {
 public:
     virtual ~Storage() = default;
@@ -70,17 +70,17 @@ public:
         = 0;
     virtual bool hasBlob(const std::string& user, const std::string& blobId) = 0;
 
-    // --- Replay protection (seen-messageId cache) ---
+    // --- Replay protection (seen-deliveryId cache) ---
     //
-    // Records every messageId admitted into a mailbox, independent of the
+    // Records every deliveryId admitted into a mailbox, independent of the
     // blob's lifecycle, so a replay of an already-delivered envelope - even one
     // since fetched, acked and swept from the mailbox - is recognised and
     // refused re-admission. One-time tokens already guard content-class
     // replays; tokenless contact requests have no token to spend, so this cache
     // is what closes them. Markers are retained until the TTL sweep
     // (purgeExpired), like pending blobs.
-    virtual bool hasSeen(const std::string& user, const std::string& messageId) = 0;
-    virtual void markSeen(const std::string& user, const std::string& messageId,
+    virtual bool hasSeen(const std::string& user, const std::string& deliveryId) = 0;
+    virtual void markSeen(const std::string& user, const std::string& deliveryId,
         std::int64_t receivedAt)
         = 0;
 
@@ -130,9 +130,9 @@ public:
     // cannot read what it is holding.
     struct OutboundEntry {
         std::string id;
-        // The delivery messageId this envelope carries: what the sender's client
+        // The delivery deliveryId this envelope carries: what the sender's client
         // knows the message by, and how it is told the send did not happen.
-        std::string messageId;
+        std::string deliveryId;
         std::string toDest;
         Bytes sealed;
         Bytes payload;
@@ -156,9 +156,9 @@ public:
 
     // A send this server gave up on, kept until the sender's client has been told.
     // Held per sender so the client asks only about its own.
-    virtual void noteUndelivered(const std::string& user, const std::string& messageId) = 0;
+    virtual void noteUndelivered(const std::string& user, const std::string& deliveryId) = 0;
     virtual std::vector<std::string> listUndelivered(const std::string& user) = 0;
-    virtual void clearUndelivered(const std::string& user, const std::string& messageId) = 0;
+    virtual void clearUndelivered(const std::string& user, const std::string& deliveryId) = 0;
 };
 
 }  // namespace bazarish::server

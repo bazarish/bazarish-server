@@ -17,7 +17,7 @@ namespace bazarish::server {
 class FederationRateLimiter;
 class WarmDestPool;
 
-// Sends a signed delivered-ack for messageId to the sending server at toDest,
+// Sends a signed delivered-ack for deliveryId to the sending server at toDest,
 // dialled FROM the given serving endpoint (the one that received the delivery) -
 // never a shared address. The ack is signed with that destination's own
 // per-destination signing key (bound to the destination, never the server root
@@ -25,7 +25,7 @@ class WarmDestPool;
 // signer. Wired once and shared by every serving accept loop, which each pass
 // their own destination's key.
 using AckSenderFn = std::function<void(bazarish::i2p::Endpoint& from, const std::string& toDest,
-    const std::string& messageId, const Key& signingKey)>;
+    const std::string& deliveryId, const Key& signingKey)>;
 
 // Relays a sealed envelope to toDest dialled from the given serving endpoint
 // (the sender's own destination). The recipient acks back to from's address.
@@ -37,7 +37,7 @@ RemoteDeliveryResult federationDeliver(bazarish::i2p::Endpoint& from, const std:
 // Sends an already-signed delivered-ack from the given serving endpoint to toDest
 // (one-way: write the line, drain until the receiver closes, so it flushes).
 void federationSendAck(bazarish::i2p::Endpoint& from, const std::string& toDest,
-    const std::string& messageId, const Bytes& signerPublicDer, const Bytes& signature);
+    const std::string& deliveryId, const Bytes& signerPublicDer, const Bytes& signature);
 
 // Outbound discovery over I2P. A server has no federation address of its own -
 // user-to-user delivery runs on the users' own destinations, and its only public

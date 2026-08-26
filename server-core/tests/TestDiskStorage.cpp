@@ -139,7 +139,7 @@ int main()
     // Alice's msg4 (receivedAt == kNow) survives a sweep with threshold kNow.
     CHECK(storage.usage(alice) == 100);
 
-    // --- Replay markers (seen-messageId cache): set, query, TTL sweep ---
+    // --- Replay markers (seen-deliveryId cache): set, query, TTL sweep ---
     CHECK(!storage.hasSeen(bob, "nonce-fresh"));
     storage.markSeen(bob, "nonce-fresh", kNow + 100);
     storage.markSeen(bob, "nonce-stale", kNow - 100);

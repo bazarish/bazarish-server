@@ -74,7 +74,7 @@ RemoteDeliveryResult federationDeliver(bazarish::i2p::Endpoint& from, const std:
 }
 
 void federationSendAck(bazarish::i2p::Endpoint& from, const std::string& toDest,
-    const std::string& messageId, const Bytes& signerPublicDer, const Bytes& signature)
+    const std::string& deliveryId, const Bytes& signerPublicDer, const Bytes& signature)
 {
     try {
         auto stream = from.connect(toDest, std::chrono::seconds(30));
@@ -82,7 +82,7 @@ void federationSendAck(bazarish::i2p::Endpoint& from, const std::string& toDest,
             return;
         }
         detail::writeFederationHeaderLine(
-            *stream, buildFederationDeliveredAck(messageId, signerPublicDer, signature));
+            *stream, buildFederationDeliveredAck(deliveryId, signerPublicDer, signature));
         // The receiver sends no reply; keep the stream open until it has read the
         // ack and closed (drain to EOF) so the single line is actually flushed.
         std::array<char, 64> buffer;

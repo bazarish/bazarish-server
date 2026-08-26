@@ -81,9 +81,9 @@ struct SocketStream {
 
 // Builds a sealed envelope addressed to the recipient server's sealing key.
 Bytes makeSealed(const Key& sealingPublic, const std::string& kind,
-    const std::string& mailbox, const std::string& messageId, const Bytes& token)
+    const std::string& mailbox, const std::string& deliveryId, const Bytes& token)
 {
-    nlohmann::json inner = {{"class", kind}, {"mailbox", mailbox}, {"messageId", messageId}};
+    nlohmann::json inner = {{"class", kind}, {"mailbox", mailbox}, {"deliveryId", deliveryId}};
     if (kind == "content") {
         inner["token"] = toBase64(token);
     }
@@ -267,7 +267,7 @@ int main()
     // A destination belongs to one user, and only their mail belongs in it.
     // Mail for anyone else is answered exactly like a delivered one - refusing
     // would say whose destination this is - and stored nowhere. The seen-cache
-    // must not be touched either, or delivering a real messageId to the wrong
+    // must not be touched either, or delivering a real deliveryId to the wrong
     // destination first would censor it at the right one.
     {
         const std::string stranger = toBase32(Bytes(32, 0x33));

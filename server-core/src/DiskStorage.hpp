@@ -16,7 +16,7 @@ namespace bazarish::server {
 //   users/<fingerprint>/tokens/<hash-hex>    registered token hash marker
 //   users/<fingerprint>/blobs/<blobId>       pending content
 //   users/<fingerprint>/meta/<blobId>.json   {"receivedAt": ..., "class": ..., "acked": [...]}
-//   users/<fingerprint>/seen/<messageId>     admitted-messageId marker (receivedAt text)
+//   users/<fingerprint>/seen/<deliveryId>     admitted-deliveryId marker (receivedAt text)
 //   outbound/<id>.json                       a send accepted and not delivered yet
 //   users/<fingerprint>/undelivered/<msgId>  a send given up on, until the sender asks
 //
@@ -40,8 +40,8 @@ public:
         const std::string& deliveryClass, std::int64_t receivedAt, std::uint64_t quotaBytes,
         const std::string& alreadyAcked = {}) override;
     bool hasBlob(const std::string& user, const std::string& blobId) override;
-    bool hasSeen(const std::string& user, const std::string& messageId) override;
-    void markSeen(const std::string& user, const std::string& messageId,
+    bool hasSeen(const std::string& user, const std::string& deliveryId) override;
+    void markSeen(const std::string& user, const std::string& deliveryId,
         std::int64_t receivedAt) override;
     void purgeTokensRegisteredBefore(std::int64_t registeredBefore) override;
     bool allowContactRequest(
@@ -61,9 +61,9 @@ public:
     std::vector<OutboundEntry> listOutbound() override;
     void updateOutbound(const std::string& id, int attempts, std::int64_t nextAttemptAt) override;
     void removeOutbound(const std::string& id) override;
-    void noteUndelivered(const std::string& user, const std::string& messageId) override;
+    void noteUndelivered(const std::string& user, const std::string& deliveryId) override;
     std::vector<std::string> listUndelivered(const std::string& user) override;
-    void clearUndelivered(const std::string& user, const std::string& messageId) override;
+    void clearUndelivered(const std::string& user, const std::string& deliveryId) override;
 
 private:
     // One minute window per mailbox for the tokenless path. In memory: a restart

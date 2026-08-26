@@ -262,15 +262,15 @@ void HttpApi::setAttempt(const std::string& attemptId, const Attempt& attempt)
         const std::lock_guard<std::mutex> lock(attemptsMutex_);
         Attempt updated = attempt;
         // A delivered-ack may already have marked this attempt delivered; never let
-        // a later job round downgrade it. Also keep the messageId so the index
+        // a later job round downgrade it. Also keep the deliveryId so the index
         // prunes, and the sender, so the wake below knows whom to wake.
         const auto existing = attempts_.find(attemptId);
         if (existing != attempts_.end()) {
             if (existing->second.status == "delivered") {
                 return;
             }
-            if (updated.messageId.empty()) {
-                updated.messageId = existing->second.messageId;
+            if (updated.deliveryId.empty()) {
+                updated.deliveryId = existing->second.deliveryId;
             }
             if (updated.user.empty()) {
                 updated.user = existing->second.user;
@@ -295,14 +295,14 @@ void HttpApi::setAttemptPhase(const std::string& attemptId, const std::string& p
     }
 }
 
-void HttpApi::markDeliveredByMessageId(const std::string& messageId)
+void HttpApi::markDeliveredByDeliveryId(const std::string& deliveryId)
 {
-    if (messageId.empty()) {
+    if (deliveryId.empty()) {
         return;
     }
     std::unique_lock<std::mutex> lock(attemptsMutex_);
-    const auto idx = messageIdToAttempt_.find(messageId);
-    if (idx == messageIdToAttempt_.end()) {
+    const auto idx = deliveryIdToAttempt_.find(deliveryId);
+    if (idx == deliveryIdToAttempt_.end()) {
         return;
     }
     const auto found = attempts_.find(idx->second);
@@ -488,8 +488,8 @@ void HttpApi::outboundSpoolLoop()
                         "undelivered send to {} given up on after {} attempts over {} s",
                         bazarish::log::redact(entry.toDest), entry.attempts,
                         now - entry.queuedAt);
-                    if (!entry.messageId.empty() && !entry.senderUser.empty()) {
-                        storage_.noteUndelivered(entry.senderUser, entry.messageId);
+                    if (!entry.deliveryId.empty() && !entry.senderUser.empty()) {
+                        storage_.noteUndelivered(entry.senderUser, entry.deliveryId);
                     }
                     storage_.removeOutbound(entry.id);
                     continue;
@@ -1006,10 +1006,10 @@ void HttpApi::setupRoutes()
             (void)request;
             nlohmann::json waiting = nlohmann::json::array();
             for (const Storage::OutboundEntry& entry : store.listOutbound()) {
-                if (entry.senderUser != user || entry.messageId.empty()) {
+                if (entry.senderUser != user || entry.deliveryId.empty()) {
                     continue;
                 }
-                waiting.push_back({{"messageId", entry.messageId}, {"attempts", entry.attempts},
+                waiting.push_back({{"deliveryId", entry.deliveryId}, {"attempts", entry.attempts},
                     {"of", static_cast<int>(kSpoolBackoffSeconds.size())}});
             }
             return jsonResponse({{"outbound", waiting}});
@@ -1023,8 +1023,8 @@ void HttpApi::setupRoutes()
                           const std::string& user) -> bazarish::http::Response {
             (void)request;
             nlohmann::json ids = nlohmann::json::array();
-            for (const std::string& messageId : store.listUndelivered(user)) {
-                ids.push_back(messageId);
+            for (const std::string& deliveryId : store.listUndelivered(user)) {
+                ids.push_back(deliveryId);
             }
             return jsonResponse({{"undelivered", ids}});
         }));
@@ -1093,7 +1093,7 @@ void HttpApi::setupRoutes()
             }
             const std::string caller = requireClient(request, user);
             const nlohmann::json body = nlohmann::json::parse(request.body);
-            const std::string messageId = body.at("messageId").get<std::string>();
+            const std::string deliveryId = body.at("deliveryId").get<std::string>();
             const Bytes payload = fromBase64(body.at("payload").get<std::string>());
             if (payload.size() > bazarish::kMaxMessagePayloadBytes) {
                 return errorResponse(413, ErrorCode::eMessageTooLarge,
@@ -1107,7 +1107,7 @@ void HttpApi::setupRoutes()
             }
             // The writer is counted as having read it, so the blob is deleted as
             // soon as the account's other devices have.
-            const Storage::PutResult result = storage_.putBlob(user, messageId, payload,
+            const Storage::PutResult result = storage_.putBlob(user, deliveryId, payload,
                 kDeviceDeliveryClass, nowSeconds(),
                 storage_.userQuota(user, options_.defaultQuotaBytes), caller);
             if (result == Storage::PutResult::eQuotaExceeded) {
@@ -1138,12 +1138,12 @@ void HttpApi::setupRoutes()
             validateB32I2pHost(toDest);
             const Bytes sealed = fromBase64(body.at("sealed").get<std::string>());
             const Bytes payload = fromBase64(body.at("payload").get<std::string>());
-            // The delivery messageId (also sealed inside the envelope, where only
+            // The delivery deliveryId (also sealed inside the envelope, where only
             // the recipient server can read it): the client passes it in the clear
             // so we can correlate the recipient's signed delivered-ack back to this
             // attempt. Optional for older clients (then there is no amber, only the
             // grey/green it already had).
-            const std::string messageId = body.value("messageId", std::string());
+            const std::string deliveryId = body.value("deliveryId", std::string());
 
             const std::int64_t now = nowSeconds();
             // Routed by destination. Local short-circuit ONLY when toDest is the
@@ -1171,8 +1171,8 @@ void HttpApi::setupRoutes()
                 for (auto it = attempts_.begin(); it != attempts_.end();) {
                     if (it->second.status != "pending"
                         && it->second.completedAt + options_.attemptRetentionSeconds < now) {
-                        if (!it->second.messageId.empty()) {
-                            messageIdToAttempt_.erase(it->second.messageId);
+                        if (!it->second.deliveryId.empty()) {
+                            deliveryIdToAttempt_.erase(it->second.deliveryId);
                         }
                         it = attempts_.erase(it);
                     } else {
@@ -1183,10 +1183,10 @@ void HttpApi::setupRoutes()
                 pending.user = user;
                 pending.status = "pending";
                 pending.phase = "queued";  // until the delivery worker starts dialing
-                pending.messageId = messageId;
+                pending.deliveryId = deliveryId;
                 attempts_[attemptId] = pending;
-                if (!messageId.empty()) {
-                    messageIdToAttempt_[messageId] = attemptId;
+                if (!deliveryId.empty()) {
+                    deliveryIdToAttempt_[deliveryId] = attemptId;
                 }
             }
             // Spooled before it is queued: the recipient may be offline for far
@@ -1196,7 +1196,7 @@ void HttpApi::setupRoutes()
             std::string spoolId;
             if (options_.spoolUndelivered) {
                 Storage::OutboundEntry entry;
-                entry.messageId = messageId;
+                entry.deliveryId = deliveryId;
                 entry.toDest = toDest;
                 entry.sealed = sealed;
                 entry.payload = payload;

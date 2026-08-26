@@ -462,17 +462,17 @@ int main(const int argc, const char** argv)
     // only the network send is detached so serving stays responsive.
     bazarish::server::AckSenderFn ackSender
         = [](bazarish::i2p::Endpoint& from, const std::string& toDest,
-              const std::string& messageId, const bazarish::Key& signingKey) {
+              const std::string& deliveryId, const bazarish::Key& signingKey) {
               const bazarish::Bytes sig = bazarish::sign(
-                  signingKey, bazarish::Bytes(messageId.begin(), messageId.end()));
+                  signingKey, bazarish::Bytes(deliveryId.begin(), deliveryId.end()));
               const bazarish::Bytes pub = signingKey.publicDer();
               bazarish::i2p::Endpoint* const fromPtr = &from;
-              std::thread([fromPtr, toDest, messageId, sig, pub]() {
-                  bazarish::server::federationSendAck(*fromPtr, toDest, messageId, pub, sig);
+              std::thread([fromPtr, toDest, deliveryId, sig, pub]() {
+                  bazarish::server::federationSendAck(*fromPtr, toDest, deliveryId, pub, sig);
               }).detach();
           };
     const auto onAck
-        = [&api](const std::string& messageId) { api.markDeliveredByMessageId(messageId); };
+        = [&api](const std::string& deliveryId) { api.markDeliveredByDeliveryId(deliveryId); };
     if (perUserDests) {
         perUserDests->setAckSender(ackSender);
         perUserDests->setOnAck(onAck);

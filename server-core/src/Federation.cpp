@@ -42,11 +42,11 @@ std::string buildFederationFetchHeader(const std::string& op, const Bytes& seale
 }
 
 std::string buildFederationDeliveredAck(
-    const std::string& messageId, const Bytes& signerPublicDer, const Bytes& signature)
+    const std::string& deliveryId, const Bytes& signerPublicDer, const Bytes& signature)
 {
     const nlohmann::json header = {
         {"op", "delivered-ack"},
-        {"messageId", messageId},
+        {"deliveryId", deliveryId},
         {"signerPub", toBase64(signerPublicDer)},
         {"sig", toBase64(signature)},
     };
@@ -101,20 +101,20 @@ void federationServeFrame(const std::string& headerLine,
         // receives over its own dest remains the authoritative confirmation.
         writeReply(reply.dump());
         if (outcome.delivered && onDelivered) {
-            onDelivered(outcome.messageId);
+            onDelivered(outcome.deliveryId);
         }
         return;
     }
 
     if (op == "delivered-ack") {
         // The recipient server confirms it stored a message we sent. Verify the
-        // signature over the messageId with the included key (self-consistent);
-        // the messageId itself is the capability - only a server that unsealed our
+        // signature over the deliveryId with the included key (self-consistent);
+        // the deliveryId itself is the capability - only a server that unsealed our
         // envelope could know it - so this authenticates the confirmation.
-        const std::string messageId = header.at("messageId").get<std::string>();
+        const std::string deliveryId = header.at("deliveryId").get<std::string>();
         const Bytes signerPub = fromBase64(header.at("signerPub").get<std::string>());
         const Bytes signature = fromBase64(header.at("sig").get<std::string>());
-        const Bytes signedBytes(messageId.begin(), messageId.end());
+        const Bytes signedBytes(deliveryId.begin(), deliveryId.end());
         bool valid = false;
         try {
             valid = bazarish::verify(Key::fromPublicDer(signerPub), signedBytes, signature);
@@ -122,7 +122,7 @@ void federationServeFrame(const std::string& headerLine,
             valid = false;
         }
         if (valid && onAck) {
-            onAck(messageId);
+            onAck(deliveryId);
         }
         return;  // no reply: the sender drains until we close
     }

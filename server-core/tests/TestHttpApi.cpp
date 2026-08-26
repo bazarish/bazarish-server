@@ -255,7 +255,7 @@ int main()
     const Bytes payload = {'e', '2', 'e', '-', 'b', 'l', 'o', 'b'};
     const std::string envelope = makeEnvelope(serverDest, sealingPublic,
         {{"class", "content"}, {"mailbox", alice.fingerprint()}, {"token", toBase64(token1)},
-            {"messageId", "msg-1"}},
+            {"deliveryId", "msg-1"}},
         payload);
     CHECK(sendAndPoll(port, alice, "alicedev", envelope).at("status") == "delivered");
     CHECK(storage.tokenHashCount(alice.fingerprint()) == 1);
@@ -305,7 +305,7 @@ int main()
     {
         const std::string bad = makeEnvelope(serverDest, sealingPublic,
             {{"class", "content"}, {"mailbox", alice.fingerprint()},
-                {"token", toBase64(generateDeliveryToken())}, {"messageId", "msg-2"}},
+                {"token", toBase64(generateDeliveryToken())}, {"deliveryId", "msg-2"}},
             payload);
         const nlohmann::json result = sendAndPoll(port, alice, "alicedev", bad);
         CHECK(result.at("status") == "failed");
@@ -316,13 +316,13 @@ int main()
     {
         const std::string request = makeEnvelope(serverDest, sealingPublic,
             {{"class", "contact"}, {"mailbox", alice.fingerprint()},
-                {"messageId", "req-1"}},
+                {"deliveryId", "req-1"}},
             Bytes(200, 0x55));
         CHECK(sendAndPoll(port, alice, "alicedev", request).at("status") == "delivered");
 
         const std::string oversized = makeEnvelope(serverDest, sealingPublic,
             {{"class", "contact"}, {"mailbox", alice.fingerprint()},
-                {"messageId", "req-2"}},
+                {"deliveryId", "req-2"}},
             Bytes(bazarish::kMaxContactRequestBytes + 1, 0x55));
         const nlohmann::json result = sendAndPoll(port, alice, "alicedev", oversized);
         CHECK(result.at("status") == "failed");
@@ -334,7 +334,7 @@ int main()
     {
         const std::string huge = makeEnvelope(serverDest, sealingPublic,
             {{"class", "contact"}, {"mailbox", alice.fingerprint()},
-                {"messageId", "req-huge"}},
+                {"deliveryId", "req-huge"}},
             Bytes(bazarish::kMaxMessagePayloadBytes + 1, 0x55));
         const nlohmann::json result = sendAndPoll(port, alice, "alicedev", huge);
         CHECK(result.at("status") == "failed");
@@ -346,7 +346,7 @@ int main()
     {
         const std::string big = makeEnvelope(serverDest, sealingPublic,
             {{"class", "content"}, {"mailbox", alice.fingerprint()},
-                {"token", toBase64(token2)}, {"messageId", "msg-3"}},
+                {"token", toBase64(token2)}, {"deliveryId", "msg-3"}},
             Bytes(2000, 0x77));
         const nlohmann::json result = sendAndPoll(port, alice, "alicedev", big);
         CHECK(result.at("status") == "failed");
@@ -364,7 +364,7 @@ int main()
     {
         const std::string remote = makeEnvelope(toBase32(Bytes(32, 0x42)) + ".b32.i2p", sealingPublic,
             {{"class", "content"}, {"mailbox", alice.fingerprint()},
-                {"token", toBase64(token2)}, {"messageId", "msg-4"}},
+                {"token", toBase64(token2)}, {"deliveryId", "msg-4"}},
             payload);
         const nlohmann::json result = sendAndPoll(port, bob, "bobdev", remote);
         CHECK(result.at("status") == "unconfirmed");
@@ -489,7 +489,7 @@ int main()
     // and nobody else sees it at all.
     {
         Storage::OutboundEntry entry;
-        entry.messageId = "waiting-one";
+        entry.deliveryId = "waiting-one";
         entry.toDest = "elsewhere.b32.i2p";
         entry.sealed = Bytes{1, 2, 3};
         entry.payload = Bytes{4, 5, 6};
@@ -502,7 +502,7 @@ int main()
         CHECK(mine.status == 200);
         const nlohmann::json waiting = nlohmann::json::parse(mine.body).at("outbound");
         CHECK(waiting.size() == 1);
-        CHECK(waiting.at(0).at("messageId") == "waiting-one");
+        CHECK(waiting.at(0).at("deliveryId") == "waiting-one");
         CHECK(waiting.at(0).at("attempts") == 6);
         CHECK(waiting.at(0).at("of") == 8);
 

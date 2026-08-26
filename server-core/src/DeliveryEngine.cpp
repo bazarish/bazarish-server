@@ -56,14 +56,14 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
     // exactly two values; the content type lives end-to-end and is never seen
     // here (see docs Messages.md).
     std::string deliveryClass;
-    std::string messageId;
+    std::string deliveryId;
     Bytes token;
     try {
         const Bytes plain = cms::unseal(sealed, sealingKey);
         const nlohmann::json inner = nlohmann::json::parse(plain.begin(), plain.end());
         deliveryClass = inner.at("class").get<std::string>();
         mailbox = inner.at("mailbox").get<std::string>();
-        messageId = inner.at("messageId").get<std::string>();
+        deliveryId = inner.at("deliveryId").get<std::string>();
         if (deliveryClass == kContentDeliveryClass) {
             token = fromBase64(inner.at("token").get<std::string>());
         } else if (deliveryClass != kContactDeliveryClass) {
@@ -76,7 +76,7 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
         return fail(ErrorCode::eDeliveryRejected, "envelope rejected");
     }
     // Expose the parsed id so the caller can acknowledge it (even a dedup hit).
-    outcome.messageId = messageId;
+    outcome.deliveryId = deliveryId;
 
     // The tokenless path is bounded on the destination this arrived on - not on
     // the mailbox the envelope names. That is what lets the refusal be explicit:
@@ -91,7 +91,7 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
 
     // The destination this arrived on belongs to one user, and only their mail
     // belongs in it. Anything else is dropped here - before the dedup and the
-    // seen-cache, which must not be touched: marking a foreign messageId seen
+    // seen-cache, which must not be touched: marking a foreign deliveryId seen
     // would let anyone censor a real message by delivering its id to the wrong
     // destination first.
     if (!owner.empty() && mailbox != owner) {
@@ -105,16 +105,16 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
 
     // Dedup before anything else: a retry of a delivered message must
     // succeed without consuming a second token.
-    if (storage_.hasBlob(mailbox, messageId)) {
+    if (storage_.hasBlob(mailbox, deliveryId)) {
         return delivered();
     }
 
-    // Replay protection: a messageId admitted earlier - even one since fetched,
+    // Replay protection: a deliveryId admitted earlier - even one since fetched,
     // acked and swept from the mailbox - must not be re-admitted. The one-time
     // token already guards content replays, but a tokenless contact request has
     // no token to spend, so the seen-cache is what closes that gap. Idempotent
     // success: no token spend, no second store.
-    if (storage_.hasSeen(mailbox, messageId)) {
+    if (storage_.hasSeen(mailbox, deliveryId)) {
         return delivered();
     }
 
@@ -138,7 +138,7 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
         }
     }
 
-    const Storage::PutResult result = storage_.putBlob(mailbox, messageId, payload, deliveryClass,
+    const Storage::PutResult result = storage_.putBlob(mailbox, deliveryId, payload, deliveryClass,
         now, storage_.userQuota(mailbox, options_.defaultQuotaBytes));
     if (result == Storage::PutResult::eQuotaExceeded) {
         if (deliveryClass == "content") {
@@ -150,9 +150,9 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
         return fail(ErrorCode::eDeliveryRejected, "delivery rejected");
     }
 
-    // Record the admitted messageId so a later replay (after this blob is acked
+    // Record the admitted deliveryId so a later replay (after this blob is acked
     // and swept) is recognised by the hasSeen check above and refused.
-    storage_.markSeen(mailbox, messageId, now);
+    storage_.markSeen(mailbox, deliveryId, now);
     if (options_.onDelivered) {
         options_.onDelivered(mailbox);  // wake whoever is holding a request open
     }

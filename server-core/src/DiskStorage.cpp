@@ -224,25 +224,25 @@ bool DiskStorage::hasBlob(const std::string& user, const std::string& blobId)
     return fs::exists(userDir(user) / "blobs" / blobId);
 }
 
-bool DiskStorage::hasSeen(const std::string& user, const std::string& messageId)
+bool DiskStorage::hasSeen(const std::string& user, const std::string& deliveryId)
 {
     requireUser(user);
-    requireSafeId(messageId);
+    requireSafeId(deliveryId);
     const std::lock_guard<std::mutex> lock(mutex_);
-    return fs::exists(userDir(user) / "seen" / messageId);
+    return fs::exists(userDir(user) / "seen" / deliveryId);
 }
 
-void DiskStorage::markSeen(const std::string& user, const std::string& messageId,
+void DiskStorage::markSeen(const std::string& user, const std::string& deliveryId,
     const std::int64_t receivedAt)
 {
     requireUser(user);
-    requireSafeId(messageId);
+    requireSafeId(deliveryId);
     const std::lock_guard<std::mutex> lock(mutex_);
     const fs::path dir = userDir(user) / "seen";
     fs::create_directories(dir);
     // The marker payload is the receive time, so the TTL sweep can age it out.
     const std::string text = std::to_string(receivedAt);
-    writeFileAtomic(dir / messageId, text.data(), text.size());
+    writeFileAtomic(dir / deliveryId, text.data(), text.size());
 }
 
 bool DiskStorage::allowContactRequest(
@@ -336,7 +336,7 @@ std::string DiskStorage::queueOutbound(const OutboundEntry& entry)
     fs::create_directories(dir);
     const std::string id = entry.id.empty() ? toHex(randomBytes(kOutboundIdBytes)) : entry.id;
     const nlohmann::json record = {
-        {"messageId", entry.messageId},
+        {"deliveryId", entry.deliveryId},
         {"toDest", entry.toDest},
         {"sealed", toBase64(entry.sealed)},
         {"payload", toBase64(entry.payload)},
@@ -362,7 +362,7 @@ std::vector<Storage::OutboundEntry> DiskStorage::listOutbound()
         const nlohmann::json record = readJsonFile(root_ / "outbound" / name);
         OutboundEntry entry;
         entry.id = name.substr(0, name.size() - std::string(".json").size());
-        entry.messageId = record.value("messageId", std::string());
+        entry.deliveryId = record.value("deliveryId", std::string());
         entry.toDest = record.value("toDest", std::string());
         entry.sealed = fromBase64(record.value("sealed", std::string()));
         entry.payload = fromBase64(record.value("payload", std::string()));
@@ -404,14 +404,14 @@ void DiskStorage::removeOutbound(const std::string& id)
     fs::remove(root_ / "outbound" / (id + ".json"), ignored);
 }
 
-void DiskStorage::noteUndelivered(const std::string& user, const std::string& messageId)
+void DiskStorage::noteUndelivered(const std::string& user, const std::string& deliveryId)
 {
     requireUser(user);
-    requireSafeId(messageId);
+    requireSafeId(deliveryId);
     const std::lock_guard<std::mutex> lock(mutex_);
     const fs::path dir = userDir(user) / "undelivered";
     fs::create_directories(dir);
-    writeFileAtomic(dir / messageId, "", 0);
+    writeFileAtomic(dir / deliveryId, "", 0);
 }
 
 std::vector<std::string> DiskStorage::listUndelivered(const std::string& user)
@@ -421,13 +421,13 @@ std::vector<std::string> DiskStorage::listUndelivered(const std::string& user)
     return listDirectoryNames(userDir(user) / "undelivered");
 }
 
-void DiskStorage::clearUndelivered(const std::string& user, const std::string& messageId)
+void DiskStorage::clearUndelivered(const std::string& user, const std::string& deliveryId)
 {
     requireUser(user);
-    requireSafeId(messageId);
+    requireSafeId(deliveryId);
     const std::lock_guard<std::mutex> lock(mutex_);
     std::error_code ignored;
-    fs::remove(userDir(user) / "undelivered" / messageId, ignored);
+    fs::remove(userDir(user) / "undelivered" / deliveryId, ignored);
 }
 
 void DiskStorage::purgeUser(const std::string& user)
@@ -458,8 +458,8 @@ void DiskStorage::purgeExpired(const std::int64_t receivedBefore)
             }
         }
         // Age out replay markers on the same horizon as the blobs they guard.
-        for (const std::string& messageId : listDirectoryNames(userEntry.path() / "seen")) {
-            const fs::path marker = userEntry.path() / "seen" / messageId;
+        for (const std::string& deliveryId : listDirectoryNames(userEntry.path() / "seen")) {
+            const fs::path marker = userEntry.path() / "seen" / deliveryId;
             std::ifstream in(marker, std::ios::binary);
             std::int64_t receivedAt = 0;
             if (in >> receivedAt && receivedAt < receivedBefore) {

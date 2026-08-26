@@ -156,7 +156,7 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
                             // Ack a stored delivery from THIS per-user dest back to
                             // the sender's serving dest.
                             [this, endpoint, sender, signingKey = raw->signingKey](
-                                const std::string& messageId) {
+                                const std::string& deliveryId) {
                                 if (!ackSender_) {
                                     return;
                                 }
@@ -169,13 +169,13 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
                                 // safe if this destination is torn down while the ack
                                 // is still in flight.
                                 std::thread([ackSender = ackSender_, endpoint, sender,
-                                                messageId, signingKey]() {
+                                                deliveryId, signingKey]() {
                                     // No accept-loop try/catch wraps a detached
                                     // thread - an escaping exception would terminate
                                     // the process, so contain it here (a failed ack is
                                     // best-effort; the sender retries on its own).
                                     try {
-                                        ackSender(*endpoint, sender, messageId, *signingKey);
+                                        ackSender(*endpoint, sender, deliveryId, *signingKey);
                                     } catch (const std::exception& error) {
                                         bazarish::log::warn(
                                             "ack to sender failed: {}", error.what());
@@ -184,9 +184,9 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
                             },
                             // A delivered-ack landing here (we sent from this dest)
                             // marks our local attempt delivered.
-                            [this](const std::string& messageId) {
+                            [this](const std::string& deliveryId) {
                                 if (onAck_) {
-                                    onAck_(messageId);
+                                    onAck_(deliveryId);
                                 }
                             });
                     } catch (const std::exception& error) {

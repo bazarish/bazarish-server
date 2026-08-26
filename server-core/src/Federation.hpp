@@ -50,18 +50,18 @@ struct FederationFetchResult {
 };
 
 // Called on the recipient when a federated deliver stored (or deduped) a message,
-// with its messageId, so the caller can send a signed delivered-ack back to the
+// with its deliveryId, so the caller can send a signed delivered-ack back to the
 // sender. Called on the sender when a verified delivered-ack arrives, to mark the
 // matching send attempt delivered.
-using OnDeliveredFn = std::function<void(const std::string& messageId)>;
-using OnAckFn = std::function<void(const std::string& messageId)>;
+using OnDeliveredFn = std::function<void(const std::string& deliveryId)>;
+using OnAckFn = std::function<void(const std::string& deliveryId)>;
 
-// Builds a signed delivered-ack line: the recipient server signs the messageId
+// Builds a signed delivered-ack line: the recipient server signs the deliveryId
 // with its identity's classical key and includes that public key, so the sender
 // can verify the ack is from a real key that also knew the (envelope-sealed)
-// messageId. Carried back over a fresh outbound federation connection.
+// deliveryId. Carried back over a fresh outbound federation connection.
 std::string buildFederationDeliveredAck(
-    const std::string& messageId, const Bytes& signerPublicDer, const Bytes& signature);
+    const std::string& deliveryId, const Bytes& signerPublicDer, const Bytes& signature);
 
 namespace detail {
 

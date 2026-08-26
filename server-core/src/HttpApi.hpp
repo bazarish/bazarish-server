@@ -178,10 +178,10 @@ public:
     bool listenAfterBind();
     void stop();
 
-    // Marks the send attempt for this delivery messageId "delivered" (amber), on a
+    // Marks the send attempt for this delivery deliveryId "delivered" (amber), on a
     // verified delivered-ack from the recipient server. Idempotent; a no-op for an
     // unknown id or an already-terminal attempt. Thread-safe.
-    void markDeliveredByMessageId(const std::string& messageId);
+    void markDeliveredByDeliveryId(const std::string& deliveryId);
 
 private:
     struct Attempt {
@@ -193,7 +193,7 @@ private:
         std::string errorCode;
         std::string errorMessage;
         std::int64_t completedAt = 0;
-        std::string messageId;  // delivery id, for the messageId -> attempt index
+        std::string deliveryId;  // delivery id, for the deliveryId -> attempt index
         // Who sent it. When the attempt settles, this is the user whose parked
         // long-poll is woken so their client learns the outcome at once instead of
         // finding out on its next poll.
@@ -261,9 +261,9 @@ private:
 
     std::mutex attemptsMutex_;
     std::map<std::string, Attempt> attempts_;
-    // delivery messageId -> attemptId, so an inbound delivered-ack (which carries
-    // the messageId, not our attempt id) resolves to the right attempt.
-    std::map<std::string, std::string> messageIdToAttempt_;
+    // delivery deliveryId -> attemptId, so an inbound delivered-ack (which carries
+    // the deliveryId, not our attempt id) resolves to the right attempt.
+    std::map<std::string, std::string> deliveryIdToAttempt_;
 
     // Background delivery executor (store-and-forward): the request thread only
     // enqueues; these workers federate with retries and record the outcome.

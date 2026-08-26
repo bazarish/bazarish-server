@@ -30,14 +30,24 @@ namespace bazarish::server {
 class WarmDestPool {
 public:
     struct Options {
-        std::size_t minSize = 2;
-        std::size_t maxSize = 10;
+        // The pool answers every user's outbound deliveries, so it is sized for a
+        // server's worth of them rather than for the occasional lookup: it starts at
+        // startSize, never falls below minSize, and never grows past maxSize (which
+        // an operator sets).
+        std::size_t minSize = 20;
+        std::size_t startSize = 40;
+        std::size_t maxSize = 100;
         bazarish::i2p::Privacy privacy = bazarish::i2p::Privacy::eMax;
-        int tunnelQuantity = bazarish::i2p::kDefaultTunnelQuantity;
+        // Narrow on purpose: these carry one server-to-server delivery at a time,
+        // and every dest in the pool costs the router its tunnels.
+        int tunnelQuantity = 2;
         // How long a freshly created dest is given to warm before it is abandoned.
         std::chrono::seconds buildTimeout{120};
-        // Idle gap after which the target size decays one step toward minSize.
-        std::chrono::seconds idleDecay{45};
+        // The window demand is measured over - a tunnel's own lifetime. Nothing
+        // taken in a whole window shrinks the target by shrinkStep; half the target
+        // taken inside one doubles it on the spot.
+        std::chrono::seconds demandWindow{600};
+        std::size_t shrinkStep = 10;
     };
 
     WarmDestPool(bazarish::i2p::Router& router, Options options);
@@ -78,6 +88,9 @@ private:
     std::deque<std::shared_ptr<bazarish::i2p::Endpoint>> ready_;  // warm, unused
     std::size_t target_;
     std::chrono::steady_clock::time_point lastAcquire_;
+    // Demand in the window that is running: how many were taken, and when it began.
+    std::size_t takenInWindow_ = 0;
+    std::chrono::steady_clock::time_point windowStartedAt_;
     bool sawMiss_ = false;  // an acquire found the pool empty since the last tick
     std::uint64_t hits_ = 0;
     std::uint64_t misses_ = 0;

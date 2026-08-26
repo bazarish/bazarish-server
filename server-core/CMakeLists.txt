@@ -29,6 +29,7 @@ add_library(bazarish_server_lib STATIC
     src/I2pFederation.cpp
     src/PerUserDestinations.cpp
     src/WarmDestPool.cpp
+    src/OutboundLeases.cpp
     src/EventGate.cpp
     src/HttpApi.cpp
     src/SessionStore.cpp

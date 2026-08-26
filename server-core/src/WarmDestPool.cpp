@@ -11,8 +11,9 @@ namespace bazarish::server {
 WarmDestPool::WarmDestPool(bazarish::i2p::Router& router, Options options)
     : router_(router)
     , options_(options)
-    , target_(options.minSize)
+    , target_(std::clamp(options.startSize, options.minSize, options.maxSize))
     , lastAcquire_(std::chrono::steady_clock::now())
+    , windowStartedAt_(std::chrono::steady_clock::now())
 {
 }
 
@@ -52,6 +53,16 @@ std::shared_ptr<bazarish::i2p::Endpoint> WarmDestPool::acquire()
             ready_.pop_front();
             ++hits_;
         }
+        // Demand is answered as it appears, not at the end of the window: once half
+        // the pool has gone in one window the target doubles on the spot and the
+        // warmer starts building, rather than letting the rest of the window run out
+        // against a pool that is already short.
+        ++takenInWindow_;
+        if (takenInWindow_ * 2 >= target_ && target_ < options_.maxSize) {
+            target_ = std::min(options_.maxSize, target_ * 2);
+            takenInWindow_ = 0;
+            windowStartedAt_ = lastAcquire_;
+        }
     }
     cv_.notify_all();  // wake the warmer to refill (and re-evaluate the target)
     return dest;
@@ -81,15 +92,22 @@ void WarmDestPool::warmerLoop()
             // maxSize; a stretch with no acquires decays it one step toward minSize
             // (and any warm dests beyond the new target are dropped to free the
             // router's tunnels - they were never used, so anonymity is unaffected).
-            if (sawMiss_) {
-                target_ = std::min(options_.maxSize, target_ + 2);
-                sawMiss_ = false;
-            } else if (std::chrono::steady_clock::now() - lastAcquire_ > options_.idleDecay
-                && target_ > options_.minSize) {
-                target_ -= 1;
-                while (ready_.size() > target_) {
-                    ready_.pop_front();
+            sawMiss_ = false;
+            const auto now = std::chrono::steady_clock::now();
+            if (now - windowStartedAt_ >= options_.demandWindow) {
+                if (takenInWindow_ == 0 && target_ > options_.minSize) {
+                    // A whole window with nobody asking: step the target down and let
+                    // the surplus go. They were never used, so dropping them costs
+                    // nothing but the tunnels they were holding.
+                    target_ = target_ > options_.minSize + options_.shrinkStep
+                        ? target_ - options_.shrinkStep
+                        : options_.minSize;
+                    while (ready_.size() > target_) {
+                        ready_.pop_front();
+                    }
                 }
+                takenInWindow_ = 0;
+                windowStartedAt_ = now;
             }
             const std::size_t have = ready_.size() + building.size();
             toCreate = target_ > have ? target_ - have : 0;

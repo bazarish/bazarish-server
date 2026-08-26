@@ -76,6 +76,10 @@ struct HttpApiOptions {
     // job, and its schedule starts ten seconds later rather than after half a
     // minute of hammering.
     int deliveryMaxRounds = 3;
+    // What only this service can report, added to its /healthz body: the warm pool
+    // an operator watches to see whether outbound deliveries have destinations to
+    // leave from. Empty when nothing is wired.
+    std::function<std::string()> statusExtras;
     // Fingerprints of the identities authorised to call the operator-internal
     // endpoints (quota, per-user destination) and /healthz. The caller proves
     // possession by signing the request (hybrid auth); no shared secret. The
@@ -127,18 +131,21 @@ struct RemoteDeliveryResult {
     bool delivered = false;
     std::string errorCode;
     std::string errorMessage;
+    // The delivery the recipient's server confirmed, as it named it back.
+    std::string deliveryId;
 };
 
-// Relays a sealed envelope to a destination over I2P federation. Dialled from the
-// SENDER's own serving destination (senderDest) so a delivery never originates
-// from a shared address - the recipient acks back to senderDest. Routing is by
+// Relays a sealed envelope to a destination over I2P federation, dialled from a
+// warm one-time destination leased for this (sender, recipient) pair: a delivery
+// never leaves from a shared address, nor from the sender's own, and the
+// recipient's signed confirmation comes back on the same stream. Routing is by
 // destination (see docs-main api/InviteAnonymity.md). The default (no transport
 // wired) reports unreachable.
 // onPhase, when set, is called as the relay progresses through its federation
 // phases ("dialing", "connected", "sending", "awaiting-ack") so the caller can
 // surface real, human-readable delivery status. Best-effort and may be empty.
 using FederationPhaseFn = std::function<void(const std::string& phase)>;
-using RemoteDeliverFn = std::function<RemoteDeliveryResult(const std::string& senderDest,
+using RemoteDeliverFn = std::function<RemoteDeliveryResult(const std::string& senderUser,
     const std::string& toDest, const Bytes& sealed, const Bytes& payload,
     const FederationPhaseFn& onPhase)>;
 

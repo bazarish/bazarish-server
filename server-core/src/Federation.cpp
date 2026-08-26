@@ -32,24 +32,21 @@ FederationDeliverResult parseFederationDeliverReply(const std::string& line)
     if (reply.contains("errorMessage")) {
         result.errorMessage = reply.at("errorMessage").get<std::string>();
     }
+    if (reply.contains("deliveryId")) {
+        result.deliveryId = reply.at("deliveryId").get<std::string>();
+    }
+    if (reply.contains("signerPub")) {
+        result.signerPublicDer = fromBase64(reply.at("signerPub").get<std::string>());
+    }
+    if (reply.contains("sig")) {
+        result.signature = fromBase64(reply.at("sig").get<std::string>());
+    }
     return result;
 }
 
 std::string buildFederationFetchHeader(const std::string& op, const Bytes& sealed)
 {
     const nlohmann::json header = {{"op", op}, {"sealed", toBase64(sealed)}};
-    return header.dump();
-}
-
-std::string buildFederationDeliveredAck(
-    const std::string& deliveryId, const Bytes& signerPublicDer, const Bytes& signature)
-{
-    const nlohmann::json header = {
-        {"op", "delivered-ack"},
-        {"deliveryId", deliveryId},
-        {"signerPub", toBase64(signerPublicDer)},
-        {"sig", toBase64(signature)},
-    };
     return header.dump();
 }
 
@@ -74,7 +71,7 @@ void federationServeFrame(const std::string& headerLine,
     const std::function<Bytes(std::size_t)>& readPayload,
     const std::function<void(const std::string&)>& writeReply, DeliveryEngine& engine,
     const std::int64_t now, const Key* const sealingKey, const std::string& owner,
-    const GetCardFn& getCard, const OnDeliveredFn& onDelivered, const OnAckFn& onAck)
+    const GetCardFn& getCard, const SignAckFn& signAck)
 {
     const nlohmann::json header = nlohmann::json::parse(headerLine);
     const std::string op = header.at("op").get<std::string>();
@@ -91,40 +88,25 @@ void federationServeFrame(const std::string& headerLine,
             reply["errorCode"] = outcome.errorCode;
             reply["errorMessage"] = outcome.errorMessage;
         }
-        // Reply on the accepted stream FIRST, then trigger the delivered-ack.
-        // onDelivered sends the signed ack over a FRESH outbound connection, which on
-        // a slow path can take seconds to dial; running it before the reply would
-        // hold the reply past the sender's read timeout - the sender then reads a
-        // stream EOF and retries a message we already stored - and would stall this
-        // destination's single accept loop for every later inbound delivery. The
-        // synchronous reply stays best-effort; the signed delivered-ack the caller
-        // receives over its own dest remains the authoritative confirmation.
+        // The confirmation goes home on this stream, signed with the key of the
+        // destination that took the delivery. It used to be dialled back to the
+        // sender on a connection of its own, because a reply lost on a flaky return
+        // leg left the sender unsure about a message that had in fact been stored.
+        // The sender now dials from a one-time destination nobody can dial back, and
+        // a lost reply is answered by its own spool: the retry arrives here, is
+        // recognised by its deliveryId and confirmed again.
+        if (outcome.delivered && signAck && !outcome.deliveryId.empty()) {
+            Bytes signerPublicDer;
+            Bytes signature;
+            signAck(outcome.deliveryId, signerPublicDer, signature);
+            if (!signature.empty()) {
+                reply["deliveryId"] = outcome.deliveryId;
+                reply["signerPub"] = toBase64(signerPublicDer);
+                reply["sig"] = toBase64(signature);
+            }
+        }
         writeReply(reply.dump());
-        if (outcome.delivered && onDelivered) {
-            onDelivered(outcome.deliveryId);
-        }
         return;
-    }
-
-    if (op == "delivered-ack") {
-        // The recipient server confirms it stored a message we sent. Verify the
-        // signature over the deliveryId with the included key (self-consistent);
-        // the deliveryId itself is the capability - only a server that unsealed our
-        // envelope could know it - so this authenticates the confirmation.
-        const std::string deliveryId = header.at("deliveryId").get<std::string>();
-        const Bytes signerPub = fromBase64(header.at("signerPub").get<std::string>());
-        const Bytes signature = fromBase64(header.at("sig").get<std::string>());
-        const Bytes signedBytes(deliveryId.begin(), deliveryId.end());
-        bool valid = false;
-        try {
-            valid = bazarish::verify(Key::fromPublicDer(signerPub), signedBytes, signature);
-        } catch (const std::exception&) {
-            valid = false;
-        }
-        if (valid && onAck) {
-            onAck(deliveryId);
-        }
-        return;  // no reply: the sender drains until we close
     }
 
     if (op == "card") {

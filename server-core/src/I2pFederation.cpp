@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #include "I2pFederation.hpp"
 
+#include <bazarish/Errors.hpp>
 #include <bazarish/Log.hpp>
 
 #include "Federation.hpp"
@@ -62,6 +63,30 @@ RemoteDeliveryResult federationDeliver(bazarish::i2p::Endpoint& from, const std:
         }
         result.errorCode = delivered.errorCode;
         result.errorMessage = delivered.errorMessage;
+        result.deliveryId = delivered.deliveryId;
+        if (delivered.delivered) {
+            // "Delivered" is believed only when it is signed: the deliveryId is
+            // sealed inside the envelope, so only a server that opened it can name
+            // it, and the signature ties that name to the key of the destination
+            // that answered.
+            const Bytes signedBytes(delivered.deliveryId.begin(), delivered.deliveryId.end());
+            bool valid = false;
+            try {
+                valid = !delivered.signature.empty()
+                    && bazarish::verify(Key::fromPublicDer(delivered.signerPublicDer), signedBytes,
+                        delivered.signature);
+            } catch (const std::exception&) {
+                valid = false;
+            }
+            if (!valid) {
+                bazarish::log::warn("federation: {} claimed delivery without a valid signature",
+                    bazarish::log::redact(toDest));
+                result.delivered = false;
+                result.errorCode = std::string(bazarish::toString(
+                    bazarish::ErrorCode::eRecipientServerUnreachable));
+                result.errorMessage = "the recipient's server did not sign its confirmation";
+            }
+        }
     } catch (const std::exception& error) {
         // Unreachable is the outcome either way, but which failure it was decides
         // whether an operator should be looking at the netDb, the tunnels or the
@@ -71,28 +96,6 @@ RemoteDeliveryResult federationDeliver(bazarish::i2p::Endpoint& from, const std:
         result.reachable = false;
     }
     return result;
-}
-
-void federationSendAck(bazarish::i2p::Endpoint& from, const std::string& toDest,
-    const std::string& deliveryId, const Bytes& signerPublicDer, const Bytes& signature)
-{
-    try {
-        auto stream = from.connect(toDest, std::chrono::seconds(30));
-        if (!stream) {
-            return;
-        }
-        detail::writeFederationHeaderLine(
-            *stream, buildFederationDeliveredAck(deliveryId, signerPublicDer, signature));
-        // The receiver sends no reply; keep the stream open until it has read the
-        // ack and closed (drain to EOF) so the single line is actually flushed.
-        std::array<char, 64> buffer;
-        while (stream->readSome(buffer.data(), buffer.size()) > 0) {
-        }
-    } catch (const std::exception& error) {
-        // The sender falls back to its own retry; losing the ack silently would
-        // leave a delivery looking undelivered with nothing to explain it.
-        bazarish::log::warn("delivered-ack not sent: {}", error.what());
-    }
 }
 
 I2pFetch::I2pFetch(bazarish::i2p::Router& router, WarmDestPool* pool)

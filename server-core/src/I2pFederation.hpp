@@ -17,27 +17,20 @@ namespace bazarish::server {
 class FederationRateLimiter;
 class WarmDestPool;
 
-// Sends a signed delivered-ack for deliveryId to the sending server at toDest,
-// dialled FROM the given serving endpoint (the one that received the delivery) -
-// never a shared address. The ack is signed with that destination's own
-// per-destination signing key (bound to the destination, never the server root
-// identity), so two users one server hosts on different destinations share no
-// signer. Wired once and shared by every serving accept loop, which each pass
-// their own destination's key.
-using AckSenderFn = std::function<void(bazarish::i2p::Endpoint& from, const std::string& toDest,
-    const std::string& deliveryId, const Key& signingKey)>;
+// Signs a delivered confirmation for the reply that is already open, with the
+// signing key of the destination that received the delivery - bound to that
+// destination, never the server root identity, so two users one server hosts on
+// different destinations share no signer.
 
-// Relays a sealed envelope to toDest dialled from the given serving endpoint
-// (the sender's own destination). The recipient acks back to from's address.
+// Relays a sealed envelope to toDest, dialled from the given endpoint - a warm
+// one-time destination leased for this sender and this recipient (see
+// OutboundLeases), never the sender's own address. The recipient's signed
+// confirmation comes back on the same stream, since nothing can dial a one-time
+// destination back.
 // onPhase (when set) is called with the live phase ("dialing", "connected",
 // "sending", "awaiting-ack") so the caller can surface real delivery progress.
 RemoteDeliveryResult federationDeliver(bazarish::i2p::Endpoint& from, const std::string& toDest,
     const Bytes& sealed, const Bytes& payload, const FederationPhaseFn& onPhase = {});
-
-// Sends an already-signed delivered-ack from the given serving endpoint to toDest
-// (one-way: write the line, drain until the receiver closes, so it flushes).
-void federationSendAck(bazarish::i2p::Endpoint& from, const std::string& toDest,
-    const std::string& deliveryId, const Bytes& signerPublicDer, const Bytes& signature);
 
 // Outbound discovery over I2P. A server has no federation address of its own -
 // user-to-user delivery runs on the users' own destinations, and its only public

@@ -379,7 +379,10 @@ void HttpApi::runDeliveryJob(const DeliveryJob& job)
             if (remoteDeliver_) {
                 // Surface each federation phase onto the attempt so a polling client
                 // sees real progress (dialing/connected/sending) while it is pending.
-                remote = remoteDeliver_(job.senderDest, job.toDest, job.sealed, job.payload,
+                // The sender, not their address: the delivery goes out from a
+                // destination leased for this pair, and the sender's own address is
+                // only ever where mail comes in.
+                remote = remoteDeliver_(job.senderUser, job.toDest, job.sealed, job.payload,
                     [this, &job](const std::string& phase) {
                         setAttemptPhase(job.attemptId, phase);
                     });
@@ -588,7 +591,8 @@ void HttpApi::setupRoutes()
                 return *refused;
             }
             return {200, "application/json", {},
-                health::reportJson("server-core", options_.version, startedAt_, nowSeconds())};
+                health::reportJson("server-core", options_.version, startedAt_, nowSeconds(),
+                    options_.statusExtras ? options_.statusExtras() : std::string())};
         });
 
     // Wraps a handler with request authentication and uniform error

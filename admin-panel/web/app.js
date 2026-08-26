@@ -162,6 +162,14 @@
                     + "/h  " + humanCount(service.requestsLastDay) + "/day"));
                 facts.appendChild(fact("in flight", String(service.inFlight)));
             }
+            // Every outbound delivery leaves from a warm destination, so an empty
+            // pool is a server whose messages are waiting to go out.
+            if (service.kind === "server-core" && service.warmPoolTarget) {
+                facts.appendChild(fact("warm pool",
+                    String(service.warmPoolReady) + " ready / " + String(service.warmPoolTarget)
+                        + " target"));
+                facts.appendChild(fact("leased out", String(service.outboundLeases)));
+            }
         } else {
             facts.appendChild(fact("error", (service.error || "no answer")
                 + (service.status ? " (HTTP " + service.status + ")" : "")));

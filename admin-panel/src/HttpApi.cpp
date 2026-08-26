@@ -279,6 +279,9 @@ void HttpApi::registerRoutes()
                 {"version", health.version},
                 {"uptime", humanizeUptime(health.uptime)},
                 {"ramBytes", health.ramBytes},
+                {"warmPoolReady", health.warmPoolReady},
+                {"warmPoolTarget", health.warmPoolTarget},
+                {"outboundLeases", health.outboundLeases},
                 {"ramPeakBytes", health.ramPeakBytes},
                 // A facade reports what it is carrying; the others report nothing
                 // here and the panel shows nothing for them.

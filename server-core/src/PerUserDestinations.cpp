@@ -153,41 +153,17 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
                         }
                         federationServeOnce(*stream, engine_, nowSeconds(), peer, limiter_,
                             serving.get(), userFp, getCard_,
-                            // Ack a stored delivery from THIS per-user dest back to
-                            // the sender's serving dest.
-                            [this, endpoint, sender, signingKey = raw->signingKey](
-                                const std::string& deliveryId) {
-                                if (!ackSender_) {
+                            // Sign the confirmation that goes back in the reply, with
+                            // THIS destination's own key: bound to the destination
+                            // that took the delivery, never to the server's identity.
+                            [signingKey = raw->signingKey](const std::string& deliveryId,
+                                Bytes& outSignerPublicDer, Bytes& outSignature) {
+                                if (!signingKey) {
                                     return;
                                 }
-                                // Send the delivered-ack on a detached thread: it
-                                // dials a fresh outbound connection back to the
-                                // sender, which must never block this destination's
-                                // single accept loop (a slow dial would stall every
-                                // later inbound delivery). Captures own copies (the
-                                // ack function and the shared endpoint/key), so it is
-                                // safe if this destination is torn down while the ack
-                                // is still in flight.
-                                std::thread([ackSender = ackSender_, endpoint, sender,
-                                                deliveryId, signingKey]() {
-                                    // No accept-loop try/catch wraps a detached
-                                    // thread - an escaping exception would terminate
-                                    // the process, so contain it here (a failed ack is
-                                    // best-effort; the sender retries on its own).
-                                    try {
-                                        ackSender(*endpoint, sender, deliveryId, *signingKey);
-                                    } catch (const std::exception& error) {
-                                        bazarish::log::warn(
-                                            "ack to sender failed: {}", error.what());
-                                    }
-                                }).detach();
-                            },
-                            // A delivered-ack landing here (we sent from this dest)
-                            // marks our local attempt delivered.
-                            [this](const std::string& deliveryId) {
-                                if (onAck_) {
-                                    onAck_(deliveryId);
-                                }
+                                const Bytes signedBytes(deliveryId.begin(), deliveryId.end());
+                                outSignature = bazarish::sign(*signingKey, signedBytes);
+                                outSignerPublicDer = signingKey->publicDer();
                             });
                     } catch (const std::exception& error) {
                         // A failed serve must not kill the loop.
@@ -469,11 +445,6 @@ void PerUserDestinations::reloadPersisted(const std::int64_t now)
 void PerUserDestinations::setGetCard(GetCardFn getCard)
 {
     getCard_ = std::move(getCard);
-}
-
-void PerUserDestinations::setAckSender(AckSenderFn ackSender)
-{
-    ackSender_ = std::move(ackSender);
 }
 
 void PerUserDestinations::setOnAck(OnAckFn onAck)

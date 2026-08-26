@@ -95,15 +95,24 @@ Bytes makeSealed(const Key& sealingPublic, const std::string& kind,
 // the same SocketStream wraps both ends, so the federation protocol is
 // exercised without I2P.
 FederationDeliverResult roundTrip(DeliveryEngine& engine, const Bytes& sealed, const Bytes& payload,
-    const Key* const servingKey = nullptr, const std::string& owner = std::string())
+    const Key* const servingKey = nullptr, const std::string& owner = std::string(),
+    const Key* const ackSigningKey = nullptr)
 {
     int fds[2];
     CHECK(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0);
     SocketStream serverStream(fds[0]);
     SocketStream clientStream(fds[1]);
 
-    std::thread serverThread([&engine, &serverStream, servingKey, owner]() {
-        federationServeOnce(serverStream, engine, kNow, std::string(), nullptr, servingKey, owner);
+    std::thread serverThread([&engine, &serverStream, servingKey, owner, ackSigningKey]() {
+        SignAckFn signAck;
+        if (ackSigningKey != nullptr) {
+            signAck = [ackSigningKey](const std::string& deliveryId, Bytes& outPub, Bytes& outSig) {
+                outSig = bazarish::sign(*ackSigningKey, Bytes(deliveryId.begin(), deliveryId.end()));
+                outPub = ackSigningKey->publicDer();
+            };
+        }
+        federationServeOnce(serverStream, engine, kNow, std::string(), nullptr, servingKey, owner,
+            GetCardFn{}, signAck);
     });
     const FederationDeliverResult result
         = federationSendDeliver(clientStream, sealed, payload);
@@ -326,6 +335,40 @@ int main()
             = roundTripCard(engine, CardFetchQuery{alice, view}, GetCardFn{});
         CHECK(!noFn.ok);
         CHECK(noFn.errorCode == "CARD_UNKNOWN");
+    }
+
+    // Two more one-time tokens for the confirmation cases below.
+    const Bytes token2 = generateDeliveryToken();
+    const Bytes token3 = generateDeliveryToken();
+    storage.registerTokenHashes(alice, {deliveryTokenHash(token2), deliveryTokenHash(token3)});
+
+    // The confirmation rides the reply, signed with the key of the destination
+    // that took the delivery: the sender dials from a one-time address nobody can
+    // dial back, so this is the only leg it can come home on.
+    {
+        const Key ackKey = Key::generateSigning();
+        const Bytes sealed = makeSealed(sealingPublic, "content", alice, "fmsg-signed", token2);
+        const FederationDeliverResult result
+            = roundTrip(engine, sealed, payload, nullptr, std::string(), &ackKey);
+        CHECK(result.delivered);
+        CHECK(result.deliveryId == "fmsg-signed");
+        CHECK(!result.signature.empty());
+        const Bytes signedBytes(result.deliveryId.begin(), result.deliveryId.end());
+        CHECK(bazarish::verify(
+            Key::fromPublicDer(result.signerPublicDer), signedBytes, result.signature));
+        // Another key's signature over the same id does not pass as this one.
+        const Key other = Key::generateSigning();
+        CHECK(!bazarish::verify(Key::fromPublicDer(other.publicDer()), signedBytes,
+            result.signature));
+    }
+
+    // A server that signs nothing still answers, and the sender is left to decide
+    // what an unsigned "delivered" is worth (federationDeliver refuses it).
+    {
+        const Bytes sealed = makeSealed(sealingPublic, "content", alice, "fmsg-unsigned", token3);
+        const FederationDeliverResult result = roundTrip(engine, sealed, payload);
+        CHECK(result.delivered);
+        CHECK(result.signature.empty());
     }
 
     std::filesystem::remove_all(root);

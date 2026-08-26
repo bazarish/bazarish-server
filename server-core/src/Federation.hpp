@@ -31,6 +31,14 @@ struct FederationDeliverResult {
     bool delivered = false;
     std::string errorCode;
     std::string errorMessage;
+    // The recipient's signature over the deliveryId, made with the signing key of
+    // the destination that took the delivery, and that key. Empty when the store
+    // did not happen. This rides the reply because the sender dialled from a
+    // one-time destination that nobody can dial back (see OutboundLeases): the
+    // confirmation has to come home on the leg that is already open.
+    std::string deliveryId;
+    Bytes signerPublicDer;
+    Bytes signature;
 };
 
 // Looks up a local user's contact card (subscription certificate DER) by
@@ -49,19 +57,14 @@ struct FederationFetchResult {
     std::string errorMessage;
 };
 
-// Called on the recipient when a federated deliver stored (or deduped) a message,
-// with its deliveryId, so the caller can send a signed delivered-ack back to the
-// sender. Called on the sender when a verified delivered-ack arrives, to mark the
-// matching send attempt delivered.
-using OnDeliveredFn = std::function<void(const std::string& deliveryId)>;
+// Called on the sender when the recipient's signed confirmation has been verified,
+// to mark the matching send attempt delivered.
 using OnAckFn = std::function<void(const std::string& deliveryId)>;
-
-// Builds a signed delivered-ack line: the recipient server signs the deliveryId
-// with its identity's classical key and includes that public key, so the sender
-// can verify the ack is from a real key that also knew the (envelope-sealed)
-// deliveryId. Carried back over a fresh outbound federation connection.
-std::string buildFederationDeliveredAck(
-    const std::string& deliveryId, const Bytes& signerPublicDer, const Bytes& signature);
+// Signs the deliveryId with the signing key of the destination the delivery
+// arrived on, and hands back that key: what makes the confirmation in the reply
+// something only the server that unsealed the envelope could have written.
+using SignAckFn = std::function<void(
+    const std::string& deliveryId, Bytes& outSignerPublicDer, Bytes& outSignature)>;
 
 namespace detail {
 
@@ -112,7 +115,7 @@ void federationServeFrame(const std::string& headerLine,
     const std::function<Bytes(std::size_t)>& readPayload,
     const std::function<void(const std::string&)>& writeReply, DeliveryEngine& engine,
     std::int64_t now, const Key* sealingKey, const std::string& owner, const GetCardFn& getCard,
-    const OnDeliveredFn& onDelivered = {}, const OnAckFn& onAck = {});
+    const SignAckFn& signAck = {});
 
 // Client side: send one deliver request and read the result.
 template <class Stream>
@@ -140,8 +143,7 @@ template <class Stream>
 void federationServeOnce(Stream& stream, DeliveryEngine& engine, const std::int64_t now,
     const std::string& peerDest = std::string(), FederationRateLimiter* const limiter = nullptr,
     const Key* const sealingKey = nullptr, const std::string& owner = std::string(),
-    const GetCardFn& getCard = {}, const OnDeliveredFn& onDelivered = {},
-    const OnAckFn& onAck = {})
+    const GetCardFn& getCard = {}, const SignAckFn& signAck = {})
 {
     if (limiter != nullptr && !limiter->allow(peerDest, now)) {
         return;  // over the per-peer rate limit: drop without serving
@@ -157,7 +159,7 @@ void federationServeOnce(Stream& stream, DeliveryEngine& engine, const std::int6
             return payload;
         },
         [&stream](const std::string& line) { detail::writeFederationHeaderLine(stream, line); },
-        engine, now, sealingKey, owner, getCard, onDelivered, onAck);
+        engine, now, sealingKey, owner, getCard, signAck);
 }
 
 }  // namespace bazarish::server

@@ -349,6 +349,11 @@ int main(const int argc, const char** argv)
                 bazarish::log::redact(user));
         }
     };
+    // The two daemons are restarted together, so the messaging server may still be
+    // binding its port. Waited for once, here, rather than discovered by the first
+    // push spending its retries on a socket that is not listening yet.
+    constexpr std::chrono::seconds kBackendWaitBudget{60};
+    (void)operatorPush.waitReachable(kBackendWaitBudget);
     // Quotas the messaging server may have missed: an account registered before
     // this node started pushing them would be served the messaging server's own
     // default, and the user would see a figure nobody promised. Pushing them at

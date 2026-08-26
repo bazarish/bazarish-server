@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -23,6 +24,17 @@ public:
     OperatorPush(std::string baseUrl, const Identity& signer,
         std::string destPath = "/v1/messaging/i2p-dest",
         std::string quotaPath = "/v1/messaging/quota");
+
+    // Waits for the messaging server to start answering, up to budget. Any answer
+    // counts, refusals included: what this asks is whether the socket is there,
+    // not whether it likes us. False when it never answered - or at once, when no
+    // messaging server is configured, since then there is nothing to wait for.
+    //
+    // A node and its messaging server are restarted together, and the node has
+    // work for it in the first second (the quota reconcile below). Without this
+    // the first push meets a socket that is not listening yet and spends its
+    // retries there, which reads in the log as a failure and is only a race.
+    bool waitReachable(std::chrono::seconds budget) const;
 
     // Provisions (non-empty transient) or revokes (empty transient) a user's
     // destination. Returns whether the push was accepted (false on no-op or any

@@ -28,6 +28,9 @@ constexpr int kReadTimeoutSeconds = 30;
 // nothing about; a real refusal (4xx) is final and is not retried.
 constexpr int kPushAttempts = 3;
 constexpr int kRetryDelaySeconds = 1;
+// How often the readiness wait asks again. Short: the two daemons come up
+// together, so this is usually over in one or two tries.
+constexpr int kReadyPollSeconds = 1;
 constexpr int kFirstServerErrorStatus = 500;
 
 struct HostPort {
@@ -66,6 +69,54 @@ OperatorPush::OperatorPush(std::string baseUrl, const Identity& signer, std::str
     , destPath_(std::move(destPath))
     , quotaPath_(std::move(quotaPath))
 {
+}
+
+bool OperatorPush::waitReachable(const std::chrono::seconds budget) const
+{
+    if (baseUrl_.empty()) {
+        return false;  // nothing configured to wait for
+    }
+    const std::chrono::steady_clock::time_point deadline
+        = std::chrono::steady_clock::now() + budget;
+    bool waited = false;
+    // Kept so the give-up below can say what was in the way, rather than only
+    // that something was.
+    std::string lastError;
+    while (true) {
+        try {
+            const HostPort hostPort = parseUrl(baseUrl_);
+            bazarish::http::ClientRequest ask;
+            ask.method = "GET";
+            // Unsigned on purpose: a 403 is as good an answer as a 200 here, and
+            // it costs the messaging server nothing to give.
+            ask.target = "/healthz";
+            bazarish::http::ClientOptions options;
+            options.connectTimeout = std::chrono::seconds(kConnectTimeoutSeconds);
+            options.readTimeout = std::chrono::seconds(kReadTimeoutSeconds);
+            const bazarish::http::ClientResponse response
+                = bazarish::http::request(hostPort.host, hostPort.port, ask, options);
+            if (response.status > 0) {
+                if (waited) {
+                    bazarish::log::info("the messaging server is answering");
+                }
+                return true;
+            }
+            lastError = response.error;
+        } catch (const std::exception& error) {
+            lastError = error.what();
+        }
+        if (std::chrono::steady_clock::now() >= deadline) {
+            bazarish::log::warn("the messaging server at {} is not answering ({}); what this "
+                                "node has for it will be pushed when it is",
+                baseUrl_, lastError.empty() ? std::string("no answer") : lastError);
+            return false;
+        }
+        if (!waited) {
+            bazarish::log::info("waiting for the messaging server at {}", baseUrl_);
+            waited = true;
+        }
+        std::this_thread::sleep_for(std::chrono::seconds(kReadyPollSeconds));
+    }
 }
 
 std::optional<OperatorPush::AccountUsage> OperatorPush::accountUsage(

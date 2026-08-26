@@ -134,13 +134,13 @@ int main()
     // Messaging route: body, method, client header and stripped path relayed.
     {
         const Headers headers = {{"X-Bazarish-Client", "dev1"}};
-        const http::ClientResponse result = call(facadePort, "POST", "/s/secret123/v1/messaging/send", headers,
+        const http::ClientResponse result = call(facadePort, "POST", "/s/secret123/v1/messaging/self", headers,
             "envelope-bytes");
         CHECK(result.status == 200);
         const nlohmann::json reply = nlohmann::json::parse(result.body);
         CHECK(reply.at("backend") == "messaging");
         CHECK(reply.at("method") == "POST");
-        CHECK(reply.at("path") == "/v1/messaging/send");
+        CHECK(reply.at("path") == "/v1/messaging/self");
         CHECK(reply.at("body") == "envelope-bytes");
         CHECK(reply.at("clientHeader") == "dev1");
     }
@@ -252,7 +252,7 @@ int main()
         const http::ClientResponse unauthenticated = call(opsPort, "GET", "/healthz");
         CHECK(unauthenticated.status == 403);
         // The proxy routes are not on this socket.
-        const http::ClientResponse proxied = call(opsPort, "GET", "/s/secret123/v1/messaging/send");
+        const http::ClientResponse proxied = call(opsPort, "GET", "/s/secret123/v1/messaging/self");
         CHECK(proxied.status == 404);
     }
 

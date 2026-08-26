@@ -73,48 +73,20 @@ Headers makeHeaders(const Identity& identity, const std::string& method,
     return headers;
 }
 
-std::string makeEnvelope(const std::string& toDest, const Key& serverSealingPublic,
-    const nlohmann::json& inner, const Bytes& payload)
+// A delivery envelope sealed to a destination's serving key. Outgoing mail is
+// the client's own business now, so what reaches this server's engine arrives on
+// a destination's accept loop, not through a route of its own - and this test
+// hands it straight to the engine, exactly as that loop does.
+Bytes sealEnvelope(const Key& serverSealingPublic, const nlohmann::json& inner)
 {
     const std::string innerText = inner.dump();
-    const Bytes sealed
-        = cms::seal(Bytes(innerText.begin(), innerText.end()), serverSealingPublic);
-    const nlohmann::json envelope = {
-        {"toDest", toDest},
-        {"sealed", toBase64(sealed)},
-        {"payload", toBase64(payload)},
-    };
-    return envelope.dump();
-}
-
-// Submits a send request and polls the attempt to completion.
-nlohmann::json sendAndPoll(const int port, const Identity& sender,
-    const std::string& clientId, const std::string& envelope)
-{
-    const http::ClientResponse posted = call(port, "POST", "/v1/messaging/send",
-        makeHeaders(sender, "POST", "/v1/messaging/send", envelope, clientId), envelope);
-    CHECK(posted.status == 200);
-    const std::string attemptId
-        = nlohmann::json::parse(posted.body).at("attemptId").get<std::string>();
-
-    // Delivery now runs on a background worker (store-and-forward), so the
-    // attempt starts "pending"; poll until it reaches a terminal state.
-    const std::string pollPath = "/v1/messaging/send/" + attemptId;
-    nlohmann::json body;
-    for (int i = 0; i < 200; ++i) {
-        const http::ClientResponse polled
-            = call(port, "GET", pollPath, makeHeaders(sender, "GET", pollPath, "", clientId));
-        CHECK(polled.status == 200);
-        body = nlohmann::json::parse(polled.body);
-        if (body.at("status") != "pending") {
-            return body;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    return body;
+    return cms::seal(Bytes(innerText.begin(), innerText.end()), serverSealingPublic);
 }
 
 }  // namespace
+
+// The engine takes unix seconds; nothing in this test depends on the wall clock.
+constexpr std::int64_t kNow = 1780000000;
 
 int main()
 {
@@ -136,9 +108,6 @@ int main()
     DeliveryEngine engine(storage, serverFp, Key::fromPrivatePem(serverSealing.privatePem()),
         engineOptions);
     HttpApiOptions httpOptions;
-    // No retries in tests: a federated (unreachable) send should reach its terminal
-    // "failed" at once instead of looping for minutes.
-    httpOptions.deliveryMaxRounds = 1;
     // Routing is by destination, and a destination belongs to one user - so a
     // delivery to serverDest is only ever local when the sender is the user it
     // was assigned to. Every user here is assigned serverDest, which makes a
@@ -197,7 +166,7 @@ int main()
         result.sealed = Bytes{0xAB, 0xCD};
         return result;
     };
-    HttpApi api(storage, engine, httpOptions, {}, std::move(remoteFetchStub));
+    HttpApi api(storage, engine, httpOptions, std::move(remoteFetchStub));
 
     const int port = api.bindToAnyPort("127.0.0.1");
     CHECK(port > 0);
@@ -247,21 +216,16 @@ int main()
     }
     CHECK(storage.tokenHashCount(alice.fingerprint()) == 2);
 
-    // A delivery through the full local pipeline. The local path is the
-    // same-destination one, and a destination belongs to one user - so what runs
-    // here is Alice's own device delivering into Alice's mailbox, which is what
-    // that path carries in a deployment (device sync). Mail for anyone else
-    // reaches a mailbox by dialling its owner's destination, never this way.
+    // A delivery into Alice's mailbox, as her correspondent's client makes it:
+    // dialled to the destination she is served on, admitted by the engine on the
+    // envelope alone. What this test cares about from here is the mailbox side -
+    // what she can fetch, and what acking it does.
     const Bytes payload = {'e', '2', 'e', '-', 'b', 'l', 'o', 'b'};
-    const std::string envelope = makeEnvelope(serverDest, sealingPublic,
+    const Bytes envelope = sealEnvelope(sealingPublic,
         {{"class", "content"}, {"mailbox", alice.fingerprint()}, {"token", toBase64(token1)},
-            {"deliveryId", "msg-1"}},
-        payload);
-    CHECK(sendAndPoll(port, alice, "alicedev", envelope).at("status") == "delivered");
-    CHECK(storage.tokenHashCount(alice.fingerprint()) == 1);
-
-    // An identical retry is deduplicated and consumes no second token.
-    CHECK(sendAndPoll(port, alice, "alicedev", envelope).at("status") == "delivered");
+            {"deliveryId", "msg-1"}});
+    const Key engineSealing = Key::fromPrivatePem(serverSealing.privatePem());
+    CHECK(engine.deliver(envelope, payload, kNow, engineSealing, alice.fingerprint()).delivered);
     CHECK(storage.tokenHashCount(alice.fingerprint()) == 1);
 
     // Alice sees the message, fetches it and acks it away.
@@ -299,76 +263,6 @@ int main()
         // Alice's only client acked: deleted immediately.
         CHECK(storage.usage(alice.fingerprint()) == 0);
         CHECK(aliceQueue() == 0);
-    }
-
-    // A bogus token is rejected without detail.
-    {
-        const std::string bad = makeEnvelope(serverDest, sealingPublic,
-            {{"class", "content"}, {"mailbox", alice.fingerprint()},
-                {"token", toBase64(generateDeliveryToken())}, {"deliveryId", "msg-2"}},
-            payload);
-        const nlohmann::json result = sendAndPoll(port, alice, "alicedev", bad);
-        CHECK(result.at("status") == "failed");
-        CHECK(result.at("error").at("code") == "DELIVERY_REJECTED");
-    }
-
-    // Tokenless contact requests pass within the size cap and fail above it.
-    {
-        const std::string request = makeEnvelope(serverDest, sealingPublic,
-            {{"class", "contact"}, {"mailbox", alice.fingerprint()},
-                {"deliveryId", "req-1"}},
-            Bytes(200, 0x55));
-        CHECK(sendAndPoll(port, alice, "alicedev", request).at("status") == "delivered");
-
-        const std::string oversized = makeEnvelope(serverDest, sealingPublic,
-            {{"class", "contact"}, {"mailbox", alice.fingerprint()},
-                {"deliveryId", "req-2"}},
-            Bytes(bazarish::kMaxContactRequestBytes + 1, 0x55));
-        const nlohmann::json result = sendAndPoll(port, alice, "alicedev", oversized);
-        CHECK(result.at("status") == "failed");
-        CHECK(result.at("error").at("code") == "CONTACT_REQUEST_TOO_LARGE");
-    }
-
-    // The protocol's own ceiling on one message, checked whatever the class and
-    // before a token is spent: anything bigger is a file, not a message.
-    {
-        const std::string huge = makeEnvelope(serverDest, sealingPublic,
-            {{"class", "contact"}, {"mailbox", alice.fingerprint()},
-                {"deliveryId", "req-huge"}},
-            Bytes(bazarish::kMaxMessagePayloadBytes + 1, 0x55));
-        const nlohmann::json result = sendAndPoll(port, alice, "alicedev", huge);
-        CHECK(result.at("status") == "failed");
-        CHECK(result.at("error").at("code") == "MESSAGE_TOO_LARGE");
-    }
-
-    // Quota exhaustion restores the consumed token (STORAGE_FULL is only
-    // visible past a valid token).
-    {
-        const std::string big = makeEnvelope(serverDest, sealingPublic,
-            {{"class", "content"}, {"mailbox", alice.fingerprint()},
-                {"token", toBase64(token2)}, {"deliveryId", "msg-3"}},
-            Bytes(2000, 0x77));
-        const nlohmann::json result = sendAndPoll(port, alice, "alicedev", big);
-        CHECK(result.at("status") == "failed");
-        CHECK(result.at("error").at("code") == "STORAGE_FULL");
-        CHECK(storage.tokenHashCount(alice.fingerprint()) == 1);
-    }
-
-    // A different destination (not the sender's own) federates rather than
-    // delivering locally - even though no other-destination recipient exists
-    // here, so it stays unreachable (no federation transport wired in tests).
-    // This is the timing guarantee: a cross-destination recipient is never a
-    // fast local delivery. An exhausted-unreachable outcome is reported as
-    // "unconfirmed" (not "failed"): the envelope may have been stored while only
-    // its acknowledgement was lost, so a red failure would be a false negative.
-    {
-        const std::string remote = makeEnvelope(toBase32(Bytes(32, 0x42)) + ".b32.i2p", sealingPublic,
-            {{"class", "content"}, {"mailbox", alice.fingerprint()},
-                {"token", toBase64(token2)}, {"deliveryId", "msg-4"}},
-            payload);
-        const nlohmann::json result = sendAndPoll(port, bob, "bobdev", remote);
-        CHECK(result.at("status") == "unconfirmed");
-        CHECK(!result.contains("error"));
     }
 
     // The destination endpoint surfaces the caller's assigned destination + the
@@ -409,14 +303,6 @@ int main()
         const http::ClientResponse result = call(port, "POST", "/v1/messaging/fetch",
             makeHeaders(bob, "POST", "/v1/messaging/fetch", body, "bobdev"), body);
         CHECK(result.status == 400);
-    }
-
-    // Unknown attempt IDs are reported as such.
-    {
-        const http::ClientResponse result = call(port, "GET", "/v1/messaging/send/deadbeef",
-            makeHeaders(bob, "GET", "/v1/messaging/send/deadbeef", "", "bobdev"));
-        CHECK(result.status == 404);
-        CHECK(nlohmann::json::parse(result.body).at("error").at("code") == "ATTEMPT_UNKNOWN");
     }
 
     // Per-user I2P destination endpoint (operator signature): auth + dispatch.
@@ -483,52 +369,6 @@ int main()
         CHECK(health.at("service").get<std::string>() == "server-core");
         CHECK(health.contains("ramBytes"));
         CHECK(health.contains("ramPeakBytes"));
-    }
-
-    // A send this server is still carrying: its sender sees which attempt it is on,
-    // and nobody else sees it at all.
-    {
-        Storage::OutboundEntry entry;
-        entry.deliveryId = "waiting-one";
-        entry.toDest = "elsewhere.b32.i2p";
-        entry.sealed = Bytes{1, 2, 3};
-        entry.payload = Bytes{4, 5, 6};
-        entry.senderUser = alice.fingerprint();
-        entry.attempts = 6;
-        storage.queueOutbound(entry);
-
-        const http::ClientResponse mine = call(port, "GET", "/v1/messaging/outbound",
-            makeHeaders(alice, "GET", "/v1/messaging/outbound", "", "alicedev"));
-        CHECK(mine.status == 200);
-        const nlohmann::json waiting = nlohmann::json::parse(mine.body).at("outbound");
-        CHECK(waiting.size() == 1);
-        CHECK(waiting.at(0).at("deliveryId") == "waiting-one");
-        CHECK(waiting.at(0).at("attempts") == 6);
-        CHECK(waiting.at(0).at("of") == 8);
-
-        const http::ClientResponse theirs = call(port, "GET", "/v1/messaging/outbound",
-            makeHeaders(bob, "GET", "/v1/messaging/outbound", "", "bobdev"));
-        CHECK(theirs.status == 200);
-        CHECK(nlohmann::json::parse(theirs.body).at("outbound").empty());
-    }
-
-    // A send given up on is reported to its sender once, and clearing it is that
-    // sender's to do.
-    {
-        storage.noteUndelivered(alice.fingerprint(), "gave-up-on-this");
-        const http::ClientResponse mine = call(port, "GET", "/v1/messaging/undelivered",
-            makeHeaders(alice, "GET", "/v1/messaging/undelivered", "", "alicedev"));
-        CHECK(mine.status == 200);
-        const nlohmann::json ids = nlohmann::json::parse(mine.body).at("undelivered");
-        CHECK(ids.size() == 1);
-        CHECK(ids.at(0) == "gave-up-on-this");
-
-        const http::ClientResponse cleared = call(port, "DELETE",
-            "/v1/messaging/undelivered/gave-up-on-this",
-            makeHeaders(alice, "DELETE", "/v1/messaging/undelivered/gave-up-on-this", "",
-                "alicedev"));
-        CHECK(cleared.status == 200);
-        CHECK(storage.listUndelivered(alice.fingerprint()).empty());
     }
 
     api.stop();

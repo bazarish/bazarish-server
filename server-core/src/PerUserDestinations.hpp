@@ -71,9 +71,6 @@ public:
     // destination's accept loop. Set before reloadPersisted/provision. Unset
     // means CARD_UNKNOWN.
     void setGetCard(GetCardFn getCard);
-    // Wires the delivered-ack sender (deliveries served here) and receiver (acks
-    // for sends originated here). Set before reloadPersisted/provision.
-    void setOnAck(OnAckFn onAck);
     // The serving endpoint for a provisioned dest (by routingHost), or null - so
     // the outbound federation path can dial from the sender's own dest.
     std::shared_ptr<bazarish::i2p::Endpoint> endpointForDest(const std::string& dest) const;
@@ -152,7 +149,6 @@ private:
     const int tunnelQuantity_;
     FederationRateLimiter* const limiter_;
     GetCardFn getCard_;
-    OnAckFn onAck_;
     mutable std::mutex mutex_;
     std::map<std::string, std::unique_ptr<Destination>> dests_;
     // Watches for delegations running out. Sleeps on stopCv_, so shutdown is

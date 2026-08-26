@@ -46,39 +46,19 @@ struct DestinationAssignment {
 using AssignDestinationFn = std::function<DestinationAssignment(const std::string& user)>;
 
 struct HttpApiOptions {
-    // Hard cap on a single delivery envelope, and with it the point at which a
-    // file stops going through the mailbox: a client that gets this cap back as a
-    // typed error falls back to transferring the file directly to the recipient.
-    // Operators should size it against the quota, not against the smallest thing
-    // that works - too small a cap pushes ordinary attachments into a transfer
-    // that needs both sides online.
-    std::uint64_t perMessageLimitBytes = 1 * 1024 * 1024;
     // The server's default per-user mailbox quota, reported (alongside actual usage)
     // by /v1/messaging/storage-usage when a user has no quota override. Mirrors the
     // delivery engine's defaultQuotaBytes.
     std::uint64_t defaultQuotaBytes = 50 * 1024 * 1024;
-    // How long a completed send attempt stays pollable.
-    std::int64_t attemptRetentionSeconds = 600;
     // Mailbox TTL backstop: a pending blob still un-acked by all of a user's
     // registered devices this long after receipt is reclaimed by the janitor
     // sweep. The primary cleanup is delete-on-all-devices-acked; this only
     // bounds mail for a device that never returns (or a user with no registered
     // clients). 0 disables the sweep.
     std::int64_t mailboxRetentionSeconds = 30 * 24 * 3600;
-    // Whether an accepted send that could not be delivered is spooled and retried
-    // at all. The schedule itself - eight attempts, ten seconds to sixteen minutes
-    // apart - is the protocol's, not an operator's: past it the sender is told the
-    // recipient could not be reached and decides for itself whether to send again.
-    bool spoolUndelivered = true;
-    // How many federation rounds one delivery run makes before handing the send
-    // back to the spool. These are the immediate ones - a leaseset that is a moment
-    // from being published - and they are few on purpose: waiting is the spool's
-    // job, and its schedule starts ten seconds later rather than after half a
-    // minute of hammering.
-    int deliveryMaxRounds = 3;
     // What only this service can report, added to its /healthz body: the warm pool
-    // an operator watches to see whether outbound deliveries have destinations to
-    // leave from. Empty when nothing is wired.
+    // an operator watches to see whether a lookup has a destination to leave from.
+    // Empty when nothing is wired.
     std::function<std::string()> statusExtras;
     // Fingerprints of the identities authorised to call the operator-internal
     // endpoints (quota, per-user destination) and /healthz. The caller proves
@@ -125,30 +105,6 @@ struct HttpApiOptions {
     int maxEventWaitSeconds = 30;
 };
 
-// Result of relaying a sealed envelope to another destination (federation).
-struct RemoteDeliveryResult {
-    bool reachable = false;
-    bool delivered = false;
-    std::string errorCode;
-    std::string errorMessage;
-    // The delivery the recipient's server confirmed, as it named it back.
-    std::string deliveryId;
-};
-
-// Relays a sealed envelope to a destination over I2P federation, dialled from a
-// warm one-time destination leased for this (sender, recipient) pair: a delivery
-// never leaves from a shared address, nor from the sender's own, and the
-// recipient's signed confirmation comes back on the same stream. Routing is by
-// destination (see docs-main api/InviteAnonymity.md). The default (no transport
-// wired) reports unreachable.
-// onPhase, when set, is called as the relay progresses through its federation
-// phases ("dialing", "connected", "sending", "awaiting-ack") so the caller can
-// surface real, human-readable delivery status. Best-effort and may be empty.
-using FederationPhaseFn = std::function<void(const std::string& phase)>;
-using RemoteDeliverFn = std::function<RemoteDeliveryResult(const std::string& senderUser,
-    const std::string& toDest, const Bytes& sealed, const Bytes& payload,
-    const FederationPhaseFn& onPhase)>;
-
 // Result of relaying a sealed fetch (card / resolve) to a destination.
 struct RemoteFetchResult {
     bool reachable = false;
@@ -164,15 +120,14 @@ struct RemoteFetchResult {
 using RemoteFetchFn = std::function<RemoteFetchResult(
     const std::string& toDest, const std::string& op, const Bytes& sealed)>;
 
-// The /v1/messaging/* HTTP API: client registry, token hashes, pending
-// fetch/ack and submit+poll sending. A send is routed by its toDest: a delivery
-// to the sender's own destination runs the shared DeliveryEngine locally; every
-// other destination - even a co-located recipient on a different destination -
-// is dialled over I2P federation, so timing reveals no co-location.
+// The /v1/messaging/* HTTP API: client registry, token hashes, pending fetch/ack
+// and the write a device makes into its own account's mailbox. Outgoing mail is
+// not here: a client delivers its own, dialling the recipient's destination
+// itself, so this server is never asked who its users write to.
 class HttpApi {
 public:
     HttpApi(Storage& storage, DeliveryEngine& engine, HttpApiOptions options,
-        RemoteDeliverFn remoteDeliver = {}, RemoteFetchFn remoteFetch = {});
+        RemoteFetchFn remoteFetch = {});
     // What a waiting client is parked on. Without it the event route is not
     // registered at all and clients fall back to polling.
     void setEventGate(EventGate* gate) { eventGate_ = gate; }
@@ -185,51 +140,10 @@ public:
     bool listenAfterBind();
     void stop();
 
-    // Marks the send attempt for this delivery deliveryId "delivered" (amber), on a
-    // verified delivered-ack from the recipient server. Idempotent; a no-op for an
-    // unknown id or an already-terminal attempt. Thread-safe.
-    void markDeliveredByDeliveryId(const std::string& deliveryId);
-
 private:
-    struct Attempt {
-        std::string status;  // "pending", "delivered", "failed" or "unconfirmed"
-        // The live federation phase while status is "pending" ("queued", "dialing",
-        // "connected", "sending", "awaiting-ack"), so a polling client can show real
-        // delivery progress instead of an opaque "pending". Empty once terminal.
-        std::string phase;
-        std::string errorCode;
-        std::string errorMessage;
-        std::int64_t completedAt = 0;
-        std::string deliveryId;  // delivery id, for the deliveryId -> attempt index
-        // Who sent it. When the attempt settles, this is the user whose parked
-        // long-poll is woken so their client learns the outcome at once instead of
-        // finding out on its next poll.
-        std::string user;
-    };
-
     // Wakes a user's parked long-poll, if there is a gate. Safe to call with no
     // gate and with no waiter.
     void wakeUser(const std::string& user);
-
-    // A send accepted into the outbound buffer and delivered off the request
-    // thread by a background worker (store-and-forward), so the client's POST
-    // returns at once. The sealed envelope already names its recipient
-    // destination; senderDest/senderServingKey back the same-destination local
-    // short-circuit.
-    struct DeliveryJob {
-        std::string attemptId;
-        // The spooled copy this job is delivering; empty for a job with none
-        // (a retry of an entry already removed).
-        std::string spoolId;
-        std::string toDest;
-        Bytes sealed;
-        Bytes payload;
-        std::string senderDest;
-        // The user that destination belongs to: on the same-destination
-        // short-circuit it is also the only mailbox this delivery may name.
-        std::string senderUser;
-        std::shared_ptr<Key> senderServingKey;
-    };
 
     void setupRoutes();
     // Verifies a request under either scheme - a session MAC or the hybrid
@@ -237,18 +151,6 @@ private:
     // back, or nothing when the caller is who they say they are.
     std::optional<bazarish::http::Response> authenticateRequest(
         const bazarish::http::Request& request, std::string* outUser);
-    void deliveryWorkerLoop();
-    // Re-queues spooled sends whose next attempt is due, and gives up on the ones
-    // that have been waiting past the retention window.
-    void outboundSpoolLoop();
-    // Takes a spooled send out of flight: removed when it is done with, kept with a
-    // longer wait when it is not.
-    void releaseSpooled(const std::string& spoolId, bool keep, std::int64_t now);
-    void runDeliveryJob(const DeliveryJob& job);
-    void setAttempt(const std::string& attemptId, const Attempt& attempt);
-    // Updates only the live federation phase of an existing, still-pending attempt
-    // (a no-op once it is terminal). Thread-safe.
-    void setAttemptPhase(const std::string& attemptId, const std::string& phase);
     void stopWorkers();
     // Periodic mailbox TTL sweep (the backstop for never-fully-acked mail).
     void mailboxJanitorLoop();
@@ -256,7 +158,6 @@ private:
     Storage& storage_;
     DeliveryEngine& engine_;
     const HttpApiOptions options_;
-    RemoteDeliverFn remoteDeliver_;
     RemoteFetchFn remoteFetch_;
 
     std::unique_ptr<bazarish::http::Server> http_;
@@ -266,25 +167,11 @@ private:
     SessionStore sessions_;
     std::int64_t startedAt_ = 0;
 
-    std::mutex attemptsMutex_;
-    std::map<std::string, Attempt> attempts_;
-    // delivery deliveryId -> attemptId, so an inbound delivered-ack (which carries
-    // the deliveryId, not our attempt id) resolves to the right attempt.
-    std::map<std::string, std::string> deliveryIdToAttempt_;
-
-    // Background delivery executor (store-and-forward): the request thread only
-    // enqueues; these workers federate with retries and record the outcome.
-    std::mutex jobsMutex_;
-    std::condition_variable jobsCv_;
-    std::deque<DeliveryJob> jobs_;
-    std::vector<std::thread> deliveryWorkers_;
-    // Background mailbox TTL sweep; shares stopping_/jobsCv_ for shutdown.
+    // Shutdown rendezvous for the background threads below.
+    std::mutex stopMutex_;
+    std::condition_variable stopCv_;
+    // Background mailbox TTL sweep (the backstop for never-fully-acked mail).
     std::thread janitorThread_;
-    // Re-queues what the spool still holds; shares stopping_/jobsCv_ for shutdown.
-    std::thread spoolThread_;
-    // Spool entries currently queued or in flight, so a due entry is not picked up
-    // twice while a worker is already carrying it.
-    std::set<std::string> spoolInFlight_;
     bool stopping_ = false;
 
     auth::ReplayCache replayCache_;

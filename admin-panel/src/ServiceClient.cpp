@@ -138,7 +138,6 @@ HealthResult probeHealth(const ServiceEntry& service, const Identity& identity)
         // The server adds what only it has: warm destinations to send from.
         out.warmPoolReady = body.value("warmPoolReady", static_cast<std::uint64_t>(0));
         out.warmPoolTarget = body.value("warmPoolTarget", static_cast<std::uint64_t>(0));
-        out.outboundLeases = body.value("outboundLeases", static_cast<std::uint64_t>(0));
         out.reachable = true;
     } catch (const std::exception& error) {
         out.error = std::string("bad health body: ") + error.what();

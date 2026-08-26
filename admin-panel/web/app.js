@@ -169,13 +169,12 @@
                     + "/h  " + humanCount(service.requestsLastDay) + "/day"));
                 facts.appendChild(fact("in flight", String(service.inFlight)));
             }
-            // Every outbound delivery leaves from a warm destination, so an empty
-            // pool is a server whose messages are waiting to go out.
+            // A contact-card lookup dials from a warm destination, so an empty pool
+            // is a server whose lookups are waiting on tunnel builds.
             if (service.kind === "server-core" && service.warmPoolTarget) {
-                facts.appendChild(fact("warm pool",
+                facts.appendChild(fact("lookup pool",
                     String(service.warmPoolReady) + " ready / " + String(service.warmPoolTarget)
                         + " target"));
-                facts.appendChild(fact("leased out", String(service.outboundLeases)));
             }
         } else {
             facts.appendChild(fact("error", (service.error || "no answer")

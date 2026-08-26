@@ -1,7 +1,6 @@
 // Bazarish project (c) 2026
 #include "DeliveryEngine.hpp"
 #include "DiskStorage.hpp"
-#include "OutboundLeases.hpp"
 #include "WarmDestPool.hpp"
 #include "FederationRateLimiter.hpp"
 #include "EventGate.hpp"
@@ -193,19 +192,17 @@ int main(const int argc, const char** argv)
     // I2P ceiling. Operators on a constrained uplink can lower it.
     const int tunnelQuantity = static_cast<int>(
         config.number("i2p.tunnelQuantity", bazarish::i2p::kMaxTunnelQuantity));
-    // Warm pool of single-use transient outbound dests. Every outbound delivery
-    // leaves from one of these (leased per sender and recipient, see
-    // OutboundLeases), and so does every card/resolve fetch, so it is sized for a
-    // server's worth of conversations: it starts at warmPoolStart, shrinks no
-    // further than warmPoolMin when nobody asks, and doubles under load up to
-    // warmPoolMax, which is the operator's ceiling.
-    const std::size_t warmPoolMin = static_cast<std::size_t>(config.number("i2p.warmPoolMin", 20));
+    // Warm pool of single-use transient outbound dests. What is left dialing out
+    // from here is discovery - a card or alias fetch on behalf of a client - so it
+    // is sized for lookups, not for a server's worth of conversations: outgoing
+    // mail is carried by the clients themselves, each from a destination of its
+    // own. It starts at warmPoolStart, shrinks no further than warmPoolMin when
+    // nobody asks, and doubles under load up to warmPoolMax, the operator's
+    // ceiling.
+    const std::size_t warmPoolMin = static_cast<std::size_t>(config.number("i2p.warmPoolMin", 2));
     const std::size_t warmPoolStart
-        = static_cast<std::size_t>(config.number("i2p.warmPoolStart", 40));
-    const std::size_t warmPoolMax = static_cast<std::size_t>(config.number("i2p.warmPoolMax", 100));
-    // How long one warm destination serves one (sender, recipient) pair.
-    const std::int64_t outboundLeaseSeconds
-        = static_cast<std::int64_t>(config.number("i2p.outboundLeaseSeconds", 600));
+        = static_cast<std::size_t>(config.number("i2p.warmPoolStart", 4));
+    const std::size_t warmPoolMax = static_cast<std::size_t>(config.number("i2p.warmPoolMax", 16));
     // Inbound deliveries per peer dest per 60s.
     const std::size_t federationRateLimit
         = static_cast<std::size_t>(config.number("federationRateLimit", 240));
@@ -265,10 +262,8 @@ int main(const int argc, const char** argv)
     // Declared before `federation` so it OUTLIVES it (federation holds a raw pointer
     // to the pool); the router, declared earlier, outlives the pool's warmer thread.
     std::unique_ptr<bazarish::server::WarmDestPool> warmPool;
-    std::unique_ptr<bazarish::server::OutboundLeases> outboundLeases;
     std::unique_ptr<bazarish::server::I2pFetch> discovery;
     std::unique_ptr<bazarish::server::PerUserDestinations> perUserDests;
-    bazarish::server::RemoteDeliverFn remoteDeliver;
     bazarish::server::RemoteFetchFn remoteFetch;
     std::vector<std::string> endpoints;
     if (enableI2p) {
@@ -337,15 +332,9 @@ int main(const int argc, const char** argv)
             warmPool->start();
             bazarish::log::info("warm one-time dest pool up (start {}, {}..{})",
                 warmOptions.startSize, warmOptions.minSize, warmOptions.maxSize);
-            bazarish::server::OutboundLeases::Options leaseOptions;
-            leaseOptions.term = std::chrono::seconds(outboundLeaseSeconds);
-            outboundLeases
-                = std::make_unique<bazarish::server::OutboundLeases>(*warmPool, leaseOptions);
-            outboundLeases->start();
         }
-        // Discovery (card/resolve) dials from a one-time dest; user-to-user
-        // delivery dials from each sender's own serving dest (below). Neither
-        // uses a shared server address, because there is none.
+        // Discovery (card/resolve) dials from a one-time dest. There is no shared
+        // server address to dial from, because there is none at all.
         discovery = std::make_unique<bazarish::server::I2pFetch>(*router, warmPool.get());
         remoteFetch = discovery->asRemoteFetchFn();
 
@@ -355,33 +344,6 @@ int main(const int argc, const char** argv)
             router.get(), engine, stateDir, privacy, tunnelQuantity, federationLimiter.get());
         perUserDests->setGetCard(getCard);
         perUserDests->reloadPersisted(nowSeconds());
-
-        // Outbound user-to-user federation leaves from a warm one-time destination
-        // leased for this sender and this recipient. The sender's own serving
-        // destination is only ever the address others write TO.
-        bazarish::server::OutboundLeases* const leases = outboundLeases.get();
-        remoteDeliver = [leases](const std::string& senderUser, const std::string& toDest,
-                            const bazarish::Bytes& sealed, const bazarish::Bytes& payload,
-                            const bazarish::server::FederationPhaseFn& onPhase)
-            -> bazarish::server::RemoteDeliveryResult {
-            // Never from the sender's own address: a one-time destination leased for
-            // this sender and this recipient, so the far end sees a name that says
-            // nothing about who else the sender writes to (see OutboundLeases).
-            std::shared_ptr<bazarish::i2p::Endpoint> from;
-            if (leases) {
-                from = leases->forPair(senderUser, toDest);
-            }
-            if (!from) {
-                // The warm pool had nothing ready. The send waits in the spool and
-                // is tried again rather than going out from an address that would
-                // link this sender to everyone they write to.
-                bazarish::log::info("fed-out: no warm destination to send from yet");
-                bazarish::server::RemoteDeliveryResult unreachable;
-                unreachable.reachable = false;
-                return unreachable;
-            }
-            return bazarish::server::federationDeliver(*from, toDest, sealed, payload, onPhase);
-        };
     }
 
     // The server card is always published: clients need the sealing key to seal
@@ -467,12 +429,11 @@ int main(const int argc, const char** argv)
         };
     }
     // What the operator watches in real time: how many warm destinations are ready
-    // to send from, what the pool is aiming at, and how many are leased out right
-    // now. A pool that is always empty is a server whose deliveries are waiting.
+    // to look someone up from, and what the pool is aiming at. A pool that is
+    // always empty is a server whose lookups are waiting on tunnel builds.
     {
         bazarish::server::WarmDestPool* const pool = warmPool.get();
-        bazarish::server::OutboundLeases* const leases = outboundLeases.get();
-        httpOptions.statusExtras = [pool, leases]() -> std::string {
+        httpOptions.statusExtras = [pool]() -> std::string {
             nlohmann::json extras = nlohmann::json::object();
             if (pool != nullptr) {
                 const bazarish::server::WarmDestPool::Stats stats = pool->stats();
@@ -481,28 +442,15 @@ int main(const int argc, const char** argv)
                 extras["warmPoolHits"] = stats.hits;
                 extras["warmPoolMisses"] = stats.misses;
             }
-            if (leases != nullptr) {
-                extras["outboundLeases"] = leases->stats().live;
-            }
             return extras.dump();
         };
     }
 
-    bazarish::server::HttpApi api(
-        storage, engine, httpOptions, std::move(remoteDeliver), std::move(remoteFetch));
+    bazarish::server::HttpApi api(storage, engine, httpOptions, std::move(remoteFetch));
 
     // The long-poll face is a route on the same server now, so there is one port,
     // one parser and one set of limits.
     api.setEventGate(&eventGate);
-
-    // A delivery this server sent is confirmed in the reply to it, signed with the
-    // key of the destination that took it (see Federation.hpp); the sending side
-    // verifies it there and marks the attempt delivered. Nothing dials back, which
-    // is what lets a delivery leave from a one-time destination.
-    if (perUserDests) {
-        perUserDests->setOnAck(
-            [&api](const std::string& deliveryId) { api.markDeliveredByDeliveryId(deliveryId); });
-    }
 
     bazarish::log::info("listening on {}:{} (private channel for facades)", host, port);
 

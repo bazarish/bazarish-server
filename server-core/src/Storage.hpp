@@ -123,42 +123,6 @@ public:
     // The user's quota override, or fallback (the server default) when none.
     virtual std::uint64_t userQuota(const std::string& user, std::uint64_t fallback) = 0;
 
-    // A send this server accepted and has not delivered yet. It is held here, not
-    // in memory: a recipient who is offline for longer than a retry round would
-    // otherwise have the envelope dropped, with the sender still being told it is
-    // at their server. Sealed for the recipient's serving key, so this server
-    // cannot read what it is holding.
-    struct OutboundEntry {
-        std::string id;
-        // The delivery deliveryId this envelope carries: what the sender's client
-        // knows the message by, and how it is told the send did not happen.
-        std::string deliveryId;
-        std::string toDest;
-        Bytes sealed;
-        Bytes payload;
-        std::string senderDest;
-        std::string senderUser;
-        std::int64_t queuedAt = 0;
-        // Rounds of retries already spent on it, and when it may be tried again.
-        int attempts = 0;
-        std::int64_t nextAttemptAt = 0;
-    };
-
-    // Writes the entry (its id is filled in when empty) and returns its id.
-    virtual std::string queueOutbound(const OutboundEntry& entry) = 0;
-    // Everything still waiting, oldest first.
-    virtual std::vector<OutboundEntry> listOutbound() = 0;
-    // Records another spent round; the entry stays until it is delivered or given
-    // up on.
-    virtual void updateOutbound(
-        const std::string& id, int attempts, std::int64_t nextAttemptAt) = 0;
-    virtual void removeOutbound(const std::string& id) = 0;
-
-    // A send this server gave up on, kept until the sender's client has been told.
-    // Held per sender so the client asks only about its own.
-    virtual void noteUndelivered(const std::string& user, const std::string& deliveryId) = 0;
-    virtual std::vector<std::string> listUndelivered(const std::string& user) = 0;
-    virtual void clearUndelivered(const std::string& user, const std::string& deliveryId) = 0;
 };
 
 }  // namespace bazarish::server

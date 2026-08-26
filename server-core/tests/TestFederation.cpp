@@ -37,6 +37,12 @@ using namespace bazarish::server;
 namespace {
 
 constexpr std::int64_t kNow = 1780000000;
+// A mailbox with barely any room, for the quota case: small enough that one
+// ordinary message overruns it.
+constexpr std::uint64_t kTinyQuotaBytes = 1024;
+// ...and what it is set back to afterwards, so the cases that follow are not
+// delivering into a full mailbox.
+constexpr std::uint64_t kAmpleQuotaBytes = 50 * 1024 * 1024;
 
 // A minimal fd-backed stream exposing the readExact/writeAll surface the
 // federation framing templates over - stands in for a bazarish::i2p::Stream so
@@ -184,6 +190,43 @@ int main()
         const FederationDeliverResult result = roundTrip(engine, sealed, payload);
         CHECK(!result.delivered);
         CHECK(result.errorCode == "DELIVERY_REJECTED");
+    }
+
+    // The protocol's own ceiling on one message, checked whatever the class and
+    // before any token is spent: anything larger is a file, and a file travels
+    // client to client instead of through a mailbox.
+    {
+        const Bytes sealed = makeSealed(sealingPublic, "content", alice, "fmsg-huge", token);
+        const FederationDeliverResult result
+            = roundTrip(engine, sealed, Bytes(bazarish::kMaxMessagePayloadBytes + 1, 0x55));
+        CHECK(!result.delivered);
+        CHECK(result.errorCode == "MESSAGE_TOO_LARGE");
+    }
+
+    // A contact request carries no token, so what it may carry is bounded tighter
+    // and on its own destination, whose budget this case has to itself.
+    {
+        const std::string newcomer = toBase32(Bytes(32, 0x66));
+        const Bytes sealed = makeSealed(sealingPublic, "contact", newcomer, "freq-big", {});
+        const FederationDeliverResult result = roundTrip(engine, sealed,
+            Bytes(bazarish::kMaxContactRequestBytes + 1, 0x55), nullptr, newcomer);
+        CHECK(!result.delivered);
+        CHECK(result.errorCode == "CONTACT_REQUEST_TOO_LARGE");
+    }
+
+    // A mailbox with no room refuses the delivery and gives the token back: the
+    // store did not happen, so the sender is not charged for it.
+    {
+        const Bytes quotaToken = generateDeliveryToken();
+        storage.registerTokenHashes(alice, {deliveryTokenHash(quotaToken)});
+        storage.setUserQuota(alice, kTinyQuotaBytes);
+        const Bytes sealed = makeSealed(sealingPublic, "content", alice, "fmsg-full", quotaToken);
+        const FederationDeliverResult result
+            = roundTrip(engine, sealed, Bytes(kTinyQuotaBytes * 2, 0x77));
+        CHECK(!result.delivered);
+        CHECK(result.errorCode == "STORAGE_FULL");
+        CHECK(storage.tokenHashCount(alice) == 1);
+        storage.setUserQuota(alice, kAmpleQuotaBytes);
     }
 
     // Tokenless contact request is admitted.
@@ -363,7 +406,8 @@ int main()
     }
 
     // A server that signs nothing still answers, and the sender is left to decide
-    // what an unsigned "delivered" is worth (federationDeliver refuses it).
+    // what an unsigned "delivered" is worth. The client's courier refuses it and
+    // tries again, which is the only reading that cannot be forged.
     {
         const Bytes sealed = makeSealed(sealingPublic, "content", alice, "fmsg-unsigned", token3);
         const FederationDeliverResult result = roundTrip(engine, sealed, payload);

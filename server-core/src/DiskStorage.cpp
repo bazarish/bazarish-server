@@ -16,8 +16,6 @@ namespace {
 namespace fs = std::filesystem;
 
 constexpr std::size_t kIdMaxLength = 64;
-// Name of a spooled outbound send: random, and only ever seen by this server.
-constexpr std::size_t kOutboundIdBytes = 8;
 
 bool isSafeId(const std::string& id)
 {
@@ -329,106 +327,6 @@ void DiskStorage::ackBlob(const std::string& user, const std::string& blobId,
     deleteIfFullyAcked(user, blobId);
 }
 
-std::string DiskStorage::queueOutbound(const OutboundEntry& entry)
-{
-    const std::lock_guard<std::mutex> lock(mutex_);
-    const fs::path dir = root_ / "outbound";
-    fs::create_directories(dir);
-    const std::string id = entry.id.empty() ? toHex(randomBytes(kOutboundIdBytes)) : entry.id;
-    const nlohmann::json record = {
-        {"deliveryId", entry.deliveryId},
-        {"toDest", entry.toDest},
-        {"sealed", toBase64(entry.sealed)},
-        {"payload", toBase64(entry.payload)},
-        {"senderDest", entry.senderDest},
-        {"senderUser", entry.senderUser},
-        {"queuedAt", entry.queuedAt},
-        {"attempts", entry.attempts},
-        {"nextAttemptAt", entry.nextAttemptAt},
-    };
-    const std::string text = record.dump();
-    writeFileAtomic(dir / (id + ".json"), text.data(), text.size());
-    return id;
-}
-
-std::vector<Storage::OutboundEntry> DiskStorage::listOutbound()
-{
-    const std::lock_guard<std::mutex> lock(mutex_);
-    std::vector<OutboundEntry> queued;
-    for (const std::string& name : listDirectoryNames(root_ / "outbound")) {
-        if (!name.ends_with(".json")) {
-            continue;
-        }
-        const nlohmann::json record = readJsonFile(root_ / "outbound" / name);
-        OutboundEntry entry;
-        entry.id = name.substr(0, name.size() - std::string(".json").size());
-        entry.deliveryId = record.value("deliveryId", std::string());
-        entry.toDest = record.value("toDest", std::string());
-        entry.sealed = fromBase64(record.value("sealed", std::string()));
-        entry.payload = fromBase64(record.value("payload", std::string()));
-        entry.senderDest = record.value("senderDest", std::string());
-        entry.senderUser = record.value("senderUser", std::string());
-        entry.queuedAt = record.value("queuedAt", static_cast<std::int64_t>(0));
-        entry.attempts = record.value("attempts", 0);
-        entry.nextAttemptAt = record.value("nextAttemptAt", static_cast<std::int64_t>(0));
-        queued.push_back(std::move(entry));
-    }
-    std::sort(queued.begin(), queued.end(),
-        [](const OutboundEntry& left, const OutboundEntry& right) {
-            return left.queuedAt < right.queuedAt;
-        });
-    return queued;
-}
-
-void DiskStorage::updateOutbound(
-    const std::string& id, const int attempts, const std::int64_t nextAttemptAt)
-{
-    requireSafeId(id);
-    const fs::path path = root_ / "outbound" / (id + ".json");
-    const std::lock_guard<std::mutex> lock(mutex_);
-    if (!fs::exists(path)) {
-        return;  // delivered and removed while this round was running
-    }
-    nlohmann::json record = readJsonFile(path);
-    record["attempts"] = attempts;
-    record["nextAttemptAt"] = nextAttemptAt;
-    const std::string text = record.dump();
-    writeFileAtomic(path, text.data(), text.size());
-}
-
-void DiskStorage::removeOutbound(const std::string& id)
-{
-    requireSafeId(id);
-    const std::lock_guard<std::mutex> lock(mutex_);
-    std::error_code ignored;
-    fs::remove(root_ / "outbound" / (id + ".json"), ignored);
-}
-
-void DiskStorage::noteUndelivered(const std::string& user, const std::string& deliveryId)
-{
-    requireUser(user);
-    requireSafeId(deliveryId);
-    const std::lock_guard<std::mutex> lock(mutex_);
-    const fs::path dir = userDir(user) / "undelivered";
-    fs::create_directories(dir);
-    writeFileAtomic(dir / deliveryId, "", 0);
-}
-
-std::vector<std::string> DiskStorage::listUndelivered(const std::string& user)
-{
-    requireUser(user);
-    const std::lock_guard<std::mutex> lock(mutex_);
-    return listDirectoryNames(userDir(user) / "undelivered");
-}
-
-void DiskStorage::clearUndelivered(const std::string& user, const std::string& deliveryId)
-{
-    requireUser(user);
-    requireSafeId(deliveryId);
-    const std::lock_guard<std::mutex> lock(mutex_);
-    std::error_code ignored;
-    fs::remove(userDir(user) / "undelivered" / deliveryId, ignored);
-}
 
 void DiskStorage::purgeUser(const std::string& user)
 {

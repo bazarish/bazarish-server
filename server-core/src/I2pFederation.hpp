@@ -17,21 +17,6 @@ namespace bazarish::server {
 class FederationRateLimiter;
 class WarmDestPool;
 
-// Signs a delivered confirmation for the reply that is already open, with the
-// signing key of the destination that received the delivery - bound to that
-// destination, never the server root identity, so two users one server hosts on
-// different destinations share no signer.
-
-// Relays a sealed envelope to toDest, dialled from the given endpoint - a warm
-// one-time destination leased for this sender and this recipient (see
-// OutboundLeases), never the sender's own address. The recipient's signed
-// confirmation comes back on the same stream, since nothing can dial a one-time
-// destination back.
-// onPhase (when set) is called with the live phase ("dialing", "connected",
-// "sending", "awaiting-ack") so the caller can surface real delivery progress.
-RemoteDeliveryResult federationDeliver(bazarish::i2p::Endpoint& from, const std::string& toDest,
-    const Bytes& sealed, const Bytes& payload, const FederationPhaseFn& onPhase = {});
-
 // Outbound discovery over I2P. A server has no federation address of its own -
 // user-to-user delivery runs on the users' own destinations, and its only public
 // I2P addresses are the facade's, for clients. So a card/resolve lookup dials

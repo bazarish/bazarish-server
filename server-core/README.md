@@ -13,15 +13,18 @@ sealed to the server's sealing key.
 
 ## What it does
 
-- **Delivery engine** - unseal the envelope, dedup by messageId, consume a
+- **Delivery engine** - unseal the envelope, dedup by deliveryId, consume a
   one-time delivery token (or admit a contact request), enforce size/quota,
-  store. Shared by local sends and incoming federation deliveries.
+  store. It admits on the envelope alone, whoever dialled.
 - **Storage** - per-user client registry, token-hash sets and pending blobs.
   Content is deleted as soon as every registered client has acked it.
 - **HTTP API** - `/v1/messaging/*`: client registry, token hashes, pending
-  fetch/ack and submit+poll sending. No persistent outbound state.
-- **Federation** - relays sealed envelopes to other servers over I2P (SAM) or
-  a plain-TCP private channel; peers resolve from `peers.json`.
+  fetch/ack, and the write a device makes into its own account's mailbox. There
+  is no send endpoint: a client delivers its own outgoing mail, so this server is
+  never told whom its users write to.
+- **Federation** - serves each user's destination over I2P: it admits what
+  arrives and signs its confirmation into the reply. It dials out only for
+  discovery (a contact-card or alias lookup on a client's behalf).
 
 ## Build
 

@@ -47,37 +47,6 @@ std::int64_t nowSeconds()
     return static_cast<std::int64_t>(std::time(nullptr));
 }
 
-// Backoff before the next transient delivery round. The first rounds retry with
-// no pause to catch a tunnel that is about to finish building, then the wait
-// grows so a longer outage is not hammered: rounds 0-2 immediate, rounds 3-5 one
-// second, then +1s per round capped at five seconds.
-// How often the spool looks for sends whose next attempt is due.
-constexpr std::chrono::seconds kSpoolPollInterval{60};
-// The gaps between attempts at a recipient this server could not reach, in
-// seconds. It starts short so a passing I2P hiccup costs seconds rather than
-// minutes, and doubles so a recipient who is simply away is not hammered; after
-// the last one the send is given up on and its sender told.
-constexpr std::array<std::int64_t, 8> kSpoolBackoffSeconds{10, 20, 40, 60, 120, 240, 480, 960};
-
-std::chrono::seconds spoolBackoff(const int attempts)
-{
-    const std::size_t index
-        = std::min<std::size_t>(static_cast<std::size_t>(std::max(attempts, 1)) - 1,
-            kSpoolBackoffSeconds.size() - 1);
-    return std::chrono::seconds{kSpoolBackoffSeconds.at(index)};
-}
-
-std::chrono::seconds retryBackoff(int round)
-{
-    int seconds = 0;
-    if (round >= 6) {
-        seconds = std::min(5, round - 4);
-    } else if (round >= 3) {
-        seconds = 1;
-    }
-    return std::chrono::seconds(seconds);
-}
-
 
 Bytes bodyBytes(const bazarish::http::Request& request)
 {
@@ -117,29 +86,16 @@ bazarish::auth::Headers collectAuthHeaders(const bazarish::http::Request& reques
 namespace bazarish::server {
 
 HttpApi::HttpApi(Storage& storage, DeliveryEngine& engine, const HttpApiOptions options,
-    RemoteDeliverFn remoteDeliver, RemoteFetchFn remoteFetch)
+    RemoteFetchFn remoteFetch)
     : storage_(storage)
     , engine_(engine)
     , options_(options)
-    , remoteDeliver_(std::move(remoteDeliver))
     , remoteFetch_(std::move(remoteFetch))
     , startedAt_(nowSeconds())
 {
-    // Background delivery workers (store-and-forward). A small fixed pool: each
-    // worker may sit in a per-message retry loop for a while, so size it for the
-    // expected number of concurrently-in-flight slow deliveries.
-    constexpr int kDeliveryWorkers = 8;
-    deliveryWorkers_.reserve(kDeliveryWorkers);
-    for (int i = 0; i < kDeliveryWorkers; ++i) {
-        deliveryWorkers_.emplace_back([this]() { deliveryWorkerLoop(); });
-    }
     // Mailbox TTL backstop sweep (skipped entirely when retention is disabled).
     if (options_.mailboxRetentionSeconds > 0) {
         janitorThread_ = std::thread([this]() { mailboxJanitorLoop(); });
-    }
-    // Sends accepted but not delivered - including whatever a restart interrupted.
-    if (options_.spoolUndelivered) {
-        spoolThread_ = std::thread([this]() { outboundSpoolLoop(); });
     }
 }
 
@@ -180,8 +136,8 @@ bool HttpApi::listenAfterBind()
 {
     // The engine serves on its own threads; this call is what keeps the caller's
     // thread (a main()) parked until stop().
-    std::unique_lock<std::mutex> lock(jobsMutex_);
-    jobsCv_.wait(lock, [this]() { return stopping_; });
+    std::unique_lock<std::mutex> lock(stopMutex_);
+    stopCv_.wait(lock, [this]() { return stopping_; });
     return true;
 }
 
@@ -196,24 +152,15 @@ void HttpApi::stop()
 void HttpApi::stopWorkers()
 {
     {
-        const std::lock_guard<std::mutex> lock(jobsMutex_);
+        const std::lock_guard<std::mutex> lock(stopMutex_);
         if (stopping_) {
             return;
         }
         stopping_ = true;
     }
-    jobsCv_.notify_all();
-    for (std::thread& worker : deliveryWorkers_) {
-        if (worker.joinable()) {
-            worker.join();
-        }
-    }
-    deliveryWorkers_.clear();
+    stopCv_.notify_all();
     if (janitorThread_.joinable()) {
         janitorThread_.join();
-    }
-    if (spoolThread_.joinable()) {
-        spoolThread_.join();
     }
 }
 
@@ -224,12 +171,12 @@ void HttpApi::mailboxJanitorLoop()
     constexpr std::chrono::seconds kSweepInterval{3600};
     for (;;) {
         {
-            std::unique_lock<std::mutex> lock(jobsMutex_);
+            std::unique_lock<std::mutex> lock(stopMutex_);
             // Sleep one interval, but return at once on shutdown (notify_all).
-            if (jobsCv_.wait_for(lock, kSweepInterval, [this]() { return stopping_; })) {
+            if (stopCv_.wait_for(lock, kSweepInterval, [this]() { return stopping_; })) {
                 return;
             }
-        }  // release jobsMutex_ before touching storage (it takes its own lock)
+        }  // release stopMutex_ before touching storage (it takes its own lock)
         try {
             storage_.purgeExpired(nowSeconds() - options_.mailboxRetentionSeconds);
             // Token hashes outlive mail by design (a contact may write years
@@ -249,279 +196,6 @@ void HttpApi::wakeUser(const std::string& user)
 {
     if (eventGate_ != nullptr && !user.empty()) {
         eventGate_->notify(user);
-    }
-}
-
-void HttpApi::setAttempt(const std::string& attemptId, const Attempt& attempt)
-{
-    if (attemptId.empty()) {
-        return;  // a spool retry: nobody is polling it any more
-    }
-    std::string settledFor;
-    {
-        const std::lock_guard<std::mutex> lock(attemptsMutex_);
-        Attempt updated = attempt;
-        // A delivered-ack may already have marked this attempt delivered; never let
-        // a later job round downgrade it. Also keep the deliveryId so the index
-        // prunes, and the sender, so the wake below knows whom to wake.
-        const auto existing = attempts_.find(attemptId);
-        if (existing != attempts_.end()) {
-            if (existing->second.status == "delivered") {
-                return;
-            }
-            if (updated.deliveryId.empty()) {
-                updated.deliveryId = existing->second.deliveryId;
-            }
-            if (updated.user.empty()) {
-                updated.user = existing->second.user;
-            }
-        }
-        settledFor = updated.user;
-        attempts_[attemptId] = updated;
-    }
-    // The sender has been waiting on this since it handed the message over; the
-    // recipient's server answered synchronously, so the only thing left between
-    // that answer and the tick on their screen is this wake.
-    wakeUser(settledFor);
-}
-
-void HttpApi::setAttemptPhase(const std::string& attemptId, const std::string& phase)
-{
-    const std::lock_guard<std::mutex> lock(attemptsMutex_);
-    const auto found = attempts_.find(attemptId);
-    // Annotate only a still-pending attempt; never relabel or resurrect a terminal one.
-    if (found != attempts_.end() && found->second.status == "pending") {
-        found->second.phase = phase;
-    }
-}
-
-void HttpApi::markDeliveredByDeliveryId(const std::string& deliveryId)
-{
-    if (deliveryId.empty()) {
-        return;
-    }
-    std::unique_lock<std::mutex> lock(attemptsMutex_);
-    const auto idx = deliveryIdToAttempt_.find(deliveryId);
-    if (idx == deliveryIdToAttempt_.end()) {
-        return;
-    }
-    const auto found = attempts_.find(idx->second);
-    if (found == attempts_.end()) {
-        return;
-    }
-    // Upgrade an in-flight (or given-up) attempt to delivered; never override a
-    // terminal rejection ("failed").
-    std::string settledFor;
-    if (found->second.status == "pending" || found->second.status == "unconfirmed") {
-        found->second.status = "delivered";
-        found->second.completedAt = nowSeconds();
-        settledFor = found->second.user;
-    }
-    lock.unlock();
-    wakeUser(settledFor);
-}
-
-void HttpApi::deliveryWorkerLoop()
-{
-    for (;;) {
-        DeliveryJob job;
-        {
-            std::unique_lock<std::mutex> lock(jobsMutex_);
-            jobsCv_.wait(lock, [this]() { return stopping_ || !jobs_.empty(); });
-            if (stopping_ && jobs_.empty()) {
-                return;
-            }
-            job = std::move(jobs_.front());
-            jobs_.pop_front();
-        }
-        runDeliveryJob(job);
-    }
-}
-
-void HttpApi::runDeliveryJob(const DeliveryJob& job)
-{
-    // A foreign server may be momentarily unreachable while its I2P leaseset
-    // publishes; that is transient, so retry for a bounded time. Any other
-    // outcome (delivered, token rejected, too large, reachable-but-refused) is
-    // terminal. The attempt stays "pending" between rounds so a polling client
-    // keeps waiting instead of seeing a spurious failure.
-    const int kMaxRounds = options_.deliveryMaxRounds > 0 ? options_.deliveryMaxRounds : 1;
-    const std::string unreachableCode
-        = std::string(toString(ErrorCode::eRecipientServerUnreachable));
-    for (int round = 0; round < kMaxRounds; ++round) {
-        {
-            const std::lock_guard<std::mutex> lock(jobsMutex_);
-            if (stopping_) {
-                return;
-            }
-        }
-        {
-            // The recipient's signed delivered-ack may have already confirmed this
-            // send (the authoritative path); if so, stop retrying the unreliable
-            // synchronous reply.
-            const std::lock_guard<std::mutex> lock(attemptsMutex_);
-            const auto found = attempts_.find(job.attemptId);
-            if (found != attempts_.end() && found->second.status == "delivered") {
-                return;
-            }
-        }
-        Attempt attempt;
-        const std::int64_t now = nowSeconds();
-        if (job.senderServingKey && !job.senderDest.empty() && job.toDest == job.senderDest) {
-            const DeliveryEngine::Outcome outcome
-                = engine_.deliver(
-                    job.sealed, job.payload, now, *job.senderServingKey, job.senderUser);
-            attempt.status = outcome.delivered ? "delivered" : "failed";
-            attempt.errorCode = outcome.errorCode;
-            attempt.errorMessage = outcome.errorMessage;
-        } else {
-            RemoteDeliveryResult remote;
-            if (remoteDeliver_) {
-                // Surface each federation phase onto the attempt so a polling client
-                // sees real progress (dialing/connected/sending) while it is pending.
-                // The sender, not their address: the delivery goes out from a
-                // destination leased for this pair, and the sender's own address is
-                // only ever where mail comes in.
-                remote = remoteDeliver_(job.senderUser, job.toDest, job.sealed, job.payload,
-                    [this, &job](const std::string& phase) {
-                        setAttemptPhase(job.attemptId, phase);
-                    });
-            }
-            if (!remote.reachable) {
-                attempt.status = "failed";
-                attempt.errorCode = unreachableCode;
-                attempt.errorMessage = "recipient server could not be reached";
-            } else {
-                attempt.status = remote.delivered ? "delivered" : "failed";
-                attempt.errorCode = remote.errorCode;
-                attempt.errorMessage = remote.errorMessage;
-            }
-        }
-        const bool transient = attempt.status == "failed" && attempt.errorCode == unreachableCode;
-        if (!transient) {
-            // Delivered, or refused for a reason retrying cannot change: either way
-            // this server is done carrying it.
-            releaseSpooled(job.spoolId, /*keep=*/false, 0);
-            attempt.completedAt = now;
-            setAttempt(job.attemptId, attempt);
-            return;
-        }
-        // Transient (the recipient's leaseset/tunnels were momentarily bad, or the
-        // synchronous reply's return leg dropped on a flaky path - the message may
-        // well already be stored, the dedup makes a re-delivery harmless): surface a
-        // "retrying" phase so a polling client shows real progress, then wait with a
-        // capped backoff before the next round (so the retry window spans minutes and
-        // catches the path's recovery without the client needing a manual resend).
-        setAttemptPhase(job.attemptId,
-            "retry " + std::to_string(round + 1) + "/" + std::to_string(kMaxRounds));
-        const auto backoff = retryBackoff(round);
-        std::unique_lock<std::mutex> lock(jobsMutex_);
-        if (jobsCv_.wait_for(lock, backoff, [this]() { return stopping_; })) {
-            return;
-        }
-    }
-    // Retries exhausted while the recipient stayed unreachable. This is NOT a
-    // delivery failure: the envelope may well have been stored on the recipient
-    // (its acknowledgement could have been lost on the return leg), so reporting
-    // "failed" here would be a false negative. Mark it "unconfirmed" - the client
-    // keeps the message grey ("at your server"); a read receipt later confirms it
-    // (green). completedAt is set so the attempt prunes normally. A true failure
-    // (token rejected, too large, refused) is terminal above and is the only path
-    // to a red "failed".
-    // The envelope itself stays spooled: the recipient may simply be offline, and
-    // the retry rounds above span half a minute where a client can be away for
-    // days. The spool keeps trying with a widening gap until it is delivered or the
-    // retention window runs out.
-    releaseSpooled(job.spoolId, /*keep=*/true, nowSeconds());
-    Attempt unconfirmed;
-    unconfirmed.status = "unconfirmed";
-    unconfirmed.completedAt = nowSeconds();
-    setAttempt(job.attemptId, unconfirmed);
-}
-
-void HttpApi::releaseSpooled(
-    const std::string& spoolId, const bool keep, const std::int64_t now)
-{
-    if (spoolId.empty()) {
-        return;
-    }
-    {
-        const std::lock_guard<std::mutex> lock(jobsMutex_);
-        spoolInFlight_.erase(spoolId);
-    }
-    try {
-        if (!keep) {
-            storage_.removeOutbound(spoolId);
-            return;
-        }
-        // Count this whole run of rounds as one attempt, and wait longer before the
-        // next: a recipient who is away stays away for minutes at a time, and there
-        // is nothing to gain from asking every few seconds for days.
-        int attempts = 0;
-        for (const Storage::OutboundEntry& entry : storage_.listOutbound()) {
-            if (entry.id == spoolId) {
-                attempts = entry.attempts + 1;
-                break;
-            }
-        }
-        storage_.updateOutbound(spoolId, attempts, now + spoolBackoff(attempts).count());
-    } catch (const std::exception& error) {
-        // The send is still in the spool either way; the loop picks it up again.
-        bazarish::log::warn("outbound spool not updated: {}", error.what());
-    }
-}
-
-void HttpApi::outboundSpoolLoop()
-{
-    for (;;) {
-        {
-            std::unique_lock<std::mutex> lock(jobsMutex_);
-            if (jobsCv_.wait_for(lock, kSpoolPollInterval, [this]() { return stopping_; })) {
-                return;
-            }
-        }  // release jobsMutex_ before touching storage (it takes its own lock)
-        try {
-            const std::int64_t now = nowSeconds();
-            for (const Storage::OutboundEntry& entry : storage_.listOutbound()) {
-                if (entry.attempts >= static_cast<int>(kSpoolBackoffSeconds.size())) {
-                    // Given up on. The sender is told which message it was, so it
-                    // shows the failure and can send it again whenever it likes -
-                    // rather than this node carrying other people's mail for days.
-                    bazarish::log::warn(
-                        "undelivered send to {} given up on after {} attempts over {} s",
-                        bazarish::log::redact(entry.toDest), entry.attempts,
-                        now - entry.queuedAt);
-                    if (!entry.deliveryId.empty() && !entry.senderUser.empty()) {
-                        storage_.noteUndelivered(entry.senderUser, entry.deliveryId);
-                    }
-                    storage_.removeOutbound(entry.id);
-                    continue;
-                }
-                if (entry.nextAttemptAt > now) {
-                    continue;  // not due yet
-                }
-                // The destination this account sends from, as it stands now: a
-                // rotation since the send was accepted must not send it from an
-                // address that no longer exists.
-                const DestinationAssignment sender = options_.assignDestination
-                    ? options_.assignDestination(entry.senderUser)
-                    : DestinationAssignment{};
-                {
-                    const std::lock_guard<std::mutex> lock(jobsMutex_);
-                    if (stopping_ || !spoolInFlight_.insert(entry.id).second) {
-                        continue;  // already queued or in a worker's hands
-                    }
-                    // A retry carries no attempt id: the client stopped polling long
-                    // ago, and a read receipt is what confirms it now.
-                    jobs_.push_back(DeliveryJob{std::string(), entry.id, entry.toDest,
-                        entry.sealed, entry.payload, entry.senderDest, entry.senderUser,
-                        sender.servingKey});
-                }
-                jobsCv_.notify_all();
-            }
-        } catch (const std::exception& error) {
-            bazarish::log::warn("outbound spool sweep failed: {}", error.what());
-        }
     }
 }
 
@@ -1001,45 +675,6 @@ void HttpApi::setupRoutes()
 
     // --- Pending content ---
 
-    // What this server is still trying to deliver for this sender, and how far
-    // along each one is: the client shows the attempt count on the message itself
-    // so a send that is taking a while says what is happening to it.
-    http_->get("/v1/messaging/outbound",
-        authenticated([&store](const bazarish::http::Request& request,
-                          const std::string& user) -> bazarish::http::Response {
-            (void)request;
-            nlohmann::json waiting = nlohmann::json::array();
-            for (const Storage::OutboundEntry& entry : store.listOutbound()) {
-                if (entry.senderUser != user || entry.deliveryId.empty()) {
-                    continue;
-                }
-                waiting.push_back({{"deliveryId", entry.deliveryId}, {"attempts", entry.attempts},
-                    {"of", static_cast<int>(kSpoolBackoffSeconds.size())}});
-            }
-            return jsonResponse({{"outbound", waiting}});
-        }));
-
-    // Sends this server carried as far as it could and then gave up on. The client
-    // asks on every sync, shows them as failed, and clears each one as it takes it -
-    // so a message is reported once and the decision to send it again is the user's.
-    http_->get("/v1/messaging/undelivered",
-        authenticated([&store](const bazarish::http::Request& request,
-                          const std::string& user) -> bazarish::http::Response {
-            (void)request;
-            nlohmann::json ids = nlohmann::json::array();
-            for (const std::string& deliveryId : store.listUndelivered(user)) {
-                ids.push_back(deliveryId);
-            }
-            return jsonResponse({{"undelivered", ids}});
-        }));
-
-    http_->del(R"(/v1/messaging/undelivered/([A-Za-z0-9_-]+))",
-        authenticated([&store](const bazarish::http::Request& request,
-                          const std::string& user) -> bazarish::http::Response {
-            store.clearUndelivered(user, request.captures.at(0));
-            return jsonResponse({{"ok", true}});
-        }));
-
     http_->get("/v1/messaging/pending",
         authenticated([&store, requireClient, clientUnregistered](const bazarish::http::Request& request,
                           const std::string& user) -> bazarish::http::Response {
@@ -1122,127 +757,6 @@ void HttpApi::setupRoutes()
                 wakeUser(user);
             }
             return jsonResponse({{"ok", true}});
-        }));
-
-    http_->post("/v1/messaging/send",
-        authenticated([this, requireClient, clientUnregistered](const bazarish::http::Request& request,
-                          const std::string& user) -> bazarish::http::Response {
-            if (requireClient(request, user).empty()) {
-                return clientUnregistered();
-            }
-            if (request.body.size() > options_.perMessageLimitBytes) {
-                return errorResponse(413, ErrorCode::eQuotaExceeded,
-                    "envelope exceeds the per-message limit of "
-                        + std::to_string(options_.perMessageLimitBytes) + " bytes");
-            }
-            const nlohmann::json body = nlohmann::json::parse(request.body);
-            const std::string toDest = body.at("toDest").get<std::string>();
-            // Routing target must be a full .b32.i2p host (no raw destinations,
-            // no addressbook names). Rejected as a 400 by the wrapper.
-            validateB32I2pHost(toDest);
-            const Bytes sealed = fromBase64(body.at("sealed").get<std::string>());
-            const Bytes payload = fromBase64(body.at("payload").get<std::string>());
-            // The delivery deliveryId (also sealed inside the envelope, where only
-            // the recipient server can read it): the client passes it in the clear
-            // so we can correlate the recipient's signed delivered-ack back to this
-            // attempt. Optional for older clients (then there is no amber, only the
-            // grey/green it already had).
-            const std::string deliveryId = body.value("deliveryId", std::string());
-
-            const std::int64_t now = nowSeconds();
-            // Routed by destination. Local short-circuit ONLY when toDest is the
-            // sender's own destination (same i2p destination): then the recipient
-            // shares that destination, so a local store leaks no co-location. Any
-            // other destination - including a recipient this server hosts on a
-            // different destination - is federated, so delivery latency cannot
-            // distinguish a local recipient from a remote one. Resolved here, on
-            // the request thread, from the authenticated caller.
-            const DestinationAssignment sender
-                = options_.assignDestination ? options_.assignDestination(user) : DestinationAssignment{};
-
-            // Accept the envelope into the outbound buffer and hand it to a
-            // background worker (store-and-forward): this POST returns at once
-            // (the "grey"/at-our-server state) and federation - with its own
-            // retries for a recipient whose leaseset is still publishing - runs
-            // off the request thread. The client polls the attempt for the
-            // delivered/failed outcome instead of blocking this request on I2P.
-            const std::string attemptId = toHex(randomBytes(16));
-            {
-                const std::lock_guard<std::mutex> lock(attemptsMutex_);
-                // Lazy pruning keeps the in-memory map bounded; there is
-                // deliberately no persistent outbound state. A still-pending
-                // attempt is never pruned (its delivery is in flight).
-                for (auto it = attempts_.begin(); it != attempts_.end();) {
-                    if (it->second.status != "pending"
-                        && it->second.completedAt + options_.attemptRetentionSeconds < now) {
-                        if (!it->second.deliveryId.empty()) {
-                            deliveryIdToAttempt_.erase(it->second.deliveryId);
-                        }
-                        it = attempts_.erase(it);
-                    } else {
-                        ++it;
-                    }
-                }
-                Attempt pending;
-                pending.user = user;
-                pending.status = "pending";
-                pending.phase = "queued";  // until the delivery worker starts dialing
-                pending.deliveryId = deliveryId;
-                attempts_[attemptId] = pending;
-                if (!deliveryId.empty()) {
-                    deliveryIdToAttempt_[deliveryId] = attemptId;
-                }
-            }
-            // Spooled before it is queued: the recipient may be offline for far
-            // longer than the rounds below, and an envelope held only in memory is
-            // one the sender was told had been accepted and that nobody has any
-            // more.
-            std::string spoolId;
-            if (options_.spoolUndelivered) {
-                Storage::OutboundEntry entry;
-                entry.deliveryId = deliveryId;
-                entry.toDest = toDest;
-                entry.sealed = sealed;
-                entry.payload = payload;
-                entry.senderDest = sender.dest;
-                entry.senderUser = user;
-                entry.queuedAt = now;
-                entry.nextAttemptAt = now;
-                spoolId = storage_.queueOutbound(entry);
-            }
-            {
-                const std::lock_guard<std::mutex> lock(jobsMutex_);
-                if (!spoolId.empty()) {
-                    spoolInFlight_.insert(spoolId);
-                }
-                jobs_.push_back(DeliveryJob{attemptId, spoolId, toDest, sealed, payload,
-                    sender.dest, user, sender.servingKey});
-            }
-            jobsCv_.notify_all();
-            return jsonResponse({{"attemptId", attemptId}, {"status", "pending"}});
-        }));
-
-    http_->get(R"(/v1/messaging/send/([a-f0-9]+))",
-        authenticated([this](const bazarish::http::Request& request,
-                          const std::string& user) -> bazarish::http::Response {
-            (void)user;
-            const std::lock_guard<std::mutex> lock(attemptsMutex_);
-            const auto found = attempts_.find(request.captures.at(0));
-            if (found == attempts_.end()) {
-                return errorResponse(404, ErrorCode::eAttemptUnknown,
-                    "attempt is not known (expired or server restarted)");
-            }
-            nlohmann::json result = {{"status", found->second.status}};
-            if (!found->second.phase.empty()) {
-                result["phase"] = found->second.phase;
-            }
-            if (!found->second.errorCode.empty()) {
-                result["error"] = {
-                    {"code", found->second.errorCode},
-                    {"message", found->second.errorMessage},
-                };
-            }
-            return jsonResponse(result);
         }));
 
     // First-contact discovery proxy (fallback for a client without its own I2P transport):

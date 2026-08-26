@@ -447,11 +447,6 @@ void PerUserDestinations::setGetCard(GetCardFn getCard)
     getCard_ = std::move(getCard);
 }
 
-void PerUserDestinations::setOnAck(OnAckFn onAck)
-{
-    onAck_ = std::move(onAck);
-}
-
 std::shared_ptr<bazarish::i2p::Endpoint> PerUserDestinations::endpointForDest(
     const std::string& dest) const
 {

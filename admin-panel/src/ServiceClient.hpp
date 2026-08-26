@@ -32,10 +32,10 @@ struct HealthResult {
     std::uint64_t requestsLastHour = 0;
     std::uint64_t requestsLastDay = 0;
     std::uint64_t inFlight = 0;
-    // Server-core only: the warm outbound pool an operator watches for load.
+    // Server-core only: the warm pool its contact-card lookups dial from, which
+    // an operator watches for load.
     std::uint64_t warmPoolReady = 0;
     std::uint64_t warmPoolTarget = 0;
-    std::uint64_t outboundLeases = 0;
 };
 
 // Every call is signed with the panel identity (hybrid request auth); the service

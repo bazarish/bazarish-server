@@ -267,6 +267,13 @@ int main()
         CHECK(!grants.peekApproval(alice.fingerprint()).has_value());
         CHECK(forgottenMailbox == alice.fingerprint());
 
+        // Asking again is answered the same way. It is what a client sees when an
+        // operator deleted the account first: nothing to end, and no reason to
+        // refuse - a refusal would leave a profile nobody can ever clean up.
+        const http::ClientResponse again = call(port, "DELETE", "/v1/account/registration",
+            makeHeaders(alice, "DELETE", "/v1/account/registration", ""));
+        CHECK(again.status == 200);
+
         const std::string body
             = nlohmann::json{{"transient", "after-closing"}, {"expiresUnix", now + 3600}}.dump();
         const http::ClientResponse orphan = call(port, "POST", "/v1/account/i2p-dest",

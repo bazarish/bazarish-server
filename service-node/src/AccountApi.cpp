@@ -216,6 +216,13 @@ void AccountApi::revokeDestination(const std::string& user)
 
 void AccountApi::deleteAccount(const std::string& user)
 {
+    if (!grants_.peekApproval(user).has_value() && !store_.getAccount(user).has_value()) {
+        // Nothing here to end: an operator got there first, or this key never had
+        // an account. Answered like a deletion all the same - the caller must be
+        // able to finish, or it is left holding a profile it can never clean up -
+        // but there is no destination to revoke and no mailbox to drop.
+        return;
+    }
     revokeDestination(user);
     // The mail is the messaging server's, so it has to be told separately. Told
     // before the local record goes: while the record is here the deletion can be

@@ -5,18 +5,19 @@ service-node, facade-http, alias-resolver).
 
 ## Authentication
 
-Access is gated to **one** Bazarish identity. There are no passwords and no
-account database: the operator pastes their own fingerprint into the config, and
-logging in is done by signing a challenge with the client.
+Access is restricted to the configured Bazarish identities. There are no passwords
+and no account database: the operator places their own fingerprint in the
+configuration, and signing in consists of signing a challenge with the client.
 
-1. Read your fingerprint: `bazarish-client whoami <account>` and put it in the
-   config `admin` field.
-2. Open `/login`; the page shows a challenge.
-3. Sign it in your client: `bazarish-client sign-login <account> <challenge>`.
-4. Paste the resulting blob back. The panel verifies the hybrid signature
-   **locally** against the configured admin fingerprints and starts a session.
+1. Obtain the fingerprint: `bazarish-client whoami <account>`, and enter it in the
+   configuration field `admin`.
+2. Open `/login`; the page presents a challenge.
+3. Sign the challenge: `bazarish-client sign-login <account> <challenge>`.
+4. Submit the resulting blob. The panel verifies the hybrid signature **locally**
+   against the configured admin fingerprints and starts a session.
 
-The login needs no backend online - the panel is the verifier. The challenge is
+Signing in requires no backend to be running: the panel performs the
+verification. The challenge is
 single-use and bound to this panel's audience, so a login blob captured anywhere
 else cannot be replayed here.
 

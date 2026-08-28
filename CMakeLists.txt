@@ -12,6 +12,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # same variable falls back to a sibling checkout of the common repository.
 set(BAZARISH_COMMON_DIR "${CMAKE_CURRENT_SOURCE_DIR}/common" CACHE PATH
     "Path to the bazarish common library repository")
+# No server here is a client: the client core in common, and the libraries only
+# it needs, stay out of this build entirely.
+set(BAZARISH_WITH_CLIENT OFF CACHE BOOL "Build the client core library" FORCE)
 add_subdirectory(${BAZARISH_COMMON_DIR} bazarish-common)
 
 enable_testing()

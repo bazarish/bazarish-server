@@ -25,6 +25,11 @@ the file. Each component ships a `config.example.json`.
 
 ## Building
 
+The target platform is **Debian 13**: that is what these components are built,
+tested and deployed on, and the only one their behaviour is stated for. They are
+server processes and are not meant to run anywhere else - the desktop client is
+the part that goes wherever the user is.
+
 ```
 git clone --recurse-submodules https://github.com/bazarish/bazarish-server
 cmake -S bazarish-server -B build

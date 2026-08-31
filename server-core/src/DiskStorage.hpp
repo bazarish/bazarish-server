@@ -29,9 +29,10 @@ public:
     std::vector<std::string> listClients(const std::string& user) override;
     bool isClientRegistered(const std::string& user, const std::string& clientId) override;
 
-    void registerTokenHashes(const std::string& user, const std::vector<Bytes>& hashes) override;
-    bool consumeTokenHash(const std::string& user, const Bytes& hash) override;
-    std::size_t tokenHashCount(const std::string& user) override;
+    void registerTokens(const std::string& user, const std::vector<Bytes>& tokens) override;
+    bool consumeToken(const std::string& user, const Bytes& token) override;
+    std::size_t tokenCount(const std::string& user) override;
+    std::size_t revokeTokens(const std::string& user, const Bytes& mask) override;
 
     PutResult putBlob(const std::string& user, const std::string& blobId, const Bytes& data,
         const std::string& deliveryClass, std::int64_t receivedAt, std::uint64_t quotaBytes,

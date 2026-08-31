@@ -10,6 +10,7 @@
 #include <bazarish/Crypto.hpp>
 #include <bazarish/Errors.hpp>
 #include <bazarish/Limits.hpp>
+#include <bazarish/Tokens.hpp>
 #include <bazarish/Health.hpp>
 #include <bazarish/I2pAddress.hpp>
 
@@ -91,10 +92,10 @@ HttpApi::HttpApi(Storage& storage, DeliveryEngine& engine, const HttpApiOptions 
     , options_(options)
     , startedAt_(nowSeconds())
 {
-    // Mailbox TTL backstop sweep (skipped entirely when retention is disabled).
-    if (options_.mailboxRetentionSeconds > 0) {
-        janitorThread_ = std::thread([this]() { mailboxJanitorLoop(); });
-    }
+    // One thread for the node: the mailbox TTL backstop sweep, and the token
+    // revocations users ask for. It runs even with retention disabled, because a
+    // revocation is not housekeeping - somebody is waiting for it.
+    janitorThread_ = std::thread([this]() { mailboxJanitorLoop(); });
 }
 
 HttpApi::~HttpApi()
@@ -162,26 +163,60 @@ void HttpApi::stopWorkers()
     }
 }
 
+void HttpApi::queueRevocation(const std::string& user, Bytes mask)
+{
+    {
+        const std::lock_guard<std::mutex> lock(stopMutex_);
+        revocations_.push_back(Revocation{user, std::move(mask)});
+    }
+    stopCv_.notify_all();
+}
+
 void HttpApi::mailboxJanitorLoop()
 {
     // Hourly is ample for a day-scale TTL: a reclaimed blob is freed within an
     // hour of crossing the retention window.
     constexpr std::chrono::seconds kSweepInterval{3600};
     for (;;) {
+        std::vector<Revocation> asked;
+        bool sweepDue = false;
         {
             std::unique_lock<std::mutex> lock(stopMutex_);
-            // Sleep one interval, but return at once on shutdown (notify_all).
-            if (stopCv_.wait_for(lock, kSweepInterval, [this]() { return stopping_; })) {
+            // Sleep one interval, but return at once on shutdown and wake early
+            // for a revocation somebody asked for (notify_all on both).
+            const bool woken = stopCv_.wait_for(lock, kSweepInterval,
+                [this]() { return stopping_ || !revocations_.empty(); });
+            if (stopping_) {
                 return;
             }
+            asked.swap(revocations_);
+            // Nothing woke us: the interval is what elapsed, so the sweep is due.
+            sweepDue = !woken;
         }  // release stopMutex_ before touching storage (it takes its own lock)
+        // Revocations first: every one of them is a user who has just cut
+        // somebody off and expects it to hold.
+        for (const Revocation& one : asked) {
+            try {
+                const std::size_t dropped = storage_.revokeTokens(one.user, one.mask);
+                bazarish::log::info("revoked {} delivery token(s) for {}", dropped,
+                    bazarish::log::redact(one.user));
+            } catch (const std::exception& error) {
+                // Said out loud: the tokens are still spendable, and the user
+                // believes they are not.
+                bazarish::log::warn("token revocation failed for {}: {}",
+                    bazarish::log::redact(one.user), error.what());
+            }
+        }
+        if (!sweepDue || options_.mailboxRetentionSeconds <= 0) {
+            continue;
+        }
         try {
             storage_.purgeExpired(nowSeconds() - options_.mailboxRetentionSeconds);
-            // Token hashes outlive mail by design (a contact may write years
-            // later), but not forever.
+            // Tokens outlive mail by design (a contact may write years later),
+            // but not forever.
             constexpr std::int64_t kSecondsPerDay = 24 * 3600;
             storage_.purgeTokensRegisteredBefore(
-                bazarish::kTokenHashRetentionDays * kSecondsPerDay);
+                bazarish::kTokenRetentionDays * kSecondsPerDay);
         } catch (const std::exception& error) {
             // Best-effort housekeeping; a sweep failure must never crash the node -
             // but a sweep that never succeeds fills the disk, so it is reported.
@@ -659,7 +694,7 @@ void HttpApi::setupRoutes()
             }
         });
 
-    // --- Token hashes ---
+    // --- Delivery tokens ---
 
     http_->post("/v1/messaging/tokens",
         authenticated([&store, requireClient, clientUnregistered](const bazarish::http::Request& request,
@@ -668,16 +703,34 @@ void HttpApi::setupRoutes()
                 return clientUnregistered();
             }
             const nlohmann::json body = nlohmann::json::parse(request.body);
-            std::vector<Bytes> hashes;
-            for (const nlohmann::json& entry : body.at("hashes")) {
-                Bytes hash = fromBase64(entry.get<std::string>());
-                if (hash.size() != kFingerprintBytes) {
-                    throw std::invalid_argument("token hash has wrong size");
+            std::vector<Bytes> tokens;
+            for (const nlohmann::json& entry : body.at("tokens")) {
+                Bytes token = fromBase64(entry.get<std::string>());
+                if (token.size() != kDeliveryTokenSize) {
+                    throw std::invalid_argument("delivery token has wrong size");
                 }
-                hashes.push_back(std::move(hash));
+                tokens.push_back(std::move(token));
             }
-            store.registerTokenHashes(user, hashes);
+            store.registerTokens(user, tokens);
             return jsonResponse({{"ok", true}});
+        }));
+
+    // Revoking what one correspondent holds. The user hands over the mask their
+    // tokens were minted under; the sweep it needs walks every token they have,
+    // so it is queued for the node's own thread and this answers at once.
+    http_->post("/v1/messaging/tokens/revoke",
+        authenticated([this, requireClient, clientUnregistered](const bazarish::http::Request& request,
+                          const std::string& user) -> bazarish::http::Response {
+            if (requireClient(request, user).empty()) {
+                return clientUnregistered();
+            }
+            const nlohmann::json body = nlohmann::json::parse(request.body);
+            Bytes mask = fromBase64(body.at("mask").get<std::string>());
+            if (mask.size() != kDeliveryTokenSize) {
+                throw std::invalid_argument("delivery mask has wrong size");
+            }
+            queueRevocation(user, std::move(mask));
+            return jsonResponse({{"queued", true}});
         }));
 
     // --- Pending content ---

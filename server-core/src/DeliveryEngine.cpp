@@ -132,8 +132,7 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
                 "contact request exceeds " + std::to_string(kMaxContactRequestBytes) + " bytes");
         }
     } else {
-        if (token.size() != kDeliveryTokenSize
-            || !storage_.consumeTokenHash(mailbox, deliveryTokenHash(token))) {
+        if (token.size() != kDeliveryTokenSize || !storage_.consumeToken(mailbox, token)) {
             return fail(ErrorCode::eDeliveryRejected, "delivery rejected");
         }
     }
@@ -144,7 +143,7 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
         if (deliveryClass == "content") {
             // The store did not happen: restore the token so the sender
             // can retry after the recipient frees space.
-            storage_.registerTokenHashes(mailbox, {deliveryTokenHash(token)});
+            storage_.registerTokens(mailbox, {token});
             return fail(ErrorCode::eStorageFull, "recipient storage quota is exhausted");
         }
         return fail(ErrorCode::eDeliveryRejected, "delivery rejected");

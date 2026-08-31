@@ -2,10 +2,13 @@
 #include "DiskStorage.hpp"
 
 #include <bazarish/Address.hpp>
+#include <bazarish/Log.hpp>
+#include <bazarish/Tokens.hpp>
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <fstream>
 #include <stdexcept>
@@ -85,6 +88,22 @@ nlohmann::json readJsonFile(const fs::path& path)
 
 }  // namespace
 
+namespace {
+
+// What this server writes into a user's token directory: the token in hex, and
+// nothing else.
+bool isTokenFileName(const std::string& name)
+{
+    if (name.size() != bazarish::kDeliveryTokenSize * 2) {
+        return false;
+    }
+    return std::all_of(name.begin(), name.end(), [](const unsigned char c) {
+        return std::isxdigit(c) != 0;
+    });
+}
+
+}  // namespace
+
 namespace bazarish::server {
 
 DiskStorage::DiskStorage(const fs::path& root)
@@ -136,33 +155,66 @@ bool DiskStorage::isClientRegistered(const std::string& user, const std::string&
     return fs::exists(userDir(user) / "clients" / clientId);
 }
 
-void DiskStorage::registerTokenHashes(const std::string& user, const std::vector<Bytes>& hashes)
+void DiskStorage::registerTokens(const std::string& user, const std::vector<Bytes>& tokens)
 {
     requireUser(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     const fs::path dir = userDir(user) / "tokens";
     fs::create_directories(dir);
-    for (const Bytes& hash : hashes) {
-        writeFileAtomic(dir / toHex(hash), "", 0);
+    for (const Bytes& token : tokens) {
+        writeFileAtomic(dir / toHex(token), "", 0);
     }
 }
 
-bool DiskStorage::consumeTokenHash(const std::string& user, const Bytes& hash)
+bool DiskStorage::consumeToken(const std::string& user, const Bytes& token)
 {
     requireUser(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     std::error_code error;
     // remove() returns true only when the entry existed: exactly the
     // consume-once semantics one-time tokens need.
-    return fs::remove(userDir(user) / "tokens" / toHex(hash), error) && !error;
+    return fs::remove(userDir(user) / "tokens" / toHex(token), error) && !error;
 }
 
 
-std::size_t DiskStorage::tokenHashCount(const std::string& user)
+std::size_t DiskStorage::tokenCount(const std::string& user)
 {
     requireUser(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     return listDirectoryNames(userDir(user) / "tokens").size();
+}
+
+std::size_t DiskStorage::revokeTokens(const std::string& user, const Bytes& mask)
+{
+    requireUser(user);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const fs::path dir = userDir(user) / "tokens";
+    std::size_t dropped = 0;
+    std::size_t foreign = 0;
+    for (const std::string& name : listDirectoryNames(dir)) {
+        // A name that is not a token was not written by this server. It is left
+        // alone rather than guessed at - and counted, because something else
+        // writing into a mailbox's token directory is worth hearing about. The
+        // shape is checked rather than tried, so a strange name is a fact here
+        // and not an exception to swallow.
+        if (!isTokenFileName(name)) {
+            ++foreign;
+            continue;
+        }
+        const Bytes token = fromHex(name);
+        if (!deliveryTokenMatches(token, mask)) {
+            continue;
+        }
+        std::error_code error;
+        if (fs::remove(dir / name, error) && !error) {
+            ++dropped;
+        }
+    }
+    if (foreign > 0) {
+        bazarish::log::warn("{} entr(ies) in the token directory of {} are not tokens",
+            foreign, bazarish::log::redact(user));
+    }
+    return dropped;
 }
 
 Storage::PutResult DiskStorage::putBlob(const std::string& user, const std::string& blobId,

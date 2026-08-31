@@ -72,19 +72,38 @@ int main()
     CHECK(storage.isClientRegistered(alice, "client1"));
     CHECK(storage.listClients(alice).size() == 2);
 
-    // --- Token hashes ---
-    const Bytes token1 = generateDeliveryToken();
-    const Bytes token2 = generateDeliveryToken();
-    storage.registerTokenHashes(alice, {deliveryTokenHash(token1), deliveryTokenHash(token2)});
-    CHECK(storage.tokenHashCount(alice) == 2);
-    CHECK(storage.consumeTokenHash(alice, deliveryTokenHash(token1)));
-    // One-time: the second consume of the same hash fails.
-    CHECK(!storage.consumeTokenHash(alice, deliveryTokenHash(token1)));
-    CHECK(storage.tokenHashCount(alice) == 1);
-    // The other one is spent the same way, and a spent hash is gone for good.
-    CHECK(storage.consumeTokenHash(alice, deliveryTokenHash(token2)));
-    CHECK(storage.tokenHashCount(alice) == 0);
-    CHECK(!storage.consumeTokenHash(alice, deliveryTokenHash(token2)));
+    // --- Delivery tokens ---
+    const Bytes secret = randomBytes(kDeliverySecretSize);
+    const Bytes forBob = deliveryTokenMask(secret, std::string(52, 'b'));
+    const Bytes token1 = generateDeliveryToken(forBob);
+    const Bytes token2 = generateDeliveryToken(forBob);
+    storage.registerTokens(alice, {token1, token2});
+    CHECK(storage.tokenCount(alice) == 2);
+    CHECK(storage.consumeToken(alice, token1));
+    // One-time: the second consume of the same token fails.
+    CHECK(!storage.consumeToken(alice, token1));
+    CHECK(storage.tokenCount(alice) == 1);
+    // The other one is spent the same way, and a spent token is gone for good.
+    CHECK(storage.consumeToken(alice, token2));
+    CHECK(storage.tokenCount(alice) == 0);
+    CHECK(!storage.consumeToken(alice, token2));
+
+    // --- Revoking one correspondent's tokens ---
+    const Bytes forCarol = deliveryTokenMask(secret, std::string(52, 'c'));
+    std::vector<Bytes> mixed;
+    for (int i = 0; i < 8; ++i) {
+        mixed.push_back(generateDeliveryToken(forBob));
+        mixed.push_back(generateDeliveryToken(forCarol));
+    }
+    storage.registerTokens(alice, mixed);
+    CHECK(storage.tokenCount(alice) == 16);
+    CHECK(storage.revokeTokens(alice, forBob) == 8);
+    CHECK(storage.tokenCount(alice) == 8);
+    // Bob's are refused now; Carol's still spend.
+    CHECK(!storage.consumeToken(alice, mixed[0]));
+    CHECK(storage.consumeToken(alice, mixed[1]));
+    // Revoking the same mask twice drops nothing more.
+    CHECK(storage.revokeTokens(alice, forBob) == 0);
 
     // --- Pending content: put, dedup, quota ---
     const Bytes blob(100, 0xab);
@@ -156,7 +175,7 @@ int main()
     CHECK(storage.listPending(bob, "bclient").empty());
     CHECK(!storage.hasSeen(bob, "nonce-fresh"));
     CHECK(!storage.isClientRegistered(bob, "bclient"));
-    CHECK(storage.tokenHashCount(bob) == 0);
+    CHECK(storage.tokenCount(bob) == 0);
 
     // --- Per-user storage quota override ---
     const std::string dave = makeUser(0x42);

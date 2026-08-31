@@ -179,7 +179,7 @@ int main()
 
     // Messaging endpoints demand a registered client ID.
     {
-        const std::string body = nlohmann::json{{"hashes", nlohmann::json::array()}}.dump();
+        const std::string body = nlohmann::json{{"tokens", nlohmann::json::array()}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/messaging/tokens",
             makeHeaders(alice, "POST", "/v1/messaging/tokens", body, "unknowndev"), body);
         CHECK(result.status == 403);
@@ -187,19 +187,50 @@ int main()
             == "CLIENT_UNREGISTERED");
     }
 
-    // Alice registers two one-time token hashes.
-    const Bytes token1 = generateDeliveryToken();
-    const Bytes token2 = generateDeliveryToken();
+    // Alice registers two one-time tokens, minted under one correspondent's mask.
+    const Bytes aliceSecret = randomBytes(kDeliverySecretSize);
+    const Bytes forBob = deliveryTokenMask(aliceSecret, std::string(52, 'b'));
+    const Bytes token1 = generateDeliveryToken(forBob);
+    const Bytes token2 = generateDeliveryToken(forBob);
     {
         const std::string body = nlohmann::json{
-            {"hashes",
-                {toBase64(deliveryTokenHash(token1)), toBase64(deliveryTokenHash(token2))}},
+            {"tokens", {toBase64(token1), toBase64(token2)}},
         }.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/messaging/tokens",
             makeHeaders(alice, "POST", "/v1/messaging/tokens", body, "alicedev"), body);
         CHECK(result.status == 200);
     }
-    CHECK(storage.tokenHashCount(alice.fingerprint()) == 2);
+    CHECK(storage.tokenCount(alice.fingerprint()) == 2);
+
+    // Revoking one correspondent: Alice registers a second batch under Carol's
+    // mask, asks for Bob's to go, and only Bob's do. The request answers before
+    // the sweep runs, so the count is waited for rather than asserted at once.
+    {
+        const Bytes forCarol = deliveryTokenMask(aliceSecret, std::string(52, 'c'));
+        const Bytes carolToken = generateDeliveryToken(forCarol);
+        storage.registerTokens(alice.fingerprint(), {carolToken});
+        CHECK(storage.tokenCount(alice.fingerprint()) == 3);
+
+        const std::string body = nlohmann::json{{"mask", toBase64(forBob)}}.dump();
+        const http::ClientResponse result = call(port, "POST", "/v1/messaging/tokens/revoke",
+            makeHeaders(alice, "POST", "/v1/messaging/tokens/revoke", body, "alicedev"), body);
+        CHECK(result.status == 200);
+        CHECK(nlohmann::json::parse(result.body).at("queued") == true);
+
+        // The node's own thread does the work; it has a second to get to it.
+        constexpr int kWaitMs = 1000;
+        constexpr int kStepMs = 10;
+        for (int waited = 0; waited < kWaitMs && storage.tokenCount(alice.fingerprint()) > 1;
+            waited += kStepMs) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(kStepMs));
+        }
+        CHECK(storage.tokenCount(alice.fingerprint()) == 1);
+        // What survived is Carol's, and it still spends.
+        CHECK(storage.consumeToken(alice.fingerprint(), carolToken));
+        // Bob's tokens are gone: re-register them so the delivery below still has
+        // one to spend.
+        storage.registerTokens(alice.fingerprint(), {token1, token2});
+    }
 
     // A delivery into Alice's mailbox, as her correspondent's client makes it:
     // dialled to the destination she is served on, admitted by the engine on the
@@ -211,7 +242,7 @@ int main()
             {"deliveryId", "msg-1"}});
     const Key engineSealing = Key::fromPrivatePem(serverSealing.privatePem());
     CHECK(engine.deliver(envelope, payload, kNow, engineSealing, alice.fingerprint()).delivered);
-    CHECK(storage.tokenHashCount(alice.fingerprint()) == 1);
+    CHECK(storage.tokenCount(alice.fingerprint()) == 1);
 
     // Alice sees the message, fetches it and acks it away.
     {
@@ -353,7 +384,7 @@ int main()
         CHECK(deleted.status == 200);
         CHECK(storage.usage(alice.fingerprint()) == 0);
         CHECK(storage.listClients(alice.fingerprint()).empty());
-        CHECK(storage.tokenHashCount(alice.fingerprint()) == 0);
+        CHECK(storage.tokenCount(alice.fingerprint()) == 0);
         // Idempotent: a fingerprint this server holds nothing for is already in
         // the state the deletion asks for.
         CHECK(call(port, "DELETE", path,

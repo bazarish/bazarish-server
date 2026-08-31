@@ -31,14 +31,23 @@ public:
     virtual std::vector<std::string> listClients(const std::string& user) = 0;
     virtual bool isClientRegistered(const std::string& user, const std::string& clientId) = 0;
 
-    // --- One-time delivery token hashes ---
+    // --- One-time delivery tokens ---
+    //
+    // The tokens themselves are held, not their hashes: every token carries,
+    // under the mask it was minted with, the mark that says which mask that was,
+    // and revoking a correspondent means sweeping for that mark. A hash would
+    // hide it. The consequence is deliberate: what is stored here can be spent,
+    // so this directory is as sensitive as the mailbox beside it.
 
-    virtual void registerTokenHashes(const std::string& user, const std::vector<Bytes>& hashes)
-        = 0;
-    // Atomically consumes the hash. Returns false when it was not present
-    // (never registered or already consumed).
-    virtual bool consumeTokenHash(const std::string& user, const Bytes& hash) = 0;
-    virtual std::size_t tokenHashCount(const std::string& user) = 0;
+    virtual void registerTokens(const std::string& user, const std::vector<Bytes>& tokens) = 0;
+    // Atomically consumes the token. Returns false when it was not present
+    // (never registered, already consumed, or revoked).
+    virtual bool consumeToken(const std::string& user, const Bytes& token) = 0;
+    virtual std::size_t tokenCount(const std::string& user) = 0;
+    // Drops every token of this user's minted under `mask`, and returns how many
+    // went. Walks all of them, so it belongs on the node's own thread rather
+    // than on the one answering a request.
+    virtual std::size_t revokeTokens(const std::string& user, const Bytes& mask) = 0;
 
     // --- Pending content ---
 

@@ -162,8 +162,9 @@ int main()
     DeliveryEngine engine(storage, toBase32(Bytes(32, 0xee)),
         Key::fromPrivatePem(sealing.privatePem()), DeliveryEngineOptions{});
 
-    const Bytes token = generateDeliveryToken();
-    storage.registerTokenHashes(alice, {deliveryTokenHash(token)});
+    const Bytes mask = deliveryTokenMask(randomBytes(kDeliverySecretSize), std::string(52, 'b'));
+    const Bytes token = generateDeliveryToken(mask);
+    storage.registerTokens(alice, {token});
 
     const Bytes payload = {'f', 'e', 'd', '-', 'b', 'l', 'o', 'b'};
 
@@ -172,7 +173,7 @@ int main()
         const Bytes sealed = makeSealed(sealingPublic, "content", alice, "fmsg-1", token);
         const FederationDeliverResult result = roundTrip(engine, sealed, payload);
         CHECK(result.delivered);
-        CHECK(storage.tokenHashCount(alice) == 0);
+        CHECK(storage.tokenCount(alice) == 0);
         CHECK(storage.getBlob(alice, "fmsg-1") == payload);
     }
 
@@ -186,7 +187,7 @@ int main()
     // A bad token collapses into DELIVERY_REJECTED.
     {
         const Bytes sealed
-            = makeSealed(sealingPublic, "content", alice, "fmsg-2", generateDeliveryToken());
+            = makeSealed(sealingPublic, "content", alice, "fmsg-2", generateDeliveryToken(mask));
         const FederationDeliverResult result = roundTrip(engine, sealed, payload);
         CHECK(!result.delivered);
         CHECK(result.errorCode == "DELIVERY_REJECTED");
@@ -217,15 +218,15 @@ int main()
     // A mailbox with no room refuses the delivery and gives the token back: the
     // store did not happen, so the sender is not charged for it.
     {
-        const Bytes quotaToken = generateDeliveryToken();
-        storage.registerTokenHashes(alice, {deliveryTokenHash(quotaToken)});
+        const Bytes quotaToken = generateDeliveryToken(mask);
+        storage.registerTokens(alice, {quotaToken});
         storage.setUserQuota(alice, kTinyQuotaBytes);
         const Bytes sealed = makeSealed(sealingPublic, "content", alice, "fmsg-full", quotaToken);
         const FederationDeliverResult result
             = roundTrip(engine, sealed, Bytes(kTinyQuotaBytes * 2, 0x77));
         CHECK(!result.delivered);
         CHECK(result.errorCode == "STORAGE_FULL");
-        CHECK(storage.tokenHashCount(alice) == 1);
+        CHECK(storage.tokenCount(alice) == 1);
         storage.setUserQuota(alice, kAmpleQuotaBytes);
     }
 
@@ -381,9 +382,9 @@ int main()
     }
 
     // Two more one-time tokens for the confirmation cases below.
-    const Bytes token2 = generateDeliveryToken();
-    const Bytes token3 = generateDeliveryToken();
-    storage.registerTokenHashes(alice, {deliveryTokenHash(token2), deliveryTokenHash(token3)});
+    const Bytes token2 = generateDeliveryToken(mask);
+    const Bytes token3 = generateDeliveryToken(mask);
+    storage.registerTokens(alice, {token2, token3});
 
     // The confirmation rides the reply, signed with the key of the destination
     // that took the delivery: the sender dials from a one-time address nobody can

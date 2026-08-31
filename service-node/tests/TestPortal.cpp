@@ -213,7 +213,8 @@ void testWebFlow()
 
     const Identity identity = Identity::generate();
     PortalApiOptions options;
-    options.audience = "service-node-fingerprint";
+    options.serverFingerprint = "service-node-fingerprint";
+    options.consumer = LoginConsumer{"Bazarish service node", "http://node.example", "Account owner"};
     options.serverDescriptor = "bazarish-descriptor-for-the-test";
     options.challengeSecret = toHex(randomBytes(16));
     options.sessionSecret = toHex(randomBytes(16));

@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #pragma once
 
+#include <bazarish/Portal.hpp>
+
 #include <string>
 #include <vector>
 
@@ -35,7 +37,11 @@ struct Config {
     // would be a second answer to the same question.
     std::string stateDir;
     std::string assetsDir;
-    std::string audience = "bazarish-admin-panel";
+    // Who the panel says it is when it asks an operator to sign a login. The
+    // client shows these words before signing, so they have to be the ones the
+    // operator has in front of them: by default where the panel listens, and
+    // something else only when it is fronted by a name of its own.
+    service::LoginConsumer consumer;
     std::string listenHost = "127.0.0.1";
     int listenPort = 8460;
     // The deployments this panel manages. A config that lists services without

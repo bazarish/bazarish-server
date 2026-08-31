@@ -17,9 +17,14 @@ configuration, and signing in consists of signing a challenge with the client.
    against the configured admin fingerprints and starts a session.
 
 Signing in requires no backend to be running: the panel performs the
-verification. The challenge is
-single-use and bound to this panel's audience, so a login blob captured anywhere
-else cannot be replayed here.
+verification. The challenge is single-use and names this panel - the words your
+client shows you before signing - so a login blob captured anywhere else cannot
+be replayed here, and a challenge from anywhere else is visibly not this panel.
+
+By default the panel calls itself "Bazarish admin panel" (plus the fleet name,
+when the config names one) at the address it listens on. Front it behind a name
+of your own and the address you open no longer matches what your client shows:
+set `consumer` in the config to the words you want compared.
 
 ## Talking to services: identity-signed, no shared secrets
 

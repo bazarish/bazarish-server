@@ -58,9 +58,13 @@ int main()
 
     // Defaults applied when optional fields are omitted.
     const Config minimal = Config::fromJson(R"({"admin": "fp"})");
-    CHECK(minimal.audience == "bazarish-admin-panel");
+    CHECK(minimal.consumer.name == "Bazarish admin panel");
     CHECK(minimal.listenHost == "127.0.0.1");
     CHECK(minimal.listenPort == 8460);
+    // Where it listens is where the operator opens it, so that is what the panel
+    // says it is until an operator fronts it and says otherwise.
+    CHECK(minimal.consumer.place == "http://127.0.0.1:8460");
+    CHECK(minimal.consumer.role == "Administrator");
     CHECK(minimal.fleets.empty());
 
     // Several operators, each with their own key.

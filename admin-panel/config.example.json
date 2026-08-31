@@ -1,7 +1,12 @@
 {
   // Only these fingerprints may sign in. One string or a list of them.
   "admin": ["REPLACE_WITH_YOUR_FINGERPRINT"],
-  "audience": "bazarish-admin-panel",
+  // What the panel says it is when it asks you to sign in. Your client shows
+  // these words, and you compare them with the address bar in front of you, so
+  // set "place" to the address you actually open when the panel is fronted.
+  // Left out: "Bazarish admin panel" (plus the fleet name, when one is named)
+  // at the address below, as "Administrator".
+  // "consumer": {"name": "...", "place": "https://panel.example", "role": "..."},
   "state": "/var/lib/bazarish/admin-panel",
   "assets": "/opt/bazarish/bazarish-server/admin-panel/web",
   "listen": {"host": "127.0.0.1", "port": 8460},

@@ -142,7 +142,7 @@ PortalApi::PortalApi(PortalApiOptions options, Captcha& captcha, GrantStore& gra
     , assets_(options_.assetsDirectory)
     , captcha_(captcha)
     , grants_(grants)
-    , login_(options_.challengeSecret, options_.audience)
+    , login_(options_.challengeSecret, options_.consumer)
     , session_(options_.sessionSecret, options_.sessionTtlSeconds)
 {
 }
@@ -370,7 +370,7 @@ void PortalApi::setupWebRoutes()
                 assets_.render("page.html",
                     {
                         {"title", "Delete"},
-                        {"server", htmlEscape(options_.audience)},
+                        {"server", htmlEscape(options_.serverFingerprint)},
                         {"session", assets_.render("session.html",
                                         {{"fingerprint", htmlEscape(user)}})},
                         {"content", assets_.render("confirm-delete.html",
@@ -443,7 +443,7 @@ std::map<std::string, std::string> PortalApi::accountValues(
             htmlEscape(settings().facades.empty()
                     ? options_.serverDescriptor
                     : encodeServerDescriptor(
-                        {options_.audience, settings().facades, settings().reseeds}))},
+                        {options_.serverFingerprint, settings().facades, settings().reseeds}))},
         {"message", notice(note, "is-waiting")},
         {"mailbox", htmlEscape(mailbox)},
         {"devices", htmlEscape(devices)},
@@ -452,7 +452,7 @@ std::map<std::string, std::string> PortalApi::accountValues(
 
 std::string PortalApi::homePage(const std::string& user, const std::string& error)
 {
-    const std::string server = htmlEscape(options_.audience);
+    const std::string server = htmlEscape(options_.serverFingerprint);
     if (user.empty()) {
         const std::string challenge = login_.issue(nowSeconds());
         return assets_.render("page.html",

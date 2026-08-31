@@ -108,6 +108,12 @@ bazarish::Identity loadOrCreateIdentity(const fs::path& stateDir)
 // register; the captcha block governs free registration.
 struct PortalConfig {
     std::string message;
+    // What the portal calls itself and where a user reaches it, in the words the
+    // client shows before a login is signed. The address is what the user has in
+    // the address bar, so it is the link they were given unless the operator
+    // fronts the portal under another one.
+    std::string name;
+    std::string address;
     std::vector<std::string> links;
     // This server's facade URLs - I2P addresses, where clients talk to it - shown
     // in the cabinet as part of the server descriptor a client pastes to connect
@@ -192,6 +198,8 @@ NodeConfig loadNodeConfig(const fs::path& path)
     if (doc.contains("portal")) {
         const nlohmann::json& portal = doc.at("portal");
         config.portal.message = portal.value("message", std::string());
+        config.portal.name = portal.value("name", std::string());
+        config.portal.address = portal.value("address", std::string());
         if (portal.contains("links")) {
             config.portal.links = portal.at("links").get<std::vector<std::string>>();
         }
@@ -383,7 +391,23 @@ int main(const int argc, const char** argv)
             bazarish::toHex(bazarish::randomBytes(16)), nodeConfig.portal.captchaLength,
             nodeConfig.portal.captchaTtlSeconds);
         bazarish::service::PortalApiOptions portalOptions;
-        portalOptions.audience = card.server;
+        portalOptions.serverFingerprint = card.server;
+        // Who the portal says it is, for the client to show before a user signs
+        // a login. Its own words: a name a user recognises and the address they
+        // opened, which is the link the node advertises unless the operator
+        // fronts it under another one.
+        portalOptions.consumer.name
+            = nodeConfig.portal.name.empty() ? "Bazarish service node" : nodeConfig.portal.name;
+        portalOptions.consumer.place = nodeConfig.portal.address.empty()
+            ? (nodeConfig.portal.links.empty() ? std::string() : nodeConfig.portal.links.front())
+            : nodeConfig.portal.address;
+        portalOptions.consumer.role = "Account owner";
+        if (portalOptions.consumer.place.empty()) {
+            bazarish::log::error("--portal-listen needs portal.address (or portal.links): a "
+                                 "portal that will not say where it lives asks users to sign "
+                                 "for a name they cannot check");
+            return 2;
+        }
         // The server descriptor a client pastes to connect: this server's
         // fingerprint plus its configured facade URLs, shown in the cabinet.
         portalOptions.serverDescriptor = bazarish::encodeServerDescriptor(

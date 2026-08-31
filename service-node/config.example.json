@@ -17,6 +17,13 @@
     "listen": {"host": "0.0.0.0", "port": 8431},
     "assets": "/opt/bazarish/bazarish-server/service-node/portal",
     "message": "Sign in with your key and pass the captcha.",
+    // What the portal calls itself and where users open it. A client shows these
+    // words before it signs a login, and the user compares them with the address
+    // bar, so "address" has to be the address they actually opened. Left out,
+    // the name is "Bazarish service node" and the address is the first link
+    // below - and with no links either, the portal refuses to start.
+    "name": "",
+    "address": "",
     "links": [],
     "facades": [],
     "captcha": {"enabled": true, "length": 5, "ttlSeconds": 300}

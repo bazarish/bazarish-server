@@ -48,9 +48,6 @@ Config Config::fromJson(const std::string& text)
     }
     config.stateDir = json.value("state", std::string());
     config.assetsDir = json.value("assets", std::string());
-    if (json.contains("audience")) {
-        config.audience = json.at("audience").get<std::string>();
-    }
     if (json.contains("listen")) {
         const nlohmann::json& listen = json.at("listen");
         if (listen.contains("host")) {
@@ -78,6 +75,13 @@ Config Config::fromJson(const std::string& text)
         return services;
     };
 
+    if (json.contains("consumer")) {
+        const nlohmann::json& consumer = json.at("consumer");
+        config.consumer.name = consumer.value("name", std::string());
+        config.consumer.place = consumer.value("place", std::string());
+        config.consumer.role = consumer.value("role", std::string());
+    }
+
     if (json.contains("fleets")) {
         for (const nlohmann::json& item : json.at("fleets")) {
             Fleet fleet;
@@ -90,6 +94,26 @@ Config Config::fromJson(const std::string& text)
         fleet.name = "server";
         fleet.services = readServices(json.at("services"));
         config.fleets.push_back(std::move(fleet));
+    }
+
+    // What the panel calls itself, when the operator has not said. A named
+    // deployment lends its name: an operator running several panels needs to see
+    // which one is asking.
+    if (config.consumer.name.empty()) {
+        config.consumer.name = "Bazarish admin panel";
+        if (json.contains("fleets") && config.fleets.size() == 1
+            && !config.fleets.front().name.empty()) {
+            config.consumer.name += " - " + config.fleets.front().name;
+        }
+    }
+    // Where it lives. The address it listens on is the one the operator opens,
+    // unless the panel is fronted - and then the operator says so here.
+    if (config.consumer.place.empty()) {
+        config.consumer.place
+            = "http://" + config.listenHost + ":" + std::to_string(config.listenPort);
+    }
+    if (config.consumer.role.empty()) {
+        config.consumer.role = "Administrator";
     }
     return config;
 }

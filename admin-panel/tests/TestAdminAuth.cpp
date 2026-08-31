@@ -4,6 +4,8 @@
 #include <bazarish/Auth.hpp>
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Crypto.hpp>
+#include <bazarish/LoginChallenge.hpp>
+#include <bazarish/Portal.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -43,27 +45,23 @@ namespace {
 
 constexpr std::int64_t kNow = 1780000000;
 
-// Produces the login blob the client's `sign-login` would emit: the four
-// request-auth headers over the challenge, packed as base64(JSON {k,t,c,p}).
+// The login blob the client's `sign-login` emits, over this challenge.
 std::string forgeBlob(const Identity& identity, const std::string& challenge, std::int64_t ts)
 {
-    const auth::Headers headers = auth::signRequest(
-        identity, ts, kLoginMethod, kLoginPath, Bytes(challenge.begin(), challenge.end()));
-    const nlohmann::json blob = {
-        {"k", headers.at(auth::kHeaderKeys)},
-        {"t", headers.at(auth::kHeaderTimestamp)},
-        {"c", headers.at(auth::kHeaderSignatureClassical)},
-        {"p", headers.at(auth::kHeaderSignaturePq)},
-    };
-    const std::string text = blob.dump();
-    return toBase64(Bytes(text.begin(), text.end()));
+    return service::signLoginBlob(identity, ts, challenge);
 }
 
-std::string makeChallenge(const std::string& nonce, std::int64_t ts, const std::string& aud)
+service::LoginConsumer panelConsumer()
 {
-    const nlohmann::json envelope = {{"nonce", nonce}, {"ts", ts}, {"aud", aud}};
-    const std::string text = envelope.dump();
-    return toBase64(Bytes(text.begin(), text.end()));
+    return service::LoginConsumer{"Bazarish admin panel", "http://127.0.0.1:8460", "Administrator"};
+}
+
+// A challenge nobody here issued, wearing this panel's name: what a captured
+// login blob from another verifier looks like from the inside.
+std::string foreignChallenge(const service::LoginConsumer& consumer, std::int64_t ts)
+{
+    service::LoginChallenge elsewhere("another-portal-secret", consumer);
+    return elsewhere.issue(ts);
 }
 
 }  // namespace
@@ -72,26 +70,20 @@ int main()
 {
     const Identity admin = Identity::generate();
 
-    // ChallengeStore: single-use, audience- and freshness-bound.
+    // The challenge names this panel, in the words the operator is shown before
+    // signing - that is the whole reason it is not an opaque string.
     {
-        ChallengeStore store("aud-x");
-        const std::string challenge = store.issue(kNow);
-        CHECK(store.consume(challenge, kNow));         // accepted once
-        CHECK(!store.consume(challenge, kNow));        // replay rejected
-        CHECK(!store.consume("not-base64", kNow));     // garbage rejected
-        // A well-formed but never-issued challenge is rejected.
-        CHECK(!store.consume(makeChallenge("ffff", kNow, "aud-x"), kNow));
-        // Wrong audience rejected even if otherwise valid-looking.
-        const std::string fresh = store.issue(kNow);
-        CHECK(!store.consume(makeChallenge("ffff", kNow, "other"), kNow));
-        // Stale (outside the freshness window) rejected.
-        const std::string stale = store.issue(kNow);
-        CHECK(!store.consume(stale, kNow + auth::kAuthFreshnessWindowSeconds + 1));
+        AdminAuth auth(panelConsumer(), {admin.fingerprint()});
+        const service::LoginConsumer named
+            = service::readLoginConsumer(auth.issueChallenge(kNow));
+        CHECK(named.name == panelConsumer().name);
+        CHECK(named.place == panelConsumer().place);
+        CHECK(named.role == panelConsumer().role);
     }
 
     // Full login: a panel-issued challenge, signed by the configured admin.
     {
-        AdminAuth auth("bazarish-admin-panel", {admin.fingerprint()});
+        AdminAuth auth(panelConsumer(), {admin.fingerprint()});
         const std::string challenge = auth.issueChallenge(kNow);
         const std::string blob = forgeBlob(admin, challenge, kNow);
         CHECK(auth.login(challenge, blob, kNow) == admin.fingerprint());
@@ -102,7 +94,7 @@ int main()
     // A panel with two operators takes either of them.
     {
         const Identity second = Identity::generate();
-        AdminAuth auth("bazarish-admin-panel", {admin.fingerprint(), second.fingerprint()});
+        AdminAuth auth(panelConsumer(), {admin.fingerprint(), second.fingerprint()});
         const std::string challenge = auth.issueChallenge(kNow);
         CHECK(auth.login(challenge, forgeBlob(second, challenge, kNow), kNow)
             == second.fingerprint());
@@ -110,7 +102,7 @@ int main()
 
     // A valid signature from a non-admin identity is rejected.
     {
-        AdminAuth auth("bazarish-admin-panel", {admin.fingerprint()});
+        AdminAuth auth(panelConsumer(), {admin.fingerprint()});
         const Identity stranger = Identity::generate();
         const std::string challenge = auth.issueChallenge(kNow);
         const std::string blob = forgeBlob(stranger, challenge, kNow);
@@ -119,7 +111,7 @@ int main()
 
     // A blob signed too long ago fails the freshness check.
     {
-        AdminAuth auth("bazarish-admin-panel", {admin.fingerprint()});
+        AdminAuth auth(panelConsumer(), {admin.fingerprint()});
         const std::string challenge = auth.issueChallenge(kNow);
         const std::string blob = forgeBlob(admin, challenge, kNow);
         CHECK_THROWS(
@@ -127,13 +119,25 @@ int main()
     }
 
     // The replay-defense crux: a validly-signed blob over a challenge this panel
-    // never issued (e.g. captured from another verifier) is rejected, because the
-    // challenge is not in the issued set.
+    // never issued (captured from another verifier) is rejected, however right
+    // the label on it looks.
     {
-        AdminAuth auth("bazarish-admin-panel", {admin.fingerprint()});
-        const std::string foreign = makeChallenge("deadbeef", kNow, "bazarish-admin-panel");
+        AdminAuth auth(panelConsumer(), {admin.fingerprint()});
+        const std::string foreign = foreignChallenge(panelConsumer(), kNow);
         const std::string blob = forgeBlob(admin, foreign, kNow);
         CHECK_THROWS(auth.login(foreign, blob, kNow));
+    }
+
+    // A challenge naming another place does not open this panel either: the
+    // label is checked before anything else, so the words the operator read are
+    // the words the panel agreed to.
+    {
+        AdminAuth auth(panelConsumer(), {admin.fingerprint()});
+        service::LoginConsumer somewhereElse = panelConsumer();
+        somewhereElse.place = "http://192.0.2.10:8460";
+        service::LoginChallenge other("another-portal-secret", somewhereElse);
+        const std::string challenge = other.issue(kNow);
+        CHECK_THROWS(auth.login(challenge, forgeBlob(admin, challenge, kNow), kNow));
     }
 
     std::printf("TestAdminAuth: all checks passed\n");

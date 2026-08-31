@@ -116,7 +116,7 @@ HttpApi::HttpApi(Config config, const Identity& identity, HttpApiOptions options
     : config_(std::move(config))
     , identity_(identity)
     , options_(std::move(options))
-    , auth_(config_.audience, config_.admins)
+    , auth_(config_.consumer, config_.admins)
     , sessions_(options_.sessionTtlSeconds)
     , assets_(options_.assetsDirectory)
 {

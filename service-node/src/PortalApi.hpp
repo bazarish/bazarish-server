@@ -26,9 +26,14 @@ class Server;
 namespace bazarish::service {
 
 struct PortalApiOptions {
-    // This service node's fingerprint - the login challenge audience, so a
-    // challenge issued here cannot be replayed against another portal.
-    std::string audience;
+    // This service node's fingerprint: part of the server descriptor a client
+    // pastes to connect, and shown in the cabinet.
+    std::string serverFingerprint;
+    // Who this portal says it is when it asks a user to sign in. The client
+    // shows these words before signing, so they are what a user compares with
+    // the address bar; the challenge is bound to them, so a challenge issued
+    // here cannot be replayed against another portal.
+    LoginConsumer consumer;
     // The server descriptor string (bazarish://server?...) shown in the cabinet
     // so a signed-in user can copy it into their client. Empty hides the section.
     std::string serverDescriptor;

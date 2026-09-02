@@ -22,6 +22,8 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <mutex>
+#include <map>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -40,6 +42,10 @@ constexpr int kDefaultPort = 8420;
 // The service node is one hop away on the operator's own machine, so a lookup
 // that takes longer than this is a node that is down, not a slow one.
 constexpr int kServiceNodeTimeoutSeconds = 5;
+// How long a card answer is reused. A card changes when its owner republishes
+// routing, and a minute of staleness costs a first-contact fetch one retry -
+// against a blocking round trip on a delivery thread for every asker.
+constexpr std::int64_t kCardCacheSeconds = 60;
 // The port a service-node URL means when it names none.
 constexpr int kDefaultHttpPort = 80;
 
@@ -273,8 +279,29 @@ int main(const int argc, const char** argv)
         // --service-node is set (else CARD_UNKNOWN).
         bazarish::server::GetCardFn getCard;
         if (!serviceNodeUrl.empty()) {
-            getCard = [serviceNodeUrl](const std::string& fp,
+            // A card answer is the same for everyone who asks and changes only
+            // when its owner republishes, so it is held briefly. Without that,
+            // every first-contact fetch is a blocking round trip to the node on a
+            // thread that also serves deliveries - and a node that is up but slow
+            // costs that thread five seconds.
+            struct CardCache {
+                std::mutex mutex;
+                std::map<std::string, std::pair<std::int64_t, bazarish::Bytes>> entries;
+            };
+            const auto cache = std::make_shared<CardCache>();
+            getCard = [serviceNodeUrl, cache](const std::string& fp,
                           const std::string& view) -> std::optional<bazarish::Bytes> {
+                const std::string key = fp + "\n" + view;
+                const std::int64_t now
+                    = static_cast<std::int64_t>(std::time(nullptr));
+                {
+                    const std::lock_guard<std::mutex> lock(cache->mutex);
+                    const auto found = cache->entries.find(key);
+                    if (found != cache->entries.end()
+                        && now - found->second.first < kCardCacheSeconds) {
+                        return found->second.second;
+                    }
+                }
                 const ServiceNodeAddress node = parseServiceNodeUrl(serviceNodeUrl);
                 bazarish::http::ClientRequest lookup;
                 lookup.method = "GET";
@@ -285,6 +312,9 @@ int main(const int argc, const char** argv)
                 bazarish::http::ClientOptions options;
                 options.connectTimeout = std::chrono::seconds(kServiceNodeTimeoutSeconds);
                 options.readTimeout = std::chrono::seconds(kServiceNodeTimeoutSeconds);
+                // Left at its default this is 60 s, which is not a timeout on a
+                // thread that owes a delivery an answer.
+                options.writeTimeout = std::chrono::seconds(kServiceNodeTimeoutSeconds);
                 const bazarish::http::ClientResponse res
                     = bazarish::http::request(node.host, node.port, lookup, options);
                 if (res.status != 200) {
@@ -292,7 +322,11 @@ int main(const int argc, const char** argv)
                 }
                 try {
                     const nlohmann::json body = nlohmann::json::parse(res.body);
-                    return bazarish::fromBase64(body.at("card").get<std::string>());
+                    bazarish::Bytes card
+                        = bazarish::fromBase64(body.at("card").get<std::string>());
+                    const std::lock_guard<std::mutex> lock(cache->mutex);
+                    cache->entries[key] = {now, card};
+                    return card;
                 } catch (const std::exception&) {
                     return std::nullopt;
                 }

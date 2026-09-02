@@ -59,6 +59,16 @@ struct SocketStream {
     SocketStream(const SocketStream&) = delete;
     SocketStream& operator=(const SocketStream&) = delete;
 
+    // What the frame reader asks for: whatever has arrived, no more.
+    std::size_t readSome(void* const buffer, const std::size_t size)
+    {
+        const ssize_t got = ::read(fd, buffer, size);
+        if (got < 0) {
+            throw std::runtime_error("socket read failed");
+        }
+        return static_cast<std::size_t>(got);
+    }
+
     void readExact(void* buffer, std::size_t size)
     {
         auto* p = static_cast<char*>(buffer);

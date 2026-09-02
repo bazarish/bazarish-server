@@ -74,10 +74,13 @@ void federationServeOnce(Stream& stream, DeliveryEngine& engine, const std::int6
     if (limiter != nullptr && !limiter->allow(peerDest, now)) {
         return;  // over the per-peer rate limit: drop without serving
     }
-    const std::string headerLine = detail::readFederationHeaderLine(stream);
+    // One reader for the whole frame: the header and the payload behind it come
+    // out of the same buffer, so nothing read ahead is lost.
+    detail::FrameReader<Stream> reader(stream);
+    const std::string headerLine = reader.line();
     federationServeFrame(
         headerLine,
-        [&stream](std::size_t len) {
+        [&reader](std::size_t len) {
             // Never allocate what a peer claims: one byte past the protocol's
             // ceiling is enough for the engine to refuse it, and the rest is
             // read and thrown away in fixed pieces so the sender - which is
@@ -87,7 +90,7 @@ void federationServeOnce(Stream& stream, DeliveryEngine& engine, const std::int6
             const std::size_t keep = std::min<std::size_t>(len, kMaxMessagePayloadBytes + 1);
             Bytes payload(keep);
             if (keep > 0) {
-                stream.readExact(payload.data(), keep);
+                reader.read(payload.data(), keep);
             }
             if (len > kMaxDiscardBytes) {
                 throw std::runtime_error("a delivery claiming " + std::to_string(len)
@@ -97,7 +100,7 @@ void federationServeOnce(Stream& stream, DeliveryEngine& engine, const std::int6
             std::array<unsigned char, kDiscardChunkBytes> sink{};
             while (left > 0) {
                 const std::size_t chunk = std::min<std::size_t>(left, sink.size());
-                stream.readExact(sink.data(), chunk);
+                reader.read(sink.data(), chunk);
                 left -= chunk;
             }
             return payload;

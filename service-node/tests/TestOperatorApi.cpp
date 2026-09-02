@@ -6,6 +6,7 @@
 #include <bazarish/Auth.hpp>
 #include <bazarish/Certificates.hpp>
 #include <bazarish/Crypto.hpp>
+#include <bazarish/Log.hpp>
 
 #include <bazarish/HttpClient.hpp>
 #include <nlohmann/json.hpp>
@@ -305,6 +306,33 @@ int main()
         CHECK(onDisk.at("portal").at("name").get<std::string>() == "Bazarish alpha");
         CHECK(onDisk.at("portal").at("address").get<std::string>() == "https://alpha.example");
         CHECK(onDisk.at("portal").at("role").get<std::string>() == "Alpha tester");
+
+        // The log level is the one setting here that is not a restart away: an
+        // operator makes a node talkative while it is running the problem.
+        CHECK(bazarish::log::level() != bazarish::log::Level::eDebug);
+        const std::string louder = nlohmann::json{{"logLevel", "debug"}}.dump();
+        CHECK(call(port, panel, "PUT", "/v1/account/settings", louder).status == 200);
+        CHECK(bazarish::log::level() == bazarish::log::Level::eDebug);
+        CHECK(settings->get().logLevel == "debug");
+        const std::string nonsense = nlohmann::json{{"logLevel", "loud"}}.dump();
+        CHECK(call(port, panel, "PUT", "/v1/account/settings", nonsense).status == 400);
+        const std::string quieter = nlohmann::json{{"logLevel", "info"}}.dump();
+        CHECK(call(port, panel, "PUT", "/v1/account/settings", quieter).status == 200);
+        CHECK(bazarish::log::level() == bazarish::log::Level::eInfo);
+
+        // Startup values are written for the next start rather than applied now.
+        const std::string wiring = nlohmann::json{{"captchaLength", 7},
+            {"portalListen", {{"host", "0.0.0.0"}, {"port", 8531}}}}
+                                       .dump();
+        CHECK(call(port, panel, "PUT", "/v1/account/settings", wiring).status == 200);
+        std::ifstream rewritten(configPath);
+        const nlohmann::json onDiskAgain = nlohmann::json::parse(rewritten);
+        CHECK(onDiskAgain.at("portal").at("captcha").at("length").get<int>() == 7);
+        CHECK(onDiskAgain.at("portal").at("listen").at("port").get<int>() == 8531);
+        const std::string tooShort = nlohmann::json{{"captchaLength", 1}}.dump();
+        CHECK(call(port, panel, "PUT", "/v1/account/settings", tooShort).status == 400);
+        const std::string badPort = nlohmann::json{{"listen", {{"port", 0}}}}.dump();
+        CHECK(call(port, panel, "PUT", "/v1/account/settings", badPort).status == 400);
 
         // A portal that will not say who it is has no business asking anyone to
         // sign for it, and the words it had stand.

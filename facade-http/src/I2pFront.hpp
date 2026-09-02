@@ -57,6 +57,10 @@ private:
     std::vector<std::shared_ptr<bazarish::i2p::Endpoint>> endpoints_;
     std::vector<std::thread> acceptThreads_;
     std::atomic<bool> running_{false};
+    // Relays in flight. Each is a thread of its own, held for as long as the
+    // client keeps its connection: unbounded, a burst of clients is a burst of
+    // threads, and a facade that cannot make one dies where it stands.
+    std::atomic<std::size_t> relays_{0};
 };
 
 }  // namespace bazarish::facade

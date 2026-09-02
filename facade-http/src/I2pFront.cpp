@@ -84,6 +84,11 @@ int connectLocal(const std::string& host, const int port)
 // Pumps one accepted stream against the local listener until either side ends.
 // The response direction runs here and the request direction on a helper thread,
 // so a streamed response is relayed as it arrives rather than after the request.
+// How many relays this facade carries at once. Each is one thread and one
+// socket to the local listener; the ceiling is what keeps a burst of clients
+// from becoming a burst of threads.
+constexpr std::size_t kMaxRelaysInFlight = 256;
+
 void relay(std::unique_ptr<bazarish::i2p::Stream> stream, const int fd)
 {
     std::size_t fromClient = 0;
@@ -245,7 +250,23 @@ void I2pFront::acceptLoop(const std::shared_ptr<bazarish::i2p::Endpoint>& endpoi
         // Detached: one slow client must not hold up the accept loop. The
         // caller's destination is deliberately not logged - the facade logs
         // nothing that identifies a client.
-        std::thread(relay, std::move(stream), fd).detach();
+        //
+        // Bounded, though: a relay is a thread held for the life of a client's
+        // connection, and without a ceiling a burst of them is a burst of
+        // threads. Past it the stream is closed rather than queued - a client
+        // retries, a facade that cannot make a thread does not.
+        if (relays_.load() >= kMaxRelaysInFlight) {
+            bazarish::log::warn("i2p front: {} relays already in flight; refusing one",
+                kMaxRelaysInFlight);
+            ::close(fd);
+            stream->close();
+            continue;
+        }
+        relays_.fetch_add(1);
+        std::thread([this, held = std::move(stream), fd]() mutable {
+            relay(std::move(held), fd);
+            relays_.fetch_sub(1);
+        }).detach();
     }
 }
 

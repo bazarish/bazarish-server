@@ -21,7 +21,16 @@ namespace bazarish::service {
 // configured (empty base URL).
 class OperatorPush {
 public:
+    // How many times a push is tried before it is given up on. A background push
+    // can afford to wait out a messaging server that is momentarily busy; one
+    // made while a device waits on the answer cannot, because it holds one of the
+    // node's few io threads for every second it spends retrying - and the device
+    // asks again by itself.
+    static constexpr int kBackgroundAttempts = 3;
+    static constexpr int kPromptAttempts = 1;
+
     OperatorPush(std::string baseUrl, const Identity& signer,
+        int attempts = kBackgroundAttempts,
         std::string destPath = "/v1/messaging/i2p-dest",
         std::string quotaPath = "/v1/messaging/quota");
 
@@ -83,6 +92,7 @@ private:
     const Identity& signer_;
     std::string destPath_;
     std::string quotaPath_;
+    const int attempts_;
     std::string servingKeyPath_ = "/v1/messaging/serving-key";
     std::string accountPath_ = "/v1/messaging/account";
 };

@@ -328,6 +328,13 @@ int main(const int argc, const char** argv)
         ? "http://" + messagingHost + ":" + std::to_string(messagingPort)
         : std::string();
     const bazarish::service::OperatorPush operatorPush(messagingUrl, nodeIdentity);
+    // The same channel, for the pushes made while a device waits on the answer.
+    // Those run on one of the account API's handful of io threads, so they are
+    // given a single attempt: retrying inline would hold that thread for close to
+    // two minutes whenever the messaging server is busy, and starve every other
+    // request the node has - a device that was refused asks again by itself.
+    const bazarish::service::OperatorPush promptPush(messagingUrl, nodeIdentity,
+        bazarish::service::OperatorPush::kPromptAttempts);
 
     bazarish::service::AccountApiOptions options;
     options.serverFingerprint = card.server;
@@ -371,22 +378,22 @@ int main(const int argc, const char** argv)
         ? bazarish::service::AccountApiOptions::Registration::eApproval
         : bazarish::service::AccountApiOptions::Registration::eOpen;
     options.registrationMessage = nodeConfig.registration.message;
-    options.publishI2pTransient = [&operatorPush](const std::string& user,
+    options.publishI2pTransient = [&promptPush](const std::string& user,
                                       const std::string& transientB64,
                                       const std::int64_t expiresUnix) {
-        return operatorPush.publish(user, transientB64, expiresUnix);
+        return promptPush.publish(user, transientB64, expiresUnix);
     };
     options.forgetMailbox
-        = [&operatorPush](const std::string& user) { return operatorPush.forgetMailbox(user); };
-    options.prepareServingKey = [&operatorPush](const std::string& user) {
-        return operatorPush.prepareServingKey(user);
+        = [&promptPush](const std::string& user) { return promptPush.forgetMailbox(user); };
+    options.prepareServingKey = [&promptPush](const std::string& user) {
+        return promptPush.prepareServingKey(user);
     };
-    options.commitServingKey = [&operatorPush](const std::string& user) {
-        return operatorPush.commitServingKey(user);
+    options.commitServingKey = [&promptPush](const std::string& user) {
+        return promptPush.commitServingKey(user);
     };
-    options.publishQuota = [&operatorPush](const std::string& user,
+    options.publishQuota = [&promptPush](const std::string& user,
                                const std::uint64_t quotaBytes) {
-        if (!operatorPush.publishQuota(user, quotaBytes)) {
+        if (!promptPush.publishQuota(user, quotaBytes)) {
             // Not fatal to the subscription - but the user would then be served the
             // messaging server's own default and see a figure nobody promised them.
             bazarish::log::warn("quota not pushed for {}: the messaging server refused it",
@@ -508,7 +515,10 @@ int main(const int argc, const char** argv)
     // redeemed, an account no operator approved - is dropped after the idle
     // window, so a dead account does not hold a fingerprint and a quota forever.
     static std::thread sweepThread;
-    sweepThread = std::thread([&grants, &store, settings, revoke = options.publishI2pTransient]() {
+    sweepThread = std::thread([&grants, &store, settings,
+                                  revoke = [&operatorPush](const std::string& user) {
+                                      return operatorPush.publish(user, std::string(), 0);
+                                  }]() {
         constexpr std::int64_t kSecondsPerDay = 24 * 3600;
         while (true) {
             std::this_thread::sleep_for(std::chrono::hours(1));
@@ -549,9 +559,7 @@ int main(const int argc, const char** argv)
                     continue;
                 }
                 // A ban outlives the account it removed, so only the account goes.
-                if (revoke) {
-                    (void)revoke(user, std::string(), 0);
-                }
+                (void)revoke(user);
                 grants.erase(user);  // a ban is stored apart and stays
                 store.deleteAccount(user);
                 bazarish::log::info("swept idle account {}", user.substr(0, 12));

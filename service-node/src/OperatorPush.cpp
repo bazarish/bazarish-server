@@ -26,7 +26,6 @@ constexpr int kReadTimeoutSeconds = 30;
 // land is almost always it being momentarily busy (bringing another destination
 // up, say), not a refusal. Retry before handing the user an error they can do
 // nothing about; a real refusal (4xx) is final and is not retried.
-constexpr int kPushAttempts = 3;
 constexpr int kRetryDelaySeconds = 1;
 // How often the readiness wait asks again. Short: the two daemons come up
 // together, so this is usually over in one or two tries.
@@ -62,12 +61,13 @@ HostPort parseUrl(const std::string& url)
 
 }  // namespace
 
-OperatorPush::OperatorPush(std::string baseUrl, const Identity& signer, std::string destPath,
-    std::string quotaPath)
+OperatorPush::OperatorPush(std::string baseUrl, const Identity& signer, const int attempts,
+    std::string destPath, std::string quotaPath)
     : baseUrl_(std::move(baseUrl))
     , signer_(signer)
     , destPath_(std::move(destPath))
     , quotaPath_(std::move(quotaPath))
+    , attempts_(attempts)
 {
 }
 
@@ -179,7 +179,7 @@ std::optional<std::string> OperatorPush::send(const std::string& method, const s
     if (baseUrl_.empty()) {
         return std::nullopt;  // not configured
     }
-    for (int attempt = 1; attempt <= kPushAttempts; ++attempt) {
+    for (int attempt = 1; attempt <= attempts_; ++attempt) {
         try {
             const HostPort hostPort = parseUrl(baseUrl_);
             // Signed per attempt: the signature covers a timestamp.
@@ -206,13 +206,13 @@ std::optional<std::string> OperatorPush::send(const std::string& method, const s
                 return std::nullopt;  // a refusal, not a hiccup: retrying changes nothing
             }
             bazarish::log::warn("operator push to {}{} did not land (attempt {}/{}): {}", baseUrl_,
-                path, attempt, kPushAttempts,
+                path, attempt, attempts_,
                 response.status > 0 ? std::to_string(response.status) : response.error);
         } catch (const std::exception& error) {
             bazarish::log::warn("operator push to {}{} failed (attempt {}/{}): {}", baseUrl_, path,
-                attempt, kPushAttempts, error.what());
+                attempt, attempts_, error.what());
         }
-        if (attempt < kPushAttempts) {
+        if (attempt < attempts_) {
             std::this_thread::sleep_for(std::chrono::seconds(kRetryDelaySeconds));
         }
     }

@@ -151,11 +151,14 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
             // The first bytes of the token go with it: it is refused and therefore
             // spent or never valid, and without a handle on WHICH token was
             // presented an operator cannot tell a stale copy from anything else.
-            bazarish::log::debug("delivery refused: {} ({}...) for {}",
+            bazarish::log::debug("delivery refused: {} ({}...) for {} on {}, id {}",
                 token.size() != kDeliveryTokenSize ? "malformed delivery token"
                                                    : "delivery token not accepted (unknown or "
                                                      "already spent)",
-                toHex(token).substr(0, kRefusedTokenPrefixChars), bazarish::log::redact(mailbox));
+                toHex(token).substr(0, kRefusedTokenPrefixChars), bazarish::log::redact(mailbox),
+                owner.empty() ? std::string("the server's own address")
+                              : bazarish::log::redact(owner),
+                deliveryId.substr(0, kRefusedTokenPrefixChars));
             return fail(ErrorCode::eDeliveryRejected, "delivery rejected");
         }
     }

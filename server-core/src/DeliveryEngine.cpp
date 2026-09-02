@@ -15,6 +15,14 @@
 
 namespace bazarish::server {
 
+namespace {
+
+// How much of a refused delivery token is written down: enough to match against
+// what a mailbox has registered, not enough to be one.
+constexpr std::size_t kRefusedTokenPrefixChars = 12;
+
+}  // namespace
+
 DeliveryEngine::DeliveryEngine(Storage& storage, std::string serverFingerprint, Key sealingKey,
     const DeliveryEngineOptions options)
     : storage_(storage)
@@ -140,11 +148,14 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
         }
     } else {
         if (token.size() != kDeliveryTokenSize || !storage_.consumeToken(mailbox, token)) {
-            bazarish::log::debug("delivery refused: {} for {}",
+            // The first bytes of the token go with it: it is refused and therefore
+            // spent or never valid, and without a handle on WHICH token was
+            // presented an operator cannot tell a stale copy from anything else.
+            bazarish::log::debug("delivery refused: {} ({}...) for {}",
                 token.size() != kDeliveryTokenSize ? "malformed delivery token"
                                                    : "delivery token not accepted (unknown or "
                                                      "already spent)",
-                bazarish::log::redact(mailbox));
+                toHex(token).substr(0, kRefusedTokenPrefixChars), bazarish::log::redact(mailbox));
             return fail(ErrorCode::eDeliveryRejected, "delivery rejected");
         }
     }

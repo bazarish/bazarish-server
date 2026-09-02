@@ -419,17 +419,25 @@ int main(const int argc, const char** argv)
 
     bazarish::service::AccountApi api(store, grants, options);
 
+    static std::unique_ptr<bazarish::service::SelfHostedCaptcha> captcha;
+    static std::unique_ptr<bazarish::service::PortalApi> portal;
+    static std::thread portalThread;
+
     // Stopping happens on the switch's own thread: a handler must not stop the
-    // server it is still answering on.
-    bazarish::RestartSwitch restart([&api]() { api.stop(); });
+    // server it is still answering on. The portal is stopped with it - its
+    // serving thread waits on a condition variable this process would otherwise
+    // destroy underneath it on the way out.
+    bazarish::RestartSwitch restart([&api]() {
+        if (portal) {
+            portal->stop();
+        }
+        api.stop();
+    });
     *restartHook = [&restart]() { restart.request(); };
 
     // The browser-facing portal (sign-in-with-key, captcha registration, ...),
     // sharing the grant store with the account API. Secrets are per-run; a
     // restart simply invalidates outstanding challenges/sessions.
-    static std::unique_ptr<bazarish::service::SelfHostedCaptcha> captcha;
-    static std::unique_ptr<bazarish::service::PortalApi> portal;
-    static std::thread portalThread;
     if (portalPort > 0) {
         if (portalAssets.empty()) {
             bazarish::log::error("--portal-listen needs --portal-assets: the portal serves its "

@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #include "DeliveryEngine.hpp"
 
+#include <bazarish/Log.hpp>
+
 #include <bazarish/Address.hpp>
 #include <bazarish/Cms.hpp>
 #include <bazarish/Errors.hpp>
@@ -100,6 +102,11 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
             // "delivered" would say whose destination this is. It goes nowhere.
             return delivered();
         }
+        // The client is told nothing that would say whose destination this is;
+        // the server writes down which of the three refusals it was, because
+        // otherwise a rejected delivery leaves no trace anywhere and the two
+        // sides can only guess.
+        bazarish::log::debug("delivery refused: this destination is not that mailbox's");
         return fail(ErrorCode::eDeliveryRejected, "delivery rejected");
     }
 
@@ -133,6 +140,11 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
         }
     } else {
         if (token.size() != kDeliveryTokenSize || !storage_.consumeToken(mailbox, token)) {
+            bazarish::log::debug("delivery refused: {} for {}",
+                token.size() != kDeliveryTokenSize ? "malformed delivery token"
+                                                   : "delivery token not accepted (unknown or "
+                                                     "already spent)",
+                bazarish::log::redact(mailbox));
             return fail(ErrorCode::eDeliveryRejected, "delivery rejected");
         }
     }
@@ -146,6 +158,7 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
             storage_.registerTokens(mailbox, {token});
             return fail(ErrorCode::eStorageFull, "recipient storage quota is exhausted");
         }
+        bazarish::log::debug("delivery refused: mailbox is full and this is not content");
         return fail(ErrorCode::eDeliveryRejected, "delivery rejected");
     }
 

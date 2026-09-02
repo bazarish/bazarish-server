@@ -135,6 +135,7 @@ PortalApi::PortalApi(PortalApiOptions options, Captcha& captcha, GrantStore& gra
                     NodeSettings::Values{.requireApproval = options_.requiresApproval,
                         .registrationMessage = options_.registrationMessage,
                         .portalMessage = {},
+                        .loginConsumer = options_.consumer,
                         .requireCaptcha = options_.requireCaptcha,
                         .facades = {},
                         .reseeds = {},
@@ -148,6 +149,20 @@ PortalApi::PortalApi(PortalApiOptions options, Captcha& captcha, GrantStore& gra
 }
 
 PortalApi::~PortalApi() = default;
+
+LoginChallenge& PortalApi::login()
+{
+    const LoginConsumer wanted = settings().loginConsumer;
+    // Settings that name no consumer - a test's, or a node whose operator has
+    // never set one - leave the portal signing under the words it was built
+    // with, which beats signing under none.
+    const bool named
+        = !wanted.name.empty() && !wanted.place.empty() && !wanted.role.empty();
+    if (named && wanted != login_.consumer()) {
+        login_.setConsumer(wanted);
+    }
+    return login_;
+}
 
 bool PortalApi::listen(const std::string& host, const int port)
 {
@@ -202,7 +217,7 @@ void PortalApi::setupRoutes()
 {
     // Issue a fresh login challenge for the user to sign with their Client.
     http_->get("/portal/login", filled([this](const http::Request&, http::Response& response) {
-        respondJson(response, {{"challenge", login_.issue(nowSeconds())}});
+        respondJson(response, {{"challenge", login().issue(nowSeconds())}});
     }));
 
     // Verify the signed challenge and start a session.
@@ -215,7 +230,7 @@ void PortalApi::setupRoutes()
             return;
         }
         try {
-            const std::string userId = login_.verify(body.at("challenge").get<std::string>(),
+            const std::string userId = login().verify(body.at("challenge").get<std::string>(),
                 body.at("blob").get<std::string>(), nowSeconds());
             const std::string token = session_.issue(userId, nowSeconds());
             response.headers["Set-Cookie"]
@@ -334,7 +349,7 @@ void PortalApi::setupWebRoutes()
 
     http_->post("/login", filled([this](const http::Request& request, http::Response& response) {
         try {
-            const std::string userId = login_.verify(request.param("challenge"),
+            const std::string userId = login().verify(request.param("challenge"),
                 request.param("blob"), nowSeconds());
             const std::string token = session_.issue(userId, nowSeconds());
             response.headers["Set-Cookie"]
@@ -454,7 +469,7 @@ std::string PortalApi::homePage(const std::string& user, const std::string& erro
 {
     const std::string server = htmlEscape(options_.serverFingerprint);
     if (user.empty()) {
-        const std::string challenge = login_.issue(nowSeconds());
+        const std::string challenge = login().issue(nowSeconds());
         return assets_.render("page.html",
             {
                 {"title", "Sign in"},

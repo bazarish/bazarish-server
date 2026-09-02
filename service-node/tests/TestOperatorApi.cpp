@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <string>
 #include <thread>
@@ -104,6 +105,27 @@ int main()
         quotaUser = user;
         quotaPushed = quotaBytes;
     };
+    // The knobs the panel edits, backed by a config file: a change an operator
+    // makes has to be where the next start reads it.
+    std::filesystem::create_directories(root);
+    const std::filesystem::path configPath = root / "service-node.json";
+    {
+        std::ofstream config(configPath);
+        config << "{}\n";
+    }
+    const auto settings = std::make_shared<NodeSettings>(configPath,
+        NodeSettings::Values{
+            .requireApproval = false,
+            .registrationMessage = {},
+            .portalMessage = {},
+            .loginConsumer
+            = LoginConsumer{"Bazarish stand", "http://127.0.0.1:8431", "Account owner"},
+            .requireCaptcha = true,
+            .facades = {},
+            .reseeds = {},
+            .defaultQuotaBytes = options.defaultQuotaBytes,
+            .idleDeleteDays = 0});
+    options.settings = settings;
 
     AccountApi api(store, grants, options);
     const int port = api.bindToAnyPort("127.0.0.1");
@@ -266,6 +288,34 @@ int main()
 
         CHECK(call(port, panel, "POST", "/v1/account/unban", body).status == 200);
         CHECK(!grants.peekBan(waitingTwo).has_value());
+    }
+
+    // What a user is shown before signing a login is the operator's to set, and
+    // it is written where the next start will read it.
+    {
+        const nlohmann::json shown
+            = nlohmann::json::parse(call(port, panel, "GET", "/v1/account/settings").body);
+        CHECK(shown.at("loginConsumer").at("name").get<std::string>() == "Bazarish stand");
+        CHECK(shown.at("loginConsumer").at("role").get<std::string>() == "Account owner");
+
+        const std::string renamed = nlohmann::json{{"loginConsumer",
+            {{"name", "Bazarish alpha"}, {"place", "https://alpha.example"},
+                {"role", "Alpha tester"}}}}
+                                        .dump();
+        CHECK(call(port, panel, "PUT", "/v1/account/settings", renamed).status == 200);
+        CHECK(settings->get().loginConsumer.place == "https://alpha.example");
+
+        std::ifstream written(configPath);
+        const nlohmann::json onDisk = nlohmann::json::parse(written);
+        CHECK(onDisk.at("portal").at("name").get<std::string>() == "Bazarish alpha");
+        CHECK(onDisk.at("portal").at("address").get<std::string>() == "https://alpha.example");
+        CHECK(onDisk.at("portal").at("role").get<std::string>() == "Alpha tester");
+
+        // A portal that will not say who it is has no business asking anyone to
+        // sign for it, and the words it had stand.
+        const std::string nameless = nlohmann::json{{"loginConsumer", {{"name", ""}}}}.dump();
+        CHECK(call(port, panel, "PUT", "/v1/account/settings", nameless).status == 400);
+        CHECK(settings->get().loginConsumer.name == "Bazarish alpha");
     }
 
     api.stop();

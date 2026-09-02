@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #pragma once
 
+#include <bazarish/Portal.hpp>
+
 #include <cstdint>
 #include <filesystem>
 #include <mutex>
@@ -22,6 +24,11 @@ public:
         // What a client is told when it reaches a server it has no account on:
         // the operator's own words about this node and how to get one.
         std::string portalMessage;
+        // Who the portal says it is when it asks a user to sign in: the name,
+        // the address and the role a client shows before signing, which the user
+        // compares with the address bar. Live, because renaming a deployment or
+        // moving it behind another address must not need a restart.
+        LoginConsumer loginConsumer;
         // Whether registering means solving a captcha on the portal. With it
         // off, a client registers itself the moment it connects - there is no
         // page to visit and nothing to type.

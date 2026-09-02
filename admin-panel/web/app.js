@@ -17,6 +17,11 @@
     var kMinQuotaMiB = 1;
     var kMaxQuotaMiB = 1024 * 1024;
     var kSecondsPerMs = 1000;
+    // What a login challenge may carry, matching the node's own caps: display
+    // limits, so the badge a user reads shows the whole of every field.
+    var kConsumerNameMax = 96;
+    var kConsumerPlaceMax = 256;
+    var kConsumerRoleMax = 48;
     // A hold is the soft measure - the operator is stopping the account in order
     // to say something - so the field starts with the plainest version of it.
     var kDefaultHoldMessage = "Service for this account has been stopped.";
@@ -684,6 +689,31 @@
                 "Shown by a client that reaches this server without an account here.")
                 .appendChild(portalMessage);
 
+            var signing = section(form, "What a user sees before signing in");
+            var consumer = data.loginConsumer || {};
+            function consumerField(label, value, limit, placeholder, hint) {
+                var row = controls(signing, hint);
+                row.appendChild(element("span", "control-label", label));
+                var input = element("input", "field");
+                input.type = "text";
+                input.maxLength = limit;
+                input.value = value || "";
+                input.placeholder = placeholder;
+                row.appendChild(input);
+                return input;
+            }
+            var consumerName = consumerField("Name", consumer.name, kConsumerNameMax,
+                "The name of this site",
+                "Shown in the client's window before a user signs a login for this portal.");
+            var consumerPlace = consumerField("Address", consumer.place, kConsumerPlaceMax,
+                "http://host:port",
+                "The address a user has in their address bar. They compare the two before"
+                + " signing, so write the address they actually opened - if you front this"
+                + " portal under another name, that is the one to put here.");
+            var consumerRole = consumerField("Role", consumer.role, kConsumerRoleMax,
+                "Account owner",
+                "What signing in here opens - whose account the signature is for.");
+
             var reach = section(form, "How clients reach this server");
             var facades = element("textarea", "field field-tall");
             facades.value = (data.facades || []).join("\n");
@@ -788,8 +818,23 @@
                     save.disabled = false;
                     return;
                 }
+                var signer = {
+                    name: consumerName.value.trim(),
+                    place: consumerPlace.value.trim(),
+                    role: consumerRole.value.trim()
+                };
+                var missing = Object.keys(signer).filter(function (key) {
+                    return signer[key].length === 0;
+                });
+                if (missing.length > 0) {
+                    footer.appendChild(notice("A portal that will not say its " + missing[0]
+                        + " has no business asking anyone to sign for it.", "is-error"));
+                    save.disabled = false;
+                    return;
+                }
                 api("PUT", withFleet("/api/settings"), {
                     requireApproval: moderated,
+                    loginConsumer: signer,
                     requireCaptcha: captcha,
                     portalMessage: portalMessage.value.trim(),
                     facades: facadeList,

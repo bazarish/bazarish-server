@@ -144,6 +144,9 @@ AccountApi::AccountApi(
                                                == AccountApiOptions::Registration::eApproval,
                                            .registrationMessage = options.registrationMessage,
                                            .portalMessage = options.portalMessage,
+                                           // The portal owns the words a login is
+                                           // signed under; this API only carries them.
+                                           .loginConsumer = {},
                                            .requireCaptcha = options.freeRegistrationCaptcha,
                                            .facades = {},
                                            .reseeds = {},
@@ -484,6 +487,12 @@ void AccountApi::setupRoutes()
                     {"requireApproval", values.requireApproval},
                     {"registrationMessage", values.registrationMessage},
                     {"portalMessage", values.portalMessage},
+                    {"loginConsumer",
+                        {
+                            {"name", values.loginConsumer.name},
+                            {"place", values.loginConsumer.place},
+                            {"role", values.loginConsumer.role},
+                        }},
                     {"requireCaptcha", values.requireCaptcha},
                     {"facades", values.facades},
                     {"reseeds", values.reseeds},
@@ -510,6 +519,21 @@ void AccountApi::setupRoutes()
             }
             if (body.contains("portalMessage")) {
                 values.portalMessage = body.at("portalMessage").get<std::string>();
+            }
+            if (body.contains("loginConsumer")) {
+                const nlohmann::json& consumer = body.at("loginConsumer");
+                LoginConsumer wanted;
+                wanted.name = consumer.value("name", values.loginConsumer.name);
+                wanted.place = consumer.value("place", values.loginConsumer.place);
+                wanted.role = consumer.value("role", values.loginConsumer.role);
+                try {
+                    requireUsableConsumer(wanted);
+                } catch (const std::exception& error) {
+                    // The operator's own words, refused for the operator's own
+                    // reason: a bad request, not a broken node.
+                    throw std::invalid_argument(error.what());
+                }
+                values.loginConsumer = wanted;
             }
             if (body.contains("requireCaptcha")) {
                 values.requireCaptcha = body.at("requireCaptcha").get<bool>();

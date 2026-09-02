@@ -113,6 +113,10 @@ private:
     // What the operator has set, live.
     NodeSettings::Values settings() const { return settings_->get(); }
 
+    // The challenge issuer, holding whatever words the operator has set for this
+    // portal now rather than the ones it was started with.
+    LoginChallenge& login();
+
     PortalApiOptions options_;
     std::shared_ptr<NodeSettings> settings_;
     WebAssets assets_;

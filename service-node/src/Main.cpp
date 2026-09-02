@@ -114,6 +114,9 @@ struct PortalConfig {
     // fronts the portal under another one.
     std::string name;
     std::string address;
+    // What signing in here is called, in the client's badge: whose account the
+    // signature opens.
+    std::string role;
     std::vector<std::string> links;
     // This server's facade URLs - I2P addresses, where clients talk to it - shown
     // in the cabinet as part of the server descriptor a client pastes to connect
@@ -200,6 +203,7 @@ NodeConfig loadNodeConfig(const fs::path& path)
         config.portal.message = portal.value("message", std::string());
         config.portal.name = portal.value("name", std::string());
         config.portal.address = portal.value("address", std::string());
+        config.portal.role = portal.value("role", std::string());
         if (portal.contains("links")) {
             config.portal.links = portal.at("links").get<std::vector<std::string>>();
         }
@@ -227,6 +231,22 @@ NodeConfig loadNodeConfig(const fs::path& path)
             = registration.value("idleDeleteDays", config.registration.idleDeleteDays);
     }
     return config;
+}
+
+// The words this portal signs under until an operator changes them. The address
+// has no default worth inventing: it is the one thing the user checks against
+// their address bar, so an unset one stops the portal instead.
+bazarish::service::LoginConsumer portalConsumer(const NodeConfig& config)
+{
+    const char* const kDefaultPortalName = "Bazarish service node";
+    const char* const kDefaultPortalRole = "Account owner";
+    bazarish::service::LoginConsumer consumer;
+    consumer.name = config.portal.name.empty() ? kDefaultPortalName : config.portal.name;
+    consumer.place = config.portal.address.empty()
+        ? (config.portal.links.empty() ? std::string() : config.portal.links.front())
+        : config.portal.address;
+    consumer.role = config.portal.role.empty() ? kDefaultPortalRole : config.portal.role;
+    return consumer;
 }
 
 }  // namespace
@@ -321,6 +341,7 @@ int main(const int argc, const char** argv)
             .requireApproval = nodeConfig.registration.requireApproval,
             .registrationMessage = nodeConfig.registration.message,
             .portalMessage = nodeConfig.portal.message,
+            .loginConsumer = portalConsumer(nodeConfig),
             .requireCaptcha = nodeConfig.portal.captchaEnabled,
             .facades = nodeConfig.portal.facades,
             .reseeds = nodeConfig.portal.reseeds,
@@ -396,12 +417,7 @@ int main(const int argc, const char** argv)
         // a login. Its own words: a name a user recognises and the address they
         // opened, which is the link the node advertises unless the operator
         // fronts it under another one.
-        portalOptions.consumer.name
-            = nodeConfig.portal.name.empty() ? "Bazarish service node" : nodeConfig.portal.name;
-        portalOptions.consumer.place = nodeConfig.portal.address.empty()
-            ? (nodeConfig.portal.links.empty() ? std::string() : nodeConfig.portal.links.front())
-            : nodeConfig.portal.address;
-        portalOptions.consumer.role = "Account owner";
+        portalOptions.consumer = settings->get().loginConsumer;
         if (portalOptions.consumer.place.empty()) {
             bazarish::log::error("--portal-listen needs portal.address (or portal.links): a "
                                  "portal that will not say where it lives asks users to sign "

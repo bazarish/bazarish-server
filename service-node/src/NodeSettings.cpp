@@ -23,6 +23,9 @@ const char* const kIdleDaysKey = "idleDeleteDays";
 const char* const kQuotaKey = "freeStorageBytes";
 const char* const kPortalKey = "portal";
 const char* const kPortalMessageKey = "message";
+const char* const kPortalNameKey = "name";
+const char* const kPortalAddressKey = "address";
+const char* const kPortalRoleKey = "role";
 const char* const kCaptchaKey = "captcha";
 const char* const kCaptchaEnabledKey = "enabled";
 const char* const kFacadesKey = "facades";
@@ -72,6 +75,15 @@ void NodeSettings::persist(const Values& values) const
     }
     if (values.portalMessage != values_.portalMessage) {
         file.set({kPortalKey, kPortalMessageKey}, values.portalMessage);
+    }
+    if (values.loginConsumer.name != values_.loginConsumer.name) {
+        file.set({kPortalKey, kPortalNameKey}, values.loginConsumer.name);
+    }
+    if (values.loginConsumer.place != values_.loginConsumer.place) {
+        file.set({kPortalKey, kPortalAddressKey}, values.loginConsumer.place);
+    }
+    if (values.loginConsumer.role != values_.loginConsumer.role) {
+        file.set({kPortalKey, kPortalRoleKey}, values.loginConsumer.role);
     }
     if (values.requireCaptcha != values_.requireCaptcha) {
         file.set({kPortalKey, kCaptchaKey, kCaptchaEnabledKey}, values.requireCaptcha);

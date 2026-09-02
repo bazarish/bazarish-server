@@ -312,6 +312,17 @@ std::vector<Storage::PendingEntry> DiskStorage::listPending(const std::string& u
     const std::lock_guard<std::mutex> lock(mutex_);
     std::vector<PendingEntry> pending;
     for (const std::string& blobId : listDirectoryNames(userDir(user) / "blobs")) {
+        // A blob with no record beside it is not a delivery: a write that was
+        // interrupted leaves its ".tmp" behind, and reading a record for that
+        // name throws. Thrown from here it took the whole mailbox with it - the
+        // user's pending list became permanently unavailable over one stray
+        // file. One stray file now costs one entry.
+        std::error_code ec;
+        if (!fs::exists(userDir(user) / "meta" / (blobId + ".json"), ec) || ec) {
+            bazarish::log::warn("ignoring an item with no record in the mailbox of {}: {}",
+                bazarish::log::redact(user), blobId);
+            continue;
+        }
         const nlohmann::json meta = readJsonFile(userDir(user) / "meta" / (blobId + ".json"));
         bool acked = false;
         for (const nlohmann::json& entry : meta.at("acked")) {
@@ -384,13 +395,29 @@ void DiskStorage::forgetUser(const std::string& user)
 
 void DiskStorage::purgeExpired(const std::int64_t receivedBefore)
 {
-    const std::lock_guard<std::mutex> lock(mutex_);
-    if (!fs::exists(root_ / "users")) {
-        return;
+    // The user list under the lock, the walk without it. This mutex is the one
+    // every delivery needs, and holding it across a walk of every mailbox in the
+    // node stalled all of them for as long as the walk took - seconds, on a node
+    // with a long retention. One user at a time is short enough not to be felt.
+    std::vector<fs::path> users;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        if (!fs::exists(root_ / "users")) {
+            return;
+        }
+        for (const fs::directory_entry& userEntry : fs::directory_iterator(root_ / "users")) {
+            users.push_back(userEntry.path());
+        }
     }
-    for (const fs::directory_entry& userEntry : fs::directory_iterator(root_ / "users")) {
+    for (const fs::path& userPath : users) {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        const fs::directory_entry userEntry(userPath);
         const std::string user = userEntry.path().filename().string();
         for (const std::string& blobId : listDirectoryNames(userEntry.path() / "blobs")) {
+            std::error_code missing;
+            if (!fs::exists(userEntry.path() / "meta" / (blobId + ".json"), missing)) {
+                continue;  // no record beside it: not a delivery, not ours to age
+            }
             const nlohmann::json meta
                 = readJsonFile(userEntry.path() / "meta" / (blobId + ".json"));
             if (meta.at("receivedAt").get<std::int64_t>() < receivedBefore) {
@@ -415,11 +442,19 @@ void DiskStorage::purgeExpired(const std::int64_t receivedBefore)
 
 void DiskStorage::purgeTokensRegisteredBefore(const std::int64_t registeredBefore)
 {
-    const std::lock_guard<std::mutex> lock(mutex_);
-    if (!fs::exists(root_ / "users")) {
-        return;
+    std::vector<fs::path> users;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        if (!fs::exists(root_ / "users")) {
+            return;
+        }
+        for (const fs::directory_entry& userEntry : fs::directory_iterator(root_ / "users")) {
+            users.push_back(userEntry.path());
+        }
     }
-    for (const fs::directory_entry& userEntry : fs::directory_iterator(root_ / "users")) {
+    for (const fs::path& userPath : users) {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        const fs::directory_entry userEntry(userPath);
         const fs::path tokens = userEntry.path() / "tokens";
         for (const std::string& hash : listDirectoryNames(tokens)) {
             std::error_code ec;

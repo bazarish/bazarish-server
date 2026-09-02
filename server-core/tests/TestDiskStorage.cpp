@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <stdexcept>
 
 // Minimal test support, mirroring the common library tests.
@@ -123,6 +124,17 @@ int main()
     // --- Pending list and the delete-when-all-acked rule ---
     CHECK((storage.listPending(alice, "client1")
         == std::vector<Storage::PendingEntry>{{"msg1", "content"}}));
+    // A write interrupted halfway leaves a ".tmp" beside the real blobs. It has
+    // no record of its own, and reading one for it used to throw out of here -
+    // taking the whole mailbox with it, for good. It costs itself and nothing
+    // more.
+    {
+        std::ofstream stray(root / "users" / alice / "blobs" / "msg9.tmp");
+        stray << "half a delivery";
+    }
+    CHECK((storage.listPending(alice, "client1")
+        == std::vector<Storage::PendingEntry>{{"msg1", "content"}}));
+    std::filesystem::remove(root / "users" / alice / "blobs" / "msg9.tmp");
     storage.ackBlob(alice, "msg1", "client1");
     CHECK(storage.listPending(alice, "client1").empty());
     // client2 has not acked: the blob must survive.

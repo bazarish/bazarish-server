@@ -184,6 +184,8 @@ void HttpApi::mailboxJanitorLoop()
     // Hourly is ample for a day-scale TTL: a reclaimed blob is freed within an
     // hour of crossing the retention window.
     constexpr std::chrono::seconds kSweepInterval{3600};
+    // The first sweep is one interval away, as it always was.
+    std::chrono::steady_clock::time_point lastSweep = std::chrono::steady_clock::now();
     for (;;) {
         std::vector<Revocation> asked;
         bool sweepDue = false;
@@ -197,8 +199,17 @@ void HttpApi::mailboxJanitorLoop()
                 return;
             }
             asked.swap(revocations_);
-            // Nothing woke us: the interval is what elapsed, so the sweep is due.
-            sweepDue = !woken;
+            // Due by the clock, not by what woke this thread. Deciding it from
+            // `woken` meant that on a node where somebody revokes tokens every
+            // hour the sweep never ran at all: mail and replay markers outlived
+            // their retention and the disk grew with them.
+            const std::chrono::steady_clock::time_point now
+                = std::chrono::steady_clock::now();
+            sweepDue = now - lastSweep >= kSweepInterval;
+            if (sweepDue) {
+                lastSweep = now;
+            }
+            (void)woken;
         }  // release stopMutex_ before touching storage (it takes its own lock)
         // Revocations first: every one of them is a user who has just cut
         // somebody off and expects it to hold.
@@ -393,6 +404,11 @@ void HttpApi::setupRoutes()
                         bazarish::log::debug("bad wait '{}': {}", asked, error.what());
                     }
                 }
+                // Armed first, looked at second. A delivery that landed between
+                // the look above and this arming woke nobody: this request then
+                // waited out the whole poll for mail that was already in the
+                // mailbox. The re-check below closes that window - waking the
+                // waiter is what a delivery would have done.
                 gate->wait(http_->executor(), user, std::chrono::seconds(wait),
                     [&store, user, clientId, respond]() {
                         nlohmann::json items = nlohmann::json::array();
@@ -407,6 +423,15 @@ void HttpApi::setupRoutes()
                         }
                         respond(jsonResponse({{"pending", items}}));
                     });
+                try {
+                    if (!pending().empty()) {
+                        gate->notify(user);
+                    }
+                } catch (const std::exception& error) {
+                    // The waiter is armed either way; at worst it waits out its
+                    // poll, which is the behaviour this check is improving on.
+                    bazarish::log::warn("event face re-check: {}", error.what());
+                }
                 return std::nullopt;  // answered from the gate
             });
     }

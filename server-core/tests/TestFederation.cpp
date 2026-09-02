@@ -101,7 +101,8 @@ Bytes makeSealed(const Key& sealingPublic, const std::string& kind,
 {
     nlohmann::json inner = {{"class", kind}, {"mailbox", mailbox}, {"deliveryId", deliveryId}};
     if (kind == "content") {
-        inner["token"] = toBase64(token);
+        // The payloads here are a few bytes, so one token is the whole price.
+        inner["tokens"] = nlohmann::json::array({toBase64(token)});
     }
     const std::string text = inner.dump();
     return cms::seal(Bytes(text.begin(), text.end()), sealingPublic);

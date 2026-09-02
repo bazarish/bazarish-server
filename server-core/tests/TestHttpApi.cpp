@@ -260,11 +260,50 @@ int main()
     // what she can fetch, and what acking it does.
     const Bytes payload = {'e', '2', 'e', '-', 'b', 'l', 'o', 'b'};
     const Bytes envelope = sealEnvelope(sealingPublic,
-        {{"class", "content"}, {"mailbox", alice.fingerprint()}, {"token", toBase64(token1)},
-            {"deliveryId", "msg-1"}});
+        {{"class", "content"}, {"mailbox", alice.fingerprint()},
+            {"tokens", nlohmann::json::array({toBase64(token1)})}, {"deliveryId", "msg-1"}});
     const Key engineSealing = Key::fromPrivatePem(serverSealing.privatePem());
     CHECK(engine.deliver(envelope, payload, kNow, engineSealing, alice.fingerprint()).delivered);
     CHECK(storage.tokenCount(alice.fingerprint()) == 1);
+
+    // A message is admitted by as many tokens as it weighs. One token buys
+    // kBytesPerDeliveryToken; a payload over that costs two, and presenting one
+    // for it is refused - with the token that was presented left where it was, so
+    // a sender that got the count wrong is not charged for the attempt.
+    {
+        const Bytes heavy(kBytesPerDeliveryToken + 1, 'h');
+        CHECK(tokensForPayload(heavy.size()) == 2);
+        // The mailbox in this test is deliberately tiny, and what is being
+        // measured here is the price rather than the room: give it space for
+        // exactly this one message.
+        const std::uint64_t quotaBytes = storage.userQuota(alice.fingerprint(), 1024);
+        storage.setUserQuota(alice.fingerprint(), heavy.size() * 2);
+        // Two of its own, so what the rest of this test holds is left alone.
+        const Bytes heavyToken1 = randomBytes(kDeliveryTokenSize);
+        const Bytes heavyToken2 = randomBytes(kDeliveryTokenSize);
+        storage.registerTokens(alice.fingerprint(), {heavyToken1, heavyToken2});
+        const std::size_t before = storage.tokenCount(alice.fingerprint());
+
+        const Bytes underpaid = sealEnvelope(sealingPublic,
+            {{"class", "content"}, {"mailbox", alice.fingerprint()},
+                {"tokens", nlohmann::json::array({toBase64(heavyToken1)})},
+                {"deliveryId", "msg-heavy"}});
+        CHECK(!engine.deliver(underpaid, heavy, kNow, engineSealing, alice.fingerprint())
+                   .delivered);
+        // Refused before anything was taken: the count is checked first.
+        CHECK(storage.tokenCount(alice.fingerprint()) == before);
+
+        const Bytes paid = sealEnvelope(sealingPublic,
+            {{"class", "content"}, {"mailbox", alice.fingerprint()},
+                {"tokens", nlohmann::json::array({toBase64(heavyToken1), toBase64(heavyToken2)})},
+                {"deliveryId", "msg-heavy"}});
+        CHECK(engine.deliver(paid, heavy, kNow, engineSealing, alice.fingerprint()).delivered);
+        CHECK(storage.tokenCount(alice.fingerprint()) == before - 2);
+        // And it leaves the mailbox as it found it for the rest of this test: the
+        // heavy message taken back out and the quota put back.
+        storage.ackBlob(alice.fingerprint(), "msg-heavy", "alicedev");
+        storage.setUserQuota(alice.fingerprint(), quotaBytes);
+    }
 
     // Alice sees the message, fetches it and acks it away.
     {
@@ -389,7 +428,8 @@ int main()
         CHECK(engine
                   .deliver(sealEnvelope(sealingPublic,
                                {{"class", "content"}, {"mailbox", alice.fingerprint()},
-                                   {"token", toBase64(token2)}, {"deliveryId", "msg-last"}}),
+                                   {"tokens", nlohmann::json::array({toBase64(token2)})},
+                                   {"deliveryId", "msg-last"}}),
                       payload, kNow, engineSealing, alice.fingerprint())
                   .delivered);
         CHECK(storage.usage(alice.fingerprint()) > 0);

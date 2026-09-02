@@ -67,7 +67,7 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
     // here (see docs Messages.md).
     std::string deliveryClass;
     std::string deliveryId;
-    Bytes token;
+    std::vector<Bytes> tokens;
     try {
         const Bytes plain = cms::unseal(sealed, sealingKey);
         const nlohmann::json inner = nlohmann::json::parse(plain.begin(), plain.end());
@@ -75,7 +75,9 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
         mailbox = inner.at("mailbox").get<std::string>();
         deliveryId = inner.at("deliveryId").get<std::string>();
         if (deliveryClass == kContentDeliveryClass) {
-            token = fromBase64(inner.at("token").get<std::string>());
+            for (const auto& entry : inner.at("tokens")) {
+                tokens.push_back(fromBase64(entry.get<std::string>()));
+            }
         } else if (deliveryClass != kContactDeliveryClass) {
             return fail(ErrorCode::eDeliveryRejected, "unknown delivery class");
         }
@@ -147,19 +149,41 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
                 "contact request exceeds " + std::to_string(kMaxContactRequestBytes) + " bytes");
         }
     } else {
-        if (token.size() != kDeliveryTokenSize || !storage_.consumeToken(mailbox, token)) {
-            // The first bytes of the token go with it: it is refused and therefore
-            // spent or never valid, and without a handle on WHICH token was
-            // presented an operator cannot tell a stale copy from anything else.
-            bazarish::log::debug("delivery refused: {} ({}...) for {} on {}, id {}",
-                token.size() != kDeliveryTokenSize ? "malformed delivery token"
-                                                   : "delivery token not accepted (unknown or "
-                                                     "already spent)",
-                toHex(token).substr(0, kRefusedTokenPrefixChars), bazarish::log::redact(mailbox),
-                owner.empty() ? std::string("the server's own address")
-                              : bazarish::log::redact(owner),
-                deliveryId.substr(0, kRefusedTokenPrefixChars));
+        // A message is admitted by as many tokens as it weighs, one per
+        // kBytesPerDeliveryToken. The count is computed here rather than taken
+        // from the sender: what the envelope says it is paying is a claim, and
+        // this is the side that decides the price.
+        const std::size_t due = bazarish::tokensForPayload(payload.size());
+        if (tokens.size() != due) {
+            bazarish::log::debug("delivery refused: {} token(s) presented for a payload that"
+                                 " costs {}, id {}",
+                tokens.size(), due, deliveryId.substr(0, kRefusedTokenPrefixChars));
             return fail(ErrorCode::eDeliveryRejected, "delivery rejected");
+        }
+        std::vector<Bytes> spent;
+        for (const Bytes& token : tokens) {
+            if (token.size() != kDeliveryTokenSize || !storage_.consumeToken(mailbox, token)) {
+                // The first bytes of the token go with it: it is refused and
+                // therefore spent or never valid, and without a handle on WHICH
+                // token was presented an operator cannot tell a stale copy from
+                // anything else. What was already taken goes back: this delivery
+                // is not happening, and it must not cost the sender the tokens
+                // that were good.
+                bazarish::log::debug("delivery refused: {} ({}...) for {} on {}, id {}",
+                    token.size() != kDeliveryTokenSize
+                        ? "malformed delivery token"
+                        : "delivery token not accepted (unknown or already spent)",
+                    toHex(token).substr(0, kRefusedTokenPrefixChars),
+                    bazarish::log::redact(mailbox),
+                    owner.empty() ? std::string("the server's own address")
+                                  : bazarish::log::redact(owner),
+                    deliveryId.substr(0, kRefusedTokenPrefixChars));
+                if (!spent.empty()) {
+                    storage_.registerTokens(mailbox, spent);
+                }
+                return fail(ErrorCode::eDeliveryRejected, "delivery rejected");
+            }
+            spent.push_back(token);
         }
     }
 
@@ -167,9 +191,9 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
         now, storage_.userQuota(mailbox, options_.defaultQuotaBytes));
     if (result == Storage::PutResult::eQuotaExceeded) {
         if (deliveryClass == "content") {
-            // The store did not happen: restore the token so the sender
+            // The store did not happen: restore the tokens so the sender
             // can retry after the recipient frees space.
-            storage_.registerTokens(mailbox, {token});
+            storage_.registerTokens(mailbox, tokens);
             return fail(ErrorCode::eStorageFull, "recipient storage quota is exhausted");
         }
         bazarish::log::debug("delivery refused: mailbox is full and this is not content");

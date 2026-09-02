@@ -3,6 +3,8 @@
 
 #include "ServiceClient.hpp"
 
+#include <bazarish/Address.hpp>
+#include <bazarish/Certificates.hpp>
 #include <bazarish/Crypto.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <bazarish/Log.hpp>
@@ -10,6 +12,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstdint>
 #include <ctime>
 #include <exception>
 #include <functional>
@@ -28,6 +31,11 @@ std::int64_t nowSeconds()
 }
 
 const char* const kCookieName = "adminsession";
+
+// What a listener may be told to bind: TCP's range without port 0, which means
+// "any free port" and is never what an operator typed on purpose.
+constexpr int kMinPort = 1;
+constexpr int kMaxPort = 65535;
 
 // The routes are written as "fill in the response"; the engine hands one back.
 using Filler = std::function<void(const http::Request&, http::Response&)>;
@@ -112,11 +120,12 @@ std::string humanizeUptime(const std::int64_t seconds)
 
 namespace bazarish::admin {
 
-HttpApi::HttpApi(Config config, const Identity& identity, HttpApiOptions options)
-    : config_(std::move(config))
+HttpApi::HttpApi(std::shared_ptr<PanelSettings> settings, const Identity& identity,
+    HttpApiOptions options)
+    : settings_(std::move(settings))
     , identity_(identity)
     , options_(std::move(options))
-    , auth_(config_.consumer, config_.admins)
+    , auth_(settings_)
     , sessions_(options_.sessionTtlSeconds)
     , assets_(options_.assetsDirectory)
 {
@@ -124,22 +133,25 @@ HttpApi::HttpApi(Config config, const Identity& identity, HttpApiOptions options
 
 HttpApi::~HttpApi() = default;
 
-const ServiceEntry* HttpApi::serviceOfKind(const std::string& fleet, const std::string& kind) const
+std::optional<ServiceEntry> HttpApi::serviceOfKind(
+    const std::string& fleet, const std::string& kind) const
 {
-    for (const Fleet& candidate : config_.fleets) {
+    // By value: the deployment list is a live setting, so a pointer into it
+    // would outlive the snapshot it came from.
+    for (const Fleet& candidate : settings_->get().fleets) {
         if (!fleet.empty() && candidate.name != fleet) {
             continue;
         }
         for (const ServiceEntry& service : candidate.services) {
             if (service.kind == kind) {
-                return &service;
+                return service;
             }
         }
         if (!fleet.empty()) {
-            return nullptr;  // named, and it has none of this kind
+            return std::nullopt;  // named, and it has none of this kind
         }
     }
-    return nullptr;
+    return std::nullopt;
 }
 
 // Passes a call through to the service that owns the accounts, and hands its
@@ -148,8 +160,8 @@ const ServiceEntry* HttpApi::serviceOfKind(const std::string& fleet, const std::
 void HttpApi::proxyToNode(const std::string& fleet, http::Response& response,
     const std::string& method, const std::string& path, const std::string& body)
 {
-    const ServiceEntry* const node = serviceOfKind(fleet, "service-node");
-    if (node == nullptr) {
+    const std::optional<ServiceEntry> node = serviceOfKind(fleet, "service-node");
+    if (!node.has_value()) {
         sendError(response, 503, "this deployment has no service node the panel can reach");
         return;
     }
@@ -190,8 +202,58 @@ void HttpApi::registerRoutes()
             });
     };
 
+    // A panel nobody owns yet. The wizard is the whole installation: sign once,
+    // and the key that signed administers this panel from here on.
+    const auto setupPage = [this](const std::string& error) {
+        return assets_.render("setup.html",
+            {
+                {"challenge", auth_.issueChallenge(nowSeconds())},
+                {"error", error.empty() ? std::string()
+                                        : "<p class=\"notice is-error\">" + error + "</p>"},
+            });
+    };
+
+    http_->get("/setup", filled([this, setupPage](
+                             const http::Request&, http::Response& response) {
+        if (!settings_->unclaimed()) {
+            redirectTo(response, "/login");
+            return;
+        }
+        sendHtml(response, setupPage(std::string()));
+    }));
+
+    http_->post("/setup", filled([this, setupPage](
+                              const http::Request& request, http::Response& response) {
+        if (!settings_->unclaimed()) {
+            redirectTo(response, "/login");
+            return;
+        }
+        try {
+            // Whoever signs first: on an unclaimed panel there is no list for
+            // anyone to be on, so this checks the signature and nothing else.
+            const std::string fingerprint = auth_.verify(
+                request.param("challenge"), request.param("blob"), nowSeconds());
+            if (!settings_->claim(fingerprint)) {
+                redirectTo(response, "/login");
+                return;
+            }
+            bazarish::log::info("this panel is now administered by {}", fingerprint);
+            const std::string token = sessions_.create(nowSeconds());
+            response.headers["Set-Cookie"]
+                = std::string(kCookieName) + "=" + token + "; HttpOnly; SameSite=Strict; Path=/";
+            redirectTo(response, "/");
+        } catch (const std::exception& error) {
+            bazarish::log::warn("panel setup refused: {}", error.what());
+            sendHtml(response, setupPage(error.what()), 401);
+        }
+    }));
+
     http_->get("/login", filled([this, signedIn, loginPage](
                              const http::Request& request, http::Response& response) {
+        if (settings_->unclaimed()) {
+            redirectTo(response, "/setup");
+            return;
+        }
         if (signedIn(request)) {
             redirectTo(response, "/");
             return;
@@ -222,6 +284,10 @@ void HttpApi::registerRoutes()
 
     http_->get("/", filled([this, signedIn](
                         const http::Request& request, http::Response& response) {
+        if (settings_->unclaimed()) {
+            redirectTo(response, "/setup");
+            return;
+        }
         if (!signedIn(request)) {
             redirectTo(response, "/login");
             return;
@@ -252,26 +318,27 @@ void HttpApi::registerRoutes()
         // Every service of every deployment at once: one being down must not hold
         // the page on the ones that are up, and an operator watching two servers
         // wants both on the same screen.
-        std::vector<std::pair<const Fleet*, const ServiceEntry*>> all;
-        for (const Fleet& fleet : config_.fleets) {
+        const Config panel = settings_->get();
+        std::vector<std::pair<std::string, ServiceEntry>> all;
+        for (const Fleet& fleet : panel.fleets) {
             for (const ServiceEntry& service : fleet.services) {
-                all.emplace_back(&fleet, &service);
+                all.emplace_back(fleet.name, service);
             }
         }
         std::vector<std::future<HealthResult>> probes;
         probes.reserve(all.size());
         for (const auto& [fleet, service] : all) {
             probes.push_back(std::async(std::launch::async,
-                [this, service]() { return probeHealth(*service, identity_); }));
+                [this, service]() { return probeHealth(service, identity_); }));
         }
         nlohmann::json services = nlohmann::json::array();
         for (std::size_t i = 0; i < all.size(); ++i) {
             const HealthResult health = probes[i].get();
             services.push_back(nlohmann::json{
-                {"fleet", all[i].first->name},
-                {"name", all[i].second->name},
-                {"kind", all[i].second->kind},
-                {"url", all[i].second->url},
+                {"fleet", all[i].first},
+                {"name", all[i].second.name},
+                {"kind", all[i].second.kind},
+                {"url", all[i].second.url},
                 {"up", health.reachable},
                 {"status", health.status},
                 {"error", health.error},
@@ -289,7 +356,7 @@ void HttpApi::registerRoutes()
             });
         }
         nlohmann::json fleets = nlohmann::json::array();
-        for (const Fleet& fleet : config_.fleets) {
+        for (const Fleet& fleet : panel.fleets) {
             fleets.push_back(fleet.name);
         }
         sendJson(response, nlohmann::json{{"services", services}, {"fleets", fleets}}.dump());
@@ -351,8 +418,9 @@ void HttpApi::registerRoutes()
     // many devices are collecting it. Neither is known to the node.
     http_->get("/api/account", api([this](
                                    const http::Request& request, http::Response& response) {
-        const ServiceEntry* const core = serviceOfKind(request.query("fleet"), "server-core");
-        if (core == nullptr) {
+        const std::optional<ServiceEntry> core
+            = serviceOfKind(request.query("fleet"), "server-core");
+        if (!core.has_value()) {
             sendError(response, 503, "no server-core configured in this panel");
             return;
         }
@@ -372,8 +440,9 @@ void HttpApi::registerRoutes()
     // actually holds. The second is measured by the server that owns the disk.
     http_->get("/api/settings", api([this](
                                     const http::Request& request, http::Response& response) {
-        const ServiceEntry* const node = serviceOfKind(request.query("fleet"), "service-node");
-        if (node == nullptr) {
+        const std::optional<ServiceEntry> node
+            = serviceOfKind(request.query("fleet"), "service-node");
+        if (!node.has_value()) {
             sendError(response, 503, "this deployment has no service node the panel can reach");
             return;
         }
@@ -388,8 +457,9 @@ void HttpApi::registerRoutes()
         // zero: "no data" and "nothing stored" are not the same answer.
         merged["diskUsedBytes"] = nullptr;
         merged["diskError"] = "no server-core configured in this panel";
-        if (const ServiceEntry* const core = serviceOfKind(request.query("fleet"), "server-core");
-            core != nullptr) {
+        if (const std::optional<ServiceEntry> core
+            = serviceOfKind(request.query("fleet"), "server-core");
+            core.has_value()) {
             const JsonResult disk = callJson(*core, identity_, "GET", "/v1/messaging/storage");
             if (disk.ok) {
                 merged["diskUsedBytes"] = nlohmann::json::parse(disk.body).at("usedBytes");
@@ -404,6 +474,126 @@ void HttpApi::registerRoutes()
 
     http_->put("/api/settings", api([this](const http::Request& request, http::Response& response) {
         proxyToNode(request.query("fleet"), response, "PUT", "/v1/account/settings", request.body);
+    }));
+
+    // The panel's own settings - the ones no service knows about: who may sign
+    // in, the words it signs under, the deployments it manages, where it listens.
+    // Beside them the facts an operator can only read, so one page answers "what
+    // is this panel" without an SSH session.
+    http_->get("/api/panel", api([this](const http::Request&, http::Response& response) {
+        const Config panel = settings_->get();
+        nlohmann::json fleets = nlohmann::json::array();
+        for (const Fleet& fleet : panel.fleets) {
+            nlohmann::json services = nlohmann::json::array();
+            for (const ServiceEntry& service : fleet.services) {
+                services.push_back({{"name", service.name}, {"kind", service.kind},
+                    {"url", service.url}});
+            }
+            fleets.push_back({{"name", fleet.name}, {"services", services}});
+        }
+        sendJson(response,
+            nlohmann::json{
+                {"admins", panel.admins},
+                {"consumer",
+                    {{"name", panel.consumer.name}, {"place", panel.consumer.place},
+                        {"role", panel.consumer.role}}},
+                {"listen", {{"host", panel.listenHost}, {"port", panel.listenPort}}},
+                {"fleets", fleets},
+                {"fingerprint", identity_.fingerprint()},
+                {"configPath", settings_->configPath().string()},
+                {"stateDir", panel.stateDir},
+                {"assetsDir", panel.assetsDir},
+                {"version", options_.version},
+            }
+                .dump());
+    }));
+
+    http_->put("/api/panel", api([this](const http::Request& request, http::Response& response) {
+        try {
+            const nlohmann::json body = nlohmann::json::parse(request.body);
+            Config panel = settings_->get();
+            if (body.contains("admins")) {
+                std::vector<std::string> admins;
+                for (const nlohmann::json& entry : body.at("admins")) {
+                    const std::string fingerprint = entry.get<std::string>();
+                    if (fingerprint.empty()) {
+                        continue;
+                    }
+                    if (!isFingerprint(fingerprint)) {
+                        throw std::invalid_argument(
+                            "not a 52-character fingerprint: " + fingerprint);
+                    }
+                    admins.push_back(fingerprint);
+                }
+                // Emptying the list would hand the panel back to the setup
+                // wizard - to whoever reaches it first. That is not a setting.
+                if (admins.empty()) {
+                    throw std::invalid_argument("a panel needs at least one administrator");
+                }
+                panel.admins = std::move(admins);
+            }
+            if (body.contains("consumer")) {
+                const nlohmann::json& consumer = body.at("consumer");
+                service::LoginConsumer wanted;
+                wanted.name = consumer.value("name", panel.consumer.name);
+                wanted.place = consumer.value("place", panel.consumer.place);
+                wanted.role = consumer.value("role", panel.consumer.role);
+                try {
+                    service::requireUsableConsumer(wanted);
+                } catch (const std::exception& error) {
+                    throw std::invalid_argument(error.what());
+                }
+                panel.consumer = wanted;
+            }
+            if (body.contains("listen")) {
+                const nlohmann::json& listen = body.at("listen");
+                const std::string host = listen.value("host", panel.listenHost);
+                const int port = listen.value("port", panel.listenPort);
+                if (host.empty()) {
+                    throw std::invalid_argument("a listener needs a host to bind");
+                }
+                if (port < kMinPort || port > kMaxPort) {
+                    throw std::invalid_argument("a port is between "
+                        + std::to_string(kMinPort) + " and " + std::to_string(kMaxPort));
+                }
+                panel.listenHost = host;
+                panel.listenPort = port;
+            }
+            if (body.contains("fleets")) {
+                std::vector<Fleet> fleets;
+                for (const nlohmann::json& entry : body.at("fleets")) {
+                    Fleet fleet;
+                    fleet.name = entry.value("name", std::string());
+                    for (const nlohmann::json& item : entry.at("services")) {
+                        ServiceEntry service;
+                        service.name = item.value("name", std::string());
+                        service.kind = item.value("kind", std::string());
+                        service.url = item.value("url", std::string());
+                        if (!isKnownServiceKind(service.kind)) {
+                            throw std::invalid_argument(
+                                "the panel does not know a service of kind \"" + service.kind
+                                + "\"");
+                        }
+                        if (service.url.empty() || service.name.empty()) {
+                            throw std::invalid_argument("a service needs a name and a URL");
+                        }
+                        fleet.services.push_back(std::move(service));
+                    }
+                    fleets.push_back(std::move(fleet));
+                }
+                panel.fleets = std::move(fleets);
+            }
+            settings_->set(panel);
+            sendJson(response, nlohmann::json{{"admins", panel.admins}}.dump());
+        } catch (const std::invalid_argument& error) {
+            sendError(response, 400, error.what());
+        } catch (const nlohmann::json::exception& error) {
+            sendError(response, 400, error.what());
+        } catch (const std::exception& error) {
+            // A change that could not be written would be lost at the next
+            // start; saying so beats pretending it stuck.
+            sendError(response, 500, error.what());
+        }
     }));
 
     // The quota belongs to the node that grants it; the panel only carries the

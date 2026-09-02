@@ -113,18 +113,13 @@ int main()
         std::ofstream config(configPath);
         config << "{}\n";
     }
-    const auto settings = std::make_shared<NodeSettings>(configPath,
-        NodeSettings::Values{
-            .requireApproval = false,
-            .registrationMessage = {},
-            .portalMessage = {},
-            .loginConsumer
-            = LoginConsumer{"Bazarish stand", "http://127.0.0.1:8431", "Account owner"},
-            .requireCaptcha = true,
-            .facades = {},
-            .reseeds = {},
-            .defaultQuotaBytes = options.defaultQuotaBytes,
-            .idleDeleteDays = 0});
+    NodeSettings::Values initial;
+    initial.loginConsumer
+        = LoginConsumer{"Bazarish stand", "http://127.0.0.1:8431", "Account owner"};
+    initial.requireCaptcha = true;
+    initial.logLevel = "info";
+    initial.defaultQuotaBytes = options.defaultQuotaBytes;
+    const auto settings = std::make_shared<NodeSettings>(configPath, initial);
     options.settings = settings;
 
     AccountApi api(store, grants, options);

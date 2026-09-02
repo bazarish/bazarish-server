@@ -551,7 +551,7 @@ body.centred {
 }
 
 .control-label {
-    flex: 0 0 8rem;
+    flex: 0 0 11rem;
     color: var(--bz-ink-dim);
     font-size: 0.75rem;
 }
@@ -733,4 +733,103 @@ textarea.field {
 /* A list the operator types line by line (the facade URLs). */
 .field-tall {
     min-height: 5.5rem;
+}
+
+/* --- settings: tabs, read-only values, restart marks --- */
+
+/* One subject per tab. The current one carries the same green slash the sidebar
+   uses, so "where am I" reads the same way in both places. */
+.tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid var(--bz-line);
+}
+
+.tab {
+    padding: 0.5rem 0.85rem;
+    background: transparent;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    color: var(--bz-ink-faint);
+    font: inherit;
+    font-size: 0.72rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    cursor: pointer;
+}
+
+.tab::before {
+    content: "/ ";
+    color: var(--bz-line-2);
+}
+
+.tab:hover {
+    color: var(--bz-ink);
+}
+
+.tab.is-on {
+    color: var(--bz-ink);
+    border-bottom-color: var(--bz-green-dim);
+}
+
+.tab.is-on::before {
+    color: var(--bz-green);
+}
+
+/* A value the panel shows but does not own. It is deliberately not a box: an
+   operator should be able to tell what is theirs to type without clicking it. */
+.readonly {
+    flex: 1 1 12rem;
+    min-width: 0;
+    padding: 0.55rem 0 0.55rem 0.7rem;
+    border-left: 2px solid var(--bz-line-2);
+    color: var(--bz-ink-dim);
+    font-size: 0.8rem;
+    overflow-wrap: anywhere;
+    user-select: text;
+}
+
+.readonly.is-unset {
+    color: var(--bz-ink-faint);
+    font-style: italic;
+}
+
+/* Said next to the field, not in the hint below it: by the time an operator has
+   typed the value, the sentence under it has been read and forgotten. */
+.badge-restart {
+    padding: 0.15rem 0.4rem;
+    border: 1px solid var(--bz-warn-line);
+    border-radius: var(--bz-radius-sm);
+    background: var(--bz-warn-bg);
+    color: var(--bz-warn);
+    font-size: 0.62rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.controls .service-name {
+    flex: 0 0 8rem;
+}
+
+.controls .service-kind {
+    flex: 0 0 10rem;
+    padding: 0.55rem 0.7rem;
+    background: var(--bz-deep);
+    color: var(--bz-ink);
+    border: 1px solid var(--bz-line-2);
+    border-radius: var(--bz-radius-sm);
+    font: inherit;
+    font-size: 0.8rem;
+}
+
+/* The setup page's one warning: until someone claims the panel, anyone can. */
+.panel-note.is-warning {
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--bz-warn-line);
+    border-radius: var(--bz-radius-sm);
+    background: var(--bz-warn-bg);
+    color: var(--bz-warn);
 }

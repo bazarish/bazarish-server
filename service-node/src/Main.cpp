@@ -157,6 +157,9 @@ struct NodeConfig {
     bazarish::ConfigView::Endpoint messaging;
     std::vector<std::string> operators;
     bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
+    // The level as the operator spelled it, so the panel can show and change the
+    // same word rather than a number nobody wrote.
+    std::string logLevelText = "info";
     std::uint64_t freeStorageBytes = 50 * 1024 * 1024;
     PortalConfig portal;
     RegistrationConfig registration;
@@ -196,6 +199,7 @@ NodeConfig loadNodeConfig(const fs::path& path)
             throw std::runtime_error("config: logLevel is not a level");
         }
         config.logLevel = *parsed;
+        config.logLevelText = level;
     }
     config.freeStorageBytes = doc.value("freeStorageBytes", config.freeStorageBytes);
     if (doc.contains("portal")) {
@@ -345,6 +349,16 @@ int main(const int argc, const char** argv)
             .requireCaptcha = nodeConfig.portal.captchaEnabled,
             .facades = nodeConfig.portal.facades,
             .reseeds = nodeConfig.portal.reseeds,
+            .portalLinks = nodeConfig.portal.links,
+            .captchaLength = nodeConfig.portal.captchaLength,
+            .captchaTtlSeconds = nodeConfig.portal.captchaTtlSeconds,
+            .logLevel = nodeConfig.logLevelText,
+            .listenHost = nodeConfig.listen.host,
+            .listenPort = nodeConfig.listen.port,
+            .portalListenHost = nodeConfig.portalListen.host,
+            .portalListenPort = nodeConfig.portalListen.port,
+            .messagingHost = nodeConfig.messaging.host,
+            .messagingPort = nodeConfig.messaging.port,
             .defaultQuotaBytes = nodeConfig.freeStorageBytes,
             .idleDeleteDays = nodeConfig.registration.idleDeleteDays});
     options.settings = settings;

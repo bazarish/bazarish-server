@@ -4,6 +4,7 @@
 #include <bazarish/Portal.hpp>
 
 #include <cstdint>
+#include <vector>
 #include <filesystem>
 #include <mutex>
 #include <string>
@@ -41,6 +42,24 @@ public:
         // Where a client with no I2P router yet fetches a slice of netdb to start
         // from. Clearnet addresses, and nothing else is served on them.
         std::vector<std::string> reseeds;
+        // Where a person is told they can onboard: the portal's public links,
+        // handed to clients by the discovery endpoint.
+        std::vector<std::string> portalLinks;
+        // The captcha a person solves on the portal. Both are read when the
+        // captcha is built, so a change to them waits for a restart.
+        int captchaLength = 0;
+        std::int64_t captchaTtlSeconds = 0;
+        // How much this node says. Applied the moment it is set.
+        std::string logLevel;
+        // The three addresses this node was started on: its operator API, its
+        // portal, and the messaging server it is bound to. Read at start, so a
+        // change to any of them waits for a restart.
+        std::string listenHost;
+        int listenPort = 0;
+        std::string portalListenHost;
+        int portalListenPort = 0;
+        std::string messagingHost;
+        int messagingPort = 0;
         std::uint64_t defaultQuotaBytes = 0;
         // How long an account is kept without a delegated destination before
         // the node drops it. The delegation is the only sign of life a server

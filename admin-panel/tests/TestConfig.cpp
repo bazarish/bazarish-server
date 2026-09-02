@@ -71,11 +71,12 @@ int main()
     const Config shared = Config::fromJson(R"({"admin": ["one", "two"]})");
     CHECK(shared.admins.size() == 2);
     CHECK(shared.admins.at(1) == "two");
-    CHECK_THROWS(Config::fromJson(R"({"admin": []})"));
+    // No administrator is not an error: it is a fresh install, and the setup
+    // wizard is what that state exists for. An empty fingerprint still is one -
+    // it names nobody while pretending to name somebody.
+    CHECK(Config::fromJson(R"({"admin": []})").admins.empty());
+    CHECK(Config::fromJson(R"({"services": []})").admins.empty());
     CHECK_THROWS(Config::fromJson(R"({"admin": ["one", ""]})"));
-
-    // A missing or empty admin fingerprint is rejected.
-    CHECK_THROWS(Config::fromJson(R"({"services": []})"));
     CHECK_THROWS(Config::fromJson(R"({"admin": ""})"));
 
     // Several deployments, each with its own services: that is the unit that

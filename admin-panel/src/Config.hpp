@@ -16,6 +16,8 @@ struct ServiceEntry {
     std::string name;
     std::string kind;  // server-core | service-node | facade
     std::string url;   // e.g. http://127.0.0.1:8420
+
+    friend bool operator==(const ServiceEntry&, const ServiceEntry&) = default;
 };
 
 // The panel configuration, loaded from a JSON file at startup. An admin pastes
@@ -28,9 +30,18 @@ struct ServiceEntry {
 struct Fleet {
     std::string name;
     std::vector<ServiceEntry> services;
+
+    friend bool operator==(const Fleet&, const Fleet&) = default;
 };
 
+// Whether the panel knows how to talk to a service of this kind. One list, used
+// both when the config file is read and when the panel is edited from the panel.
+bool isKnownServiceKind(const std::string& kind);
+
 struct Config {
+    // Who may sign in. Empty means nobody has claimed this panel yet, which is
+    // the one state where the setup wizard answers: a fresh install has no
+    // administrator until the first key signs in and becomes one.
     std::vector<std::string> admins;
     // Where the panel keeps its own signing identity, and where its web files
     // live. In the config like everything else: a flag that could override them
@@ -49,7 +60,8 @@ struct Config {
     std::vector<Fleet> fleets;
 
     // Parses configuration from JSON text. Throws std::runtime_error on malformed
-    // input or a missing required field (the admin fingerprints).
+    // input. An absent or empty "admin" is not an error - it is an unclaimed
+    // panel, which the setup wizard exists for.
     static Config fromJson(const std::string& text);
 
     // Reads and parses the configuration file. Throws if it cannot be read.

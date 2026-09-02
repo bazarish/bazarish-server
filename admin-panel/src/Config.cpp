@@ -15,7 +15,9 @@ namespace {
 // a server has nothing to do with it.
 const char* const kKnownKinds[] = {"server-core", "service-node", "facade"};
 
-bool isKnownKind(const std::string& kind)
+}  // namespace
+
+bool isKnownServiceKind(const std::string& kind)
 {
     for (const char* const known : kKnownKinds) {
         if (kind == known) {
@@ -25,21 +27,20 @@ bool isKnownKind(const std::string& kind)
     return false;
 }
 
-}  // namespace
-
 Config Config::fromJson(const std::string& text)
 {
     const nlohmann::json json = nlohmann::json::parse(text, nullptr, true, true);
 
     Config config;
-    const nlohmann::json& admin = json.at("admin");
-    if (admin.is_array()) {
-        config.admins = admin.get<std::vector<std::string>>();
-    } else {
-        config.admins = {admin.get<std::string>()};
-    }
-    if (config.admins.empty()) {
-        throw std::runtime_error("config: \"admin\" must name at least one fingerprint");
+    // No "admin" at all is how a fresh install arrives: the panel comes up
+    // unclaimed and the setup wizard hands it to the first key that signs in.
+    if (json.contains("admin")) {
+        const nlohmann::json& admin = json.at("admin");
+        if (admin.is_array()) {
+            config.admins = admin.get<std::vector<std::string>>();
+        } else if (!admin.is_null()) {
+            config.admins = {admin.get<std::string>()};
+        }
     }
     for (const std::string& fingerprint : config.admins) {
         if (fingerprint.empty()) {
@@ -67,7 +68,7 @@ Config Config::fromJson(const std::string& text)
             entry.name = item.at("name").get<std::string>();
             entry.kind = item.at("kind").get<std::string>();
             entry.url = item.at("url").get<std::string>();
-            if (!isKnownKind(entry.kind)) {
+            if (!isKnownServiceKind(entry.kind)) {
                 throw std::runtime_error("config: unknown service kind \"" + entry.kind + "\"");
             }
             services.push_back(std::move(entry));

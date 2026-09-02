@@ -30,6 +30,14 @@ const char* const kCaptchaKey = "captcha";
 const char* const kCaptchaEnabledKey = "enabled";
 const char* const kFacadesKey = "facades";
 const char* const kReseedsKey = "reseeds";
+const char* const kLinksKey = "links";
+const char* const kCaptchaLengthKey = "length";
+const char* const kCaptchaTtlKey = "ttlSeconds";
+const char* const kLogLevelKey = "logLevel";
+const char* const kListenKey = "listen";
+const char* const kMessagingKey = "messaging";
+const char* const kHostKey = "host";
+const char* const kPortKey = "port";
 
 }  // namespace
 
@@ -93,6 +101,36 @@ void NodeSettings::persist(const Values& values) const
     }
     if (values.reseeds != values_.reseeds) {
         file.set({kPortalKey, kReseedsKey}, values.reseeds);
+    }
+    if (values.portalLinks != values_.portalLinks) {
+        file.set({kPortalKey, kLinksKey}, values.portalLinks);
+    }
+    if (values.captchaLength != values_.captchaLength) {
+        file.set({kPortalKey, kCaptchaKey, kCaptchaLengthKey}, values.captchaLength);
+    }
+    if (values.captchaTtlSeconds != values_.captchaTtlSeconds) {
+        file.set({kPortalKey, kCaptchaKey, kCaptchaTtlKey}, values.captchaTtlSeconds);
+    }
+    if (values.logLevel != values_.logLevel) {
+        file.set({kLogLevelKey}, values.logLevel);
+    }
+    if (values.listenHost != values_.listenHost) {
+        file.set({kListenKey, kHostKey}, values.listenHost);
+    }
+    if (values.listenPort != values_.listenPort) {
+        file.set({kListenKey, kPortKey}, values.listenPort);
+    }
+    if (values.portalListenHost != values_.portalListenHost) {
+        file.set({kPortalKey, kListenKey, kHostKey}, values.portalListenHost);
+    }
+    if (values.portalListenPort != values_.portalListenPort) {
+        file.set({kPortalKey, kListenKey, kPortKey}, values.portalListenPort);
+    }
+    if (values.messagingHost != values_.messagingHost) {
+        file.set({kMessagingKey, kHostKey}, values.messagingHost);
+    }
+    if (values.messagingPort != values_.messagingPort) {
+        file.set({kMessagingKey, kPortKey}, values.messagingPort);
     }
 }
 

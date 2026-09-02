@@ -123,6 +123,22 @@ std::string notice(const std::string& text, const std::string& kind)
     return "<p class=\"notice " + kind + "\">" + htmlEscape(text) + "</p>";
 }
 
+// The knobs a portal built without a shared settings object runs on: what its
+// caller passed, and this node's defaults for everything else. Written field by
+// field rather than as one initialiser, so a new setting does not silently
+// arrive here as a zero.
+bazarish::service::NodeSettings::Values valuesFrom(
+    const bazarish::service::PortalApiOptions& options)
+{
+    bazarish::service::NodeSettings::Values values;
+    values.requireApproval = options.requiresApproval;
+    values.registrationMessage = options.registrationMessage;
+    values.loginConsumer = options.consumer;
+    values.requireCaptcha = options.requireCaptcha;
+    values.defaultQuotaBytes = options.defaultQuotaBytes;
+    return values;
+}
+
 }  // namespace
 
 namespace bazarish::service {
@@ -131,15 +147,8 @@ PortalApi::PortalApi(PortalApiOptions options, Captcha& captcha, GrantStore& gra
     : options_(std::move(options))
     , settings_(options_.settings
               ? options_.settings
-              : std::make_shared<NodeSettings>(std::filesystem::path(),
-                    NodeSettings::Values{.requireApproval = options_.requiresApproval,
-                        .registrationMessage = options_.registrationMessage,
-                        .portalMessage = {},
-                        .loginConsumer = options_.consumer,
-                        .requireCaptcha = options_.requireCaptcha,
-                        .facades = {},
-                        .reseeds = {},
-                        .defaultQuotaBytes = options_.defaultQuotaBytes}))
+              : std::make_shared<NodeSettings>(
+                    std::filesystem::path(), valuesFrom(options_)))
     , assets_(options_.assetsDirectory)
     , captcha_(captcha)
     , grants_(grants)

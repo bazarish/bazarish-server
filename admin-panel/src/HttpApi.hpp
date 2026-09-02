@@ -3,6 +3,7 @@
 
 #include "AdminAuth.hpp"
 #include "Config.hpp"
+#include "PanelSettings.hpp"
 #include "SessionStore.hpp"
 
 #include <bazarish/WebAssets.hpp>
@@ -12,6 +13,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 
 namespace bazarish::http {
@@ -41,7 +43,8 @@ class HttpApi {
 public:
     // identity is the panel's own signing identity (it signs every service call);
     // it must outlive the HttpApi.
-    HttpApi(Config config, const Identity& identity, HttpApiOptions options);
+    HttpApi(std::shared_ptr<PanelSettings> settings, const Identity& identity,
+        HttpApiOptions options);
     ~HttpApi();
 
     HttpApi(const HttpApi&) = delete;
@@ -60,12 +63,13 @@ private:
     // The service of a kind inside one fleet, or null when that fleet has none.
     // A fleet named by nothing is the first one, which is what a single
     // deployment always has.
-    const ServiceEntry* serviceOfKind(const std::string& fleet, const std::string& kind) const;
+    std::optional<ServiceEntry> serviceOfKind(
+        const std::string& fleet, const std::string& kind) const;
     // Signs a call to a fleet's service node and answers with its reply verbatim.
     void proxyToNode(const std::string& fleet, bazarish::http::Response& response,
         const std::string& method, const std::string& path, const std::string& body);
 
-    Config config_;
+    std::shared_ptr<PanelSettings> settings_;
     const Identity& identity_;
     HttpApiOptions options_;
     AdminAuth auth_;

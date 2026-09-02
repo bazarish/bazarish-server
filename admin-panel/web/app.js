@@ -626,233 +626,532 @@
 
     // --- settings ---------------------------------------------------------
 
-    function renderSettings() {
+    // Settings are grouped by what they are about, not by what type they are: an
+    // operator looking for "who may sign in" should not have to read past the
+    // captcha to find it. One tab is one subject, and each saves on its own.
+    var kSettingsTabs = [
+        { id: "registration", label: "Registration" },
+        { id: "portal", label: "Portal" },
+        { id: "network", label: "Network" },
+        { id: "accounts", label: "Accounts" },
+        { id: "panel", label: "Panel" }
+    ];
+    var kLogLevels = ["error", "warn", "info", "debug"];
+    var settingsTab = kSettingsTabs[0].id;
+
+    // A value the operator types. `hint` explains it; `restart` marks the ones
+    // the service only reads when it starts.
+    function fieldRow(block, label, value, spec) {
+        var options = spec || {};
+        var row = controls(block, options.hint);
+        row.appendChild(element("span", "control-label", label));
+        var input = element("input", "field" + (options.narrow ? " quota-input" : ""));
+        input.type = options.type || "text";
+        if (options.limit) {
+            input.maxLength = options.limit;
+        }
+        if (options.min !== undefined) {
+            input.min = String(options.min);
+        }
+        if (options.placeholder) {
+            input.placeholder = options.placeholder;
+        }
+        input.value = value === null || value === undefined ? "" : String(value);
+        row.appendChild(input);
+        if (options.unit) {
+            row.appendChild(element("span", "unit", options.unit));
+        }
+        if (options.restart) {
+            row.appendChild(element("span", "badge-restart", "restart"));
+        }
+        return input;
+    }
+
+    // A value the panel knows but cannot change. Deliberately not an input: an
+    // operator must be able to tell at a glance what is theirs to edit.
+    function readOnlyRow(block, label, value, hint) {
+        var row = controls(block, hint);
+        row.appendChild(element("span", "control-label", label));
+        var shown = value === null || value === undefined || value === "" ? "not set" : String(value);
+        row.appendChild(element("span", "readonly" + (shown === "not set" ? " is-unset" : ""), shown));
+        return row;
+    }
+
+    // A host and a port on one line: they are one address and are edited as one.
+    function endpointRow(block, label, endpoint, hint, restart) {
+        var value = endpoint || {};
+        var row = controls(block, hint);
+        row.appendChild(element("span", "control-label", label));
+        var host = element("input", "field");
+        host.type = "text";
+        host.value = value.host || "";
+        host.placeholder = "127.0.0.1";
+        row.appendChild(host);
+        var port = element("input", "field quota-input");
+        port.type = "number";
+        port.min = "1";
+        port.max = "65535";
+        port.value = value.port ? String(value.port) : "";
+        row.appendChild(port);
+        if (restart) {
+            row.appendChild(element("span", "badge-restart", "restart"));
+        }
+        return { host: host, port: port };
+    }
+
+    function chipRow(block, hint, choices, current, onPick) {
+        var row = controls(block, hint);
+        var chips = {};
+        var picked = current;
+        choices.forEach(function (choice) {
+            var chip = element("button", "chip" + (choice.value === picked ? " is-on" : ""),
+                choice.label);
+            chip.addEventListener("click", function () {
+                picked = choice.value;
+                Object.keys(chips).forEach(function (key) {
+                    chips[key].className = "chip" + (key === String(picked) ? " is-on" : "");
+                });
+                if (onPick) {
+                    onPick(picked);
+                }
+            });
+            chips[String(choice.value)] = chip;
+            row.appendChild(chip);
+        });
+        return function () { return picked; };
+    }
+
+    function textareaBlock(block, value, placeholder, hint, tall) {
+        var area = element("textarea", "field" + (tall ? " field-tall" : ""));
+        area.value = value || "";
+        area.placeholder = placeholder;
+        controls(block, hint).appendChild(area);
+        return area;
+    }
+
+    function linesOf(area) {
+        return area.value.split("\n").map(function (line) {
+            return line.trim();
+        }).filter(function (line) {
+            return line.length > 0;
+        });
+    }
+
+    // One button per tab, on a line of its own: nothing above it takes effect
+    // until it is pressed, and pressing it saves that tab and nothing else.
+    function saveFooter(form, note, gather) {
+        var footer = element("div", "form-footer");
+        var save = element("button", "btn", "Save");
+        footer.appendChild(save);
+        footer.appendChild(element("span", "hint", note));
+        form.appendChild(footer);
+        save.addEventListener("click", function () {
+            var call;
+            try {
+                call = gather();
+            } catch (error) {
+                footer.appendChild(notice(error.message, "is-error"));
+                return;
+            }
+            if (!call) {
+                return;
+            }
+            save.disabled = true;
+            api(call.method, call.path, call.body).then(function () {
+                renderSettings();
+            }).catch(function (error) {
+                save.disabled = false;
+                footer.appendChild(notice(error.message, "is-error"));
+            });
+        });
+        return footer;
+    }
+
+    function portRead(input, what) {
+        var port = Number(input.value);
+        if (!Number.isInteger(port) || port < 1 || port > 65535) {
+            throw new Error(what + " needs a port between 1 and 65535.");
+        }
+        return port;
+    }
+
+    function renderSettings(wanted) {
+        // The tab is in the address, like the open account is: a link points at
+        // one subject rather than at "settings, then click around".
+        if (wanted && kSettingsTabs.some(function (tab) { return tab.id === wanted; })) {
+            settingsTab = wanted;
+        }
+        setHash("#/settings/" + settingsTab);
         var box = view("settings");
+        var bar = element("nav", "tabs");
+        kSettingsTabs.forEach(function (tab) {
+            var button = element("button", "tab" + (tab.id === settingsTab ? " is-on" : ""),
+                tab.label);
+            button.addEventListener("click", function () {
+                renderSettings(tab.id);
+            });
+            bar.appendChild(button);
+        });
+        box.appendChild(bar);
+
         var form = element("div", "panel-box");
         box.appendChild(form);
         form.appendChild(element("p", "muted", "Loading..."));
 
-        api("GET", "/api/settings").then(function (data) {
+        if (settingsTab === "panel") {
+            api("GET", "/api/panel").then(function (data) {
+                form.innerHTML = "";
+                renderPanelTab(form, data);
+            }).catch(function (error) {
+                form.innerHTML = "";
+                form.appendChild(notice(error.message, "is-error"));
+            });
+            return;
+        }
+
+        api("GET", withFleet("/api/settings")).then(function (data) {
             form.innerHTML = "";
-
-            var totals = element("ul", "facts");
-            totals.appendChild(fact("accounts", String(data.accounts)));
-            totals.appendChild(fact("allocated by quota", humanBytes(data.allocatedBytes)));
-            totals.appendChild(fact("on disk", data.diskUsedBytes === null
-                ? "unknown (" + data.diskError + ")"
-                : humanBytes(data.diskUsedBytes)));
-            form.appendChild(totals);
-
-            var registration = section(form, "Registration");
-            var modes = controls(registration,
-                "Open: an account is served as soon as it registers. Moderated: it waits for you.");
-            var moderated = data.requireApproval;
-            var modeChips = {};
-            [["open", false], ["moderated", true]].forEach(function (entry) {
-                var chip = element("button", "chip" + (entry[1] === moderated ? " is-on" : ""),
-                    entry[0]);
-                chip.addEventListener("click", function () {
-                    moderated = entry[1];
-                    Object.keys(modeChips).forEach(function (key) {
-                        modeChips[key].className = "chip"
-                            + ((key === "moderated") === moderated ? " is-on" : "");
-                    });
-                });
-                modeChips[entry[0]] = chip;
-                modes.appendChild(chip);
-            });
-
-            var how = controls(registration,
-                "Captcha: a person registers on the portal. No captcha: a client registers"
-                + " itself the moment it connects, and nobody visits a page.");
-            var captcha = data.requireCaptcha !== false;
-            var captchaChips = {};
-            [["captcha", true], ["no captcha", false]].forEach(function (entry) {
-                var chip = element("button", "chip" + (entry[1] === captcha ? " is-on" : ""),
-                    entry[0]);
-                chip.addEventListener("click", function () {
-                    captcha = entry[1];
-                    Object.keys(captchaChips).forEach(function (key) {
-                        captchaChips[key].className = "chip"
-                            + ((key === "captcha") === captcha ? " is-on" : "");
-                    });
-                });
-                captchaChips[entry[0]] = chip;
-                how.appendChild(chip);
-            });
-
-            var greeting = section(form, "What a new client is told");
-            var portalMessage = element("textarea", "field");
-            portalMessage.value = data.portalMessage || "";
-            portalMessage.placeholder = "What this server is, and what registering here means";
-            controls(greeting,
-                "Shown by a client that reaches this server without an account here.")
-                .appendChild(portalMessage);
-
-            var signing = section(form, "What a user sees before signing in");
-            var consumer = data.loginConsumer || {};
-            function consumerField(label, value, limit, placeholder, hint) {
-                var row = controls(signing, hint);
-                row.appendChild(element("span", "control-label", label));
-                var input = element("input", "field");
-                input.type = "text";
-                input.maxLength = limit;
-                input.value = value || "";
-                input.placeholder = placeholder;
-                row.appendChild(input);
-                return input;
+            if (settingsTab === "registration") {
+                renderRegistrationTab(form, data);
+            } else if (settingsTab === "portal") {
+                renderPortalTab(form, data);
+            } else if (settingsTab === "network") {
+                renderNetworkTab(form, data);
+            } else {
+                renderAccountsTab(form, data);
             }
-            var consumerName = consumerField("Name", consumer.name, kConsumerNameMax,
-                "The name of this site",
-                "Shown in the client's window before a user signs a login for this portal.");
-            var consumerPlace = consumerField("Address", consumer.place, kConsumerPlaceMax,
-                "http://host:port",
-                "The address a user has in their address bar. They compare the two before"
+        }).catch(function (error) {
+            form.innerHTML = "";
+            form.appendChild(notice(error.message, "is-error"));
+        });
+    }
+
+    function renderRegistrationTab(form, data) {
+        var how = section(form, "Who gets an account");
+        var moderated = chipRow(how,
+            "Open: an account is served as soon as it registers. Moderated: it waits for you.",
+            [{ value: false, label: "open" }, { value: true, label: "moderated" }],
+            Boolean(data.requireApproval));
+        var captcha = chipRow(how,
+            "Captcha: a person registers on the portal. No captcha: a client registers itself"
+            + " the moment it connects, and nobody visits a page.",
+            [{ value: true, label: "captcha" }, { value: false, label: "no captcha" }],
+            data.requireCaptcha !== false);
+        var length = fieldRow(how, "Captcha length", data.captchaLength, {
+            type: "number", narrow: true, min: 3, unit: "characters", restart: true,
+            hint: "How many characters a person has to read off the image."
+        });
+        var ttl = fieldRow(how, "Captcha lifetime", data.captchaTtlSeconds, {
+            type: "number", narrow: true, min: 60, unit: "seconds", restart: true,
+            hint: "How long one captcha stays valid before a new one is drawn."
+        });
+
+        var says = section(form, "What people are told");
+        var portalMessage = textareaBlock(says, data.portalMessage,
+            "What this server is, and what registering here means",
+            "Shown by a client that reaches this server without an account here.");
+        var waiting = textareaBlock(says, data.registrationMessage, "How to reach you",
+            "Shown to an account that is registered but not served yet - in the portal and in"
+            + " its client.");
+
+        saveFooter(form, "Applies now and is written to the node's config, so a restart keeps it.",
+            function () {
+                return {
+                    method: "PUT", path: withFleet("/api/settings"),
+                    body: {
+                        requireApproval: moderated(),
+                        requireCaptcha: captcha(),
+                        captchaLength: Number(length.value) || 0,
+                        captchaTtlSeconds: Number(ttl.value) || 0,
+                        portalMessage: portalMessage.value.trim(),
+                        registrationMessage: waiting.value.trim()
+                    }
+                };
+            });
+    }
+
+    function renderPortalTab(form, data) {
+        var consumer = data.loginConsumer || {};
+        var signing = section(form, "What a user sees before signing in");
+        var name = fieldRow(signing, "Name", consumer.name, {
+            limit: kConsumerNameMax, placeholder: "The name of this site",
+            hint: "Shown in the client's window before a user signs a login for this portal."
+        });
+        var place = fieldRow(signing, "Address", consumer.place, {
+            limit: kConsumerPlaceMax, placeholder: "http://host:port",
+            hint: "The address a user has in their address bar. They compare the two before"
                 + " signing, so write the address they actually opened - if you front this"
-                + " portal under another name, that is the one to put here.");
-            var consumerRole = consumerField("Role", consumer.role, kConsumerRoleMax,
-                "Account owner",
-                "What signing in here opens - whose account the signature is for.");
+                + " portal under another name, that is the one to put here."
+        });
+        var role = fieldRow(signing, "Role", consumer.role, {
+            limit: kConsumerRoleMax, placeholder: "Account owner",
+            hint: "What signing in here opens - whose account the signature is for."
+        });
 
-            var reach = section(form, "How clients reach this server");
-            var facades = element("textarea", "field field-tall");
-            facades.value = (data.facades || []).join("\n");
-            facades.placeholder = "http://<b32>.b32.i2p/<base path>";
-            controls(reach,
-                "Facades, one per line, in the order a client tries them. Clients talk to this"
-                + " server over I2P and nothing else, so every one of these is a .b32.i2p"
-                + " address.").appendChild(facades);
-            var reseeds = element("textarea", "field field-tall");
-            reseeds.value = (data.reseeds || []).join("\n");
-            reseeds.placeholder = "https://host:port/<base path>";
-            controls(reach,
-                "Reseeds, one per line: clearnet addresses where a client with no I2P router"
-                + " yet fetches a slice of the network database to start from. They carry"
-                + " nothing else, and a client that has a router never asks them again.")
-                .appendChild(reseeds);
-            var descriptor = element("pre", "copy", data.descriptor || "");
-            controls(reach, "Built from both lists. This is what a user pastes into their client.")
-                .appendChild(descriptor);
+        var reach = section(form, "Where the portal answers");
+        var links = textareaBlock(reach, (data.portalLinks || []).join("\n"),
+            "https://host:port",
+            "Links a client shows a person who has no account here yet, one per line.");
+        var listen = endpointRow(reach, "Listens on", data.portalListen,
+            "The socket the portal binds. Changing it moves the page an operator opens.", true);
 
-            var waiting = section(form, "Message to a waiting account");
-            var message = element("textarea", "field");
-            message.value = data.registrationMessage || "";
-            message.placeholder = "How to reach you";
-            controls(waiting,
-                "Shown to an account that is registered but not served yet - in the portal and in"
-                + " its client.").appendChild(message);
-
-            var accounts = section(form, "New accounts");
-            var storageRow = controls(accounts);
-            storageRow.appendChild(element("span", "control-label", "Storage"));
-            var quota = element("input", "field quota-input");
-            quota.type = "number";
-            quota.min = String(kMinQuotaMiB);
-            quota.max = String(kMaxQuotaMiB);
-            quota.step = "1";
-            quota.value = String(Math.round(data.defaultQuotaBytes / kBytesPerMiB));
-            storageRow.appendChild(quota);
-            storageRow.appendChild(element("span", "unit", "MB"));
-
-            var ttlRow = controls(accounts,
-                "An account with no destination delegated here for this long is deleted -"
-                + " a client nobody runs, a registration nobody redeemed, an account nobody"
-                + " approved. The number is the node's; this only carries it over.");
-            ttlRow.appendChild(element("span", "control-label", "Delete when idle for"));
-            var ttl = element("input", "field quota-input");
-            ttl.type = "number";
-            ttl.min = "0";
-            ttl.step = "1";
-            ttl.value = String(data.idleDeleteDays);
-            ttlRow.appendChild(ttl);
-            ttlRow.appendChild(element("span", "unit", "days (0: forever)"));
-
-            // One button for the whole form, on a line of its own: nothing above
-            // it takes effect until it is pressed.
-            var footer = element("div", "form-footer");
-            var save = element("button", "btn", "Save settings");
-            footer.appendChild(save);
-            footer.appendChild(element("span", "hint", "Applies now and is written to the node's"
-                + " config, so a restart keeps it."));
-            form.appendChild(footer);
-
-            save.addEventListener("click", function () {
-                var megabytes = Number(quota.value);
-                if (!Number.isFinite(megabytes) || megabytes < kMinQuotaMiB
-                    || megabytes > kMaxQuotaMiB) {
-                    footer.appendChild(notice("Storage is a whole number of megabytes.",
-                        "is-error"));
-                    return;
-                }
-                save.disabled = true;
-                var facadeList = facades.value.split("\n").map(function (line) {
-                    return line.trim();
-                }).filter(function (line) {
-                    return line.length > 0;
-                });
-                if (facadeList.length === 0) {
-                    footer.appendChild(notice("A server with no facade cannot be reached.",
-                        "is-error"));
-                    save.disabled = false;
-                    return;
-                }
-                var reseedList = reseeds.value.split("\n").map(function (line) {
-                    return line.trim();
-                }).filter(function (line) {
-                    return line.length > 0;
-                });
-                // Said here as well as at the node, so the mistake is caught where
-                // it is being made rather than after a round trip.
-                var wrongFacade = facadeList.filter(function (url) { return !isI2pUrl(url); });
-                if (wrongFacade.length > 0) {
-                    footer.appendChild(notice("A facade must be a .b32.i2p address: "
-                        + wrongFacade[0], "is-error"));
-                    save.disabled = false;
-                    return;
-                }
-                var wrongReseed = reseedList.filter(isI2pUrl);
-                if (wrongReseed.length > 0) {
-                    footer.appendChild(notice("A reseed must not be a .b32.i2p address - it is"
-                        + " what a client without a router asks first: " + wrongReseed[0],
-                        "is-error"));
-                    save.disabled = false;
-                    return;
-                }
+        saveFooter(form, "The words apply to the next challenge; the listener needs a restart.",
+            function () {
                 var signer = {
-                    name: consumerName.value.trim(),
-                    place: consumerPlace.value.trim(),
-                    role: consumerRole.value.trim()
+                    name: name.value.trim(), place: place.value.trim(), role: role.value.trim()
                 };
                 var missing = Object.keys(signer).filter(function (key) {
                     return signer[key].length === 0;
                 });
                 if (missing.length > 0) {
-                    footer.appendChild(notice("A portal that will not say its " + missing[0]
-                        + " has no business asking anyone to sign for it.", "is-error"));
-                    save.disabled = false;
-                    return;
+                    throw new Error("A portal that will not say its " + missing[0]
+                        + " has no business asking anyone to sign for it.");
                 }
-                api("PUT", withFleet("/api/settings"), {
-                    requireApproval: moderated,
-                    loginConsumer: signer,
-                    requireCaptcha: captcha,
-                    portalMessage: portalMessage.value.trim(),
-                    facades: facadeList,
-                    reseeds: reseedList,
-                    registrationMessage: message.value.trim(),
-                    idleDeleteDays: Math.max(0, Math.round(Number(ttl.value) || 0)),
-                    defaultQuotaBytes: Math.round(megabytes) * kBytesPerMiB
-                }).then(function () {
-                    renderSettings();
-                }).catch(function (error) {
-                    save.disabled = false;
-                    footer.appendChild(notice(error.message, "is-error"));
-                });
+                return {
+                    method: "PUT", path: withFleet("/api/settings"),
+                    body: {
+                        loginConsumer: signer,
+                        portalLinks: linesOf(links),
+                        portalListen: {
+                            host: listen.host.value.trim(),
+                            port: portRead(listen.port, "The portal")
+                        }
+                    }
+                };
             });
-        }).catch(function (error) {
-            form.innerHTML = "";
-            form.appendChild(notice(error.message, "is-error"));
+    }
+
+    function renderNetworkTab(form, data) {
+        var reach = section(form, "How clients reach this server");
+        var facades = textareaBlock(reach, (data.facades || []).join("\n"),
+            "http://<b32>.b32.i2p/<base path>",
+            "Facades, one per line, in the order a client tries them. Clients talk to this"
+            + " server over I2P and nothing else, so every one of these is a .b32.i2p address.",
+            true);
+        var reseeds = textareaBlock(reach, (data.reseeds || []).join("\n"),
+            "https://host:port/<base path>",
+            "Reseeds, one per line: clearnet addresses where a client with no I2P router yet"
+            + " fetches a slice of the network database to start from. They carry nothing else,"
+            + " and a client that has a router never asks them again.",
+            true);
+        readOnlyRow(reach, "Descriptor", data.descriptor,
+            "Built from both lists. This is what a user pastes into their client.");
+
+        var wiring = section(form, "This node's own wiring");
+        var listen = endpointRow(wiring, "Operator API", data.listen,
+            "Where the node answers the panel. Not a public address.", true);
+        var messaging = endpointRow(wiring, "Messaging server", data.messaging,
+            "The server-core this node is bound to: where it pushes quotas and reads mailboxes.",
+            true);
+        var level = chipRow(wiring, "How much the node writes to its log. Applies at once.",
+            kLogLevels.map(function (name) { return { value: name, label: name }; }),
+            data.logLevel || "info");
+
+        saveFooter(form, "Addresses apply after a restart; the log level applies now.",
+            function () {
+                var facadeList = linesOf(facades);
+                if (facadeList.length === 0) {
+                    throw new Error("A server with no facade cannot be reached.");
+                }
+                var wrongFacade = facadeList.filter(function (url) { return !isI2pUrl(url); });
+                if (wrongFacade.length > 0) {
+                    throw new Error("A facade must be a .b32.i2p address: " + wrongFacade[0]);
+                }
+                var reseedList = linesOf(reseeds);
+                var wrongReseed = reseedList.filter(isI2pUrl);
+                if (wrongReseed.length > 0) {
+                    throw new Error("A reseed must not be a .b32.i2p address - it is what a"
+                        + " client without a router asks first: " + wrongReseed[0]);
+                }
+                return {
+                    method: "PUT", path: withFleet("/api/settings"),
+                    body: {
+                        facades: facadeList,
+                        reseeds: reseedList,
+                        listen: {
+                            host: listen.host.value.trim(),
+                            port: portRead(listen.port, "The operator API")
+                        },
+                        messaging: {
+                            host: messaging.host.value.trim(),
+                            port: portRead(messaging.port, "The messaging server")
+                        },
+                        logLevel: level()
+                    }
+                };
+            });
+    }
+
+    function renderAccountsTab(form, data) {
+        var totals = element("ul", "facts");
+        totals.appendChild(fact("accounts", String(data.accounts)));
+        totals.appendChild(fact("allocated by quota", humanBytes(data.allocatedBytes)));
+        totals.appendChild(fact("on disk", data.diskUsedBytes === null
+            ? "unknown (" + data.diskError + ")"
+            : humanBytes(data.diskUsedBytes)));
+        form.appendChild(totals);
+
+        var accounts = section(form, "What a new account gets");
+        var quota = fieldRow(accounts, "Storage", Math.round(data.defaultQuotaBytes / kBytesPerMiB), {
+            type: "number", narrow: true, min: kMinQuotaMiB, unit: "MB",
+            hint: "The mailbox a registration is granted. The two numbers above say whether the"
+                + " disk can still keep that promise."
         });
+        var ttl = fieldRow(accounts, "Delete when idle for", data.idleDeleteDays, {
+            type: "number", narrow: true, min: 0, unit: "days (0: forever)",
+            hint: "An account with no destination delegated here for this long is deleted - a"
+                + " client nobody runs, a registration nobody redeemed, an account nobody"
+                + " approved."
+        });
+
+        saveFooter(form, "Applies now and is written to the node's config, so a restart keeps it.",
+            function () {
+                var megabytes = Number(quota.value);
+                if (!Number.isFinite(megabytes) || megabytes < kMinQuotaMiB
+                    || megabytes > kMaxQuotaMiB) {
+                    throw new Error("Storage is a whole number of megabytes.");
+                }
+                return {
+                    method: "PUT", path: withFleet("/api/settings"),
+                    body: {
+                        defaultQuotaBytes: Math.round(megabytes) * kBytesPerMiB,
+                        idleDeleteDays: Math.max(0, Math.round(Number(ttl.value) || 0))
+                    }
+                };
+            });
+    }
+
+    function renderPanelTab(form, data) {
+        var who = section(form, "Who may sign in");
+        var admins = textareaBlock(who, (data.admins || []).join("\n"),
+            "52-character fingerprint",
+            "One fingerprint per line - `bazarish-client whoami`, or the Signature window in the"
+            + " app. Removing the last one is refused: a panel with no administrator would be"
+            + " handed to whoever opened its setup page next.");
+
+        var consumer = data.consumer || {};
+        var signing = section(form, "What an administrator sees before signing in");
+        var name = fieldRow(signing, "Name", consumer.name, {
+            limit: kConsumerNameMax, placeholder: "Bazarish admin panel",
+            hint: "Shown in the client's window before you sign a login for this panel."
+        });
+        var place = fieldRow(signing, "Address", consumer.place, {
+            limit: kConsumerPlaceMax, placeholder: "http://host:port",
+            hint: "The address you have in the address bar when you sign in here."
+        });
+        var role = fieldRow(signing, "Role", consumer.role, {
+            limit: kConsumerRoleMax, placeholder: "Administrator",
+            hint: "What signing in here opens."
+        });
+
+        var services = section(form, "Services this panel manages");
+        var rows = [];
+        function serviceRow(fleetName, service) {
+            var row = controls(services);
+            var name = element("input", "field service-name");
+            name.type = "text";
+            name.placeholder = "core";
+            name.value = service ? service.name : "";
+            row.appendChild(name);
+            var kind = element("select", "field service-kind");
+            ["server-core", "service-node", "facade"].forEach(function (known) {
+                var option = document.createElement("option");
+                option.value = known;
+                option.textContent = known;
+                if (service && service.kind === known) {
+                    option.selected = true;
+                }
+                kind.appendChild(option);
+            });
+            row.appendChild(kind);
+            var url = element("input", "field");
+            url.type = "text";
+            url.placeholder = "http://127.0.0.1:8420";
+            url.value = service ? service.url : "";
+            row.appendChild(url);
+            var drop = element("button", "chip", "remove");
+            row.appendChild(drop);
+            var entry = { fleet: fleetName, name: name, kind: kind, url: url, row: row,
+                dropped: false };
+            drop.addEventListener("click", function () {
+                entry.dropped = true;
+                row.remove();
+            });
+            rows.push(entry);
+        }
+        var fleets = data.fleets && data.fleets.length > 0
+            ? data.fleets
+            : [{ name: "server", services: [] }];
+        var fleetName = fleets[0].name || "server";
+        fleets.forEach(function (entry) {
+            (entry.services || []).forEach(function (service) {
+                serviceRow(entry.name || fleetName, service);
+            });
+        });
+        var addRow = controls(services,
+            "One deployment: a messaging server, the node bound to it, and the facades in front."
+            + " The panel signs every call to them with its own key, so each service must carry"
+            + " this panel's fingerprint in its operators list.");
+        var add = element("button", "chip", "add service");
+        add.addEventListener("click", function () {
+            serviceRow(fleetName, null);
+            services.insertBefore(rows[rows.length - 1].row, addRow);
+        });
+        addRow.appendChild(add);
+
+        var where = section(form, "Where the panel listens");
+        var listen = endpointRow(where, "Listens on", data.listen,
+            "The socket this page is served on.", true);
+
+        var facts = section(form, "What this panel is");
+        readOnlyRow(facts, "Fingerprint", data.fingerprint,
+            "The key the panel signs its calls to services with. Each service must list it as an"
+            + " operator, or the panel gets a 403 from it.");
+        readOnlyRow(facts, "Config file", data.configPath,
+            "Where everything on this page is written back.");
+        readOnlyRow(facts, "State", data.stateDir);
+        readOnlyRow(facts, "Web files", data.assetsDir);
+        readOnlyRow(facts, "Version", data.version);
+
+        saveFooter(form,
+            "Applies now, except the listener, which the panel picks up when it restarts.",
+            function () {
+                var list = linesOf(admins);
+                if (list.length === 0) {
+                    throw new Error("A panel needs at least one administrator.");
+                }
+                var services = rows.filter(function (entry) {
+                    return !entry.dropped;
+                }).map(function (entry) {
+                    return {
+                        name: entry.name.value.trim(),
+                        kind: entry.kind.value,
+                        url: entry.url.value.trim()
+                    };
+                });
+                var incomplete = services.filter(function (service) {
+                    return !service.name || !service.url;
+                });
+                if (incomplete.length > 0) {
+                    throw new Error("A service needs a name and a URL.");
+                }
+                return {
+                    method: "PUT", path: "/api/panel",
+                    body: {
+                        admins: list,
+                        consumer: {
+                            name: name.value.trim(),
+                            place: place.value.trim(),
+                            role: role.value.trim()
+                        },
+                        listen: {
+                            host: listen.host.value.trim(),
+                            port: portRead(listen.port, "The panel")
+                        },
+                        fleets: [{ name: fleetName, services: services }]
+                    }
+                };
+            });
     }
 
     // --- routing ----------------------------------------------------------

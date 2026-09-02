@@ -20,6 +20,34 @@
 
 namespace {
 
+// What an operator may set from the panel. A captcha shorter than this is not a
+// test at all, and one longer is a wall; a lifetime under a minute expires while
+// the person is still typing. Ports are TCP's own range without 0, which means
+// "any free port" and is never what someone typed on purpose.
+constexpr int kMinCaptchaLength = 3;
+constexpr int kMaxCaptchaLength = 12;
+constexpr std::int64_t kMinCaptchaTtlSeconds = 60;
+constexpr int kMinPort = 1;
+constexpr int kMaxPort = 65535;
+
+// The knobs an API built without a shared settings object runs on. The portal
+// owns the words a login is signed under, so nothing here fills them in. Written
+// field by field so a new setting cannot arrive here as a silent zero.
+bazarish::service::NodeSettings::Values valuesFrom(
+    const bazarish::service::AccountApiOptions& options)
+{
+    bazarish::service::NodeSettings::Values values;
+    values.requireApproval
+        = options.registration == bazarish::service::AccountApiOptions::Registration::eApproval;
+    values.registrationMessage = options.registrationMessage;
+    values.portalMessage = options.portalMessage;
+    values.requireCaptcha = options.freeRegistrationCaptcha;
+    values.portalLinks = options.portalLinks;
+    values.defaultQuotaBytes = options.defaultQuotaBytes;
+    return values;
+}
+
+
 using bazarish::Bytes;
 using bazarish::ErrorCode;
 
@@ -137,20 +165,9 @@ AccountApi::AccountApi(
     // Without a shared settings object (tests) the options are the settings, and
     // a change to them has nowhere to be written: an empty config path says so
     // by refusing the write rather than dropping it.
-    : settings_(options.settings ? options.settings
-                                 : std::make_shared<NodeSettings>(std::filesystem::path(),
-                                       NodeSettings::Values{
-                                           .requireApproval = options.registration
-                                               == AccountApiOptions::Registration::eApproval,
-                                           .registrationMessage = options.registrationMessage,
-                                           .portalMessage = options.portalMessage,
-                                           // The portal owns the words a login is
-                                           // signed under; this API only carries them.
-                                           .loginConsumer = {},
-                                           .requireCaptcha = options.freeRegistrationCaptcha,
-                                           .facades = {},
-                                           .reseeds = {},
-                                           .defaultQuotaBytes = options.defaultQuotaBytes}))
+    : settings_(options.settings
+              ? options.settings
+              : std::make_shared<NodeSettings>(std::filesystem::path(), valuesFrom(options)))
     , store_(store)
     , grants_(grants)
     , options_(options)
@@ -499,6 +516,15 @@ void AccountApi::setupRoutes()
                     {"descriptor",
                         encodeServerDescriptor(
                             {options_.serverFingerprint, values.facades, values.reseeds})},
+                    {"portalLinks", values.portalLinks},
+                    {"captchaLength", values.captchaLength},
+                    {"captchaTtlSeconds", values.captchaTtlSeconds},
+                    {"logLevel", values.logLevel},
+                    {"listen", {{"host", values.listenHost}, {"port", values.listenPort}}},
+                    {"portalListen",
+                        {{"host", values.portalListenHost}, {"port", values.portalListenPort}}},
+                    {"messaging",
+                        {{"host", values.messagingHost}, {"port", values.messagingPort}}},
                     {"defaultQuotaBytes", values.defaultQuotaBytes},
                     {"idleDeleteDays", values.idleDeleteDays},
                     {"accounts", accounts},
@@ -578,6 +604,61 @@ void AccountApi::setupRoutes()
                 }
                 values.reseeds = std::move(reseeds);
             }
+            if (body.contains("portalLinks")) {
+                std::vector<std::string> links;
+                for (const nlohmann::json& entry : body.at("portalLinks")) {
+                    std::string link = entry.get<std::string>();
+                    if (!link.empty()) {
+                        links.push_back(std::move(link));
+                    }
+                }
+                values.portalLinks = std::move(links);
+            }
+            if (body.contains("captchaLength")) {
+                values.captchaLength = body.at("captchaLength").get<int>();
+                if (values.captchaLength < kMinCaptchaLength
+                    || values.captchaLength > kMaxCaptchaLength) {
+                    throw std::invalid_argument("a captcha is between "
+                        + std::to_string(kMinCaptchaLength) + " and "
+                        + std::to_string(kMaxCaptchaLength) + " characters");
+                }
+            }
+            if (body.contains("captchaTtlSeconds")) {
+                values.captchaTtlSeconds = body.at("captchaTtlSeconds").get<std::int64_t>();
+                if (values.captchaTtlSeconds < kMinCaptchaTtlSeconds) {
+                    throw std::invalid_argument("a captcha nobody can read in time is a wall");
+                }
+            }
+            if (body.contains("logLevel")) {
+                const std::string level = body.at("logLevel").get<std::string>();
+                const std::optional<bazarish::log::Level> parsed
+                    = bazarish::log::levelFromString(level);
+                if (!parsed.has_value()) {
+                    throw std::invalid_argument("not a log level: " + level);
+                }
+                values.logLevel = level;
+            }
+            const auto readEndpoint = [&body](const std::string& key, std::string& host,
+                                          int& port) {
+                if (!body.contains(key)) {
+                    return;
+                }
+                const nlohmann::json& endpoint = body.at(key);
+                const std::string wantedHost = endpoint.value("host", host);
+                const int wantedPort = endpoint.value("port", port);
+                if (wantedHost.empty()) {
+                    throw std::invalid_argument("a " + key + " address needs a host");
+                }
+                if (wantedPort < kMinPort || wantedPort > kMaxPort) {
+                    throw std::invalid_argument("a port is between " + std::to_string(kMinPort)
+                        + " and " + std::to_string(kMaxPort));
+                }
+                host = wantedHost;
+                port = wantedPort;
+            };
+            readEndpoint("listen", values.listenHost, values.listenPort);
+            readEndpoint("portalListen", values.portalListenHost, values.portalListenPort);
+            readEndpoint("messaging", values.messagingHost, values.messagingPort);
             if (body.contains("idleDeleteDays")) {
                 values.idleDeleteDays = body.at("idleDeleteDays").get<std::int64_t>();
                 if (values.idleDeleteDays < 0) {
@@ -590,6 +671,7 @@ void AccountApi::setupRoutes()
                     throw std::invalid_argument("a new account needs some storage");
                 }
             }
+            const std::string levelBefore = settings().logLevel;
             try {
                 settings_->set(values);
             } catch (const std::exception& error) {
@@ -597,6 +679,15 @@ void AccountApi::setupRoutes()
                 // Saying so beats applying it and losing it later.
                 respondError(response, 500, ErrorCode::eDeliveryRejected, error.what());
                 return;
+            }
+            if (values.logLevel != levelBefore) {
+                // The one startup value that is not one: a node can be made
+                // talkative while it is running the problem being chased.
+                if (const std::optional<bazarish::log::Level> level
+                    = bazarish::log::levelFromString(values.logLevel);
+                    level.has_value()) {
+                    bazarish::log::setLevel(*level);
+                }
             }
             respondJson(response,
                 {
@@ -1017,8 +1108,10 @@ void AccountApi::setupRoutes()
     // catalogue: the only variables are whether a captcha is required and
     // whether an operator has to approve the account.
     http_->get("/v1/account/portal", filled([this](const http::Request&, http::Response& response) {
+            const NodeSettings::Values live = settings();
             nlohmann::json links = nlohmann::json::array();
-            for (const std::string& link : options_.portalLinks) {
+            for (const std::string& link :
+                live.portalLinks.empty() ? options_.portalLinks : live.portalLinks) {
                 links.push_back(link);
             }
             respondJson(response,

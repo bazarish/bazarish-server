@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #include "Config.hpp"
 #include "HttpApi.hpp"
+#include "PanelSettings.hpp"
 
 #include <bazarish/Crypto.hpp>
 
@@ -115,9 +116,14 @@ int main(const int argc, const char** argv)
     HttpApiOptions options;
     options.version = kVersion;
     options.assetsDirectory = config.assetsDir;
+    // The panel administers itself: what it reads at start it can also write
+    // back, into the same file the operator wrote by hand.
+    const bool unclaimed = config.admins.empty();
+    const auto settings
+        = std::make_shared<PanelSettings>(fs::path(configPath), std::move(config));
     std::optional<HttpApi> api;
     try {
-        api.emplace(std::move(config), identity, options);
+        api.emplace(settings, identity, options);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "panel not started: %s\n", error.what());
         return 2;
@@ -127,6 +133,14 @@ int main(const int argc, const char** argv)
     std::printf("panel operator fingerprint: %s\n", identity.fingerprint().c_str());
     std::printf("add this fingerprint to each service's --operator-fingerprint\n");
     std::printf("listening on %s:%d\n", host.c_str(), port);
+    if (unclaimed) {
+        // A fresh install: no administrator yet, and the first key to sign in
+        // becomes one. Said on the console because that is where whoever just
+        // installed it is looking.
+        std::printf("no administrator configured yet: open http://%s:%d/setup and sign in -\n"
+                    "the first key to sign there administers this panel\n",
+            host.c_str(), port);
+    }
     std::fflush(stdout);
 
     if (!api->listen(host, port)) {

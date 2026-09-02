@@ -23,6 +23,7 @@ find_package(Threads REQUIRED)
 
 add_library(bazarish_admin_lib STATIC
     src/Config.cpp
+    src/PanelSettings.cpp
     src/AdminAuth.cpp
     src/SessionStore.cpp
     src/ServiceClient.cpp
@@ -46,5 +47,6 @@ function(bazarish_admin_add_test name)
 endfunction()
 
 bazarish_admin_add_test(TestConfig)
+bazarish_admin_add_test(TestPanelSettings)
 bazarish_admin_add_test(TestAdminAuth)
 bazarish_admin_add_test(TestServiceClient)

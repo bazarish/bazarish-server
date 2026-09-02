@@ -9,7 +9,6 @@
 
 #include <cstdio>
 #include <cstdlib>
-#include <atomic>
 #include <cstring>
 #include <filesystem>
 #include <memory>
@@ -168,11 +167,10 @@ int main(const int argc, const char** argv)
 
     bazarish::facade::Facade facade(options);
 
-    std::atomic<bool> restartWanted{false};
-    *restartHook = [&restartWanted, &facade]() {
-        restartWanted.store(true);
-        facade.stop();
-    };
+    // Stopping happens on the switch's own thread: a handler must not stop the
+    // server it is still answering on.
+    bazarish::RestartSwitch restart([&facade]() { facade.stop(); });
+    *restartHook = [&restart]() { restart.request(); };
     std::printf("bazarish-facade-http %s\n", kVersion);
     std::fflush(stdout);
     bazarish::log::info("messaging -> {}:{}, account -> {}:{}", options.messagingHost,
@@ -243,5 +241,5 @@ int main(const int argc, const char** argv)
     if (opsThread.joinable()) {
         opsThread.join();
     }
-    return restartWanted.load() ? bazarish::kRestartExitCode : 0;
+    return restart.requested() ? bazarish::kRestartExitCode : 0;
 }

@@ -418,11 +418,10 @@ int main(const int argc, const char** argv)
 
     bazarish::server::HttpApi api(storage, engine, httpOptions);
 
-    std::atomic<bool> restartWanted{false};
-    *restartHook = [&restartWanted, &api]() {
-        restartWanted.store(true);
-        api.stop();
-    };
+    // Stopping happens on the switch's own thread: a handler must not stop the
+    // server it is still answering on.
+    bazarish::RestartSwitch restart([&api]() { api.stop(); });
+    *restartHook = [&restart]() { restart.request(); };
 
     // The long-poll face is a route on the same server now, so there is one port,
     // one parser and one set of limits.
@@ -431,11 +430,11 @@ int main(const int argc, const char** argv)
     bazarish::log::info("listening on {}:{} (private channel for facades)", host, port);
 
     if (!api.listen(host, port)) {
-        if (restartWanted.load()) {
+        if (restart.requested()) {
             return bazarish::kRestartExitCode;
         }
         bazarish::log::error("failed to listen on {}:{}", host, port);
         return 1;
     }
-    return restartWanted.load() ? bazarish::kRestartExitCode : 0;
+    return restart.requested() ? bazarish::kRestartExitCode : 0;
 }

@@ -9,7 +9,6 @@
 
 #include <cstdio>
 #include <cstring>
-#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -152,18 +151,17 @@ int main(const int argc, const char** argv)
     }
     std::fflush(stdout);
 
-    std::atomic<bool> restartWanted{false};
-    *restartHook = [&restartWanted, &api]() {
-        restartWanted.store(true);
-        api->stop();
-    };
+    // Stopping happens on the switch's own thread: a handler must not stop the
+    // server it is still answering on.
+    bazarish::RestartSwitch restart([&api]() { api->stop(); });
+    *restartHook = [&restart]() { restart.request(); };
 
     if (!api->listen(host, port)) {
-        if (restartWanted.load()) {
+        if (restart.requested()) {
             return bazarish::kRestartExitCode;
         }
         std::fprintf(stderr, "failed to listen on %s:%d\n", host.c_str(), port);
         return 1;
     }
-    return restartWanted.load() ? bazarish::kRestartExitCode : 0;
+    return restart.requested() ? bazarish::kRestartExitCode : 0;
 }

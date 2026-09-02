@@ -8,6 +8,7 @@
 #include <bazarish/HttpClient.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/HttpServer.hpp>
+#include <bazarish/I2p.hpp>
 
 #include <utility>
 
@@ -33,6 +34,15 @@
 namespace bazarish::facade {
 
 namespace {
+
+// What a listener may be told to bind, and how many destinations one facade may
+// be asked to publish. The port range is TCP's without 0, which means "any free
+// port"; the destination ceiling is a guard against a typo that would have the
+// facade build tunnels for hours.
+constexpr int kMinPort = 1;
+constexpr int kMaxPort = 65535;
+constexpr int kMaxI2pDestinations = 8;
+
 
 // How long the facade waits on a backend. Longer than the event face's own cap,
 // so a held request is answered by the backend rather than cut short here.
@@ -336,6 +346,179 @@ void Facade::setupOpsRoutes()
             report["requestsTotal"] = sample.total;
             report["inFlight"] = sample.inFlight;
             return {200, "application/json", {}, report.dump()};
+        });
+
+    // The facade's own configuration, on the ops socket for the same reason
+    // /healthz is: the public socket must not admit that a facade is here.
+    const auto operatorRejection
+        = [this](const bazarish::http::Request& request)
+        -> std::optional<bazarish::http::Response> {
+        try {
+            bazarish::auth::authorizeRequest(collectAuthHeaders(request), nowSeconds(),
+                request.method, request.path,
+                bazarish::Bytes(request.body.begin(), request.body.end()),
+                options_.operatorFingerprints);
+            return std::nullopt;
+        } catch (const std::exception& error) {
+            bazarish::log::debug("ops call refused: {}", error.what());
+            return bazarish::http::Response{403, "application/json", {},
+                R"({"error":{"message":"operator authentication required"}})"};
+        }
+    };
+
+    const auto refuse = [](const int status, const std::string& message) {
+        return bazarish::http::Response{status, "application/json", {},
+            nlohmann::json{{"error", {{"message", message}}}}.dump()};
+    };
+
+    ops_->get("/settings",
+        [this, operatorRejection, refuse](
+            const bazarish::http::Request& request) -> bazarish::http::Response {
+            if (const std::optional<bazarish::http::Response> refused = operatorRejection(request);
+                refused.has_value()) {
+                return *refused;
+            }
+            if (!options_.settings) {
+                return refuse(503, "this facade was started without a config file to write to");
+            }
+            const FacadeSettings::Values values = options_.settings->get();
+            return {200, "application/json", {},
+                nlohmann::json{
+                    {"logLevel", values.logLevel},
+                    {"basePath", values.basePath},
+                    {"messaging", {{"host", values.messagingHost},
+                                      {"port", values.messagingPort}}},
+                    {"account", {{"host", values.accountHost}, {"port", values.accountPort}}},
+                    {"listen", {{"host", values.listenHost}, {"port", values.listenPort}}},
+                    {"opsListen", {{"host", values.opsHost}, {"port", values.opsPort}}},
+                    {"i2pEnabled", values.i2pEnabled},
+                    {"i2pDestinations", values.i2pDestinations},
+                    {"i2pPrivacy", values.i2pPrivacy},
+                    {"i2pTunnelQuantity", values.i2pTunnelQuantity},
+                    {"stateDirectory", options_.stateDirectory},
+                    {"version", options_.version},
+                    {"canRestart", static_cast<bool>(options_.requestRestart)},
+                }
+                    .dump()};
+        });
+
+    ops_->put("/settings",
+        [this, operatorRejection, refuse](
+            const bazarish::http::Request& request) -> bazarish::http::Response {
+            if (const std::optional<bazarish::http::Response> refused = operatorRejection(request);
+                refused.has_value()) {
+                return *refused;
+            }
+            if (!options_.settings) {
+                return refuse(503, "this facade was started without a config file to write to");
+            }
+            FacadeSettings::Values values = options_.settings->get();
+            try {
+                const nlohmann::json body = nlohmann::json::parse(request.body);
+                if (body.contains("logLevel")) {
+                    const std::string level = body.at("logLevel").get<std::string>();
+                    if (!bazarish::log::levelFromString(level).has_value()) {
+                        throw std::invalid_argument("not a log level: " + level);
+                    }
+                    values.logLevel = level;
+                }
+                if (body.contains("basePath")) {
+                    const std::string path = body.at("basePath").get<std::string>();
+                    // The one field here that is a secret. An empty one is only
+                    // legitimate when a fronting proxy owns it, and that is a
+                    // decision made in the config file, not in a browser.
+                    if (path.empty() || !isValidBasePath(path)) {
+                        throw std::invalid_argument(
+                            "a base path looks like /8f1818f3/0966179fb196: one or more"
+                            " slash-separated segments of letters, digits, '-' or '_'");
+                    }
+                    values.basePath = path;
+                }
+                const auto readEndpoint = [&body](const std::string& key, std::string& host,
+                                              int& port) {
+                    if (!body.contains(key)) {
+                        return;
+                    }
+                    const nlohmann::json& endpoint = body.at(key);
+                    const std::string wantedHost = endpoint.value("host", host);
+                    const int wantedPort = endpoint.value("port", port);
+                    if (wantedHost.empty()) {
+                        throw std::invalid_argument("a " + key + " address needs a host");
+                    }
+                    if (wantedPort < kMinPort || wantedPort > kMaxPort) {
+                        throw std::invalid_argument("a port is between "
+                            + std::to_string(kMinPort) + " and " + std::to_string(kMaxPort));
+                    }
+                    host = wantedHost;
+                    port = wantedPort;
+                };
+                readEndpoint("messaging", values.messagingHost, values.messagingPort);
+                readEndpoint("account", values.accountHost, values.accountPort);
+                readEndpoint("listen", values.listenHost, values.listenPort);
+                readEndpoint("opsListen", values.opsHost, values.opsPort);
+                if (body.contains("i2pEnabled")) {
+                    values.i2pEnabled = body.at("i2pEnabled").get<bool>();
+                }
+                if (body.contains("i2pDestinations")) {
+                    const int count = body.at("i2pDestinations").get<int>();
+                    if (count < 1 || count > kMaxI2pDestinations) {
+                        throw std::invalid_argument("a facade carries between 1 and "
+                            + std::to_string(kMaxI2pDestinations) + " destinations");
+                    }
+                    values.i2pDestinations = count;
+                }
+                if (body.contains("i2pPrivacy")) {
+                    const std::string named = body.at("i2pPrivacy").get<std::string>();
+                    if (!bazarish::i2p::privacyFromString(named).has_value()) {
+                        throw std::invalid_argument("not a privacy level: " + named);
+                    }
+                    values.i2pPrivacy = named;
+                }
+                if (body.contains("i2pTunnelQuantity")) {
+                    const int quantity = body.at("i2pTunnelQuantity").get<int>();
+                    if (quantity < 1 || quantity > bazarish::i2p::kMaxTunnelQuantity) {
+                        throw std::invalid_argument("a destination carries between 1 and "
+                            + std::to_string(bazarish::i2p::kMaxTunnelQuantity) + " tunnels");
+                    }
+                    values.i2pTunnelQuantity = quantity;
+                }
+            } catch (const nlohmann::json::exception& error) {
+                return refuse(400, error.what());
+            } catch (const std::invalid_argument& error) {
+                return refuse(400, error.what());
+            }
+
+            const std::string levelBefore = options_.settings->get().logLevel;
+            try {
+                options_.settings->set(values);
+            } catch (const std::exception& error) {
+                return refuse(500, error.what());
+            }
+            if (values.logLevel != levelBefore) {
+                if (const std::optional<bazarish::log::Level> level
+                    = bazarish::log::levelFromString(values.logLevel);
+                    level.has_value()) {
+                    bazarish::log::setLevel(*level);
+                }
+            }
+            return {200, "application/json", {},
+                nlohmann::json{{"logLevel", values.logLevel}}.dump()};
+        });
+
+    ops_->post("/restart",
+        [this, operatorRejection, refuse](
+            const bazarish::http::Request& request) -> bazarish::http::Response {
+            if (const std::optional<bazarish::http::Response> refused = operatorRejection(request);
+                refused.has_value()) {
+                return *refused;
+            }
+            if (!options_.requestRestart) {
+                return refuse(503,
+                    "this facade cannot restart itself: it was started without a supervisor");
+            }
+            bazarish::log::info("restarting at the operator's request");
+            options_.requestRestart();
+            return {200, "application/json", {}, R"({"restarting":true})"};
         });
 }
 

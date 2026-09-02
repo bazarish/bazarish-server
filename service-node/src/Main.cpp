@@ -12,6 +12,7 @@
 #include <bazarish/ConfigFile.hpp>
 #include <bazarish/Crypto.hpp>
 #include <bazarish/Log.hpp>
+#include <bazarish/Restart.hpp>
 #include <bazarish/ServerDescriptor.hpp>
 
 #include <nlohmann/json.hpp>
@@ -408,7 +409,21 @@ int main(const int argc, const char** argv)
         }
     }
 
+    // Filled in once the API exists; the handler reads the slot when called.
+    const auto restartHook = std::make_shared<std::function<void()>>();
+    options.requestRestart = [restartHook]() {
+        if (*restartHook) {
+            (*restartHook)();
+        }
+    };
+
     bazarish::service::AccountApi api(store, grants, options);
+
+    std::atomic<bool> restartWanted{false};
+    *restartHook = [&restartWanted, &api]() {
+        restartWanted.store(true);
+        api.stop();
+    };
 
     // The browser-facing portal (sign-in-with-key, captcha registration, ...),
     // sharing the grant store with the account API. Secrets are per-run; a
@@ -544,8 +559,11 @@ int main(const int argc, const char** argv)
     bazarish::log::info("listening on {}:{} (private channel for facades)", host, port);
 
     if (!api.listen(host, port)) {
+        if (restartWanted.load()) {
+            return bazarish::kRestartExitCode;
+        }
         bazarish::log::error("failed to listen on {}:{}", host, port);
         return 1;
     }
-    return 0;
+    return restartWanted.load() ? bazarish::kRestartExitCode : 0;
 }

@@ -11,6 +11,7 @@
 #include <bazarish/Crypto.hpp>
 #include <bazarish/I2p.hpp>
 #include <bazarish/Log.hpp>
+#include <bazarish/Restart.hpp>
 
 #include <bazarish/HttpClient.hpp>
 #include <nlohmann/json.hpp>
@@ -389,7 +390,39 @@ int main(const int argc, const char** argv)
             return perUserDests->commitServingKey(user);
         };
     }
+    // The configuration an operator turns from the panel, written back into the
+    // file this server was started with.
+    bazarish::server::ServerSettings::Values settingValues;
+    settingValues.logLevel = config.text("logLevel").empty() ? "info" : config.text("logLevel");
+    settingValues.i2pLog = i2pLog;
+    settingValues.i2pPrivacy = bazarish::i2p::privacyName(privacy);
+    settingValues.i2pTunnelQuantity = tunnelQuantity;
+    settingValues.federationRateLimit = federationRateLimit;
+    settingValues.mailboxRetentionDays = mailboxRetentionDays;
+    settingValues.listenHost = host;
+    settingValues.listenPort = port;
+    settingValues.serviceNodeUrl = serviceNodeUrl;
+    httpOptions.settings = std::make_shared<bazarish::server::ServerSettings>(
+        fs::path(argv[2]), settingValues);
+    httpOptions.stateDirectory = stateDir.string();
+    httpOptions.fingerprint = identity.fingerprint();
+    // Restarting from the panel is the other half of editing a startup setting
+    // there. The hook is handed to the API before the API exists, so it is
+    // filled in through a slot the handler reads when it is called.
+    const auto restartHook = std::make_shared<std::function<void()>>();
+    httpOptions.requestRestart = [restartHook]() {
+        if (*restartHook) {
+            (*restartHook)();
+        }
+    };
+
     bazarish::server::HttpApi api(storage, engine, httpOptions);
+
+    std::atomic<bool> restartWanted{false};
+    *restartHook = [&restartWanted, &api]() {
+        restartWanted.store(true);
+        api.stop();
+    };
 
     // The long-poll face is a route on the same server now, so there is one port,
     // one parser and one set of limits.
@@ -398,8 +431,11 @@ int main(const int argc, const char** argv)
     bazarish::log::info("listening on {}:{} (private channel for facades)", host, port);
 
     if (!api.listen(host, port)) {
+        if (restartWanted.load()) {
+            return bazarish::kRestartExitCode;
+        }
         bazarish::log::error("failed to listen on {}:{}", host, port);
         return 1;
     }
-    return 0;
+    return restartWanted.load() ? bazarish::kRestartExitCode : 0;
 }

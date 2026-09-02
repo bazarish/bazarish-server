@@ -2,6 +2,7 @@
 #pragma once
 
 #include "DeliveryEngine.hpp"
+#include "ServerSettings.hpp"
 #include "Storage.hpp"
 
 #include <bazarish/Auth.hpp>
@@ -46,6 +47,17 @@ struct DestinationAssignment {
 using AssignDestinationFn = std::function<DestinationAssignment(const std::string& user)>;
 
 struct HttpApiOptions {
+    // The settings an operator turns from the panel, and the file they go back
+    // to. Null leaves the settings endpoints out: a server started without a
+    // config file has nothing to write.
+    std::shared_ptr<ServerSettings> settings;
+    // Asked for by the panel when a setting only a restart can pick up has been
+    // written. Empty answers that this server cannot restart itself, rather than
+    // pretending it did.
+    std::function<void()> requestRestart;
+    // Facts an operator reads on the settings page and cannot change from it.
+    std::string stateDirectory;
+    std::string fingerprint;
     // The server's default per-user mailbox quota, reported (alongside actual usage)
     // by /v1/messaging/storage-usage when a user has no quota override. Mirrors the
     // delivery engine's defaultQuotaBytes.

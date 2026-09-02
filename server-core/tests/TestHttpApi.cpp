@@ -5,6 +5,7 @@
 #include "DiskStorage.hpp"
 
 #include <bazarish/Auth.hpp>
+#include <bazarish/Log.hpp>
 #include <bazarish/Cms.hpp>
 #include <bazarish/Limits.hpp>
 #include <bazarish/Tokens.hpp>
@@ -19,6 +20,7 @@
 #include <cstring>
 #include <ctime>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <string>
@@ -139,6 +141,26 @@ int main()
     // operator is authorised by signature (its fingerprint), not a shared secret.
     const Identity operatorIdentity = Identity::generate();
     httpOptions.operatorFingerprints = {operatorIdentity.fingerprint()};
+    // The configuration this server answers for, backed by a file it can write.
+    const std::filesystem::path configPath = root / "server-core.json";
+    {
+        std::ofstream config(configPath);
+        config << "{\n  \"state\": \"/var/lib/bazarish/server-core\"\n}\n";
+    }
+    bazarish::server::ServerSettings::Values initialSettings;
+    initialSettings.logLevel = "info";
+    initialSettings.i2pPrivacy = "max";
+    initialSettings.i2pTunnelQuantity = 16;
+    initialSettings.federationRateLimit = 240;
+    initialSettings.mailboxRetentionDays = 30;
+    initialSettings.listenHost = "127.0.0.1";
+    initialSettings.listenPort = 8420;
+    initialSettings.serviceNodeUrl = "http://127.0.0.1:8421";
+    const auto serverSettings = std::make_shared<bazarish::server::ServerSettings>(
+        configPath, initialSettings);
+    httpOptions.settings = serverSettings;
+    httpOptions.stateDirectory = "/var/lib/bazarish/server-core";
+    httpOptions.fingerprint = "server-fingerprint";
     std::string provisionedUser;
     std::string provisionedTransient;
     std::int64_t provisionedExpires = 0;
@@ -391,6 +413,64 @@ int main()
                    makeHeaders(operatorIdentity, "DELETE", "/v1/messaging/account", "", ""))
                   .status
             == 200);
+    }
+
+    // The whole configuration, answered to an operator and written back to the
+    // file: what the panel edits instead of an SSH session.
+    {
+        const std::string path = "/v1/messaging/settings";
+        CHECK(call(port, "GET", path).status == 403);
+
+        const http::ClientResponse shown
+            = call(port, "GET", path, makeHeaders(operatorIdentity, "GET", path, {}, {}));
+        CHECK(shown.status == 200);
+        const nlohmann::json values = nlohmann::json::parse(shown.body);
+        CHECK(values.at("federationRateLimit").get<int>() == 240);
+        CHECK(values.at("i2pPrivacy").get<std::string>() == "max");
+        // Nothing here can restart this server: the test built it without a hook.
+        CHECK(!values.at("canRestart").get<bool>());
+
+        const std::string body = nlohmann::json{{"logLevel", "debug"},
+            {"i2pPrivacy", "middle"}, {"federationRateLimit", 60},
+            {"mailboxRetentionDays", 7}}
+                                     .dump();
+        CHECK(call(port, "PUT", path, makeHeaders(operatorIdentity, "PUT", path, body, {}), body)
+                  .status
+            == 200);
+        // The level is the one that does not wait for a restart.
+        CHECK(bazarish::log::level() == bazarish::log::Level::eDebug);
+        CHECK(serverSettings->get().federationRateLimit == 60);
+
+        std::ifstream written(configPath);
+        const nlohmann::json onDisk = nlohmann::json::parse(written);
+        CHECK(onDisk.at("logLevel").get<std::string>() == "debug");
+        CHECK(onDisk.at("i2p").at("privacy").get<std::string>() == "middle");
+        CHECK(onDisk.at("federationRateLimit").get<int>() == 60);
+        CHECK(onDisk.at("mailboxRetentionDays").get<int>() == 7);
+        // The operator's own text is untouched.
+        CHECK(onDisk.at("state").get<std::string>() == "/var/lib/bazarish/server-core");
+
+        const std::string nonsense = nlohmann::json{{"i2pPrivacy", "invisible"}}.dump();
+        CHECK(call(port, "PUT", path,
+                  makeHeaders(operatorIdentity, "PUT", path, nonsense, {}), nonsense)
+                  .status
+            == 400);
+        const std::string tooMany = nlohmann::json{{"i2pTunnelQuantity", 99}}.dump();
+        CHECK(call(port, "PUT", path,
+                  makeHeaders(operatorIdentity, "PUT", path, tooMany, {}), tooMany)
+                  .status
+            == 400);
+        const std::string quiet = nlohmann::json{{"logLevel", "info"}}.dump();
+        CHECK(call(port, "PUT", path, makeHeaders(operatorIdentity, "PUT", path, quiet, {}), quiet)
+                  .status
+            == 200);
+
+        // A server nobody can restart says so rather than pretending it did.
+        const std::string restart = "/v1/messaging/restart";
+        CHECK(call(port, "POST", restart,
+                  makeHeaders(operatorIdentity, "POST", restart, {}, {}))
+                  .status
+            == 503);
     }
 
     api.stop();

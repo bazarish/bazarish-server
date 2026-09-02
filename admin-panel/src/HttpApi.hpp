@@ -10,6 +10,7 @@
 
 #include <condition_variable>
 #include <filesystem>
+#include <functional>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -29,6 +30,10 @@ namespace bazarish::admin {
 
 struct HttpApiOptions {
     std::string version;
+    // Asked for from the Panel tab when a setting only a start reads has been
+    // written - the panel's own listener. Empty answers that this panel cannot
+    // restart itself.
+    std::function<void()> requestRestart;
     std::int64_t sessionTtlSeconds = 3600;
     // Where the panel's web files live (page shell, stylesheet, script, logo).
     std::filesystem::path assetsDirectory;

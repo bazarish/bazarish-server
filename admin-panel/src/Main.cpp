@@ -3,10 +3,13 @@
 #include "HttpApi.hpp"
 #include "PanelSettings.hpp"
 
+#include <bazarish/Restart.hpp>
+
 #include <bazarish/Crypto.hpp>
 
 #include <cstdio>
 #include <cstring>
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -121,6 +124,12 @@ int main(const int argc, const char** argv)
     const bool unclaimed = config.admins.empty();
     const auto settings
         = std::make_shared<PanelSettings>(fs::path(configPath), std::move(config));
+    const auto restartHook = std::make_shared<std::function<void()>>();
+    options.requestRestart = [restartHook]() {
+        if (*restartHook) {
+            (*restartHook)();
+        }
+    };
     std::optional<HttpApi> api;
     try {
         api.emplace(settings, identity, options);
@@ -143,9 +152,18 @@ int main(const int argc, const char** argv)
     }
     std::fflush(stdout);
 
+    std::atomic<bool> restartWanted{false};
+    *restartHook = [&restartWanted, &api]() {
+        restartWanted.store(true);
+        api->stop();
+    };
+
     if (!api->listen(host, port)) {
+        if (restartWanted.load()) {
+            return bazarish::kRestartExitCode;
+        }
         std::fprintf(stderr, "failed to listen on %s:%d\n", host.c_str(), port);
         return 1;
     }
-    return 0;
+    return restartWanted.load() ? bazarish::kRestartExitCode : 0;
 }

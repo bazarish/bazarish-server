@@ -632,11 +632,18 @@
     var kSettingsTabs = [
         { id: "registration", label: "Registration" },
         { id: "portal", label: "Portal" },
-        { id: "network", label: "Network" },
+        { id: "addresses", label: "Addresses" },
         { id: "accounts", label: "Accounts" },
+        { id: "server", label: "Messaging server" },
+        { id: "facade", label: "Facade" },
         { id: "panel", label: "Panel" }
     ];
     var kLogLevels = ["error", "warn", "info", "debug"];
+    var kPrivacyLevels = ["minimal", "middle", "max"];
+    // How long a restarted service is given before the page asks it again. The
+    // unit's own RestartSec is the operator's to set; this is only how long the
+    // page waits before it stops saying "restarting".
+    var kRestartWaitMs = 10000;
     var settingsTab = kSettingsTabs[0].id;
 
     // A value the operator types. `hint` explains it; `restart` marks the ones
@@ -767,6 +774,31 @@
         return footer;
     }
 
+    // A service is restarted from here because a setting only a start reads is
+    // otherwise saved and inert until somebody opens a terminal on the server.
+    function restartButton(footer, kind, canRestart) {
+        if (!canRestart) {
+            footer.appendChild(element("span", "hint",
+                "This service cannot restart itself: its unit has no restart policy."));
+            return;
+        }
+        var button = element("button", "chip", "restart " + kind);
+        button.addEventListener("click", function () {
+            button.disabled = true;
+            button.textContent = "restarting " + kind + "...";
+            api("POST", withFleet("/api/restart?kind=" + encodeURIComponent(kind)))
+                .then(function () {
+                    window.setTimeout(renderSettings, kRestartWaitMs);
+                })
+                .catch(function (error) {
+                    button.disabled = false;
+                    button.textContent = "restart " + kind;
+                    footer.appendChild(notice(error.message, "is-error"));
+                });
+        });
+        footer.appendChild(button);
+    }
+
     function portRead(input, what) {
         var port = Number(input.value);
         if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -809,14 +841,33 @@
             return;
         }
 
+        // The other two services answer for their own configuration; the panel
+        // only carries the request to them.
+        if (settingsTab === "server" || settingsTab === "facade") {
+            var kind = settingsTab === "server" ? "server-core" : "facade";
+            api("GET", withFleet("/api/service-settings?kind=" + kind))
+                .then(function (data) {
+                    form.innerHTML = "";
+                    if (kind === "server-core") {
+                        renderServerTab(form, data);
+                    } else {
+                        renderFacadeTab(form, data);
+                    }
+                }).catch(function (error) {
+                    form.innerHTML = "";
+                    form.appendChild(notice(error.message, "is-error"));
+                });
+            return;
+        }
+
         api("GET", withFleet("/api/settings")).then(function (data) {
             form.innerHTML = "";
             if (settingsTab === "registration") {
                 renderRegistrationTab(form, data);
             } else if (settingsTab === "portal") {
                 renderPortalTab(form, data);
-            } else if (settingsTab === "network") {
-                renderNetworkTab(form, data);
+            } else if (settingsTab === "addresses") {
+                renderAddressesTab(form, data);
             } else {
                 renderAccountsTab(form, data);
             }
@@ -854,7 +905,8 @@
             "Shown to an account that is registered but not served yet - in the portal and in"
             + " its client.");
 
-        saveFooter(form, "Applies now and is written to the node's config, so a restart keeps it.",
+        var footer = saveFooter(form,
+            "Applies now and is written to the node's config, so a restart keeps it.",
             function () {
                 return {
                     method: "PUT", path: withFleet("/api/settings"),
@@ -868,6 +920,7 @@
                     }
                 };
             });
+        restartButton(footer, "service-node", data.canRestart);
     }
 
     function renderPortalTab(form, data) {
@@ -895,7 +948,8 @@
         var listen = endpointRow(reach, "Listens on", data.portalListen,
             "The socket the portal binds. Changing it moves the page an operator opens.", true);
 
-        saveFooter(form, "The words apply to the next challenge; the listener needs a restart.",
+        var footer = saveFooter(form,
+            "The words apply to the next challenge; the listener needs a restart.",
             function () {
                 var signer = {
                     name: name.value.trim(), place: place.value.trim(), role: role.value.trim()
@@ -919,9 +973,10 @@
                     }
                 };
             });
+        restartButton(footer, "service-node", data.canRestart);
     }
 
-    function renderNetworkTab(form, data) {
+    function renderAddressesTab(form, data) {
         var reach = section(form, "How clients reach this server");
         var facades = textareaBlock(reach, (data.facades || []).join("\n"),
             "http://<b32>.b32.i2p/<base path>",
@@ -947,7 +1002,8 @@
             kLogLevels.map(function (name) { return { value: name, label: name }; }),
             data.logLevel || "info");
 
-        saveFooter(form, "Addresses apply after a restart; the log level applies now.",
+        var footer = saveFooter(form,
+            "Addresses apply after a restart; the log level applies now.",
             function () {
                 var facadeList = linesOf(facades);
                 if (facadeList.length === 0) {
@@ -980,6 +1036,7 @@
                     }
                 };
             });
+        restartButton(footer, "service-node", data.canRestart);
     }
 
     function renderAccountsTab(form, data) {
@@ -1019,6 +1076,167 @@
                     }
                 };
             });
+    }
+
+    function renderServerTab(form, data) {
+        var talk = section(form, "What the server says");
+        var level = chipRow(talk, "Applies at once.",
+            kLogLevels.map(function (name) { return { value: name, label: name }; }),
+            data.logLevel || "info");
+        var i2pLog = chipRow(talk,
+            "libi2pd's own lines, folded into this server's log. Loud, and off unless a"
+            + " tunnel problem is being chased. Applies at once.",
+            [{ value: false, label: "i2p log off" }, { value: true, label: "i2p log on" }],
+            Boolean(data.i2pLog));
+
+        var i2p = section(form, "How this server sits on I2P");
+        var privacy = chipRow(i2p,
+            "Hops each tunnel takes. More hops, more anonymity, more latency: minimal is one"
+            + " hop, max is three.",
+            kPrivacyLevels.map(function (name) { return { value: name, label: name }; }),
+            data.i2pPrivacy || "max");
+        var tunnels = fieldRow(i2p, "Tunnels per address", data.i2pTunnelQuantity, {
+            type: "number", narrow: true, min: 1, unit: "of 16", restart: true,
+            hint: "Parallel tunnels carrying one destination. A public server's inbound"
+                + " federation runs a full pool; lower it on a thin uplink."
+        });
+
+        var limits = section(form, "What it accepts and keeps");
+        var rate = fieldRow(limits, "Inbound per peer", data.federationRateLimit, {
+            type: "number", narrow: true, min: 1, unit: "deliveries / minute", restart: true,
+            hint: "Per peer destination. It bounds one sender, not the server."
+        });
+        var retention = fieldRow(limits, "Keep unacknowledged mail", data.mailboxRetentionDays, {
+            type: "number", narrow: true, min: 0, unit: "days (0: forever)", restart: true,
+            hint: "The backstop for mail no device of the recipient ever collected. Mail that"
+                + " every device acknowledged is deleted at once regardless."
+        });
+
+        var wiring = section(form, "Where it stands");
+        var listen = endpointRow(wiring, "Listens on", data.listen,
+            "The private channel the facade and the node reach it on. Never public.", true);
+        var node = fieldRow(wiring, "Service node", data.serviceNode, {
+            placeholder: "http://127.0.0.1:8421", restart: true,
+            hint: "The node this server reports to."
+        });
+        readOnlyRow(wiring, "Fingerprint", data.fingerprint,
+            "This server's identity. Clients pin it; it is not something to change.");
+        readOnlyRow(wiring, "State", data.stateDirectory);
+        readOnlyRow(wiring, "Version", data.version);
+
+        var footer = saveFooter(form,
+            "The log levels apply now; everything else is written for the next start.",
+            function () {
+                return {
+                    method: "PUT",
+                    path: withFleet("/api/service-settings?kind=server-core"),
+                    body: {
+                        logLevel: level(),
+                        i2pLog: i2pLog(),
+                        i2pPrivacy: privacy(),
+                        i2pTunnelQuantity: Math.round(Number(tunnels.value) || 0),
+                        federationRateLimit: Math.round(Number(rate.value) || 0),
+                        mailboxRetentionDays: Math.max(0, Math.round(Number(retention.value) || 0)),
+                        listen: {
+                            host: listen.host.value.trim(),
+                            port: portRead(listen.port, "The messaging server")
+                        },
+                        serviceNode: node.value.trim()
+                    }
+                };
+            });
+        restartButton(footer, "server-core", data.canRestart);
+    }
+
+    function renderFacadeTab(form, data) {
+        var secret = section(form, "The secret prefix");
+        var basePath = fieldRow(secret, "Base path", data.basePath, {
+            placeholder: "/8f1818f3/0966179fb196", restart: true,
+            hint: "The whole clearnet API - the reseed included - lives under this prefix, and"
+                + " nothing outside it answers at all. It travels inside the facade URL of the"
+                + " server descriptor, so changing it invalidates every descriptor already"
+                + " handed out: update the facade list on the Addresses tab and re-issue the"
+                + " descriptor before the old prefix goes away."
+        });
+
+        var talk = section(form, "What the facade says");
+        var level = chipRow(talk, "Applies at once. The facade logs nothing identifying at any"
+            + " level.",
+            kLogLevels.map(function (name) { return { value: name, label: name }; }),
+            data.logLevel || "info");
+
+        var sockets = section(form, "Sockets");
+        var listen = endpointRow(sockets, "Public", data.listen,
+            "Where clients reach it, under the base path above.", true);
+        var ops = endpointRow(sockets, "Operator", data.opsListen,
+            "The private socket this page is talking to: health, settings, restart. Never"
+            + " published to clients.", true);
+
+        var backends = section(form, "What it forwards to");
+        var messaging = endpointRow(backends, "Messaging server", data.messaging,
+            "/v1/messaging/* goes here.", true);
+        var account = endpointRow(backends, "Service node", data.account,
+            "/v1/account/* goes here.", true);
+
+        var i2p = section(form, "Its I2P side");
+        var enabled = chipRow(i2p,
+            "Whether the facade publishes destinations of its own. This is the address clients"
+            + " should prefer: it needs no clearnet at all.",
+            [{ value: true, label: "i2p on" }, { value: false, label: "i2p off" }],
+            data.i2pEnabled !== false);
+        var destinations = fieldRow(i2p, "Destinations", data.i2pDestinations, {
+            type: "number", narrow: true, min: 1, unit: "addresses", restart: true,
+            hint: "More than one spreads client traffic across separate addresses."
+        });
+        var privacy = chipRow(i2p, "Hops each tunnel takes.",
+            kPrivacyLevels.map(function (name) { return { value: name, label: name }; }),
+            data.i2pPrivacy || "max");
+        var tunnels = fieldRow(i2p, "Tunnels per address", data.i2pTunnelQuantity, {
+            type: "number", narrow: true, min: 1, unit: "of 16", restart: true
+        });
+
+        var facts = section(form, "What this facade is");
+        readOnlyRow(facts, "State", data.stateDirectory,
+            "Where its destination keys live, so its addresses survive a restart.");
+        readOnlyRow(facts, "Version", data.version);
+
+        var footer = saveFooter(form,
+            "The log level applies now; everything else is written for the next start.",
+            function () {
+                var path = basePath.value.trim();
+                if (path.length === 0 || path.charAt(0) !== "/" || path.slice(-1) === "/") {
+                    throw new Error("A base path starts with / and does not end with one.");
+                }
+                return {
+                    method: "PUT",
+                    path: withFleet("/api/service-settings?kind=facade"),
+                    body: {
+                        basePath: path,
+                        logLevel: level(),
+                        listen: {
+                            host: listen.host.value.trim(),
+                            port: portRead(listen.port, "The public listener")
+                        },
+                        opsListen: {
+                            host: ops.host.value.trim(),
+                            port: portRead(ops.port, "The operator listener")
+                        },
+                        messaging: {
+                            host: messaging.host.value.trim(),
+                            port: portRead(messaging.port, "The messaging server")
+                        },
+                        account: {
+                            host: account.host.value.trim(),
+                            port: portRead(account.port, "The service node")
+                        },
+                        i2pEnabled: enabled(),
+                        i2pDestinations: Math.round(Number(destinations.value) || 0),
+                        i2pPrivacy: privacy(),
+                        i2pTunnelQuantity: Math.round(Number(tunnels.value) || 0)
+                    }
+                };
+            });
+        restartButton(footer, "facade", data.canRestart);
     }
 
     function renderPanelTab(form, data) {
@@ -1113,7 +1331,7 @@
         readOnlyRow(facts, "Web files", data.assetsDir);
         readOnlyRow(facts, "Version", data.version);
 
-        saveFooter(form,
+        var footer = saveFooter(form,
             "Applies now, except the listener, which the panel picks up when it restarts.",
             function () {
                 var list = linesOf(admins);
@@ -1152,6 +1370,23 @@
                     }
                 };
             });
+        // The panel is not one of the services it manages, so its own restart is
+        // its own route.
+        if (data.canRestart) {
+            var restart = element("button", "chip", "restart panel");
+            restart.addEventListener("click", function () {
+                restart.disabled = true;
+                restart.textContent = "restarting panel...";
+                api("POST", "/api/panel/restart").then(function () {
+                    window.setTimeout(function () { window.location.reload(); }, kRestartWaitMs);
+                }).catch(function (error) {
+                    restart.disabled = false;
+                    restart.textContent = "restart panel";
+                    footer.appendChild(notice(error.message, "is-error"));
+                });
+            });
+            footer.appendChild(restart);
+        }
     }
 
     // --- routing ----------------------------------------------------------

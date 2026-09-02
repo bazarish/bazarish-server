@@ -476,6 +476,77 @@ void HttpApi::registerRoutes()
         proxyToNode(request.query("fleet"), response, "PUT", "/v1/account/settings", request.body);
     }));
 
+    // The configuration of one service, straight from the service that owns it.
+    // The panel knows only which path each kind answers on: the settings
+    // themselves are the service's, and so is every rule about them.
+    const auto serviceSettingsPath = [](const std::string& kind) -> std::string {
+        if (kind == "server-core") {
+            return "/v1/messaging/settings";
+        }
+        if (kind == "service-node") {
+            return "/v1/account/settings";
+        }
+        if (kind == "facade") {
+            return "/settings";
+        }
+        return {};
+    };
+    const auto restartPath = [](const std::string& kind) -> std::string {
+        if (kind == "server-core") {
+            return "/v1/messaging/restart";
+        }
+        if (kind == "service-node") {
+            return "/v1/account/restart";
+        }
+        if (kind == "facade") {
+            return "/restart";
+        }
+        return {};
+    };
+
+    const auto toService = [this, serviceSettingsPath, restartPath](const http::Request& request,
+                               http::Response& response, const std::string& method,
+                               const bool restarting) {
+        const std::string kind = request.query("kind");
+        const std::string path
+            = restarting ? restartPath(kind) : serviceSettingsPath(kind);
+        if (path.empty()) {
+            sendError(response, 400, "the panel does not know a service of kind \"" + kind + "\"");
+            return;
+        }
+        const std::optional<ServiceEntry> service = serviceOfKind(request.query("fleet"), kind);
+        if (!service.has_value()) {
+            sendError(response, 503, "this deployment has no " + kind + " the panel can reach");
+            return;
+        }
+        const JsonResult result = callJson(*service, identity_, method, path, request.body);
+        if (result.status == 0) {
+            bazarish::log::warn("{} unreachable: {}", kind, result.error);
+            sendError(response, 502, result.error.empty() ? kind + " unreachable" : result.error);
+            return;
+        }
+        sendJson(response, result.body, result.status);
+    };
+
+    http_->get("/api/service-settings", api([toService](
+                                            const http::Request& request,
+                                            http::Response& response) {
+        toService(request, response, "GET", false);
+    }));
+
+    http_->put("/api/service-settings", api([toService](
+                                            const http::Request& request,
+                                            http::Response& response) {
+        toService(request, response, "PUT", false);
+    }));
+
+    // A service is restarted from here rather than over SSH: a setting only a
+    // start reads is otherwise saved and inert until somebody opens a terminal.
+    http_->post("/api/restart", api([toService](
+                                    const http::Request& request, http::Response& response) {
+        toService(request, response, "POST", true);
+    }));
+
     // The panel's own settings - the ones no service knows about: who may sign
     // in, the words it signs under, the deployments it manages, where it listens.
     // Beside them the facts an operator can only read, so one page answers "what
@@ -500,12 +571,27 @@ void HttpApi::registerRoutes()
                 {"listen", {{"host", panel.listenHost}, {"port", panel.listenPort}}},
                 {"fleets", fleets},
                 {"fingerprint", identity_.fingerprint()},
+                {"canRestart", static_cast<bool>(options_.requestRestart)},
                 {"configPath", settings_->configPath().string()},
                 {"stateDir", panel.stateDir},
                 {"assetsDir", panel.assetsDir},
                 {"version", options_.version},
             }
                 .dump());
+    }));
+
+    // The panel restarts itself for the same reason it restarts the others: a
+    // listener written into the file is inert until the process reads it again.
+    http_->post("/api/panel/restart", api([this](
+                                          const http::Request&, http::Response& response) {
+        if (!options_.requestRestart) {
+            sendError(response, 503,
+                "this panel cannot restart itself: it was started without a supervisor");
+            return;
+        }
+        bazarish::log::info("restarting at the operator's request");
+        options_.requestRestart();
+        sendJson(response, R"({"restarting":true})");
     }));
 
     http_->put("/api/panel", api([this](const http::Request& request, http::Response& response) {

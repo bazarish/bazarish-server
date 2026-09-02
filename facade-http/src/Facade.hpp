@@ -1,12 +1,15 @@
 // Bazarish project (c) 2026
 #pragma once
 
+#include "FacadeSettings.hpp"
+
 #include "Load.hpp"
 
 #include <cstdint>
 
 #include <bazarish/HttpServer.hpp>
 #include <condition_variable>
+#include <functional>
 #include <mutex>
 #include <memory>
 #include <string>
@@ -25,6 +28,14 @@ struct FacadeOptions {
     // travels solely inside the facade URL of a server descriptor. Empty only
     // when the operator opted out (a fronting proxy owns the secret then).
     std::string basePath;
+    // The settings an operator turns from the panel, and the file they go back
+    // to. Null leaves the settings routes out.
+    std::shared_ptr<FacadeSettings> settings;
+    // Asked for by the panel once a setting that only a start reads has been
+    // written. Empty answers that this facade cannot restart itself.
+    std::function<void()> requestRestart;
+    // Where its state lives, for the operator to read.
+    std::string stateDirectory;
     // Version string reported by /healthz.
     std::string version;
     // Fingerprints authorised to call /healthz on the ops listener (the admin

@@ -5,8 +5,13 @@
 #include <bazarish/HttpClient.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <nlohmann/json.hpp>
+#include <bazarish/Certificates.hpp>
+#include <bazarish/Auth.hpp>
 
 #include <cstdio>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
 #include <cstdlib>
 #include <string>
 #include <map>
@@ -105,6 +110,16 @@ void testLoadSample()
     CHECK(load.sample(kNow).inFlight == 0);
 }
 
+// One operator-signed request: the ops socket takes nothing else.
+Headers signedHeaders(const bazarish::Identity& identity, const std::string& method,
+    const std::string& path, const std::string& body)
+{
+    const bazarish::auth::Headers signature = bazarish::auth::signRequest(identity,
+        static_cast<std::int64_t>(std::time(nullptr)), method, path,
+        bazarish::Bytes(body.begin(), body.end()));
+    return Headers(signature.begin(), signature.end());
+}
+
 int main()
 {
     testLoadSample();
@@ -122,6 +137,34 @@ int main()
     options.accountHost = "127.0.0.1";
     options.accountPort = accountPort;
     options.basePath = "/s/secret123";
+    // The configuration this facade answers for on its ops socket, backed by a
+    // file it can write.
+    const std::filesystem::path configPath
+        = std::filesystem::temp_directory_path() / "bazarish-facade-test.json";
+    {
+        std::ofstream config(configPath);
+        config << "{\n  \"basePath\": \"/s/secret123\"\n}\n";
+    }
+    bazarish::facade::FacadeSettings::Values facadeValues;
+    facadeValues.logLevel = "info";
+    facadeValues.basePath = options.basePath;
+    facadeValues.messagingHost = "127.0.0.1";
+    facadeValues.messagingPort = messagingPort;
+    facadeValues.accountHost = "127.0.0.1";
+    facadeValues.accountPort = accountPort;
+    facadeValues.listenHost = "127.0.0.1";
+    facadeValues.listenPort = 8419;
+    facadeValues.opsHost = "127.0.0.1";
+    facadeValues.opsPort = 8429;
+    facadeValues.i2pEnabled = true;
+    facadeValues.i2pDestinations = 1;
+    facadeValues.i2pPrivacy = "max";
+    facadeValues.i2pTunnelQuantity = 3;
+    const auto facadeSettings
+        = std::make_shared<bazarish::facade::FacadeSettings>(configPath, facadeValues);
+    options.settings = facadeSettings;
+    const bazarish::Identity operatorIdentity = bazarish::Identity::generate();
+    options.operatorFingerprints = {operatorIdentity.fingerprint()};
     bazarish::facade::Facade facade(options);
     const int facadePort = facade.bindToAnyPort("127.0.0.1");
     CHECK(facadePort > 0);
@@ -254,6 +297,51 @@ int main()
         // The proxy routes are not on this socket.
         const http::ClientResponse proxied = call(opsPort, "GET", "/s/secret123/v1/messaging/self");
         CHECK(proxied.status == 404);
+    }
+
+    // The facade's own configuration, on the ops socket and operator-signed: the
+    // secret prefix included, because otherwise it is the one setting an
+    // operator still has to change over SSH.
+    {
+        const std::string path = "/settings";
+        CHECK(call(opsPort, "GET", path).status == 403);
+
+        const http::ClientResponse shown
+            = call(opsPort, "GET", path, signedHeaders(operatorIdentity, "GET", path, {}));
+        CHECK(shown.status == 200);
+        const nlohmann::json values = nlohmann::json::parse(shown.body);
+        CHECK(values.at("basePath").get<std::string>() == "/s/secret123");
+        CHECK(values.at("i2pTunnelQuantity").get<int>() == 3);
+
+        const std::string body
+            = nlohmann::json{{"basePath", "/s/secret456"}, {"i2pTunnelQuantity", 8}}.dump();
+        CHECK(call(opsPort, "PUT", path, signedHeaders(operatorIdentity, "PUT", path, body), body)
+                  .status
+            == 200);
+        CHECK(facadeSettings->get().basePath == "/s/secret456");
+
+        std::ifstream written(configPath);
+        const nlohmann::json onDisk = nlohmann::json::parse(written);
+        CHECK(onDisk.at("basePath").get<std::string>() == "/s/secret456");
+        CHECK(onDisk.at("i2p").at("tunnelQuantity").get<int>() == 8);
+
+        // A prefix that is not one is refused, and the facade keeps the one it has.
+        const std::string bad = nlohmann::json{{"basePath", "secret/"}}.dump();
+        CHECK(call(opsPort, "PUT", path, signedHeaders(operatorIdentity, "PUT", path, bad), bad)
+                  .status
+            == 400);
+        CHECK(facadeSettings->get().basePath == "/s/secret456");
+
+        // The settings routes are not on the public socket.
+        CHECK(call(facadePort, "GET", "/settings").status == 404);
+        CHECK(call(facadePort, "GET", "/s/secret123/settings").status != 200);
+
+        // A facade nobody can restart says so rather than pretending it did.
+        const std::string restart = "/restart";
+        CHECK(call(opsPort, "POST", restart,
+                  signedHeaders(operatorIdentity, "POST", restart, {}))
+                  .status
+            == 503);
     }
 
     facade.stop();

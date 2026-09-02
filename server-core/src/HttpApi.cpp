@@ -12,6 +12,7 @@
 #include <bazarish/Limits.hpp>
 #include <bazarish/Tokens.hpp>
 #include <bazarish/Health.hpp>
+#include <bazarish/I2p.hpp>
 #include <bazarish/I2pAddress.hpp>
 
 #include <bazarish/HttpServer.hpp>
@@ -32,6 +33,12 @@
 #include <vector>
 
 namespace {
+
+// What a listener may be told to bind: TCP's range without port 0, which means
+// "any free port" and is never what an operator typed on purpose.
+constexpr int kMinPort = 1;
+constexpr int kMaxPort = 65535;
+
 
 using bazarish::Bytes;
 using bazarish::ErrorCode;
@@ -594,6 +601,158 @@ void HttpApi::setupRoutes()
     //
     // The panel shows this next to the sum of the quotas: the two answer
     // different questions, and only this one is measured.
+    // --- Operator-internal: this server's own configuration ---
+    //
+    // Everything an operator would otherwise edit over SSH. The log level and
+    // libi2pd's logging take effect at once; the rest is written for the next
+    // start, and the panel says so beside each field.
+    http_->get("/v1/messaging/settings",
+        [this, operatorRejection](
+            const bazarish::http::Request& request) -> bazarish::http::Response {
+            if (const std::optional<bazarish::http::Response> refused = operatorRejection(request);
+                refused.has_value()) {
+                return *refused;
+            }
+            if (!options_.settings) {
+                return errorResponse(503, ErrorCode::eDeliveryRejected,
+                    "this server was started without a config file to write to");
+            }
+            const ServerSettings::Values values = options_.settings->get();
+            return jsonResponse({
+                {"logLevel", values.logLevel},
+                {"i2pLog", values.i2pLog},
+                {"i2pPrivacy", values.i2pPrivacy},
+                {"i2pTunnelQuantity", values.i2pTunnelQuantity},
+                {"federationRateLimit", values.federationRateLimit},
+                {"mailboxRetentionDays", values.mailboxRetentionDays},
+                {"listen", {{"host", values.listenHost}, {"port", values.listenPort}}},
+                {"serviceNode", values.serviceNodeUrl},
+                {"stateDirectory", options_.stateDirectory},
+                {"fingerprint", options_.fingerprint},
+                {"version", options_.version},
+                {"canRestart", static_cast<bool>(options_.requestRestart)},
+            });
+        });
+
+    http_->put("/v1/messaging/settings",
+        [this, operatorRejection](
+            const bazarish::http::Request& request) -> bazarish::http::Response {
+            if (const std::optional<bazarish::http::Response> refused = operatorRejection(request);
+                refused.has_value()) {
+                return *refused;
+            }
+            if (!options_.settings) {
+                return errorResponse(503, ErrorCode::eDeliveryRejected,
+                    "this server was started without a config file to write to");
+            }
+            ServerSettings::Values values = options_.settings->get();
+            try {
+                const nlohmann::json body = nlohmann::json::parse(request.body);
+                if (body.contains("logLevel")) {
+                    const std::string level = body.at("logLevel").get<std::string>();
+                    if (!bazarish::log::levelFromString(level).has_value()) {
+                        throw std::invalid_argument("not a log level: " + level);
+                    }
+                    values.logLevel = level;
+                }
+                if (body.contains("i2pLog")) {
+                    values.i2pLog = body.at("i2pLog").get<bool>();
+                }
+                if (body.contains("i2pPrivacy")) {
+                    const std::string named = body.at("i2pPrivacy").get<std::string>();
+                    if (!bazarish::i2p::privacyFromString(named).has_value()) {
+                        throw std::invalid_argument("not a privacy level: " + named);
+                    }
+                    values.i2pPrivacy = named;
+                }
+                if (body.contains("i2pTunnelQuantity")) {
+                    const int quantity = body.at("i2pTunnelQuantity").get<int>();
+                    if (quantity < 1 || quantity > bazarish::i2p::kMaxTunnelQuantity) {
+                        throw std::invalid_argument("a destination carries between 1 and "
+                            + std::to_string(bazarish::i2p::kMaxTunnelQuantity) + " tunnels");
+                    }
+                    values.i2pTunnelQuantity = quantity;
+                }
+                if (body.contains("federationRateLimit")) {
+                    const std::int64_t limit
+                        = body.at("federationRateLimit").get<std::int64_t>();
+                    if (limit < 1) {
+                        throw std::invalid_argument(
+                            "a rate limit of zero accepts nothing from anyone");
+                    }
+                    values.federationRateLimit = static_cast<std::size_t>(limit);
+                }
+                if (body.contains("mailboxRetentionDays")) {
+                    const std::int64_t days
+                        = body.at("mailboxRetentionDays").get<std::int64_t>();
+                    if (days < 0) {
+                        throw std::invalid_argument("a retention cannot be negative");
+                    }
+                    values.mailboxRetentionDays = days;
+                }
+                if (body.contains("listen")) {
+                    const nlohmann::json& listen = body.at("listen");
+                    const std::string host = listen.value("host", values.listenHost);
+                    const int port = listen.value("port", values.listenPort);
+                    if (host.empty()) {
+                        throw std::invalid_argument("a listener needs a host to bind");
+                    }
+                    if (port < kMinPort || port > kMaxPort) {
+                        throw std::invalid_argument("a port is between "
+                            + std::to_string(kMinPort) + " and " + std::to_string(kMaxPort));
+                    }
+                    values.listenHost = host;
+                    values.listenPort = port;
+                }
+                if (body.contains("serviceNode")) {
+                    values.serviceNodeUrl = body.at("serviceNode").get<std::string>();
+                }
+            } catch (const nlohmann::json::exception& error) {
+                return errorResponse(400, ErrorCode::eDeliveryRejected, error.what());
+            } catch (const std::invalid_argument& error) {
+                return errorResponse(400, ErrorCode::eDeliveryRejected, error.what());
+            }
+
+            const ServerSettings::Values before = options_.settings->get();
+            try {
+                options_.settings->set(values);
+            } catch (const std::exception& error) {
+                return errorResponse(500, ErrorCode::eDeliveryRejected, error.what());
+            }
+            // The two that do not wait for a restart.
+            if (values.logLevel != before.logLevel) {
+                if (const std::optional<bazarish::log::Level> level
+                    = bazarish::log::levelFromString(values.logLevel);
+                    level.has_value()) {
+                    bazarish::log::setLevel(*level);
+                }
+            }
+            if (values.i2pLog != before.i2pLog) {
+                bazarish::i2p::setI2pLogging(values.i2pLog);
+            }
+            return jsonResponse({{"logLevel", values.logLevel}, {"i2pLog", values.i2pLog}});
+        });
+
+    // Restarting is the other half of editing a startup setting from a browser:
+    // without it the operator still has to open a terminal to make the change
+    // they just saved take effect. The process stops cleanly and its service
+    // manager starts it again.
+    http_->post("/v1/messaging/restart",
+        [this, operatorRejection](
+            const bazarish::http::Request& request) -> bazarish::http::Response {
+            if (const std::optional<bazarish::http::Response> refused = operatorRejection(request);
+                refused.has_value()) {
+                return *refused;
+            }
+            if (!options_.requestRestart) {
+                return errorResponse(503, ErrorCode::eDeliveryRejected,
+                    "this server cannot restart itself: it was started without a supervisor");
+            }
+            bazarish::log::info("restarting at the operator's request");
+            options_.requestRestart();
+            return jsonResponse({{"restarting", true}});
+        });
+
     http_->get("/v1/messaging/storage",
         [this, operatorRejection](
             const bazarish::http::Request& request) -> bazarish::http::Response {

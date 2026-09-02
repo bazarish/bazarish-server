@@ -29,6 +29,7 @@ add_library(bazarish_server_lib STATIC
     src/PerUserDestinations.cpp
     src/EventGate.cpp
     src/HttpApi.cpp
+    src/ServerSettings.cpp
     src/SessionStore.cpp
 )
 target_include_directories(bazarish_server_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)

@@ -527,6 +527,7 @@ void AccountApi::setupRoutes()
                         {{"host", values.messagingHost}, {"port", values.messagingPort}}},
                     {"defaultQuotaBytes", values.defaultQuotaBytes},
                     {"idleDeleteDays", values.idleDeleteDays},
+                    {"canRestart", static_cast<bool>(options_.requestRestart)},
                     {"accounts", accounts},
                     {"allocatedBytes", allocated},
                 });
@@ -696,6 +697,22 @@ void AccountApi::setupRoutes()
                     {"defaultQuotaBytes", values.defaultQuotaBytes},
                     {"idleDeleteDays", values.idleDeleteDays},
                 });
+        })));
+
+    // Restarting is the other half of editing a startup setting from a browser:
+    // without it an operator still opens a terminal to make the change they just
+    // saved take effect. The node stops cleanly and its service manager starts
+    // it again.
+    http_->post("/v1/account/restart",
+        filled(operatorOnly([this](const http::Request&, http::Response& response) {
+            if (!options_.requestRestart) {
+                respondError(response, 503, ErrorCode::eDeliveryRejected,
+                    "this node cannot restart itself: it was started without a supervisor");
+                return;
+            }
+            bazarish::log::info("restarting at the operator's request");
+            options_.requestRestart();
+            respondJson(response, {{"restarting", true}});
         })));
 
     // One account in full, for the card the operator opens.

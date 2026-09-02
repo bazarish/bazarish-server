@@ -5,9 +5,11 @@
 #include <bazarish/I2p.hpp>
 #include <bazarish/ConfigFile.hpp>
 #include <bazarish/Log.hpp>
+#include <bazarish/Restart.hpp>
 
 #include <cstdio>
 #include <cstdlib>
+#include <atomic>
 #include <cstring>
 #include <filesystem>
 #include <memory>
@@ -43,16 +45,6 @@ void printUsage()
         "\"opsListen\" adds a private socket serving the operator-signed /healthz\n"
         "for the admin panel; it is never published to clients.\n",
         kVersion);
-}
-
-// A base path must be a single absolute URI prefix the facade can strip:
-// leading slash, no trailing slash, no query or fragment.
-bool isValidBasePath(const std::string& path)
-{
-    if (path.empty() || path.front() != '/' || path.back() == '/') {
-        return false;
-    }
-    return path.find_first_of("?# ") == std::string::npos;
 }
 
 }  // namespace
@@ -136,7 +128,7 @@ int main(const int argc, const char** argv)
         std::fprintf(stderr, "config: \"public\" and \"basePath\" contradict each other\n");
         return 2;
     }
-    if (!options.basePath.empty() && !isValidBasePath(options.basePath)) {
+    if (!options.basePath.empty() && !bazarish::facade::isValidBasePath(options.basePath)) {
         std::fprintf(stderr,
             "invalid --base-path: expected an absolute prefix such as /h9fd/kshdcy,\n"
             "with no trailing slash and no query\n");
@@ -146,7 +138,41 @@ int main(const int argc, const char** argv)
     bazarish::log::setComponent("facade-http");
     bazarish::log::setLevel(logLevel);
 
+    // The configuration an operator turns from the panel, written back into the
+    // file this facade was started with.
+    bazarish::facade::FacadeSettings::Values settingValues;
+    settingValues.logLevel = config.text("logLevel").empty() ? "info" : config.text("logLevel");
+    settingValues.basePath = options.basePath;
+    settingValues.messagingHost = options.messagingHost;
+    settingValues.messagingPort = options.messagingPort;
+    settingValues.accountHost = options.accountHost;
+    settingValues.accountPort = options.accountPort;
+    settingValues.listenHost = host;
+    settingValues.listenPort = port;
+    settingValues.opsHost = opsHost;
+    settingValues.opsPort = opsPort;
+    settingValues.i2pEnabled = enableI2p;
+    settingValues.i2pDestinations = static_cast<int>(i2pDests);
+    settingValues.i2pPrivacy = std::string(bazarish::i2p::privacyName(privacy));
+    settingValues.i2pTunnelQuantity = tunnelQuantity;
+    options.settings = std::make_shared<bazarish::facade::FacadeSettings>(
+        std::filesystem::path(argv[2]), settingValues);
+    options.stateDirectory = stateDir.string();
+    // Filled in once the facade exists; the handler reads the slot when called.
+    const auto restartHook = std::make_shared<std::function<void()>>();
+    options.requestRestart = [restartHook]() {
+        if (*restartHook) {
+            (*restartHook)();
+        }
+    };
+
     bazarish::facade::Facade facade(options);
+
+    std::atomic<bool> restartWanted{false};
+    *restartHook = [&restartWanted, &facade]() {
+        restartWanted.store(true);
+        facade.stop();
+    };
     std::printf("bazarish-facade-http %s\n", kVersion);
     std::fflush(stdout);
     bazarish::log::info("messaging -> {}:{}, account -> {}:{}", options.messagingHost,
@@ -217,5 +243,5 @@ int main(const int argc, const char** argv)
     if (opsThread.joinable()) {
         opsThread.join();
     }
-    return 0;
+    return restartWanted.load() ? bazarish::kRestartExitCode : 0;
 }

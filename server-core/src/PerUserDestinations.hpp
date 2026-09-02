@@ -15,6 +15,8 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <chrono>
+#include <vector>
 #include <thread>
 
 namespace bazarish::server {
@@ -109,7 +111,10 @@ public:
 private:
     struct Destination {
         std::atomic<bool> running{true};
-        std::thread worker;
+        // Several: one accepted stream must not hold up the next. A destination
+        // that serves inbound deliveries one at a time makes every sender behind
+        // a slow one wait, and the queue behind it is unbounded.
+        std::vector<std::thread> workers;
         std::string transientB64;
         std::int64_t expiresUnix = 0;
         // The destination's own serving sealing key (private half held here; its
@@ -134,7 +139,20 @@ private:
     void bringUp(const std::string& userFp, const std::string& transientB64,
         std::int64_t expiresUnix, const std::string& sealingKeyPem,
         const std::string& signingKeyPem);
+    // Takes the destination out of service and hands its threads to reapRetired.
+    // It does NOT join them: the callers hold mutex_, the workers take mutex_ per
+    // request, and joining under it is a deadlock that freezes every destination.
     void teardownLocked(const std::string& userFp);
+    // Joins whatever teardownLocked retired. Called with no lock held.
+    void reapRetired();
+    // The accept-and-serve loop of one destination, run by each of its workers.
+    void serveLoop(Destination* destination, const std::string& userFp);
+    // Closes streams whose serve has outstayed its deadline: an I2P read has none
+    // of its own, and a peer that opens a stream and says nothing would otherwise
+    // hold a worker forever.
+    void startWatchdog();
+    void watchStream(const std::shared_ptr<bazarish::i2p::Stream>& stream);
+    void unwatchStream(const bazarish::i2p::Stream* stream);
     // Starts the expiry sweeper once; called from reloadPersisted, which every
     // server runs at start.
     void startSweeper();
@@ -153,6 +171,16 @@ private:
     // Watches for delegations running out. Sleeps on stopCv_, so shutdown is
     // immediate rather than one sweep interval away.
     std::thread sweeper_;
+    std::thread watchdog_;
+    // Destinations taken out of service, waiting to be joined outside mutex_.
+    std::mutex retiringMutex_;
+    std::vector<std::unique_ptr<Destination>> retiring_;
+    // Streams being served now, with the moment each stops being given the
+    // benefit of the doubt.
+    std::mutex watchMutex_;
+    std::vector<std::pair<std::weak_ptr<bazarish::i2p::Stream>,
+        std::chrono::steady_clock::time_point>>
+        watched_;
     std::condition_variable stopCv_;
     std::mutex stopMutex_;
     bool stopping_ = false;

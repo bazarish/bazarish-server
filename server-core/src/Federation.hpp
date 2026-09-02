@@ -2,6 +2,9 @@
 #pragma once
 
 #include "DeliveryEngine.hpp"
+#include <bazarish/Limits.hpp>
+#include <algorithm>
+#include <array>
 
 #include <bazarish/Resolve.hpp>
 #include "FederationRateLimiter.hpp"
@@ -52,6 +55,13 @@ void federationServeFrame(const std::string& headerLine,
     std::int64_t now, const Key* sealingKey, const std::string& owner, const GetCardFn& getCard,
     const SignAckFn& signAck = {});
 
+// What a frame may make this server read before it is not a message at all, and
+// the piece the surplus is read in. Reading the surplus is what lets the sender
+// hear a typed refusal instead of a stream that closed while it was still
+// writing - and a sender that hears nothing is a sender that tries again forever.
+inline constexpr std::size_t kDiscardChunkBytes = 64 * 1024;
+inline constexpr std::size_t kMaxDiscardBytes = 4 * kMaxMessagePayloadBytes;
+
 // Server side: read one request, run the engine / card lookup, write the reply.
 // peerDest/limiter give per-peer rate-limiting (the request is dropped without
 // serving when over the limit). An unknown op throws.
@@ -68,9 +78,27 @@ void federationServeOnce(Stream& stream, DeliveryEngine& engine, const std::int6
     federationServeFrame(
         headerLine,
         [&stream](std::size_t len) {
-            Bytes payload(len);
-            if (len > 0) {
-                stream.readExact(payload.data(), len);
+            // Never allocate what a peer claims: one byte past the protocol's
+            // ceiling is enough for the engine to refuse it, and the rest is
+            // read and thrown away in fixed pieces so the sender - which is
+            // already writing - gets a typed answer instead of a closed stream.
+            // Past a few times the ceiling it is not a message at all and the
+            // stream is not worth the bandwidth.
+            const std::size_t keep = std::min<std::size_t>(len, kMaxMessagePayloadBytes + 1);
+            Bytes payload(keep);
+            if (keep > 0) {
+                stream.readExact(payload.data(), keep);
+            }
+            if (len > kMaxDiscardBytes) {
+                throw std::runtime_error("a delivery claiming " + std::to_string(len)
+                    + " bytes is not a message");
+            }
+            std::size_t left = len - keep;
+            std::array<unsigned char, kDiscardChunkBytes> sink{};
+            while (left > 0) {
+                const std::size_t chunk = std::min<std::size_t>(left, sink.size());
+                stream.readExact(sink.data(), chunk);
+                left -= chunk;
             }
             return payload;
         },

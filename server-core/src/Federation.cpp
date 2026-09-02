@@ -1,5 +1,8 @@
 // Bazarish project (c) 2026
 #include "Federation.hpp"
+#include <bazarish/Log.hpp>
+#include <bazarish/Errors.hpp>
+#include <bazarish/Limits.hpp>
 
 #include <bazarish/Cms.hpp>
 #include <bazarish/Crypto.hpp>
@@ -23,6 +26,10 @@ void federationServeFrame(const std::string& headerLine,
     if (op == "deliver") {
         const Bytes sealed = fromBase64(header.at("sealed").get<std::string>());
         const std::size_t length = header.at("len").get<std::size_t>();
+        // The length is the peer's word. What is done with it is bounded by the
+        // reader, which never allocates more than a message may be: the refusal
+        // that follows is the engine's, and it travels back as a typed answer
+        // rather than as a stream closed under a sender still writing.
         const Bytes payload = readPayload(length);
 
         const DeliveryEngine::Outcome outcome = engine.deliver(sealed, payload, now,

@@ -31,6 +31,19 @@ constexpr int kPublishPollSeconds = 1;
 // Likewise for the accept loop: this is how long a stopping destination can keep
 // its caller waiting, not how long it waits for a peer.
 constexpr int kAcceptTimeoutSeconds = 2;
+// How many accepted streams one destination serves at a time. Serving strictly
+// one at a time is what made a delivery queue behind a slow or silent peer with
+// no bound and no timeout: the sender saw "sending" for as long as the one in
+// front took, which was minutes.
+constexpr std::size_t kServeWorkers = 3;
+// How long one inbound serve may take before the stream is closed under it. An
+// I2P read has no deadline of its own, so without this a peer that opens a
+// stream and then says nothing holds a worker for good.
+constexpr int kServeDeadlineSeconds = 45;
+// How often the watchdog looks for a serve that has outstayed that.
+constexpr int kWatchdogTickSeconds = 2;
+// How long a worker waits between checks for its destination to finish building.
+constexpr int kEndpointPollMillis = 200;
 
 
 std::int64_t nowSeconds()
@@ -62,15 +75,87 @@ PerUserDestinations::~PerUserDestinations()
     if (sweeper_.joinable()) {
         sweeper_.join();
     }
-    const std::lock_guard<std::mutex> lock(mutex_);
-    for (auto& entry : dests_) {
-        entry.second->running = false;
+    if (watchdog_.joinable()) {
+        watchdog_.join();
     }
-    for (auto& entry : dests_) {
-        if (entry.second->worker.joinable()) {
-            entry.second->worker.join();
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& entry : dests_) {
+            entry.second->running = false;
+        }
+        const std::lock_guard<std::mutex> retiringLock(retiringMutex_);
+        for (auto& entry : dests_) {
+            retiring_.push_back(std::move(entry.second));
+        }
+        dests_.clear();
+    }
+    // Outside mutex_, always: a worker takes it once per request, and joining a
+    // worker while holding it is a deadlock that never ends.
+    reapRetired();
+}
+
+void PerUserDestinations::reapRetired()
+{
+    std::vector<std::unique_ptr<Destination>> retired;
+    {
+        const std::lock_guard<std::mutex> lock(retiringMutex_);
+        retired.swap(retiring_);
+    }
+    for (auto& destination : retired) {
+        destination->running = false;
+        for (std::thread& worker : destination->workers) {
+            if (worker.joinable()) {
+                worker.join();
+            }
         }
     }
+}
+
+void PerUserDestinations::watchStream(const std::shared_ptr<bazarish::i2p::Stream>& stream)
+{
+    const std::lock_guard<std::mutex> lock(watchMutex_);
+    watched_.emplace_back(stream,
+        std::chrono::steady_clock::now() + std::chrono::seconds(kServeDeadlineSeconds));
+}
+
+void PerUserDestinations::unwatchStream(const bazarish::i2p::Stream* const stream)
+{
+    const std::lock_guard<std::mutex> lock(watchMutex_);
+    watched_.erase(std::remove_if(watched_.begin(), watched_.end(),
+                       [stream](const auto& entry) {
+                           const std::shared_ptr<bazarish::i2p::Stream> held = entry.first.lock();
+                           return !held || held.get() == stream;
+                       }),
+        watched_.end());
+}
+
+void PerUserDestinations::startWatchdog()
+{
+    if (watchdog_.joinable()) {
+        return;
+    }
+    watchdog_ = std::thread([this]() {
+        while (true) {
+            {
+                std::unique_lock<std::mutex> lock(stopMutex_);
+                if (stopCv_.wait_for(lock, std::chrono::seconds(kWatchdogTickSeconds),
+                        [this]() { return stopping_; })) {
+                    return;
+                }
+            }
+            const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+            const std::lock_guard<std::mutex> lock(watchMutex_);
+            for (const auto& entry : watched_) {
+                const std::shared_ptr<bazarish::i2p::Stream> held = entry.first.lock();
+                if (held && entry.second <= now) {
+                    // The peer opened a stream and stopped talking. Closing it is
+                    // what turns that into one failed serve instead of a worker
+                    // this destination never gets back.
+                    held->close();
+                }
+            }
+        }
+    });
 }
 
 std::filesystem::path PerUserDestinations::destsDir() const
@@ -96,7 +181,12 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
     // Without a router (tests / router-less mode) only the persisted/registered
     // state is kept; no destination is built, so it stays in "building".
     if (router_ != nullptr) {
-        raw->worker = std::thread([this, raw, transientB64, userFp]() {
+        // The extra workers wait for the destination to build, then serve beside
+        // the one that built it: one accepted stream must not hold up the next.
+        for (std::size_t i = 1; i < kServeWorkers; ++i) {
+            raw->workers.emplace_back([this, raw, userFp]() { serveLoop(raw, userFp); });
+        }
+        raw->workers.emplace_back([this, raw, transientB64, userFp]() {
             try {
                 // The transient is a base64-encoded i2pd private-keys blob with an
                 // offline section; a STANDARD LeaseSet2 (offline-signature dests
@@ -135,42 +225,7 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
                         "keeps retrying, the account is unreachable until it succeeds",
                         bazarish::log::redact(userFp), kPublishWaitSeconds);
                 }
-                while (raw->running.load()) {
-                    std::string peer;
-                    auto stream = endpoint->accept(peer, std::chrono::seconds(kAcceptTimeoutSeconds));
-                    if (!stream) {
-                        continue;  // accept timeout / stop
-                    }
-                    try {
-                        const std::string sender = peer;
-                        // Snapshotted per request under the lock: a rotation
-                        // replaces this key while the loop is running, and the
-                        // loop must serve with whichever one is in force now.
-                        std::shared_ptr<Key> serving;
-                        {
-                            const std::lock_guard<std::mutex> lock(mutex_);
-                            serving = raw->sealingKey;
-                        }
-                        federationServeOnce(*stream, engine_, nowSeconds(), peer, limiter_,
-                            serving.get(), userFp, getCard_,
-                            // Sign the confirmation that goes back in the reply, with
-                            // THIS destination's own key: bound to the destination
-                            // that took the delivery, never to the server's identity.
-                            [signingKey = raw->signingKey](const std::string& deliveryId,
-                                Bytes& outSignerPublicDer, Bytes& outSignature) {
-                                if (!signingKey) {
-                                    return;
-                                }
-                                const Bytes signedBytes(deliveryId.begin(), deliveryId.end());
-                                outSignature = bazarish::sign(*signingKey, signedBytes);
-                                outSignerPublicDer = signingKey->publicDer();
-                            });
-                    } catch (const std::exception& error) {
-                        // A failed serve must not kill the loop.
-                        bazarish::log::warn("serving a user's destination failed: {}",
-                            error.what());
-                    }
-                }
+                serveLoop(raw, userFp);
             } catch (const std::exception& error) {
                 // Bad/expired transient: the destination stays down until the next
                 // provision, and the user cannot be reached until then.
@@ -182,6 +237,71 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
     dests_[userFp] = std::move(dest);
 }
 
+void PerUserDestinations::serveLoop(Destination* const raw, const std::string& userFp)
+{
+    std::shared_ptr<bazarish::i2p::Endpoint> endpoint;
+    while (raw->running.load() && !endpoint) {
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            endpoint = raw->endpoint;
+        }
+        if (!endpoint) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(kEndpointPollMillis));
+        }
+    }
+    if (!endpoint) {
+        return;  // torn down before it ever built
+    }
+    while (raw->running.load()) {
+        std::string peer;
+        const std::shared_ptr<bazarish::i2p::Stream> stream
+            = endpoint->accept(peer, std::chrono::seconds(kAcceptTimeoutSeconds));
+        if (!stream) {
+            continue;  // accept timeout / stop
+        }
+        // Asked again here, not only above: between the accept and the lock
+        // below a teardown may have started, and walking into that lock is
+        // walking into the thread that is waiting for this one to end.
+        if (!raw->running.load()) {
+            stream->close();
+            return;
+        }
+        try {
+            // Snapshotted per request under the lock: a rotation replaces this
+            // key while the loop is running, and the loop must serve with
+            // whichever one is in force now.
+            std::shared_ptr<Key> serving;
+            std::shared_ptr<Key> signingKey;
+            {
+                const std::lock_guard<std::mutex> lock(mutex_);
+                serving = raw->sealingKey;
+                signingKey = raw->signingKey;
+            }
+            // An I2P read has no deadline of its own; this is the one it gets.
+            watchStream(stream);
+            federationServeOnce(*stream, engine_, nowSeconds(), peer, limiter_, serving.get(),
+                userFp, getCard_,
+                // Sign the confirmation that goes back in the reply, with THIS
+                // destination's own key: bound to the destination that took the
+                // delivery, never to the server's identity.
+                [signingKey](const std::string& deliveryId, Bytes& outSignerPublicDer,
+                    Bytes& outSignature) {
+                    if (!signingKey) {
+                        return;
+                    }
+                    const Bytes signedBytes(deliveryId.begin(), deliveryId.end());
+                    outSignature = bazarish::sign(*signingKey, signedBytes);
+                    outSignerPublicDer = signingKey->publicDer();
+                });
+            unwatchStream(stream.get());
+        } catch (const std::exception& error) {
+            unwatchStream(stream.get());
+            // A failed serve must not kill the loop.
+            bazarish::log::warn("serving a user's destination failed: {}", error.what());
+        }
+    }
+}
+
 void PerUserDestinations::teardownLocked(const std::string& userFp)
 {
     const auto it = dests_.find(userFp);
@@ -189,8 +309,12 @@ void PerUserDestinations::teardownLocked(const std::string& userFp)
         return;
     }
     it->second->running = false;
-    if (it->second->worker.joinable()) {
-        it->second->worker.join();
+    {
+        // Handed over, not joined: every caller of this holds mutex_, and each of
+        // this destination's workers takes mutex_ once per request. Joining here
+        // is the deadlock that stops every destination on the server, for good.
+        const std::lock_guard<std::mutex> lock(retiringMutex_);
+        retiring_.push_back(std::move(it->second));
     }
     dests_.erase(it);
 }
@@ -198,6 +322,7 @@ void PerUserDestinations::teardownLocked(const std::string& userFp)
 void PerUserDestinations::provision(const std::string& userFp, const std::string& transientB64,
     const std::int64_t expiresUnix)
 {
+    reapRetired();
     const std::lock_guard<std::mutex> lock(mutex_);
     const auto existing = dests_.find(userFp);
     if (existing != dests_.end() && existing->second->transientB64 == transientB64) {
@@ -361,6 +486,7 @@ void PerUserDestinations::startSweeper()
     if (sweeper_.joinable()) {
         return;
     }
+    startWatchdog();
     sweeper_ = std::thread([this]() {
         for (;;) {
             std::unique_lock<std::mutex> lock(stopMutex_);
@@ -368,6 +494,9 @@ void PerUserDestinations::startSweeper()
                 return;
             }
             lock.unlock();
+            // Whatever the last sweep or a revoke took out of service is joined
+            // here, on a thread that holds no lock of ours.
+            reapRetired();
             try {
                 sweepExpired(nowSeconds());
             } catch (const std::exception& error) {
@@ -381,6 +510,9 @@ void PerUserDestinations::startSweeper()
 
 void PerUserDestinations::revoke(const std::string& userFp)
 {
+    // Anything a previous teardown retired, joined here rather than under the
+    // lock this method is about to take.
+    reapRetired();
     const std::lock_guard<std::mutex> lock(mutex_);
     std::error_code ec;
     std::filesystem::remove(pathFor(userFp), ec);

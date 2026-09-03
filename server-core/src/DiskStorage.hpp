@@ -44,6 +44,7 @@ public:
     void purgeTokensRegisteredBefore(std::int64_t registeredBefore) override;
     bool allowContactRequest(
         const std::string& user, std::int64_t now, std::size_t maxPerMinute) override;
+    std::size_t countHeld(const std::string& user, const std::string& deliveryClass) override;
     std::vector<PendingEntry> listPending(const std::string& user,
         const std::string& clientId) override;
     Bytes getBlob(const std::string& user, const std::string& blobId) override;

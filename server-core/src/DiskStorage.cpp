@@ -304,6 +304,28 @@ bool DiskStorage::allowContactRequest(
     return true;
 }
 
+std::size_t DiskStorage::countHeld(const std::string& user, const std::string& deliveryClass)
+{
+    requireUser(user);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    std::size_t held = 0;
+    for (const std::string& blobId : listDirectoryNames(userDir(user) / "blobs")) {
+        // As in listPending: a blob with no record beside it is a write that was
+        // interrupted, and it costs itself rather than the whole count.
+        std::error_code ec;
+        if (!fs::exists(userDir(user) / "meta" / (blobId + ".json"), ec) || ec) {
+            continue;
+        }
+        if (readJsonFile(userDir(user) / "meta" / (blobId + ".json"))
+                .at("class")
+                .get<std::string>()
+            == deliveryClass) {
+            ++held;
+        }
+    }
+    return held;
+}
+
 std::vector<Storage::PendingEntry> DiskStorage::listPending(const std::string& user,
     const std::string& clientId)
 {

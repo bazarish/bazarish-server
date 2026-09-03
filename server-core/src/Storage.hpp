@@ -104,6 +104,11 @@ public:
         const std::string& user, std::int64_t now, std::size_t maxPerMinute)
         = 0;
 
+    // How many blobs of one delivery class the mailbox is holding, whoever has or
+    // has not acked them. What the tokenless path is bounded by: the rate limit
+    // above says how fast requests may come, this says how many may pile up.
+    virtual std::size_t countHeld(const std::string& user, const std::string& deliveryClass) = 0;
+
     // Blobs not yet acked by this client.
     virtual std::vector<PendingEntry> listPending(const std::string& user,
         const std::string& clientId)

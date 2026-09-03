@@ -100,6 +100,17 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
         return fail(ErrorCode::eContactRateLimited,
             "this address is taking too many contact requests right now - try again shortly");
     }
+    // And how many may be waiting at once. The rate limit bounds how fast they
+    // arrive; without this an address that is being hammered holds a day of them.
+    // Transient, like the rate limit: the sender is told to come back rather than
+    // told anything about who is served here.
+    if (!owner.empty() && deliveryClass == kContactDeliveryClass
+        && storage_.countHeld(owner, kContactDeliveryClass) >= kMaxPendingContactRequests) {
+        bazarish::log::debug("contact request deferred: {} already holds {}",
+            bazarish::log::redact(owner), kMaxPendingContactRequests);
+        return fail(ErrorCode::eContactRateLimited,
+            "this address has too many contact requests waiting - try again later");
+    }
 
     // The destination this arrived on belongs to one user, and only their mail
     // belongs in it. Anything else is dropped here - before the dedup and the

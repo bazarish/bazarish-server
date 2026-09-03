@@ -456,6 +456,11 @@ int main(const int argc, const char** argv)
             nodeConfig.portal.captchaTtlSeconds);
         bazarish::service::PortalApiOptions portalOptions;
         portalOptions.serverFingerprint = card.server;
+        // Where the archive comes from. The portal publishes it because the
+        // portal is what the clearnet reaches; the messaging server packs it
+        // because that is where the netDb is.
+        portalOptions.reseedArchiveUrl
+            = messagingUrl.empty() ? std::string() : messagingUrl + "/internal/i2pseeds.su3";
         // Who the portal says it is, for the client to show before a user signs
         // a login. Its own words: a name a user recognises and the address they
         // opened, which is the link the node advertises unless the operator

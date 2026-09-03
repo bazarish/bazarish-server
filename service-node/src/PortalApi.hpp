@@ -57,6 +57,13 @@ struct PortalApiOptions {
     // Shown to a user whose account is created frozen on a moderated node: how
     // to reach the operator to finish registration. Empty on an open node.
     std::string registrationMessage;
+    // Where this node's messaging server keeps its reseed archive, on the private
+    // channel (e.g. "http://127.0.0.1:8420/internal/i2pseeds.su3"). The portal
+    // publishes it because the portal is what faces the clearnet: a client needs
+    // the archive before it has I2P, so it cannot come through a facade. Empty
+    // means this node publishes no reseed, which is a fair choice - an operator
+    // may point their descriptor at reseeds that have nothing to do with them.
+    std::string reseedArchiveUrl;
     // Where the portal's web files live (page shell, stylesheet, logo, fonts).
     std::filesystem::path assetsDirectory;
     // The live knobs, shared with the account API. When null (tests), the values
@@ -98,6 +105,14 @@ public:
     void stop();
 
 private:
+    // The reseed archive as this portal last had it from the messaging server,
+    // and when. Held briefly: the archive itself is repacked no more than hourly,
+    // so asking more often would only move bytes.
+    std::string reseedArchive();
+    std::mutex reseedMutex_;
+    std::string reseedSu3_;
+    std::int64_t reseedFetchedAt_ = 0;
+
     // Binds on a chosen port (0 lets the kernel pick) and starts serving.
     int bindToAnyPort(const std::string& host, int port);
     void setupRoutes();

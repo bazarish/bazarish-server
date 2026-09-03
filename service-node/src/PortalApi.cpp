@@ -4,6 +4,7 @@
 #include <bazarish/ServerDescriptor.hpp>
 
 
+#include <bazarish/HttpClient.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <bazarish/Log.hpp>
 
@@ -23,6 +24,11 @@
 #include <utility>
 
 namespace {
+
+// How long the portal keeps the archive it fetched. The messaging server repacks
+// only hourly, so a short hold is enough to keep a burst of clients off the
+// private channel without ever serving something much older than it has.
+constexpr std::int64_t kReseedHoldSeconds = 300;
 
 std::int64_t nowSeconds()
 {
@@ -318,8 +324,63 @@ void PortalApi::setupRoutes()
     setupWebRoutes();
 }
 
+std::string PortalApi::reseedArchive()
+{
+    const std::lock_guard<std::mutex> lock(reseedMutex_);
+    const std::int64_t now = nowSeconds();
+    if (!reseedSu3_.empty() && now - reseedFetchedAt_ < kReseedHoldSeconds) {
+        return reseedSu3_;
+    }
+    try {
+        const std::size_t scheme = options_.reseedArchiveUrl.find("://");
+        const std::string rest = options_.reseedArchiveUrl.substr(scheme + 3);
+        const std::size_t slash = rest.find('/');
+        const std::string authority = rest.substr(0, slash);
+        const std::size_t colon = authority.rfind(':');
+        bazarish::http::ClientRequest ask;
+        ask.method = "GET";
+        ask.target = slash == std::string::npos ? "/" : rest.substr(slash);
+        const bazarish::http::ClientResponse answer = bazarish::http::request(
+            colon == std::string::npos ? authority : authority.substr(0, colon),
+            colon == std::string::npos ? 80 : std::stoi(authority.substr(colon + 1)), ask, {});
+        if (answer.status != 200 || answer.body.empty()) {
+            bazarish::log::warn("portal: the messaging server has no reseed archive ({})",
+                answer.status);
+            return reseedSu3_;  // whatever was fetched before, or nothing
+        }
+        reseedSu3_ = answer.body;
+        reseedFetchedAt_ = now;
+    } catch (const std::exception& error) {
+        bazarish::log::warn("portal: could not fetch the reseed archive: {}", error.what());
+    }
+    return reseedSu3_;
+}
+
 void PortalApi::setupWebRoutes()
 {
+    if (!options_.reseedArchiveUrl.empty()) {
+        // The reseed, published where the clearnet already reaches: a client with
+        // no I2P cannot ask a facade for anything, and this is the one file it
+        // needs before it has any. Under the name the format gives it, so a
+        // router appends it to whatever address the descriptor names and no
+        // special case is needed anywhere. Fetched from the messaging server on
+        // the private channel and held for kReseedHoldSeconds - that server packs
+        // a fresh one only hourly, so asking it more often buys nothing.
+        http_->get("/i2pseeds.su3", [this](const http::Request&) {
+            http::Response response;
+            const std::string archive = reseedArchive();
+            if (archive.empty()) {
+                response.status = 503;
+                response.contentType = "text/plain";
+                response.body = "no reseed available";
+                return response;
+            }
+            response.contentType = "application/octet-stream";
+            response.body = archive;
+            return response;
+        });
+    }
+
     // The portal's own files, answered from memory. Registering them one by one
     // keeps the directory a site rather than a file share: only what the
     // operator put there, and nothing above it, can be asked for.

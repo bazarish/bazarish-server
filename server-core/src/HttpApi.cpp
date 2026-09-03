@@ -539,12 +539,14 @@ void HttpApi::setupRoutes()
             return jsonResponse({{"ok", true}});
         }));
 
-    // The reseed archive: the ordinary su3 every I2P router reads, so a client
-    // bootstraps from this server the way it would from any reseed. Nothing
-    // Bazarish is spoken here and nothing is authenticated - a client fetching
-    // its first netDb has no transport and no capability yet - which is also why
-    // it is safe: every RouterInfo inside is signed by the router it describes.
-    http_->get("/v1/messaging/reseed.su3",
+    // The reseed archive, for the portal to publish. Deliberately outside
+    // /v1/messaging/: a facade forwards that prefix and a facade is an I2P
+    // address, while a reseed is the one thing a client needs BEFORE it has I2P.
+    // So this path is reachable only on the private listener, and what faces the
+    // clearnet is the portal, which is on it anyway. Nothing is authenticated
+    // here and nothing needs to be: every RouterInfo inside is signed by the
+    // router it describes.
+    http_->get("/internal/i2pseeds.su3",
         [this](const bazarish::http::Request&) -> bazarish::http::Response {
             const std::string archive = reseedArchive();
             if (archive.empty()) {

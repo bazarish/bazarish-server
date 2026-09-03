@@ -946,7 +946,11 @@
             "https://host:port",
             "Links a client shows a person who has no account here yet, one per line.");
         var listen = endpointRow(reach, "Listens on", data.portalListen,
-            "The socket the portal binds. Changing it moves the page an operator opens.", true);
+            "The socket the portal binds. Changing it moves the page an operator opens - and"
+            + " with it the reseed, which this node publishes at i2pseeds.su3 under the same"
+            + " address. That is the address to put on the Addresses tab as a reseed (the"
+            + " directory, not the file), or to front with whatever the operator likes: a"
+            + " reseed a client fetches is the one thing that cannot travel over I2P.", true);
 
         var footer = saveFooter(form,
             "The words apply to the next challenge; the listener needs a restart.",
@@ -1152,8 +1156,10 @@
         var secret = section(form, "The secret prefix");
         var basePath = fieldRow(secret, "Base path", data.basePath, {
             placeholder: "/8f1818f3/0966179fb196", restart: true,
-            hint: "The whole clearnet API - the reseed included - lives under this prefix, and"
-                + " nothing outside it answers at all. It travels inside the facade URL of the"
+            hint: "The whole facade API lives under this prefix, and nothing outside it"
+                + " answers at all. The reseed is not part of it: a client needs the network"
+                + " database before it has I2P, so it cannot come through a facade, and this"
+                + " node serves it from the portal instead. The prefix travels inside the facade URL of the"
                 + " server descriptor, so changing it invalidates every descriptor already"
                 + " handed out: update the facade list on the Addresses tab and re-issue the"
                 + " descriptor before the old prefix goes away."

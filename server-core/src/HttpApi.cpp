@@ -43,13 +43,6 @@ constexpr int kMaxPort = 65535;
 using bazarish::Bytes;
 using bazarish::ErrorCode;
 
-// How many RouterInfos a private reseed hands out when the client asks for no
-// particular number, and the most it will ever hand out. Large enough that a
-// fresh router has a real slice of the netDb to start from, bounded so one
-// caller cannot pull the whole thing.
-constexpr std::size_t kReseedRoutersDefault = 75;
-constexpr std::size_t kReseedRoutersMax = 200;
-
 std::int64_t nowSeconds()
 {
     return static_cast<std::int64_t>(std::time(nullptr));
@@ -514,34 +507,6 @@ void HttpApi::setupRoutes()
             store.unregisterClient(user, request.captures.at(0));
             return jsonResponse({{"ok", true}});
         }));
-
-    // Private reseed: a random slice of this server's netDb, so a client's first
-    // I2P start never reaches for a public reseed host - the most blocked and
-    // most telling part of a bootstrap. Deliberately unauthenticated (the client
-    // has nothing yet) and deliberately random per request: the server picks
-    // which routers a client learns first, so a fixed set would be an eclipse
-    // handle. Every RouterInfo carries its own signature, so this adds no trust.
-    http_->get("/v1/messaging/reseed",
-        [this](const bazarish::http::Request& request) -> bazarish::http::Response {
-            if (!options_.reseedSample) {
-                return errorResponse(503, ErrorCode::eI2pUnavailable, "no reseed available");
-            }
-            std::size_t count = kReseedRoutersDefault;
-            if (!request.query("count").empty()) {
-                count = std::min<std::size_t>(
-                    std::strtoull(request.query("count").c_str(), nullptr, 10),
-                    kReseedRoutersMax);
-            }
-            const std::vector<Bytes> routers = options_.reseedSample(count);
-            if (routers.empty()) {
-                return errorResponse(503, ErrorCode::eI2pUnavailable, "netdb is empty");
-            }
-            nlohmann::json list = nlohmann::json::array();
-            for (const Bytes& router : routers) {
-                list.push_back(toBase64(router));
-            }
-            return jsonResponse({{"routers", list}});
-        });
 
     // The caller's assigned serving destination + the public serving sealing
     // key for it, so the client can fold both into its self-signed contact card

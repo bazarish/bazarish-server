@@ -98,11 +98,6 @@ struct HttpApiOptions {
     // api/InviteAnonymity.md). Also backs GET /v1/messaging/destination. Empty
     // disables local delivery (every send federates).
     AssignDestinationFn assignDestination;
-    // Hands a starting client a slice of this server's netDb so it can bring up
-    // I2P without touching a public reseed host. Unauthenticated on purpose: a
-    // client has no I2P yet, and every RouterInfo authenticates itself. Empty
-    // disables the endpoint.
-    std::function<std::vector<Bytes>(std::size_t count)> reseedSample;
 
     // What this server's storage actually occupies on disk, for the operator
     // panel. Quotas say what has been promised; only the filesystem says what has

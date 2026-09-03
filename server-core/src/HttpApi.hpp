@@ -102,6 +102,9 @@ struct HttpApiOptions {
     // What this server's storage actually occupies on disk, for the operator
     // panel. Quotas say what has been promised; only the filesystem says what has
     // been used. Empty = the endpoint answers that it cannot tell.
+    // A slice of this server's netDb, for the reseed archive below. Absent when
+    // the server runs without a router, and then it serves no archive.
+    std::function<std::vector<Bytes>(std::size_t count)> reseedSample;
     std::function<std::uint64_t()> diskUsage;
     // Longest a client may ask to be held on the event face. Anything longer is
     // clamped: an idle I2P stream that lives too long is torn down under us.
@@ -139,6 +142,15 @@ private:
     std::optional<bazarish::http::Response> authenticateRequest(
         const bazarish::http::Request& request, std::string* outUser);
     void stopWorkers();
+    // The reseed archive this server hands out, packed from a slice of its netDb
+    // and rebuilt no more often than kReseedRefreshSeconds. One archive for
+    // everyone who asks within that hour: it costs the disk one walk, and it
+    // leaves nobody a way to pull the netDb by asking repeatedly.
+    std::string reseedArchive();
+
+    std::mutex reseedMutex_;
+    std::string reseedSu3_;
+    std::int64_t reseedPackedAt_ = 0;
     // Periodic mailbox TTL sweep (the backstop for never-fully-acked mail).
     void mailboxJanitorLoop();
     // A revocation waiting for the janitor thread: one user, one mask.

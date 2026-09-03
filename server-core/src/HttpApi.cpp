@@ -43,6 +43,13 @@ constexpr int kMaxPort = 65535;
 using bazarish::Bytes;
 using bazarish::ErrorCode;
 
+// How many routers the archive carries, and how often it is repacked. A fresh
+// router needs a real slice of the netDb to start from; an hour between packings
+// keeps the walk off the disk and means one caller cannot learn more of this
+// server's netDb by asking again.
+constexpr std::size_t kReseedRouters = 60;
+constexpr std::int64_t kReseedRefreshSeconds = 3600;
+
 std::int64_t nowSeconds()
 {
     return static_cast<std::int64_t>(std::time(nullptr));
@@ -146,6 +153,30 @@ void HttpApi::stop()
         http_->stop();
     }
     stopWorkers();
+}
+
+std::string HttpApi::reseedArchive()
+{
+    if (!options_.reseedSample) {
+        return {};  // no router here, so no netDb to hand out
+    }
+    const std::lock_guard<std::mutex> lock(reseedMutex_);
+    const std::int64_t now = nowSeconds();
+    if (!reseedSu3_.empty() && now - reseedPackedAt_ < kReseedRefreshSeconds) {
+        return reseedSu3_;
+    }
+    const std::vector<Bytes> routers = options_.reseedSample(kReseedRouters);
+    if (routers.empty()) {
+        return reseedSu3_;  // an empty netDb: whatever was packed before, or nothing
+    }
+    // The name in the header is what an operator sees when they open the file;
+    // it names the service, not the server.
+    const Bytes su3 = bazarish::i2p::packReseedSu3(routers, "bazarish");
+    reseedSu3_.assign(su3.begin(), su3.end());
+    reseedPackedAt_ = now;
+    bazarish::log::info("reseed archive packed: {} routers, {} bytes", routers.size(),
+        reseedSu3_.size());
+    return reseedSu3_;
 }
 
 void HttpApi::stopWorkers()
@@ -507,6 +538,21 @@ void HttpApi::setupRoutes()
             store.unregisterClient(user, request.captures.at(0));
             return jsonResponse({{"ok", true}});
         }));
+
+    // The reseed archive: the ordinary su3 every I2P router reads, so a client
+    // bootstraps from this server the way it would from any reseed. Nothing
+    // Bazarish is spoken here and nothing is authenticated - a client fetching
+    // its first netDb has no transport and no capability yet - which is also why
+    // it is safe: every RouterInfo inside is signed by the router it describes.
+    http_->get("/v1/messaging/reseed.su3",
+        [this](const bazarish::http::Request&) -> bazarish::http::Response {
+            const std::string archive = reseedArchive();
+            if (archive.empty()) {
+                return errorResponse(503, ErrorCode::eI2pUnavailable, "no reseed available");
+            }
+            return bazarish::http::Response{
+                200, "application/octet-stream", {}, archive};
+        });
 
     // The caller's assigned serving destination + the public serving sealing
     // key for it, so the client can fold both into its self-signed contact card

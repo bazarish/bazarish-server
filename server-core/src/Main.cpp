@@ -369,6 +369,12 @@ int main(const int argc, const char** argv)
     // make every user behind it provably co-located. Used to short-circuit only
     // same-destination deliveries (a send to the sender's own destination) and
     // to surface the destination to the user.
+    if (router) {
+        // The netDb this server hands out in its reseed archive. Sampled at
+        // random per packing, which is once an hour.
+        httpOptions.reseedSample
+            = [](const std::size_t count) { return bazarish::i2p::sampleRouterInfos(count); };
+    }
     // What the mailboxes actually take up. Walked on demand (the panel asks for
     // it when an operator opens the settings page), not tracked, so it cannot
     // drift from the filesystem.

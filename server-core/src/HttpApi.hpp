@@ -139,8 +139,13 @@ private:
     // Verifies a request under either scheme - a session MAC or the hybrid
     // signature - and fills the caller's fingerprint. Returns the refusal to send
     // back, or nothing when the caller is who they say they are.
+    // allowSession false accepts the signature only: opening a session is the one
+    // thing a session may not do, or a leaked secret would renew itself into a
+    // credential that never expires and the identity would never be presented
+    // again.
     std::optional<bazarish::http::Response> authenticateRequest(
-        const bazarish::http::Request& request, std::string* outUser);
+        const bazarish::http::Request& request, std::string* outUser,
+        bool allowSession = true);
     void stopWorkers();
     // The reseed archive this server hands out, packed from a slice of its netDb
     // and rebuilt no more often than kReseedRefreshSeconds. One archive for

@@ -61,13 +61,14 @@ http::ClientResponse call(const int port, const std::string& method, const std::
 }
 
 // Signs a request with the caller identity and optionally attaches the
-// client ID header.
+// client ID header - which is signed with the rest when there is one, exactly as
+// a real client signs it.
 Headers makeHeaders(const Identity& identity, const std::string& method,
     const std::string& path, const std::string& body, const std::string& clientId)
 {
     const auth::Headers signed_ = auth::signRequest(identity,
         static_cast<std::int64_t>(std::time(nullptr)), method, path,
-        Bytes(body.begin(), body.end()));
+        Bytes(body.begin(), body.end()), clientId);
     Headers headers(signed_.begin(), signed_.end());
     if (!clientId.empty()) {
         headers.emplace("X-Bazarish-Client", clientId);
@@ -320,12 +321,91 @@ int main()
         CHECK(aliceQueue() == 1);
 
         const std::string ackBody = nlohmann::json{{"blobId", "msg-1"}}.dump();
+
+        // The device an ack speaks for is signed with it. Rewriting that label -
+        // which anything between the two ends could do while it was only a
+        // header - would acknowledge this device's mail as another device and
+        // drop it before that device ever saw it, so it is refused.
+        {
+            Headers swapped
+                = makeHeaders(alice, "POST", "/v1/messaging/ack", ackBody, "alicedev");
+            swapped["X-Bazarish-Client"] = "bobdev";
+            const http::ClientResponse forged
+                = call(port, "POST", "/v1/messaging/ack", swapped, ackBody);
+            CHECK(forged.status == 401);
+            // Stripped rather than swapped: also refused, and not taken for a
+            // request that never named a device.
+            Headers stripped
+                = makeHeaders(alice, "POST", "/v1/messaging/ack", ackBody, "alicedev");
+            stripped.erase("X-Bazarish-Client");
+            CHECK(call(port, "POST", "/v1/messaging/ack", stripped, ackBody).status == 401);
+            // Neither attempt got anywhere near the mailbox.
+            CHECK(aliceQueue() == 1);
+        }
+
         const http::ClientResponse acked = call(port, "POST", "/v1/messaging/ack",
             makeHeaders(alice, "POST", "/v1/messaging/ack", ackBody, "alicedev"), ackBody);
         CHECK(acked.status == 200);
         // Alice's only client acked: deleted immediately.
         CHECK(storage.usage(alice.fingerprint()) == 0);
         CHECK(aliceQueue() == 0);
+    }
+
+    // --- Sessions ---
+    //
+    // The signature is presented once; everything after it carries a MAC. What
+    // this checks is the one thing that must not follow from holding a session:
+    // being able to mint the next one with it.
+    {
+        // The secret is sealed to the serving key of the caller's own
+        // destination, which this server holds the private half of.
+        const Bytes secret = randomBytes(32);
+        const Key replyKey = Key::generateSealing();
+        const std::string inner = nlohmann::json{{"secret", toBase64(secret)},
+            {"replyKey", toBase64(replyKey.publicDer())}}.dump();
+        const std::string openBody = nlohmann::json{{"sealed",
+            toBase64(cms::seal(Bytes(inner.begin(), inner.end()), sealingPublic))}}.dump();
+
+        const http::ClientResponse opened = call(port, "POST", "/v1/auth/session",
+            makeHeaders(alice, "POST", "/v1/auth/session", openBody, "alicedev"), openBody);
+        CHECK(opened.status == 200);
+        const Bytes answer = cms::unseal(
+            fromBase64(nlohmann::json::parse(opened.body).at("sealed").get<std::string>()),
+            replyKey);
+        const nlohmann::json term = nlohmann::json::parse(answer.begin(), answer.end());
+        CHECK(term.at("expiresUnix").get<std::int64_t>() > 0);
+
+        const std::string sessionId = toHex(sha256(secret)).substr(0, 32);
+        const Bytes sessionKey = auth::deriveSessionKey(secret, sessionId);
+        // One request under the session, to show it works at all.
+        const auto maced = [&](const std::uint64_t seq, const std::string& method,
+                               const std::string& path, const std::string& body,
+                               const std::string& clientId) {
+            const auth::Headers headers = auth::macRequest(auth::sessionHandle(secret, seq),
+                sessionKey, seq, static_cast<std::int64_t>(std::time(nullptr)), method, path,
+                Bytes(body.begin(), body.end()), clientId);
+            Headers out(headers.begin(), headers.end());
+            out.emplace("X-Bazarish-Client", clientId);
+            return out;
+        };
+        CHECK(call(port, "GET", "/v1/messaging/storage-usage",
+                  maced(1, "GET", "/v1/messaging/storage-usage", "", "alicedev"))
+                  .status
+            == 200);
+        // The device is inside the MAC too, so the same swap is refused here.
+        {
+            Headers swapped = maced(2, "GET", "/v1/messaging/storage-usage", "", "alicedev");
+            swapped["X-Bazarish-Client"] = "bobdev";
+            CHECK(call(port, "GET", "/v1/messaging/storage-usage", swapped).status == 401);
+        }
+
+        // And the point: a session may not open the next one. Were it allowed, a
+        // leaked secret would renew itself for ever and the identity would never
+        // be presented again - which is what the short lifetime exists to bound.
+        const http::ClientResponse chained = call(port, "POST", "/v1/auth/session",
+            maced(3, "POST", "/v1/auth/session", openBody, "alicedev"), openBody);
+        CHECK(chained.status == 401);
+        CHECK(nlohmann::json::parse(chained.body).at("error").at("code") == "SESSION_INVALID");
     }
 
     // The destination endpoint surfaces the caller's assigned destination + the

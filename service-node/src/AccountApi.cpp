@@ -346,8 +346,10 @@ void AccountApi::setupRoutes()
         return [this, handler](const http::Request& request, http::Response& response) {
             std::string user;
             try {
+                // The device the request speaks for is part of what it signed.
                 user = auth::verifyRequest(collectAuthHeaders(request), nowSeconds(),
-                    request.method, request.path, bodyBytes(request), replayCache_);
+                    request.method, request.path, bodyBytes(request), replayCache_,
+                    request.header("X-Bazarish-Client"));
             } catch (const std::exception& error) {
                 respondError(response, 401, ErrorCode::eDeliveryRejected, error.what());
                 return;

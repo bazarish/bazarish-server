@@ -275,10 +275,21 @@ void HttpApi::wakeUser(const std::string& user)
 }
 
 std::optional<bazarish::http::Response> HttpApi::authenticateRequest(
-    const bazarish::http::Request& request, std::string* const outUser)
+    const bazarish::http::Request& request, std::string* const outUser, const bool allowSession)
 {
     const auth::Headers authHeaders = collectAuthHeaders(request);
+    // The device this request speaks for. It is part of what was signed or
+    // MAC'd, so a facade that rewrote it to another device of the same account -
+    // and so acknowledged that device's mail away - fails verification here
+    // rather than being obeyed.
+    const std::string clientId = request.header("X-Bazarish-Client");
     if (auth::hasSessionHeaders(authHeaders)) {
+        if (!allowSession) {
+            // Typed as an invalid session on purpose: a client answers that by
+            // presenting the signature, which is exactly what this route wants.
+            return errorResponse(401, ErrorCode::eSessionInvalid,
+                "this route is authenticated by the identity signature, not a session");
+        }
         // A session MAC. Every refusal here is typed eSessionInvalid, so a client
         // can tell "open a new session" from "your identity is wrong" and never
         // retries the second in a loop. The handle differs per request: what
@@ -291,7 +302,7 @@ std::optional<bazarish::http::Response> HttpApi::authenticateRequest(
         }
         try {
             const std::uint64_t seq = auth::verifyMac(authHeaders, session->key, nowSeconds(),
-                request.method, request.path, bodyBytes(request));
+                request.method, request.path, bodyBytes(request), clientId);
             if (!sessions_.acceptSeq(handle, seq, nowSeconds())) {
                 return errorResponse(401, ErrorCode::eSessionInvalid, "sequence replayed");
             }
@@ -303,7 +314,7 @@ std::optional<bazarish::http::Response> HttpApi::authenticateRequest(
     }
     try {
         *outUser = auth::verifyRequest(authHeaders, nowSeconds(), request.method, request.path,
-            bodyBytes(request), replayCache_);
+            bodyBytes(request), replayCache_, clientId);
     } catch (const std::exception& error) {
         return errorResponse(401, ErrorCode::eDeliveryRejected, error.what());
     }
@@ -346,11 +357,12 @@ void HttpApi::setupRoutes()
 
     // Wraps a handler with request authentication and uniform error
     // mapping. The handler receives the verified caller fingerprint.
-    const auto authenticated = [this](auto handler) {
-        return [this, handler](const bazarish::http::Request& request) -> bazarish::http::Response {
+    const auto authenticate = [this](auto handler, const bool allowSession) {
+        return [this, handler, allowSession](
+                   const bazarish::http::Request& request) -> bazarish::http::Response {
             std::string user;
             if (const std::optional<bazarish::http::Response> refused
-                = authenticateRequest(request, &user);
+                = authenticateRequest(request, &user, allowSession);
                 refused.has_value()) {
                 return *refused;
             }
@@ -363,6 +375,11 @@ void HttpApi::setupRoutes()
             }
         };
     };
+    const auto authenticated
+        = [authenticate](auto handler) { return authenticate(handler, /*allowSession=*/true); };
+    // For the one route a session may not authenticate: the one that issues them.
+    const auto signedOnly
+        = [authenticate](auto handler) { return authenticate(handler, /*allowSession=*/false); };
 
     // Left unused below; kept as the single place both schemes are decided.
 
@@ -469,7 +486,7 @@ void HttpApi::setupRoutes()
     // destination - this server holds its private half, so no key has to be
     // distributed for this, and the facade in between sees a sealed blob.
     http_->post("/v1/auth/session",
-        authenticated([this](const bazarish::http::Request& request,
+        signedOnly([this](const bazarish::http::Request& request,
                           const std::string& user) -> bazarish::http::Response {
             if (!options_.assignDestination) {
                 return errorResponse(

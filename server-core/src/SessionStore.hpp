@@ -21,6 +21,10 @@ public:
         std::string user;
         Bytes key;
         Bytes secret;  // the handles are derived from it
+        // What the frames of this tunnel are encrypted under. Derived from the
+        // same secret as `key` with a different label, so holding one of them is
+        // not holding the other.
+        Bytes tunnelKey;
         std::int64_t expiresUnix = 0;
         std::uint64_t lastSeq = 0;
     };
@@ -34,6 +38,9 @@ public:
     // The session a request handle belongs to, if any is still live. Expired
     // sessions are dropped as they are looked up.
     std::optional<Session> findByHandle(const std::string& handle, std::int64_t now);
+
+    // Records the key this session's tunnel frames are encrypted under.
+    void setTunnelKey(const std::string& id, const Bytes& tunnelKey);
 
     // Records that this session used `seq`, rejecting anything not strictly
     // higher than it used before - the replay check, one integer per session

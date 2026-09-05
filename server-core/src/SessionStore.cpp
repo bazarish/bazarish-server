@@ -116,6 +116,15 @@ bool SessionStore::acceptSeq(
     return true;
 }
 
+void SessionStore::setTunnelKey(const std::string& id, const Bytes& tunnelKey)
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const auto found = sessions_.find(id);
+    if (found != sessions_.end()) {
+        found->second.tunnelKey = tunnelKey;
+    }
+}
+
 void SessionStore::drop(const std::string& id)
 {
     const std::lock_guard<std::mutex> lock(mutex_);

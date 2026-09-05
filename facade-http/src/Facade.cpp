@@ -2,6 +2,7 @@
 #include "Facade.hpp"
 
 #include <bazarish/Auth.hpp>
+#include <bazarish/Tunnel.hpp>
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Health.hpp>
 
@@ -53,7 +54,6 @@ constexpr int kUpstreamTimeoutSeconds = 60;
 enum class Backend {
     eNone,
     eMessaging,
-    eAccount,
 };
 
 bool startsWith(const std::string& text, const std::string& prefix)
@@ -88,28 +88,26 @@ std::string pathOf(const std::string& target)
     return target.substr(0, target.find('?'));
 }
 
+// Three paths, and nothing else exists as far as this program is concerned.
+//
+// A client speaks to its server through one of them - a sealed tunnel - and this
+// process cannot read a byte of what it carries: not who is calling, not what
+// they are asking, not what comes back. It cannot even tell an account call from
+// a message being fetched. That is the point: this is the least trusted piece of
+// the system, and it now holds nothing worth taking.
+//
+// The other two are public by nature and identical for every caller, so serving
+// them tells nobody anything: the signed server card, which is what lets a client
+// seal the tunnel in the first place, and the reseed archive, which is what a
+// client with no I2P yet bootstraps from and therefore cannot be behind I2P.
 Backend routeOf(const std::string& method, const std::string& path)
 {
-    if (startsWith(path, "/v1/messaging/")) {
+    if (method == "POST" && path == bazarish::tunnel::kTunnelPath) {
         return Backend::eMessaging;
     }
-    // Session issue lives with the messaging server, because the key a session
-    // secret is sealed to is the one that server holds.
-    if (startsWith(path, "/v1/auth/")) {
+    if (method == "GET"
+        && (path == bazarish::tunnel::kServerCardPath || path == "/v1/messaging/reseed")) {
         return Backend::eMessaging;
-    }
-    // The card LOOKUP is not a clearnet endpoint. It answers to any caller
-    // holding the descriptor's view capability, so forwarding it would let
-    // anyone test a contact they already know against every facade they know:
-    // "is this user served here?". The messaging server reaches it directly over
-    // the private channel, which is the only caller that needs it. Publishing a
-    // card is the opposite: the account's own signed call, and the only way a
-    // client can register at all - it keeps going through.
-    if (method == "GET" && startsWith(path, "/v1/account/card")) {
-        return Backend::eNone;
-    }
-    if (startsWith(path, "/v1/account/")) {
-        return Backend::eAccount;
     }
     return Backend::eNone;
 }
@@ -142,10 +140,6 @@ std::optional<Route> resolveRoute(
     case Backend::eMessaging:
         route.host = options.messagingHost;
         route.port = options.messagingPort;
-        break;
-    case Backend::eAccount:
-        route.host = options.accountHost;
-        route.port = options.accountPort;
         break;
     case Backend::eNone:
         return std::nullopt;

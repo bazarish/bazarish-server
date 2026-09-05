@@ -52,30 +52,6 @@ constexpr int kDefaultHttpPort = 80;
 // Where a --service-node URL points. The HTTP client takes a host and a port,
 // not a URL, and the scheme is always plain http here (the node listens on
 // loopback).
-struct ServiceNodeAddress {
-    std::string host;
-    int port = kDefaultHttpPort;
-};
-
-ServiceNodeAddress parseServiceNodeUrl(const std::string& url)
-{
-    std::string rest = url;
-    if (const std::string scheme = "http://"; rest.rfind(scheme, 0) == 0) {
-        rest = rest.substr(scheme.size());
-    }
-    if (const auto slash = rest.find('/'); slash != std::string::npos) {
-        rest = rest.substr(0, slash);
-    }
-    ServiceNodeAddress address;
-    if (const auto colon = rest.find(':'); colon == std::string::npos) {
-        address.host = rest;
-    } else {
-        address.host = rest.substr(0, colon);
-        address.port = std::stoi(rest.substr(colon + 1));
-    }
-    return address;
-}
-
 void printUsage()
 {
     std::printf(
@@ -302,7 +278,8 @@ int main(const int argc, const char** argv)
                         return found->second.second;
                     }
                 }
-                const ServiceNodeAddress node = parseServiceNodeUrl(serviceNodeUrl);
+                const bazarish::server::ServiceNodeAddress node
+                    = bazarish::server::parseServiceNodeUrl(serviceNodeUrl);
                 bazarish::http::ClientRequest lookup;
                 lookup.method = "GET";
                 // The node answers only when the view capability matches the one
@@ -442,6 +419,15 @@ int main(const int argc, const char** argv)
         fs::path(argv[2]), settingValues);
     httpOptions.stateDirectory = stateDir.string();
     httpOptions.fingerprint = identity.fingerprint();
+    // What the client tunnel needs: the key a hello is sealed to, the signed card
+    // that hands its public half out, this server's own signature for the account
+    // calls it forwards, and where to forward them.
+    httpOptions.sealingKey = std::make_shared<bazarish::Key>(
+        bazarish::Key::fromPrivatePem(sealing.privatePem()));
+    httpOptions.serverCardDer = card;
+    httpOptions.identity = std::make_shared<const bazarish::Identity>(
+        bazarish::Identity::fromPrivatePem(identity.privatePem()));
+    httpOptions.serviceNodeUrl = serviceNodeUrl;
     // Restarting from the panel is the other half of editing a startup setting
     // there. The hook is handed to the API before the API exists, so it is
     // filled in through a slot the handler reads when it is called.

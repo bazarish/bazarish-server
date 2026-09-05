@@ -25,6 +25,14 @@
 
 namespace bazarish::server {
 
+// Where a service-node URL points. Shared with the server's own startup, which
+// resolves the same setting for its card lookups.
+struct ServiceNodeAddress {
+    std::string host;
+    int port = 80;
+};
+ServiceNodeAddress parseServiceNodeUrl(const std::string& url);
+
 // A user's assigned serving destination and its serving sealing key (private
 // half held by this server). Used both to surface the destination to the user
 // and to decide same-destination local delivery. An empty dest / null key means
@@ -109,6 +117,23 @@ struct HttpApiOptions {
     // Longest a client may ask to be held on the event face. Anything longer is
     // clamped: an idle I2P stream that lives too long is torn down under us.
     int maxEventWaitSeconds = 30;
+    // This server's own signing identity: it signs the account calls it forwards
+    // to the service node, which is how the node knows the call is one this
+    // server authenticated and whose it is.
+    std::shared_ptr<const Identity> identity;
+    // This server's sealing key: what a client's tunnel hello is sealed to. The
+    // public half rides in the server card below, which the client verifies
+    // against the fingerprint it already had, so the facade in between can
+    // withhold the card but never substitute one of its own.
+    std::shared_ptr<Key> sealingKey;
+    // The signed server card, served as-is to any caller: it is public, it is the
+    // same answer for everybody, and it is what bootstraps the tunnel.
+    Bytes serverCardDer;
+    // Where the service node answers. A client's account calls arrive inside the
+    // tunnel and are forwarded there under this server's own signature: the node
+    // never sees a client, and the facade never sees which of the two a request
+    // was for.
+    std::string serviceNodeUrl;
 };
 
 // The /v1/messaging/* HTTP API: client registry, token hashes, pending fetch/ack
@@ -146,6 +171,13 @@ private:
     std::optional<bazarish::http::Response> authenticateRequest(
         const bazarish::http::Request& request, std::string* outUser,
         bool allowSession = true);
+    // The one route a facade can see. Opens the frame, runs what was inside
+    // through this server's own routes, and seals the answer back.
+    void serveTunnel(const bazarish::http::Request& request, bazarish::http::Responder respond);
+    // An account call that arrived in a tunnel: forwarded to the service node
+    // under this server's signature, which vouches for whose call it is.
+    bazarish::http::Response forwardToNode(
+        const bazarish::http::Request& request, const std::string& user);
     void stopWorkers();
     // The reseed archive this server hands out, packed from a slice of its netDb
     // and rebuilt no more often than kReseedRefreshSeconds. One archive for

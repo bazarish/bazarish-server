@@ -174,37 +174,42 @@ int main()
     std::thread opsThread([&facade]() { (void)facade.listenOpsAfterBind(); });
 
 
-    // Messaging route: body, method, client header and stripped path relayed.
+    // The tunnel: one path, one body, relayed byte for byte. Everything a client
+    // says now arrives this way, and this program can read none of it - it does
+    // not even learn whether this was mail being fetched or an account being
+    // managed.
     {
-        const Headers headers = {{"X-Bazarish-Client", "dev1"}};
-        const http::ClientResponse result = call(facadePort, "POST", "/s/secret123/v1/messaging/self", headers,
-            "envelope-bytes");
+        const std::string sealed = "opaque-frame-bytes";
+        const http::ClientResponse result
+            = call(facadePort, "POST", "/s/secret123/t", {}, sealed);
         CHECK(result.status == 200);
         const nlohmann::json reply = nlohmann::json::parse(result.body);
         CHECK(reply.at("backend") == "messaging");
         CHECK(reply.at("method") == "POST");
-        CHECK(reply.at("path") == "/v1/messaging/self");
-        CHECK(reply.at("body") == "envelope-bytes");
-        CHECK(reply.at("clientHeader") == "dev1");
+        CHECK(reply.at("path") == "/t");
+        CHECK(reply.at("body") == sealed);
+        // Nothing rides beside it: no device, no keys, nothing to read.
+        CHECK(reply.at("clientHeader") == "");
     }
 
-    // Account route, with a preserved query string.
+    // The routes that used to be the client API are not routes any more. A
+    // facade that still carried them would carry them in the clear.
+    for (const char* const gone : {"/s/secret123/v1/messaging/self",
+             "/s/secret123/v1/messaging/pending", "/s/secret123/v1/account/registration",
+             "/s/secret123/v1/auth/session"}) {
+        CHECK(call(facadePort, "POST", gone, {}, "{}").status == 404);
+        CHECK(call(facadePort, "GET", gone).status == 404);
+    }
+
+    // The server card is public, identical for everyone who asks, and what a
+    // client needs before it can seal anything - so it is served, and serving it
+    // says nothing about anybody.
     {
-        const http::ClientResponse result
-            = call(facadePort, "GET", "/s/secret123/v1/account/resolve?alias=alice");
+        const http::ClientResponse result = call(facadePort, "GET", "/s/secret123/v1/server/card");
         CHECK(result.status == 200);
         const nlohmann::json reply = nlohmann::json::parse(result.body);
-        CHECK(reply.at("backend") == "account");
-        CHECK(reply.at("path") == "/v1/account/resolve");
-        CHECK(reply.at("alias") == "alice");
-    }
-
-    // DELETE is relayed too.
-    {
-        const http::ClientResponse result
-            = call(facadePort, "DELETE", "/s/secret123/v1/account/alias", {}, "{}");
-        CHECK(result.status == 200);
-        CHECK(nlohmann::json::parse(result.body).at("method") == "DELETE");
+        CHECK(reply.at("backend") == "messaging");
+        CHECK(reply.at("path") == "/v1/server/card");
     }
 
     // Wrong secret base path: rejected, never forwarded.
@@ -226,32 +231,23 @@ int main()
         CHECK(result.status == 404);
     }
 
-    // The card lookup is never exposed through the facade. It answers only to a
-    // caller holding the descriptor's key - and every contact holds one, so a
-    // clearnet route would let them test that descriptor against every facade
-    // they know until one says yes. Only the messaging server calls it, over the
-    // private channel.
+    // Publishing a card and looking one up are both client API now, and the
+    // client API has exactly one door. Neither is a route here any more, so the
+    // rule that used to live in this file - "forwarding a card lookup would let
+    // anyone test a contact against every facade they know" - is enforced by the
+    // messaging server, which is the only thing that can still tell the two
+    // apart. What is left here is the same bare 404 as any other path.
     {
-        const http::ClientResponse result = call(facadePort, "GET",
+        const http::ClientResponse lookup = call(facadePort, "GET",
             "/s/secret123/v1/account/card?user=alice&key=AAAA");
-        CHECK(result.status == 404);
-        // The same bare 404 the facade gives any path it does not carry: the
-        // refusal must not read as "there is something here".
+        CHECK(lookup.status == 404);
+        const http::ClientResponse publish = call(facadePort, "POST",
+            "/s/secret123/v1/account/card", {}, R"({"card":"AAAA"})");
+        CHECK(publish.status == 404);
         const http::ClientResponse unknown
             = call(facadePort, "GET", "/s/secret123/v1/other/thing");
-        CHECK(result.body == unknown.body);
-    }
-
-    // Publishing a card is the same path with a different method, and it is the
-    // one call that turns a portal registration into an account: blocking it by
-    // path alone left every client unable to register at all.
-    {
-        const http::ClientResponse result = call(facadePort, "POST",
-            "/s/secret123/v1/account/card", {}, R"({"card":"AAAA"})");
-        CHECK(result.status == 200);
-        const nlohmann::json reply = nlohmann::json::parse(result.body);
-        CHECK(reply.at("backend") == "account");
-        CHECK(reply.at("path") == "/v1/account/card");
+        CHECK(lookup.body == unknown.body);
+        CHECK(publish.body == unknown.body);
     }
 
     // The operator quota endpoint is never exposed through the facade.

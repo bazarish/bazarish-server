@@ -2,6 +2,7 @@
 #include "AccountApi.hpp"
 
 #include <bazarish/Auth.hpp>
+#include <bazarish/Tunnel.hpp>
 #include <bazarish/Certificates.hpp>
 #include <bazarish/Descriptor.hpp>
 #include <bazarish/ServerDescriptor.hpp>
@@ -362,6 +363,42 @@ void AccountApi::setupRoutes()
                 respondError(response, 400, ErrorCode::eDeliveryRejected, error.what());
             }
         };
+    };
+
+    // The same call, arriving the other way. A client's account calls now reach
+    // the messaging server inside its tunnel; that server authenticates them and
+    // forwards them here under its own signature, with the user named in the
+    // path - so what vouches for whose call it is, is signed, not asserted in a
+    // header the link between the two could rewrite. The node authorises it
+    // against the server it is bound to, which it already knows: no shared
+    // secret, no new setting.
+    const auto vouched = [this](auto handler) {
+        return [this, handler](const http::Request& request, http::Response& response) {
+            try {
+                auth::authorizeRequest(collectAuthHeaders(request), nowSeconds(), request.method,
+                    request.path, bodyBytes(request), {options_.serverFingerprint});
+            } catch (const std::exception& error) {
+                respondError(response, 403, ErrorCode::eDeliveryRejected, error.what());
+                return;
+            }
+            if (request.captures.empty() || request.captures.at(0).empty()) {
+                respondError(response, 400, ErrorCode::eDeliveryRejected, "no user named");
+                return;
+            }
+            handler(request, response, request.captures.at(0));
+        };
+    };
+    // A route of the client API, reachable both ways: signed by the client
+    // itself (a daemon on the same machine, and the tests), or forwarded on a
+    // client's behalf. Only the client API is registered this way - the operator
+    // surface below is not, because an operator standing in for a user would be
+    // exactly the confusion of roles this must not allow.
+    const auto clientRoute = [this, &authenticated, &vouched](const std::string& method,
+                                 const std::string& path, auto handler) {
+        http_->route(method, path, filled(authenticated(handler)));
+        http_->route(method,
+            std::string(bazarish::tunnel::kVouchedPrefix) + "([a-z2-7]{52})" + path,
+            filled(vouched(handler)));
     };
 
     // Operator-only moderation surface for the admin panel, signed with the
@@ -778,8 +815,8 @@ void AccountApi::setupRoutes()
     // authenticated call redeems the grant - and it can be repeated whenever the
     // routing changes. There is no term: an account lives while its owner keeps
     // a destination delegated here.
-    http_->post("/v1/account/card",
-        filled(authenticated([this](const http::Request& request, http::Response& response,
+    clientRoute("POST", "/v1/account/card",
+        [this](const http::Request& request, http::Response& response,
                           const std::string& user) {
             const nlohmann::json body = nlohmann::json::parse(request.body);
             const Bytes der = fromBase64(body.at("card").get<std::string>());
@@ -861,18 +898,18 @@ void AccountApi::setupRoutes()
                     {"registrationMessage",
                         pending ? holdMessageFor(approval, settings()) : std::string()},
                 });
-        })));
+        });
 
     // Closing an account tears it down, it does not merely stop delegating: the
     // destination is revoked and the grants (including the approval) are
     // dropped, so nothing about the account outlives it. Coming back means
     // registering again.
-    http_->del("/v1/account/registration",
-        filled(authenticated([this](const http::Request&, http::Response& response,
+    clientRoute("DELETE", "/v1/account/registration",
+        [this](const http::Request&, http::Response& response,
                           const std::string& user) {
             deleteAccount(user);
             respondJson(response, {{"ok", true}});
-        })));
+        });
 
     // Receives the user's client-owned offline I2P transient and hands it to the
     // messaging server, which operates the user's own destination. Every account
@@ -881,8 +918,8 @@ void AccountApi::setupRoutes()
     // means: the account exists and the transient is accepted nowhere. An empty
     // transient revokes the destination. The transient's validity is recorded so
     // the status endpoint can tell the client's other devices when to re-issue.
-    http_->post("/v1/account/i2p-dest",
-        filled(authenticated([this](const http::Request& request, http::Response& response,
+    clientRoute("POST", "/v1/account/i2p-dest",
+        [this](const http::Request& request, http::Response& response,
                           const std::string& user) {
             if (!options_.publishI2pTransient) {
                 respondError(response, 503, ErrorCode::eDeliveryRejected,
@@ -939,14 +976,14 @@ void AccountApi::setupRoutes()
                 }
             }
             respondJson(response, {{"ok", true}});
-        })));
+        });
 
     // What the client's devices need to keep the user's destination alive: the
     // approval state (a frozen account has no destination) and the validity of
     // the transient currently delegated, so any device knows when to issue the
     // next one without holding it.
-    http_->get("/v1/account/i2p-status",
-        filled(authenticated([this](const http::Request&, http::Response& response,
+    clientRoute("GET", "/v1/account/i2p-status",
+        [this](const http::Request&, http::Response& response,
                           const std::string& user) {
             const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
             const std::optional<GrantStore::Transient> transient = grants_.peekTransient(user);
@@ -962,7 +999,7 @@ void AccountApi::setupRoutes()
                     {"transientExpires", transient.has_value() ? transient->expires : 0},
                     {"transientUpdatedAt", transient.has_value() ? transient->updatedAt : 0},
                 });
-        })));
+        });
 
     // The contact card a peer fetches, answered only to someone who already
     // holds the descriptor: the query carries its `key` - the per-user serving
@@ -976,8 +1013,8 @@ void AccountApi::setupRoutes()
     // switch has to be the user's: this node prepares, the user signs the
     // prepared key into a card, and only the commit puts either in force. A
     // rotation that stops halfway leaves the account exactly as it was.
-    http_->post("/v1/account/serving-key",
-        filled(authenticated([this](const http::Request& request, http::Response& response,
+    clientRoute("POST", "/v1/account/serving-key",
+        [this](const http::Request& request, http::Response& response,
                           const std::string& user) {
             (void)request;
             const std::optional<SubscriptionStore::Account> held = store_.getAccount(user);
@@ -1002,10 +1039,10 @@ void AccountApi::setupRoutes()
             store_.putAccount(record);
             respondJson(response,
                 {{"servingKey", record.pendingServingKey}, {"view", record.pendingView}});
-        })));
+        });
 
-    http_->post("/v1/account/serving-key/commit",
-        filled(authenticated([this](const http::Request& request, http::Response& response,
+    clientRoute("POST", "/v1/account/serving-key/commit",
+        [this](const http::Request& request, http::Response& response,
                           const std::string& user) {
             const nlohmann::json body = nlohmann::json::parse(request.body);
             const std::optional<SubscriptionStore::Account> held = store_.getAccount(user);
@@ -1054,7 +1091,7 @@ void AccountApi::setupRoutes()
                 return;
             }
             respondJson(response, {{"ok", true}, {"view", record.view}});
-        })));
+        });
 
     http_->get("/v1/account/card",
         filled([this](const http::Request& request, http::Response& response) {
@@ -1093,8 +1130,8 @@ void AccountApi::setupRoutes()
     // captcha: a captcha is a person's proof that they are one, and a client
     // cannot stand in for it. The account is granted exactly what the portal
     // grants, approval included, so the two doors lead to the same place.
-    http_->post("/v1/account/registration",
-        filled(authenticated([this](const http::Request&, http::Response& response,
+    clientRoute("POST", "/v1/account/registration",
+        [this](const http::Request&, http::Response& response,
                           const std::string& user) {
             if (settings().requireCaptcha) {
                 respondError(response, 403, ErrorCode::eDeliveryRejected,
@@ -1119,14 +1156,14 @@ void AccountApi::setupRoutes()
                     {"requiresApproval", values.requireApproval},
                     {"message", values.requireApproval ? values.registrationMessage
                                                        : std::string()}});
-        })));
+        });
 
     // Onboarding discovery: where to register and on what terms. Unauthenticated
     // - the client shows the message and link(s); registration happens on the
     // portal, not here. Nothing on this node is for sale, so there is no service
     // catalogue: the only variables are whether a captcha is required and
     // whether an operator has to approve the account.
-    http_->get("/v1/account/portal", filled([this](const http::Request&, http::Response& response) {
+    const auto portalHandler = [this](const http::Request&, http::Response& response) {
             const NodeSettings::Values live = settings();
             nlohmann::json links = nlohmann::json::array();
             for (const std::string& link :
@@ -1147,7 +1184,13 @@ void AccountApi::setupRoutes()
                         }},
                     {"quotaBytes", settings().defaultQuotaBytes},
                 });
-        }));
+    };
+    // Unauthenticated, and reachable both ways for the same reason as the rest:
+    // a client asks for it through its server's tunnel, where the facade cannot
+    // tell this apart from any other call.
+    http_->get("/v1/account/portal", filled(portalHandler));
+    http_->get(std::string(bazarish::tunnel::kVouchedPrefix) + "([a-z2-7]{52})/v1/account/portal",
+        filled(portalHandler));
 }
 
 }  // namespace bazarish::service

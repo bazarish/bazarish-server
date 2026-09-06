@@ -210,6 +210,20 @@ int main(const int argc, const char** argv)
     fs::create_directories(stateDir);
     const bazarish::Identity identity = loadOrCreateIdentity(stateDir);
     bazarish::Key sealing = loadOrCreateSealingKey(stateDir);
+    // A client opens its tunnel by sealing to this key, and sealing needs the
+    // post-quantum half. A key from before sealing keys were hybrid has none, and
+    // a server holding one cannot be talked to at all: every client would sit at
+    // "connecting" while nothing said why. Refused here, in one place, with what
+    // to do about it - not discovered one hung client at a time.
+    if (!sealing.hasKem()) {
+        std::fprintf(stderr,
+            "%s holds a sealing key with no ML-KEM half - it was made before sealing keys\n"
+            "were hybrid, and no client can open a tunnel to it. Move it aside and start\n"
+            "again: a new one is generated, and nothing is stored under the old one (the\n"
+            "mail in the mailboxes is sealed to its owners' keys, not to this).\n",
+            (stateDir / "sealing.pem").string().c_str());
+        return 1;
+    }
 
     bazarish::server::DiskStorage storage(stateDir / "storage");
     // Clients that hold a request open are woken from here: a delivery tells the

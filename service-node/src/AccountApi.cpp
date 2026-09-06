@@ -829,9 +829,12 @@ void AccountApi::setupRoutes()
                     std::string("invalid contact card: ") + error.what());
                 return;
             }
-            if (card.user != user) {
+            // Whose card it is, is who signed it - so this asks whether the
+            // caller signed the card they are publishing, not whether a line in
+            // the body agrees with them.
+            if (card.fingerprint() != user) {
                 respondError(response, 403, ErrorCode::eDeliveryRejected,
-                    "card does not name the authenticated user");
+                    "this card was signed by somebody else");
                 return;
             }
             if (const std::optional<GrantStore::Ban> ban = grants_.peekBan(user);
@@ -1060,9 +1063,12 @@ void AccountApi::setupRoutes()
                     std::string("invalid contact card: ") + error.what());
                 return;
             }
-            if (card.user != user) {
+            // Whose card it is, is who signed it - so this asks whether the
+            // caller signed the card they are publishing, not whether a line in
+            // the body agrees with them.
+            if (card.fingerprint() != user) {
                 respondError(response, 403, ErrorCode::eDeliveryRejected,
-                    "card does not name the authenticated user");
+                    "this card was signed by somebody else");
                 return;
             }
             // The card has to carry the key that was prepared, or the commit would

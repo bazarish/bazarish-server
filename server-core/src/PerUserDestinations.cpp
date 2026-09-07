@@ -617,8 +617,11 @@ void PerUserDestinations::reloadPersisted(const std::int64_t now)
         } catch (const std::exception& error) {
             // Skip a malformed record rather than fail startup - that user's
             // destination stays down, which the operator has to be able to see.
+            // The record's file name is the user's fingerprint, so it is
+            // shortened like every other one: an operator has to be able to find
+            // the record, not to read the roster out of a log.
             bazarish::log::warn("destination record {} skipped at start: {}",
-                entry.path().filename().string(), error.what());
+                bazarish::log::redact(entry.path().filename().string()), error.what());
         }
     }
 }

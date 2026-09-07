@@ -12,6 +12,7 @@
 #include <bazarish/Crypto.hpp>
 #include <bazarish/Errors.hpp>
 #include <bazarish/Limits.hpp>
+#include <bazarish/Padding.hpp>
 #include <bazarish/Pass.hpp>
 #include <bazarish/Health.hpp>
 #include <bazarish/I2p.hpp>
@@ -38,6 +39,10 @@ namespace {
 
 // What a listener may be told to bind: TCP's range without port 0, which means
 // "any free port" and is never what an operator typed on purpose.
+// What a refused tunnel answers with. Any size does, since it is padded to a
+// step like everything else on this path; it exists only so that a refusal is
+// shaped like an answer.
+constexpr std::size_t kRefusalNoiseBytes = 64;
 constexpr int kMinPort = 1;
 constexpr int kMaxPort = 65535;
 
@@ -251,9 +256,17 @@ void HttpApi::serveTunnel(
     // middle, and it is the one this exists to keep out. A client that gets this
     // opens a new tunnel.
     const auto refuse = [respond]() {
+        // The same answer a carried request gets, and the same shape: a status
+        // that differed would tell whoever forwards this - the facade, which is
+        // the one party this exists to keep out - exactly when a client's session
+        // lapsed or a hello failed. What comes back cannot be opened under any
+        // key the caller holds, which is how a client tells a refusal from an
+        // answer, and it is padded like everything else so its length says
+        // nothing either.
         bazarish::http::Response response;
-        response.status = 400;
         response.contentType = "application/octet-stream";
+        const Bytes noise = bazarish::padToLadder(randomBytes(kRefusalNoiseBytes));
+        response.body = std::string(noise.begin(), noise.end());
         respond(std::move(response));
     };
     // By value: a route behind this answers later when it is a long poll, and a

@@ -138,17 +138,17 @@ FederationDeliverResult roundTrip(DeliveryEngine& engine, const Bytes& sealed, c
 
 // Runs one client card fetch against an in-thread server (socketpair), with a
 // stub card lookup. servingKey == nullptr uses the engine's home sealing key.
-FederationFetchResult roundTripCard(
-    DeliveryEngine& engine, const CardFetchQuery& query, const GetCardFn& getCard)
+FederationFetchResult roundTripCard(DeliveryEngine& engine, const CardFetchQuery& query,
+    const GetCardFn& getCard, const std::string& owner = {})
 {
     int fds[2];
     CHECK(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0);
     SocketStream serverStream(fds[0]);
     SocketStream clientStream(fds[1]);
 
-    std::thread serverThread([&engine, &serverStream, &getCard]() {
-        federationServeOnce(serverStream, engine, kNow, std::string(), nullptr, nullptr,
-            std::string(), getCard);
+    std::thread serverThread([&engine, &serverStream, &getCard, &owner]() {
+        federationServeOnce(
+            serverStream, engine, kNow, std::string(), nullptr, nullptr, owner, getCard);
     });
     const std::string queryText = toJson(query).dump();
     const FederationFetchResult result = federationSendFetch(
@@ -222,6 +222,25 @@ int main()
             = roundTrip(engine, sealed, Bytes(bazarish::kMaxMessagePayloadBytes + 1, 0x55));
         CHECK(!result.delivered);
         CHECK(result.errorCode == "MESSAGE_TOO_LARGE");
+    }
+
+    // An unknown pass answers the same whatever the payload weighs. Checked the
+    // other way round, an over-sized payload with a garbage pass drew a typed
+    // size error on the destination that serves the named mailbox and a flat
+    // refusal on one that does not - which is the "is this fingerprint served
+    // here" answer nothing on this path may give.
+    {
+        const Bytes stranger = deliveryPass(randomBytes(kDeliverySecretSize), std::string(52, 'z'));
+        const Bytes small
+            = makeSealed(sealingPublic, "content", alice, "fmsg-probe-small", stranger);
+        const FederationDeliverResult refusedSmall = roundTrip(engine, small, payload);
+        const Bytes huge = makeSealed(sealingPublic, "content", alice, "fmsg-probe-huge", stranger);
+        const FederationDeliverResult refusedHuge
+            = roundTrip(engine, huge, Bytes(bazarish::kMaxMessagePayloadBytes + 1, 0x55));
+        CHECK(!refusedSmall.delivered);
+        CHECK(!refusedHuge.delivered);
+        CHECK(refusedHuge.errorCode == refusedSmall.errorCode);
+        CHECK(refusedHuge.errorMessage == refusedSmall.errorMessage);
     }
 
     // A contact request presents nothing, so what it may carry is bounded tighter
@@ -397,6 +416,33 @@ int main()
             = roundTripCard(engine, CardFetchQuery{alice, view}, GetCardFn{});
         CHECK(!noFn.ok);
         CHECK(noFn.errorCode == "CARD_UNKNOWN");
+
+        // A destination answers for its own user and for nobody else. The lookup
+        // below would gladly answer for both, so what refuses the second query is
+        // the destination it arrived on - which is the whole point: otherwise any
+        // published address is an oracle for "is this fingerprint served here",
+        // and two invites would prove their owners co-located.
+        const std::string bob = toBase32(Bytes(32, 0x0b));
+        const GetCardFn nodeWide
+            = [&](const std::string& fp, const std::string& asked) -> std::optional<Bytes> {
+            if ((fp == alice || fp == bob) && asked == view) {
+                return cardDer;
+            }
+            return std::nullopt;
+        };
+        const FederationFetchResult own
+            = roundTripCard(engine, CardFetchQuery{alice, view}, nodeWide, alice);
+        CHECK(own.ok);
+        CHECK(own.sealed == cardDer);
+
+        const FederationFetchResult neighbour
+            = roundTripCard(engine, CardFetchQuery{bob, view}, nodeWide, alice);
+        CHECK(!neighbour.ok);
+        CHECK(neighbour.errorCode == "CARD_UNKNOWN");
+        // Indistinguishable from a fingerprint the node does not serve at all.
+        const FederationFetchResult absent = roundTripCard(
+            engine, CardFetchQuery{toBase32(Bytes(32, 0x99)), view}, nodeWide, alice);
+        CHECK(absent.errorCode == neighbour.errorCode);
     }
 
 

@@ -143,14 +143,16 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
         return delivered();
     }
 
-    // One message carries a message. Anything larger is a file, which travels
-    // client to client and never enters a mailbox - so the limit is the
-    // protocol's, not an operator's, and it is checked before admission.
-    if (payload.size() > kMaxMessagePayloadBytes) {
-        return fail(ErrorCode::eMessageTooLarge,
-            "a message may carry at most " + std::to_string(kMaxMessagePayloadBytes) + " bytes");
-    }
-
+    // Admission first, and only then anything that describes this mailbox.
+    //
+    // The order matters more than it looks: a typed answer about size is an
+    // answer about the mailbox, and one given before admission is given to
+    // anybody. Checked the other way round, a garbage pass and an over-sized
+    // payload drew MESSAGE_TOO_LARGE on the destination that serves the named
+    // fingerprint and DELIVERY_REJECTED on one that does not - which is exactly
+    // the "is this fingerprint served here" answer the mailbox check above
+    // refuses to give. A contact request has nothing to present, so for that
+    // class the size cap is the admission.
     if (deliveryClass == kContactDeliveryClass) {
         if (payload.size() > kMaxContactRequestBytes) {
             return fail(ErrorCode::eContactRequestTooLarge,
@@ -165,6 +167,15 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
             owner.empty() ? std::string("the server's own address") : bazarish::log::redact(owner),
             deliveryId.substr(0, kRefusedPassPrefixChars));
         return fail(ErrorCode::eDeliveryRejected, "delivery rejected");
+    }
+
+    // One message carries a message. Anything larger is a file, which travels
+    // client to client and never enters a mailbox - so the limit is the
+    // protocol's, not an operator's. Past admission, so only a correspondent
+    // ever sees it.
+    if (payload.size() > kMaxMessagePayloadBytes) {
+        return fail(ErrorCode::eMessageTooLarge,
+            "a message may carry at most " + std::to_string(kMaxMessagePayloadBytes) + " bytes");
     }
 
     const Storage::PutResult result = storage_.putBlob(mailbox, deliveryId, payload, deliveryClass,

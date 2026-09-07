@@ -65,9 +65,27 @@ void federationServeFrame(const std::string& headerLine,
         // the descriptor's view capability; both it and the answer travel in the
         // clear, because this only ever arrives over a direct I2P stream, which
         // is already encrypted and authenticated to this destination.
+        //
+        // A destination answers for the one user it belongs to, and for nobody
+        // else. Without that check any destination of a node answers for any
+        // fingerprint the node serves, which turns every published address into
+        // an oracle: hold two invites, ask one destination for the other's card,
+        // and a "yes" says the two are served by the same server. That is the
+        // co-location signal this protocol treats as a critical fault. The
+        // capability the query carries does not help - it is the account-wide
+        // view, and it rides in the routing block of every message a contact
+        // ever receives.
+        //
+        // Nothing legitimate is refused by this: a card is fetched by dialling
+        // the destination of the very account whose card is wanted.
         if (getCard) {
             const Bytes queryBytes = fromBase64(header.at("sealed").get<std::string>());
             const CardFetchQuery query = cardFetchQueryFromJson(nlohmann::json::parse(queryBytes));
+            if (!owner.empty() && query.fingerprint != owner) {
+                writeReply(
+                    nlohmann::json({{"ok", false}, {"errorCode", "CARD_UNKNOWN"}}).dump());
+                return;
+            }
             const std::optional<Bytes> cardDer = getCard(query.fingerprint, query.view);
             if (cardDer) {
                 writeReply(

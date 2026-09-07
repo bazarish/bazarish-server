@@ -276,14 +276,12 @@ int main()
         }
     }
 
-    // The reseed is reachable under the secret prefix, unauthenticated - the
-    // client has no I2P transport yet when it asks for it.
+    // The reseed is not forwarded: it moved to the server's ops socket and the
+    // portal, and a path that answers nothing has no business in the allow-list.
     {
-        const http::ClientResponse result = call(facadePort, "GET", "/s/secret123/v1/messaging/reseed");
-        CHECK(result.status == 200);
-        const nlohmann::json reply = nlohmann::json::parse(result.body);
-        CHECK(reply.at("backend") == "messaging");
-        CHECK(reply.at("path") == "/v1/messaging/reseed");
+        const http::ClientResponse result
+            = call(facadePort, "GET", "/s/secret123/v1/messaging/reseed");
+        CHECK(result.status == 404);
     }
 
     // The ops socket serves /healthz, and only to an operator-signed caller.

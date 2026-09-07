@@ -96,17 +96,17 @@ std::string pathOf(const std::string& target)
 // a message being fetched. That is the point: this is the least trusted piece of
 // the system, and it now holds nothing worth taking.
 //
-// The other two are public by nature and identical for every caller, so serving
-// them tells nobody anything: the signed server card, which is what lets a client
-// seal the tunnel in the first place, and the reseed archive, which is what a
-// client with no I2P yet bootstraps from and therefore cannot be behind I2P.
+// The other is public by nature and identical for every caller, so serving it
+// tells nobody anything: the signed server card, which is what lets a client seal
+// the tunnel in the first place. The reseed archive used to be forwarded here
+// too; it moved to the server's ops socket and the portal, and the path was left
+// standing in this list answering nothing.
 Backend routeOf(const std::string& method, const std::string& path)
 {
     if (method == "POST" && path == bazarish::tunnel::kTunnelPath) {
         return Backend::eMessaging;
     }
-    if (method == "GET"
-        && (path == bazarish::tunnel::kServerCardPath || path == "/v1/messaging/reseed")) {
+    if (method == "GET" && path == bazarish::tunnel::kServerCardPath) {
         return Backend::eMessaging;
     }
     return Backend::eNone;

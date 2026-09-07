@@ -129,7 +129,7 @@ int main()
     // registration into an account.
     {
         grants.grantSubscription(alice.fingerprint(), options.defaultQuotaBytes, now);
-        const Bytes card = ContactCard::issue(alice);
+        const Bytes card = ContactCard::issue(alice, now);
         const std::string body = nlohmann::json{{"card", toBase64(card)}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
             makeHeaders(alice, "POST", "/v1/account/card", body), body);
@@ -157,7 +157,7 @@ int main()
 
     // A client with no registration behind it is refused.
     {
-        const Bytes card = ContactCard::issue(mallory);
+        const Bytes card = ContactCard::issue(mallory, now);
         const std::string body = nlohmann::json{{"card", toBase64(card)}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
             makeHeaders(mallory, "POST", "/v1/account/card", body), body);
@@ -174,7 +174,7 @@ int main()
         const Bytes servingKey = Key::generateSealing().publicDer();
         CHECK(!grants.peekSubscription(alice.fingerprint()).has_value());
         const Bytes card
-            = ContactCard::issue(alice, dest, sealing.publicDer(), servingKey);
+            = ContactCard::issue(alice, now + 1, dest, sealing.publicDer(), servingKey);
         const std::string body = nlohmann::json{{"card", toBase64(card)}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
             makeHeaders(alice, "POST", "/v1/account/card", body), body);
@@ -194,6 +194,45 @@ int main()
             fromBase64(nlohmann::json::parse(looked.body).at("card").get<std::string>()));
         CHECK(fetched.dest == dest);
         CHECK(fetched.servingSealingKeyDer == servingKey);
+
+        // A card is published forwards only. An older one - a copy a second
+        // device kept - would otherwise put this account's routing back to what
+        // it used to be, with a valid signature and nobody the wiser.
+        {
+            const std::string oldDest
+                = "elkbeyqjykssca6o7qlbwgq4fr2hry7kw2ursn2sh3lt3acox6gq.b32.i2p";
+            const Bytes stale = ContactCard::issue(
+                alice, now, oldDest, sealing.publicDer(), servingKey);
+            const std::string staleBody = nlohmann::json{{"card", toBase64(stale)}}.dump();
+            CHECK(call(port, "POST", "/v1/account/card",
+                      makeHeaders(alice, "POST", "/v1/account/card", staleBody), staleBody)
+                      .status
+                == 409);
+            // Nor one of the same age: "newer" means newer, not "no older".
+            const Bytes sameAge = ContactCard::issue(
+                alice, now + 1, oldDest, sealing.publicDer(), servingKey);
+            const std::string sameBody = nlohmann::json{{"card", toBase64(sameAge)}}.dump();
+            CHECK(call(port, "POST", "/v1/account/card",
+                      makeHeaders(alice, "POST", "/v1/account/card", sameBody), sameBody)
+                      .status
+                == 409);
+            // And what is served is still the card that was published.
+            const http::ClientResponse again = call(port, "GET",
+                "/v1/account/card?user=" + alice.fingerprint() + "&view=" + view);
+            CHECK(ContactCard::verify(fromBase64(
+                      nlohmann::json::parse(again.body).at("card").get<std::string>()))
+                      .dest
+                == dest);
+
+            // A clock running ahead cannot publish a card no later one could beat.
+            const Bytes future = ContactCard::issue(alice, now + 4000, oldDest,
+                sealing.publicDer(), servingKey);
+            const std::string futureBody = nlohmann::json{{"card", toBase64(future)}}.dump();
+            CHECK(call(port, "POST", "/v1/account/card",
+                      makeHeaders(alice, "POST", "/v1/account/card", futureBody), futureBody)
+                      .status
+                == 400);
+        }
         CHECK(fetched.sealingPublicKeyDer == sealing.publicDer());
 
         // A wrong key and an unknown user are refused identically, so asking

@@ -847,6 +847,35 @@ void AccountApi::setupRoutes()
             const std::optional<GrantStore::SubscriptionGrant> grant
                 = grants_.peekSubscription(user);
             const std::optional<SubscriptionStore::Account> held = store_.getAccount(user);
+            // A card is only published forwards. Without this, a device that kept
+            // an old copy could republish it and quietly put the account's
+            // routing back to what it used to be - the signature would be valid,
+            // the card simply old, and nobody would see it happen.
+            if (held.has_value() && !held->card.empty()) {
+                try {
+                    if (const ContactCard previous = ContactCard::verify(held->card);
+                        card.issuedAt <= previous.issuedAt) {
+                        respondError(response, 409, ErrorCode::eDeliveryRejected,
+                            "this card is not newer than the one already published");
+                        return;
+                    }
+                } catch (const std::exception& error) {
+                    // What is held cannot be read - a card from before this field
+                    // existed, or a damaged row. It cannot be ordered against, so
+                    // it is replaced rather than allowed to block every future
+                    // publication, and that is said out loud.
+                    bazarish::log::warn("the card held for {} could not be read, replacing it: {}",
+                        bazarish::log::redact(user), error.what());
+                }
+            }
+            // A clock that is wrong forwards would otherwise publish a card no
+            // later one could ever beat. The same skew the request signatures
+            // allow is allowed here.
+            if (card.issuedAt > now + auth::kAuthFreshnessWindowSeconds) {
+                respondError(response, 400, ErrorCode::eDeliveryRejected,
+                    "this card is dated in the future - check the clock on that device");
+                return;
+            }
             std::uint64_t quota = 0;
             if (grant.has_value()) {
                 grants_.takeSubscription(user);  // consume the one-shot grant

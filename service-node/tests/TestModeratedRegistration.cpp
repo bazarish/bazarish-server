@@ -106,7 +106,7 @@ int main()
     {
         grants.grantSubscription(
             alice.fingerprint(), options.defaultQuotaBytes, now);
-        const Bytes card = ContactCard::issue(alice);
+        const Bytes card = ContactCard::issue(alice, now);
         const std::string body = nlohmann::json{{"card", toBase64(card)}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
             makeHeaders(alice, "POST", "/v1/account/card", body), body);

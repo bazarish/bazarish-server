@@ -63,10 +63,19 @@ int main()
     {
         PerUserDestinations dests(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
 
+        // Real transients, because what may be reused across a provision turns
+        // on the address they serve, and only a real blob has one. Two issued
+        // from one master are a renewal: same address, different blob.
+        const bazarish::i2p::Keys master = bazarish::i2p::Keys::generate();
+        const std::string transientA = toBase64(master.issueTransient(kNow + 1000).blob());
+        const std::string transientB = toBase64(master.issueTransient(kNow + 2000).blob());
+        const std::string movedAway
+            = toBase64(bazarish::i2p::Keys::generate().issueTransient(kNow + 1000).blob());
+
         // Provision persists the transient and registers the destination.
-        dests.provision(alice, "transient-blob-A", kNow + 1000);
+        dests.provision(alice, transientA, kNow + 1000);
         CHECK(std::filesystem::exists(aliceFile));
-        CHECK(readFile(aliceFile).find("transient-blob-A") != std::string::npos);
+        CHECK(readFile(aliceFile).find(transientA) != std::string::npos);
         CHECK(dests.size() == 1);
 
         // The destination has a serving sealing key, persisted and surfaced for
@@ -94,18 +103,33 @@ int main()
         CHECK(dests.stateFor("nobody", kNow).empty());
 
         // Same transient: a no-op (still one destination).
-        dests.provision(alice, "transient-blob-A", kNow + 1000);
+        dests.provision(alice, transientA, kNow + 1000);
         CHECK(dests.size() == 1);
 
-        // A different transient replaces it (file updated, still one destination),
-        // but the serving key is reused so the user's card stays valid.
-        dests.provision(alice, "transient-blob-B", kNow + 1000);
+        // A renewal - a fresh transient of the same master, so the same address.
+        // The file is updated and the keys are reused, or every contact holding
+        // this user's card would stop being able to write to them.
+        dests.provision(alice, transientB, kNow + 2000);
         CHECK(dests.size() == 1);
-        CHECK(readFile(aliceFile).find("transient-blob-B") != std::string::npos);
+        CHECK(readFile(aliceFile).find(transientB) != std::string::npos);
         CHECK(dests.servingKeyFor(alice)->publicDer() == servingA);
-        // The signing key is reused across renewals too (a stable signer for the
-        // dest), exactly like the serving sealing key.
         CHECK(fieldOf(aliceFile, "signingKey") == signingA);
+
+        // Moving to another master is not a renewal: the address changes, the
+        // old one is being left behind, and the keys must not follow it there.
+        // The signature on a delivery confirmation is public - it goes back to
+        // anyone who delivered, a stranger whose contact request was merely
+        // stored included - so a signer carried across would let them prove the
+        // new address is the same person.
+        dests.provision(alice, movedAway, kNow + 1000);
+        CHECK(dests.size() == 1);
+        CHECK(dests.servingKeyFor(alice)->publicDer() != servingA);
+        CHECK(fieldOf(aliceFile, "signingKey") != signingA);
+
+        // And back to the address it started on, which is a fresh start of its
+        // own: nothing of the abandoned one comes back either.
+        dests.provision(alice, transientA, kNow + 1000);
+        CHECK(fieldOf(aliceFile, "signingKey") != signingA);
 
         // Revoke forgets the destination and deletes the persisted transient.
         dests.revoke(alice);

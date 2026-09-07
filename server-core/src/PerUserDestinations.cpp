@@ -319,6 +319,42 @@ void PerUserDestinations::teardownLocked(const std::string& userFp)
     dests_.erase(it);
 }
 
+namespace {
+
+// The address a transient serves, which is the master's and therefore the same
+// for every transient reissued from it. Empty when the blob will not parse -
+// then nothing is reused, which is the safe way to be wrong.
+std::string addressOfTransient(const std::string& transientB64)
+{
+    try {
+        return bazarish::i2p::Keys::fromBlob(fromBase64(transientB64)).base32();
+    } catch (const std::exception&) {
+        // error-hiding: allowed - an unparseable blob is answered by minting
+        // fresh keys, which the caller does when this is empty.
+        return {};
+    }
+}
+
+// What the persisted record says this user's address was, or empty.
+std::string recordedAddress(const std::filesystem::path& path)
+{
+    std::ifstream in(path, std::ios::binary);
+    const std::string text(
+        (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (text.empty()) {
+        return {};
+    }
+    try {
+        return nlohmann::json::parse(text).value("address", std::string());
+    } catch (const std::exception&) {
+        // error-hiding: allowed - a record that will not parse is treated as no
+        // record, and the keys are minted afresh a few lines below.
+        return {};
+    }
+}
+
+}  // namespace
+
 void PerUserDestinations::provision(const std::string& userFp, const std::string& transientB64,
     const std::int64_t expiresUnix)
 {
@@ -328,19 +364,32 @@ void PerUserDestinations::provision(const std::string& userFp, const std::string
     if (existing != dests_.end() && existing->second->transientB64 == transientB64) {
         return;  // already serving this exact transient
     }
-    // Reuse a previously-issued serving sealing key and federation signing key
-    // (from the running destination, else the persisted record) so the user's
-    // contact card and signer stay stable across renewals; mint fresh ones only
-    // for a brand-new destination.
+    // Reuse a previously-issued serving sealing key and federation signing key so
+    // the user's contact card and signer stay stable across renewals - but only
+    // across renewals. Keyed on the address rather than on the user: a transient
+    // reissued from the same master keeps the address, and everything a contact
+    // holds must go on working; a new master is a new address, and the old one is
+    // being left behind.
+    //
+    // Carried across that boundary, the signer would undo the leaving. The
+    // signature on a delivery confirmation is public - it goes back to whoever
+    // delivered, including a stranger whose contact request was merely stored -
+    // so anyone who kept one could prove the new address is the same person.
+    const std::string address = addressOfTransient(transientB64);
+    const bool sameAddress = !address.empty()
+        && ((existing != dests_.end()
+                && addressOfTransient(existing->second->transientB64) == address)
+            || recordedAddress(pathFor(userFp)) == address);
+
     std::string sealingKeyPem;
     std::string signingKeyPem;
-    if (existing != dests_.end() && existing->second->sealingKey) {
+    if (sameAddress && existing != dests_.end() && existing->second->sealingKey) {
         sealingKeyPem = existing->second->sealingKey->privatePem();
     }
-    if (existing != dests_.end() && existing->second->signingKey) {
+    if (sameAddress && existing != dests_.end() && existing->second->signingKey) {
         signingKeyPem = existing->second->signingKey->privatePem();
     }
-    if (sealingKeyPem.empty() || signingKeyPem.empty()) {
+    if (sameAddress && (sealingKeyPem.empty() || signingKeyPem.empty())) {
         std::ifstream in(pathFor(userFp), std::ios::binary);
         const std::string text(
             (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
@@ -371,7 +420,7 @@ void PerUserDestinations::provision(const std::string& userFp, const std::string
     std::error_code ec;
     std::filesystem::create_directories(destsDir(), ec);
     const nlohmann::json record = {{"transient", transientB64}, {"expiresUnix", expiresUnix},
-        {"sealingKey", sealingKeyPem}, {"signingKey", signingKeyPem}};
+        {"address", address}, {"sealingKey", sealingKeyPem}, {"signingKey", signingKeyPem}};
     const std::string text = record.dump();
     {
         std::ofstream out(pathFor(userFp), std::ios::binary | std::ios::trunc);

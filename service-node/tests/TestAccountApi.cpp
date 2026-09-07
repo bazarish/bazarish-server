@@ -76,8 +76,8 @@ int main()
     const Key serverSealing = Key::generateSealing();
     const std::string serverFp = serverIdentity.fingerprint();
     const std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
-    const Bytes cardDer = ServerCard::issue(
-        serverIdentity, {"i2p:exampledest"}, Key::fromPublicDer(serverSealing.publicDer()), now);
+    const Bytes cardDer
+        = ServerCard::issue(serverIdentity, Key::fromPublicDer(serverSealing.publicDer()), now);
 
     AccountApiOptions options;
     options.serverFingerprint = serverFp;

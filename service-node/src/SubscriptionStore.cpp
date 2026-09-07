@@ -127,7 +127,7 @@ std::vector<SubscriptionStore::Account> SubscriptionStore::allAccounts() const
             out.push_back(accountFromJson(readJsonFile(entry.path())));
         } catch (const std::exception& error) {
             bazarish::log::warn("account record {} unreadable: {}",
-                entry.path().filename().string(), error.what());
+                bazarish::log::redact(entry.path().filename().string()), error.what());
         }
     }
     return out;

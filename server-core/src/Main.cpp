@@ -246,7 +246,6 @@ int main(const int argc, const char** argv)
     // Declared before `federation` so it OUTLIVES it (federation holds a raw pointer
     // to the pool); the router, declared earlier, outlives the pool's warmer thread.
     std::unique_ptr<bazarish::server::PerUserDestinations> perUserDests;
-    std::vector<std::string> endpoints;
     if (enableI2p) {
         bazarish::log::info("starting embedded I2P router (building tunnels)...");
         // The embedded router (server role: relays transit). State under <state>/i2p.
@@ -339,7 +338,7 @@ int main(const int argc, const char** argv)
     // users are reached at their own destinations, and the way in for clients is
     // the facade, whose addresses live in the server descriptor.
     const bazarish::Bytes card = bazarish::ServerCard::issue(
-        identity, endpoints, bazarish::Key::fromPublicDer(sealing.publicDer()), nowSeconds());
+        identity, bazarish::Key::fromPublicDer(sealing.publicDer()), nowSeconds());
     {
         std::ofstream out(stateDir / "server-card.der", std::ios::binary | std::ios::trunc);
         out.write(reinterpret_cast<const char*>(card.data()),

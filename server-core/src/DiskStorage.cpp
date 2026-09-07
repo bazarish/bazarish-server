@@ -3,7 +3,7 @@
 
 #include <bazarish/Address.hpp>
 #include <bazarish/Log.hpp>
-#include <bazarish/Tokens.hpp>
+#include <bazarish/Pass.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -11,6 +11,7 @@
 #include <cctype>
 #include <chrono>
 #include <fstream>
+#include <iterator>
 #include <stdexcept>
 #include <system_error>
 
@@ -90,17 +91,8 @@ nlohmann::json readJsonFile(const fs::path& path)
 
 namespace {
 
-// What this server writes into a user's token directory: the token in hex, and
-// nothing else.
-bool isTokenFileName(const std::string& name)
-{
-    if (name.size() != bazarish::kDeliveryTokenSize * 2) {
-        return false;
-    }
-    return std::all_of(name.begin(), name.end(), [](const unsigned char c) {
-        return std::isxdigit(c) != 0;
-    });
-}
+// How long one mailbox's contact-request window lasts.
+constexpr std::int64_t kContactWindowSeconds = 60;
 
 }  // namespace
 
@@ -155,64 +147,58 @@ bool DiskStorage::isClientRegistered(const std::string& user, const std::string&
     return fs::exists(userDir(user) / "clients" / clientId);
 }
 
-void DiskStorage::registerTokens(const std::string& user, const std::vector<Bytes>& tokens)
+void DiskStorage::registerPasses(const std::string& user, const std::vector<Bytes>& handles)
 {
     requireUser(user);
+    for (const Bytes& handle : handles) {
+        if (handle.size() != bazarish::kDeliveryPassSize) {
+            throw std::invalid_argument("delivery pass handle has wrong size");
+        }
+    }
     const std::lock_guard<std::mutex> lock(mutex_);
-    const fs::path dir = userDir(user) / "tokens";
+    const fs::path dir = userDir(user) / "passes";
     fs::create_directories(dir);
-    for (const Bytes& token : tokens) {
-        writeFileAtomic(dir / toHex(token), "", 0);
+    for (const Bytes& handle : handles) {
+        // Registering one that is already held is how an account gives a
+        // correspondent their pass back after a block, so this must not care.
+        writeFileAtomic(dir / toHex(handle), "", 0);
     }
 }
 
-bool DiskStorage::consumeToken(const std::string& user, const Bytes& token)
+bool DiskStorage::hasPass(const std::string& user, const Bytes& handle)
 {
     requireUser(user);
+    // A handle of the wrong size would name something other than a pass - an
+    // empty one names the directory itself, which exists.
+    if (handle.size() != bazarish::kDeliveryPassSize) {
+        return false;
+    }
     const std::lock_guard<std::mutex> lock(mutex_);
     std::error_code error;
-    // remove() returns true only when the entry existed: exactly the
-    // consume-once semantics one-time tokens need.
-    return fs::remove(userDir(user) / "tokens" / toHex(token), error) && !error;
+    return fs::exists(userDir(user) / "passes" / toHex(handle), error) && !error;
 }
 
-
-std::size_t DiskStorage::tokenCount(const std::string& user)
+std::size_t DiskStorage::passCount(const std::string& user)
 {
     requireUser(user);
     const std::lock_guard<std::mutex> lock(mutex_);
-    return listDirectoryNames(userDir(user) / "tokens").size();
+    return listDirectoryNames(userDir(user) / "passes").size();
 }
 
-std::size_t DiskStorage::revokeTokens(const std::string& user, const Bytes& mask)
+std::size_t DiskStorage::revokePasses(const std::string& user, const std::vector<Bytes>& handles)
 {
     requireUser(user);
     const std::lock_guard<std::mutex> lock(mutex_);
-    const fs::path dir = userDir(user) / "tokens";
+    const fs::path dir = userDir(user) / "passes";
     std::size_t dropped = 0;
-    std::size_t foreign = 0;
-    for (const std::string& name : listDirectoryNames(dir)) {
-        // A name that is not a token was not written by this server. It is left
-        // alone rather than guessed at - and counted, because something else
-        // writing into a mailbox's token directory is worth hearing about. The
-        // shape is checked rather than tried, so a strange name is a fact here
-        // and not an exception to swallow.
-        if (!isTokenFileName(name)) {
-            ++foreign;
-            continue;
-        }
-        const Bytes token = fromHex(name);
-        if (!deliveryTokenMatches(token, mask)) {
+    for (const Bytes& handle : handles) {
+        if (handle.size() != bazarish::kDeliveryPassSize) {
             continue;
         }
         std::error_code error;
-        if (fs::remove(dir / name, error) && !error) {
+        if (fs::remove(dir / toHex(handle), error) && !error) {
             ++dropped;
         }
-    }
-    if (foreign > 0) {
-        bazarish::log::warn("{} entr(ies) in the token directory of {} are not tokens",
-            foreign, bazarish::log::redact(user));
     }
     return dropped;
 }
@@ -290,10 +276,9 @@ bool DiskStorage::allowContactRequest(
     const std::string& user, const std::int64_t now, const std::size_t maxPerMinute)
 {
     requireUser(user);
-    constexpr std::int64_t kWindowSeconds = 60;
     const std::lock_guard<std::mutex> lock(mutex_);
     Window& window = contactWindows_[user];
-    if (now - window.start >= kWindowSeconds) {
+    if (now - window.start >= kContactWindowSeconds) {
         window.start = now;
         window.count = 0;
     }
@@ -460,38 +445,15 @@ void DiskStorage::purgeExpired(const std::int64_t receivedBefore)
         }
         (void)user;
     }
-}
-
-void DiskStorage::purgeTokensRegisteredBefore(const std::int64_t registeredBefore)
-{
-    std::vector<fs::path> users;
+    // The contact-request windows are in memory and nothing else drops them, so
+    // a node accumulates one per user that ever asked. They are swept on the
+    // blob horizon rather than on their own minute: this runs hourly, and a
+    // window that old cannot be counting anything.
     {
         const std::lock_guard<std::mutex> lock(mutex_);
-        if (!fs::exists(root_ / "users")) {
-            return;
-        }
-        for (const fs::directory_entry& userEntry : fs::directory_iterator(root_ / "users")) {
-            users.push_back(userEntry.path());
-        }
-    }
-    for (const fs::path& userPath : users) {
-        const std::lock_guard<std::mutex> lock(mutex_);
-        const fs::directory_entry userEntry(userPath);
-        const fs::path tokens = userEntry.path() / "tokens";
-        for (const std::string& hash : listDirectoryNames(tokens)) {
-            std::error_code ec;
-            // A token hash is an empty file, so its write time is when it was
-            // registered - there is nothing inside to read a date from.
-            const fs::file_time_type written = fs::last_write_time(tokens / hash, ec);
-            if (ec) {
-                continue;
-            }
-            const auto age = std::chrono::duration_cast<std::chrono::seconds>(
-                fs::file_time_type::clock::now() - written);
-            if (static_cast<std::int64_t>(age.count()) > registeredBefore) {
-                std::error_code ignored;
-                fs::remove(tokens / hash, ignored);
-            }
+        for (auto entry = contactWindows_.begin(); entry != contactWindows_.end();) {
+            entry = entry->second.start < receivedBefore ? contactWindows_.erase(entry)
+                                                         : std::next(entry);
         }
     }
 }

@@ -7,7 +7,7 @@
 #include <bazarish/Cms.hpp>
 #include <bazarish/Errors.hpp>
 #include <bazarish/Limits.hpp>
-#include <bazarish/Tokens.hpp>
+#include <bazarish/Pass.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -17,9 +17,9 @@ namespace bazarish::server {
 
 namespace {
 
-// How much of a refused delivery token is written down: enough to match against
+// How much of a refused delivery pass is written down: enough to match against
 // what a mailbox has registered, not enough to be one.
-constexpr std::size_t kRefusedTokenPrefixChars = 12;
+constexpr std::size_t kRefusedPassPrefixChars = 12;
 
 }  // namespace
 
@@ -59,7 +59,7 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
     };
 
     // Anti-enumeration: every structural or admission failure below
-    // collapses into DELIVERY_REJECTED; only token holders see the
+    // collapses into DELIVERY_REJECTED; only pass holders see the
     // detailed quota errors.
     std::string mailbox;
     // Delivery class: the server-visible admission selector. A closed set of
@@ -67,7 +67,7 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
     // here (see docs Messages.md).
     std::string deliveryClass;
     std::string deliveryId;
-    std::vector<Bytes> tokens;
+    Bytes pass;
     try {
         const Bytes plain = cms::unseal(sealed, sealingKey);
         const nlohmann::json inner = nlohmann::json::parse(plain.begin(), plain.end());
@@ -75,9 +75,7 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
         mailbox = inner.at("mailbox").get<std::string>();
         deliveryId = inner.at("deliveryId").get<std::string>();
         if (deliveryClass == kContentDeliveryClass) {
-            for (const auto& entry : inner.at("tokens")) {
-                tokens.push_back(fromBase64(entry.get<std::string>()));
-            }
+            pass = fromBase64(inner.at("pass").get<std::string>());
         } else if (deliveryClass != kContactDeliveryClass) {
             return fail(ErrorCode::eDeliveryRejected, "unknown delivery class");
         }
@@ -131,24 +129,23 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
         return fail(ErrorCode::eDeliveryRejected, "delivery rejected");
     }
 
-    // Dedup before anything else: a retry of a delivered message must
-    // succeed without consuming a second token.
+    // Dedup before anything else: a retry of a delivered message must succeed
+    // without being admitted a second time.
     if (storage_.hasBlob(mailbox, deliveryId)) {
         return delivered();
     }
 
     // Replay protection: a deliveryId admitted earlier - even one since fetched,
-    // acked and swept from the mailbox - must not be re-admitted. The one-time
-    // token already guards content replays, but a tokenless contact request has
-    // no token to spend, so the seen-cache is what closes that gap. Idempotent
-    // success: no token spend, no second store.
+    // acked and swept from the mailbox - must not be re-admitted. A pass is not
+    // spent, so this is what stops an envelope being offered twice, on both the
+    // admitted and the tokenless path. Idempotent success: no second store.
     if (storage_.hasSeen(mailbox, deliveryId)) {
         return delivered();
     }
 
     // One message carries a message. Anything larger is a file, which travels
     // client to client and never enters a mailbox - so the limit is the
-    // protocol's, not an operator's, and it is checked before any token is spent.
+    // protocol's, not an operator's, and it is checked before admission.
     if (payload.size() > kMaxMessagePayloadBytes) {
         return fail(ErrorCode::eMessageTooLarge,
             "a message may carry at most " + std::to_string(kMaxMessagePayloadBytes) + " bytes");
@@ -159,52 +156,21 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
             return fail(ErrorCode::eContactRequestTooLarge,
                 "contact request exceeds " + std::to_string(kMaxContactRequestBytes) + " bytes");
         }
-    } else {
-        // A message is admitted by as many tokens as it weighs, one per
-        // kBytesPerDeliveryToken. The count is computed here rather than taken
-        // from the sender: what the envelope says it is paying is a claim, and
-        // this is the side that decides the price.
-        const std::size_t due = bazarish::tokensForPayload(payload.size());
-        if (tokens.size() != due) {
-            bazarish::log::debug("delivery refused: {} token(s) presented for a payload that"
-                                 " costs {}, id {}",
-                tokens.size(), due, deliveryId.substr(0, kRefusedTokenPrefixChars));
-            return fail(ErrorCode::eDeliveryRejected, "delivery rejected");
-        }
-        std::vector<Bytes> spent;
-        for (const Bytes& token : tokens) {
-            if (token.size() != kDeliveryTokenSize || !storage_.consumeToken(mailbox, token)) {
-                // The first bytes of the token go with it: it is refused and
-                // therefore spent or never valid, and without a handle on WHICH
-                // token was presented an operator cannot tell a stale copy from
-                // anything else. What was already taken goes back: this delivery
-                // is not happening, and it must not cost the sender the tokens
-                // that were good.
-                bazarish::log::debug("delivery refused: {} ({}...) for {} on {}, id {}",
-                    token.size() != kDeliveryTokenSize
-                        ? "malformed delivery token"
-                        : "delivery token not accepted (unknown or already spent)",
-                    toHex(token).substr(0, kRefusedTokenPrefixChars),
-                    bazarish::log::redact(mailbox),
-                    owner.empty() ? std::string("the server's own address")
-                                  : bazarish::log::redact(owner),
-                    deliveryId.substr(0, kRefusedTokenPrefixChars));
-                if (!spent.empty()) {
-                    storage_.registerTokens(mailbox, spent);
-                }
-                return fail(ErrorCode::eDeliveryRejected, "delivery rejected");
-            }
-            spent.push_back(token);
-        }
+    } else if (!storage_.hasPass(mailbox, sha256(pass))) {
+        // The pass is presented; what the mailbox holds is its hash. A pass is
+        // not spent, so there is nothing to take here and nothing to give back
+        // when the store below refuses: presenting it is the whole of admission.
+        bazarish::log::debug("delivery refused: pass {}... unknown for {} on {}, id {}",
+            toHex(pass).substr(0, kRefusedPassPrefixChars), bazarish::log::redact(mailbox),
+            owner.empty() ? std::string("the server's own address") : bazarish::log::redact(owner),
+            deliveryId.substr(0, kRefusedPassPrefixChars));
+        return fail(ErrorCode::eDeliveryRejected, "delivery rejected");
     }
 
     const Storage::PutResult result = storage_.putBlob(mailbox, deliveryId, payload, deliveryClass,
         now, storage_.userQuota(mailbox, options_.defaultQuotaBytes));
     if (result == Storage::PutResult::eQuotaExceeded) {
         if (deliveryClass == "content") {
-            // The store did not happen: restore the tokens so the sender
-            // can retry after the recipient frees space.
-            storage_.registerTokens(mailbox, tokens);
             return fail(ErrorCode::eStorageFull, "recipient storage quota is exhausted");
         }
         bazarish::log::debug("delivery refused: mailbox is full and this is not content");

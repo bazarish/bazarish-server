@@ -8,7 +8,7 @@
 #include <bazarish/Log.hpp>
 #include <bazarish/Cms.hpp>
 #include <bazarish/Limits.hpp>
-#include <bazarish/Tokens.hpp>
+#include <bazarish/Pass.hpp>
 
 #include <bazarish/HttpClient.hpp>
 #include <nlohmann/json.hpp>
@@ -90,6 +90,9 @@ Bytes sealEnvelope(const Key& serverSealingPublic, const nlohmann::json& inner)
 
 // The engine takes unix seconds; nothing in this test depends on the wall clock.
 constexpr std::int64_t kNow = 1780000000;
+// A payload well past anything a line of text weighs, to show that weight has no
+// price of its own any more.
+constexpr std::size_t kHeavyPayloadBytes = 64 * 1024;
 
 int main()
 {
@@ -186,59 +189,64 @@ int main()
         CHECK(result.status == 200);
     }
 
-    // Messaging endpoints demand a registered client ID.
-    {
-        const std::string body = nlohmann::json{{"tokens", nlohmann::json::array()}}.dump();
-        const http::ClientResponse result = call(port, "POST", "/v1/messaging/tokens",
-            makeHeaders(alice, "POST", "/v1/messaging/tokens", body, "unknowndev"), body);
-        CHECK(result.status == 403);
-        CHECK(nlohmann::json::parse(result.body).at("error").at("code")
-            == "CLIENT_UNREGISTERED");
-    }
-
-    // Alice registers two one-time tokens, minted under one correspondent's mask.
+    // --- Delivery passes ---
     const Bytes aliceSecret = randomBytes(kDeliverySecretSize);
-    const Bytes forBob = deliveryTokenMask(aliceSecret, std::string(52, 'b'));
-    const Bytes token1 = generateDeliveryToken(forBob);
-    const Bytes token2 = generateDeliveryToken(forBob);
+    const Bytes passForBob = deliveryPass(aliceSecret, std::string(52, 'b'));
+    const Bytes handleForBob = deliveryPassHandle(passForBob);
     {
-        const std::string body = nlohmann::json{
-            {"tokens", {toBase64(token1), toBase64(token2)}},
-        }.dump();
-        const http::ClientResponse result = call(port, "POST", "/v1/messaging/tokens",
-            makeHeaders(alice, "POST", "/v1/messaging/tokens", body, "alicedev"), body);
+        const std::string body
+            = nlohmann::json{{"passes", {toBase64(handleForBob)}}}.dump();
+        const http::ClientResponse result = call(port, "POST", "/v1/messaging/passes",
+            makeHeaders(alice, "POST", "/v1/messaging/passes", body, "alicedev"), body);
         CHECK(result.status == 200);
+        CHECK(nlohmann::json::parse(result.body).at("held") == 1);
     }
-    CHECK(storage.tokenCount(alice.fingerprint()) == 2);
-
-    // Revoking one correspondent: Alice registers a second batch under Carol's
-    // mask, asks for Bob's to go, and only Bob's do. The request answers before
-    // the sweep runs, so the count is waited for rather than asserted at once.
+    // Registering it again is a block being lifted, not a second pass.
     {
-        const Bytes forCarol = deliveryTokenMask(aliceSecret, std::string(52, 'c'));
-        const Bytes carolToken = generateDeliveryToken(forCarol);
-        storage.registerTokens(alice.fingerprint(), {carolToken});
-        CHECK(storage.tokenCount(alice.fingerprint()) == 3);
-
-        const std::string body = nlohmann::json{{"mask", toBase64(forBob)}}.dump();
-        const http::ClientResponse result = call(port, "POST", "/v1/messaging/tokens/revoke",
-            makeHeaders(alice, "POST", "/v1/messaging/tokens/revoke", body, "alicedev"), body);
+        const std::string body
+            = nlohmann::json{{"passes", {toBase64(handleForBob)}}}.dump();
+        const http::ClientResponse result = call(port, "POST", "/v1/messaging/passes",
+            makeHeaders(alice, "POST", "/v1/messaging/passes", body, "alicedev"), body);
         CHECK(result.status == 200);
-        CHECK(nlohmann::json::parse(result.body).at("queued") == true);
+        CHECK(nlohmann::json::parse(result.body).at("held") == 1);
+    }
+    CHECK(storage.passCount(alice.fingerprint()) == 1);
+    CHECK(storage.hasPass(alice.fingerprint(), handleForBob));
 
-        // The node's own thread does the work; it has a second to get to it.
-        constexpr int kWaitMs = 1000;
-        constexpr int kStepMs = 10;
-        for (int waited = 0; waited < kWaitMs && storage.tokenCount(alice.fingerprint()) > 1;
-            waited += kStepMs) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(kStepMs));
+    // An unregistered device may not touch them either.
+    {
+        const std::string body = nlohmann::json{{"passes", nlohmann::json::array()}}.dump();
+        const http::ClientResponse result = call(port, "POST", "/v1/messaging/passes",
+            makeHeaders(alice, "POST", "/v1/messaging/passes", body, "unknowndev"), body);
+        CHECK(result.status == 403);
+    }
+    // More than one request may carry is refused rather than written.
+    {
+        nlohmann::json many = nlohmann::json::array();
+        for (std::size_t i = 0; i <= kMaxPassesPerRequest; ++i) {
+            many.push_back(toBase64(randomBytes(kDeliveryPassSize)));
         }
-        CHECK(storage.tokenCount(alice.fingerprint()) == 1);
-        // What survived is Carol's, and it still spends.
-        CHECK(storage.consumeToken(alice.fingerprint(), carolToken));
-        // Bob's tokens are gone: re-register them so the delivery below still has
-        // one to spend.
-        storage.registerTokens(alice.fingerprint(), {token1, token2});
+        const std::string body = nlohmann::json{{"passes", many}}.dump();
+        const http::ClientResponse result = call(port, "POST", "/v1/messaging/passes",
+            makeHeaders(alice, "POST", "/v1/messaging/passes", body, "alicedev"), body);
+        CHECK(result.status == 400);
+        CHECK(storage.passCount(alice.fingerprint()) == 1);
+    }
+    // Revocation is exact, immediate, and says what it did - no sweep to wait for.
+    {
+        const Bytes handleForCarol
+            = deliveryPassHandle(deliveryPass(aliceSecret, std::string(52, 'c')));
+        storage.registerPasses(alice.fingerprint(), {handleForCarol});
+        const std::string body
+            = nlohmann::json{{"passes", {toBase64(handleForBob)}}}.dump();
+        const http::ClientResponse result = call(port, "POST", "/v1/messaging/passes/revoke",
+            makeHeaders(alice, "POST", "/v1/messaging/passes/revoke", body, "alicedev"), body);
+        CHECK(result.status == 200);
+        CHECK(nlohmann::json::parse(result.body).at("revoked") == 1);
+        CHECK(!storage.hasPass(alice.fingerprint(), handleForBob));
+        CHECK(storage.hasPass(alice.fingerprint(), handleForCarol));
+        // Given back, so the deliveries below have their way in.
+        storage.registerPasses(alice.fingerprint(), {handleForBob});
     }
 
     // A delivery into Alice's mailbox, as her correspondent's client makes it:
@@ -248,44 +256,24 @@ int main()
     const Bytes payload = {'e', '2', 'e', '-', 'b', 'l', 'o', 'b'};
     const Bytes envelope = sealEnvelope(sealingPublic,
         {{"class", "content"}, {"mailbox", alice.fingerprint()},
-            {"tokens", nlohmann::json::array({toBase64(token1)})}, {"deliveryId", "msg-1"}});
+            {"pass", toBase64(passForBob)}, {"deliveryId", "msg-1"}});
     const Key engineSealing = Key::fromPrivatePem(serverSealing.privatePem());
     CHECK(engine.deliver(envelope, payload, kNow, engineSealing, alice.fingerprint()).delivered);
-    CHECK(storage.tokenCount(alice.fingerprint()) == 1);
+    CHECK(storage.passCount(alice.fingerprint()) == 2);
 
-    // A message is admitted by as many tokens as it weighs. One token buys
-    // kBytesPerDeliveryToken; a payload over that costs two, and presenting one
-    // for it is refused - with the token that was presented left where it was, so
-    // a sender that got the count wrong is not charged for the attempt.
+    // Weight no longer has a price: one pass admits a message of any legal size,
+    // and the only thing a big one still meets is the mailbox's own room.
     {
-        const Bytes heavy(kBytesPerDeliveryToken + 1, 'h');
-        CHECK(tokensForPayload(heavy.size()) == 2);
-        // The mailbox in this test is deliberately tiny, and what is being
-        // measured here is the price rather than the room: give it space for
-        // exactly this one message.
+        const Bytes heavy(kHeavyPayloadBytes, 'h');
         const std::uint64_t quotaBytes = storage.userQuota(alice.fingerprint(), 1024);
         storage.setUserQuota(alice.fingerprint(), heavy.size() * 2);
-        // Two of its own, so what the rest of this test holds is left alone.
-        const Bytes heavyToken1 = randomBytes(kDeliveryTokenSize);
-        const Bytes heavyToken2 = randomBytes(kDeliveryTokenSize);
-        storage.registerTokens(alice.fingerprint(), {heavyToken1, heavyToken2});
-        const std::size_t before = storage.tokenCount(alice.fingerprint());
-
-        const Bytes underpaid = sealEnvelope(sealingPublic,
-            {{"class", "content"}, {"mailbox", alice.fingerprint()},
-                {"tokens", nlohmann::json::array({toBase64(heavyToken1)})},
-                {"deliveryId", "msg-heavy"}});
-        CHECK(!engine.deliver(underpaid, heavy, kNow, engineSealing, alice.fingerprint())
-                   .delivered);
-        // Refused before anything was taken: the count is checked first.
-        CHECK(storage.tokenCount(alice.fingerprint()) == before);
+        const std::size_t before = storage.passCount(alice.fingerprint());
 
         const Bytes paid = sealEnvelope(sealingPublic,
             {{"class", "content"}, {"mailbox", alice.fingerprint()},
-                {"tokens", nlohmann::json::array({toBase64(heavyToken1), toBase64(heavyToken2)})},
-                {"deliveryId", "msg-heavy"}});
+                {"pass", toBase64(passForBob)}, {"deliveryId", "msg-heavy"}});
         CHECK(engine.deliver(paid, heavy, kNow, engineSealing, alice.fingerprint()).delivered);
-        CHECK(storage.tokenCount(alice.fingerprint()) == before - 2);
+        CHECK(storage.passCount(alice.fingerprint()) == before);
         // And it leaves the mailbox as it found it for the rest of this test: the
         // heavy message taken back out and the quota put back.
         storage.ackBlob(alice.fingerprint(), "msg-heavy", "alicedev");
@@ -469,8 +457,7 @@ int main()
         CHECK(engine
                   .deliver(sealEnvelope(sealingPublic,
                                {{"class", "content"}, {"mailbox", alice.fingerprint()},
-                                   {"tokens", nlohmann::json::array({toBase64(token2)})},
-                                   {"deliveryId", "msg-last"}}),
+                                   {"pass", toBase64(passForBob)}, {"deliveryId", "msg-last"}}),
                       payload, kNow, engineSealing, alice.fingerprint())
                   .delivered);
         CHECK(storage.usage(alice.fingerprint()) > 0);
@@ -487,7 +474,7 @@ int main()
         CHECK(deleted.status == 200);
         CHECK(storage.usage(alice.fingerprint()) == 0);
         CHECK(storage.listClients(alice.fingerprint()).empty());
-        CHECK(storage.tokenCount(alice.fingerprint()) == 0);
+        CHECK(storage.passCount(alice.fingerprint()) == 0);
         // Idempotent: a fingerprint this server holds nothing for is already in
         // the state the deletion asks for.
         CHECK(call(port, "DELETE", path,

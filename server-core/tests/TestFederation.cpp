@@ -7,7 +7,7 @@
 #include <bazarish/Cms.hpp>
 #include <bazarish/Limits.hpp>
 #include <bazarish/Resolve.hpp>
-#include <bazarish/Tokens.hpp>
+#include <bazarish/Pass.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -97,12 +97,11 @@ struct SocketStream {
 
 // Builds a sealed envelope addressed to the recipient server's sealing key.
 Bytes makeSealed(const Key& sealingPublic, const std::string& kind,
-    const std::string& mailbox, const std::string& deliveryId, const Bytes& token)
+    const std::string& mailbox, const std::string& deliveryId, const Bytes& pass)
 {
     nlohmann::json inner = {{"class", kind}, {"mailbox", mailbox}, {"deliveryId", deliveryId}};
     if (kind == "content") {
-        // The payloads here are a few bytes, so one token is the whole price.
-        inner["tokens"] = nlohmann::json::array({toBase64(token)});
+        inner["pass"] = toBase64(pass);
     }
     const std::string text = inner.dump();
     return cms::seal(Bytes(text.begin(), text.end()), sealingPublic);
@@ -173,49 +172,59 @@ int main()
     DeliveryEngine engine(storage, toBase32(Bytes(32, 0xee)),
         Key::fromPrivatePem(sealing.privatePem()), DeliveryEngineOptions{});
 
-    const Bytes mask = deliveryTokenMask(randomBytes(kDeliverySecretSize), std::string(52, 'b'));
-    const Bytes token = generateDeliveryToken(mask);
-    storage.registerTokens(alice, {token});
+    const Bytes secret = randomBytes(kDeliverySecretSize);
+    const Bytes pass = deliveryPass(secret, std::string(52, 'b'));
+    storage.registerPasses(alice, {deliveryPassHandle(pass)});
 
     const Bytes payload = {'f', 'e', 'd', '-', 'b', 'l', 'o', 'b'};
 
-    // Successful federated message delivery consumes the token.
+    // Successful federated message delivery, with the pass still there after it:
+    // admission is not a payment.
     {
-        const Bytes sealed = makeSealed(sealingPublic, "content", alice, "fmsg-1", token);
+        const Bytes sealed = makeSealed(sealingPublic, "content", alice, "fmsg-1", pass);
         const FederationDeliverResult result = roundTrip(engine, sealed, payload);
         CHECK(result.delivered);
-        CHECK(storage.tokenCount(alice) == 0);
+        CHECK(storage.passCount(alice) == 1);
         CHECK(storage.getBlob(alice, "fmsg-1") == payload);
     }
 
-    // Retry is deduplicated and does not need a (now spent) token.
+    // The same pass admits the next message, and the one after that. This is the
+    // whole of what replaced counting.
+    for (int i = 0; i < 100; ++i) {
+        const Bytes sealed = makeSealed(
+            sealingPublic, "content", alice, "fmsg-again-" + std::to_string(i), pass);
+        CHECK(roundTrip(engine, sealed, payload).delivered);
+    }
+    CHECK(storage.passCount(alice) == 1);
+
+    // Retry is deduplicated.
     {
-        const Bytes sealed = makeSealed(sealingPublic, "content", alice, "fmsg-1", token);
+        const Bytes sealed = makeSealed(sealingPublic, "content", alice, "fmsg-1", pass);
         const FederationDeliverResult result = roundTrip(engine, sealed, payload);
         CHECK(result.delivered);
     }
 
-    // A bad token collapses into DELIVERY_REJECTED.
+    // A pass this mailbox never registered collapses into DELIVERY_REJECTED.
     {
-        const Bytes sealed
-            = makeSealed(sealingPublic, "content", alice, "fmsg-2", generateDeliveryToken(mask));
+        const Bytes sealed = makeSealed(sealingPublic, "content", alice, "fmsg-2",
+            deliveryPass(randomBytes(kDeliverySecretSize), std::string(52, 'b')));
         const FederationDeliverResult result = roundTrip(engine, sealed, payload);
         CHECK(!result.delivered);
         CHECK(result.errorCode == "DELIVERY_REJECTED");
     }
 
     // The protocol's own ceiling on one message, checked whatever the class and
-    // before any token is spent: anything larger is a file, and a file travels
-    // client to client instead of through a mailbox.
+    // before admission: anything larger is a file, and a file travels client to
+    // client instead of through a mailbox.
     {
-        const Bytes sealed = makeSealed(sealingPublic, "content", alice, "fmsg-huge", token);
+        const Bytes sealed = makeSealed(sealingPublic, "content", alice, "fmsg-huge", pass);
         const FederationDeliverResult result
             = roundTrip(engine, sealed, Bytes(bazarish::kMaxMessagePayloadBytes + 1, 0x55));
         CHECK(!result.delivered);
         CHECK(result.errorCode == "MESSAGE_TOO_LARGE");
     }
 
-    // A contact request carries no token, so what it may carry is bounded tighter
+    // A contact request presents nothing, so what it may carry is bounded tighter
     // and on its own destination, whose budget this case has to itself.
     {
         const std::string newcomer = toBase32(Bytes(32, 0x66));
@@ -226,18 +235,16 @@ int main()
         CHECK(result.errorCode == "CONTACT_REQUEST_TOO_LARGE");
     }
 
-    // A mailbox with no room refuses the delivery and gives the token back: the
-    // store did not happen, so the sender is not charged for it.
+    // A mailbox with no room refuses the delivery, and the pass is untouched by
+    // it: there was nothing to take and nothing to give back.
     {
-        const Bytes quotaToken = generateDeliveryToken(mask);
-        storage.registerTokens(alice, {quotaToken});
         storage.setUserQuota(alice, kTinyQuotaBytes);
-        const Bytes sealed = makeSealed(sealingPublic, "content", alice, "fmsg-full", quotaToken);
+        const Bytes sealed = makeSealed(sealingPublic, "content", alice, "fmsg-full", pass);
         const FederationDeliverResult result
             = roundTrip(engine, sealed, Bytes(kTinyQuotaBytes * 2, 0x77));
         CHECK(!result.delivered);
         CHECK(result.errorCode == "STORAGE_FULL");
-        CHECK(storage.tokenCount(alice) == 1);
+        CHECK(storage.passCount(alice) == 1);
         storage.setUserQuota(alice, kAmpleQuotaBytes);
     }
 
@@ -273,7 +280,7 @@ int main()
     {
         const Key wrong = Key::generateSealing();
         const Bytes sealed = makeSealed(Key::fromPublicDer(wrong.publicDer()), "content", alice,
-            "fmsg-3", token);
+            "fmsg-3", pass);
         const FederationDeliverResult result = roundTrip(engine, sealed, payload);
         CHECK(!result.delivered);
         CHECK(result.errorCode == "DELIVERY_REJECTED");
@@ -392,17 +399,14 @@ int main()
         CHECK(noFn.errorCode == "CARD_UNKNOWN");
     }
 
-    // Two more one-time tokens for the confirmation cases below.
-    const Bytes token2 = generateDeliveryToken(mask);
-    const Bytes token3 = generateDeliveryToken(mask);
-    storage.registerTokens(alice, {token2, token3});
+
 
     // The confirmation rides the reply, signed with the key of the destination
     // that took the delivery: the sender dials from a one-time address nobody can
     // dial back, so this is the only leg it can come home on.
     {
         const Key ackKey = Key::generateSigning();
-        const Bytes sealed = makeSealed(sealingPublic, "content", alice, "fmsg-signed", token2);
+        const Bytes sealed = makeSealed(sealingPublic, "content", alice, "fmsg-signed", pass);
         const FederationDeliverResult result
             = roundTrip(engine, sealed, payload, nullptr, std::string(), &ackKey);
         CHECK(result.delivered);
@@ -421,7 +425,7 @@ int main()
     // what an unsigned "delivered" is worth. The client's courier refuses it and
     // tries again, which is the only reading that cannot be forged.
     {
-        const Bytes sealed = makeSealed(sealingPublic, "content", alice, "fmsg-unsigned", token3);
+        const Bytes sealed = makeSealed(sealingPublic, "content", alice, "fmsg-unsigned", pass);
         const FederationDeliverResult result = roundTrip(engine, sealed, payload);
         CHECK(result.delivered);
         CHECK(result.signature.empty());

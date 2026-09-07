@@ -12,7 +12,7 @@
 #include <bazarish/Crypto.hpp>
 #include <bazarish/Errors.hpp>
 #include <bazarish/Limits.hpp>
-#include <bazarish/Tokens.hpp>
+#include <bazarish/Pass.hpp>
 #include <bazarish/Health.hpp>
 #include <bazarish/I2p.hpp>
 #include <bazarish/I2pAddress.hpp>
@@ -208,71 +208,25 @@ void HttpApi::stopWorkers()
     }
 }
 
-void HttpApi::queueRevocation(const std::string& user, Bytes mask)
-{
-    {
-        const std::lock_guard<std::mutex> lock(stopMutex_);
-        revocations_.push_back(Revocation{user, std::move(mask)});
-    }
-    stopCv_.notify_all();
-}
-
 void HttpApi::mailboxJanitorLoop()
 {
     // Hourly is ample for a day-scale TTL: a reclaimed blob is freed within an
     // hour of crossing the retention window.
     constexpr std::chrono::seconds kSweepInterval{3600};
-    // The first sweep is one interval away, as it always was.
-    std::chrono::steady_clock::time_point lastSweep = std::chrono::steady_clock::now();
     for (;;) {
-        std::vector<Revocation> asked;
-        bool sweepDue = false;
         {
             std::unique_lock<std::mutex> lock(stopMutex_);
-            // Sleep one interval, but return at once on shutdown and wake early
-            // for a revocation somebody asked for (notify_all on both).
-            const bool woken = stopCv_.wait_for(lock, kSweepInterval,
-                [this]() { return stopping_ || !revocations_.empty(); });
+            // Sleep one interval, but return at once on shutdown.
+            stopCv_.wait_for(lock, kSweepInterval, [this]() { return stopping_; });
             if (stopping_) {
                 return;
             }
-            asked.swap(revocations_);
-            // Due by the clock, not by what woke this thread. Deciding it from
-            // `woken` meant that on a node where somebody revokes tokens every
-            // hour the sweep never ran at all: mail and replay markers outlived
-            // their retention and the disk grew with them.
-            const std::chrono::steady_clock::time_point now
-                = std::chrono::steady_clock::now();
-            sweepDue = now - lastSweep >= kSweepInterval;
-            if (sweepDue) {
-                lastSweep = now;
-            }
-            (void)woken;
         }  // release stopMutex_ before touching storage (it takes its own lock)
-        // Revocations first: every one of them is a user who has just cut
-        // somebody off and expects it to hold.
-        for (const Revocation& one : asked) {
-            try {
-                const std::size_t dropped = storage_.revokeTokens(one.user, one.mask);
-                bazarish::log::info("revoked {} delivery token(s) for {}", dropped,
-                    bazarish::log::redact(one.user));
-            } catch (const std::exception& error) {
-                // Said out loud: the tokens are still spendable, and the user
-                // believes they are not.
-                bazarish::log::warn("token revocation failed for {}: {}",
-                    bazarish::log::redact(one.user), error.what());
-            }
-        }
-        if (!sweepDue || options_.mailboxRetentionSeconds <= 0) {
+        if (options_.mailboxRetentionSeconds <= 0) {
             continue;
         }
         try {
             storage_.purgeExpired(nowSeconds() - options_.mailboxRetentionSeconds);
-            // Tokens outlive mail by design (a contact may write years later),
-            // but not forever.
-            constexpr std::int64_t kSecondsPerDay = 24 * 3600;
-            storage_.purgeTokensRegisteredBefore(
-                bazarish::kTokenRetentionDays * kSecondsPerDay);
         } catch (const std::exception& error) {
             // Best-effort housekeeping; a sweep failure must never crash the node -
             // but a sweep that never succeeds fills the disk, so it is reported.
@@ -1145,43 +1099,67 @@ void HttpApi::setupRoutes()
             }));
     }
 
-    // --- Delivery tokens ---
+    // --- Delivery passes ---
+    //
+    // Registering one already held is not an error: that is how an account gives
+    // a correspondent their pass back after a block, without sending them
+    // anything.
 
-    http_->post("/v1/messaging/tokens",
-        authenticated([&store, requireClient, clientUnregistered](const bazarish::http::Request& request,
+    http_->post("/v1/messaging/passes",
+        authenticated([&store, requireClient, clientUnregistered](
+                          const bazarish::http::Request& request,
                           const std::string& user) -> bazarish::http::Response {
             if (requireClient(request, user).empty()) {
                 return clientUnregistered();
             }
             const nlohmann::json body = nlohmann::json::parse(request.body);
-            std::vector<Bytes> tokens;
-            for (const nlohmann::json& entry : body.at("tokens")) {
-                Bytes token = fromBase64(entry.get<std::string>());
-                if (token.size() != kDeliveryTokenSize) {
-                    throw std::invalid_argument("delivery token has wrong size");
-                }
-                tokens.push_back(std::move(token));
+            const nlohmann::json& asked = body.at("passes");
+            if (asked.size() > kMaxPassesPerRequest) {
+                throw std::invalid_argument("too many delivery passes in one request");
             }
-            store.registerTokens(user, tokens);
-            return jsonResponse({{"ok", true}});
+            std::vector<Bytes> handles;
+            for (const nlohmann::json& entry : asked) {
+                Bytes handle = fromBase64(entry.get<std::string>());
+                if (handle.size() != kDeliveryPassSize) {
+                    throw std::invalid_argument("delivery pass handle has wrong size");
+                }
+                handles.push_back(std::move(handle));
+            }
+            // Counted before the write rather than after it: a mailbox holds one
+            // of these per correspondent, so anything near the cap is a client
+            // that has stopped keeping track, and letting it write first would
+            // be letting it past the cap.
+            if (store.passCount(user) + handles.size() > kMaxPassesPerMailbox) {
+                throw std::invalid_argument("this mailbox holds too many delivery passes");
+            }
+            store.registerPasses(user, handles);
+            return jsonResponse({{"ok", true}, {"held", store.passCount(user)}});
         }));
 
-    // Revoking what one correspondent holds. The user hands over the mask their
-    // tokens were minted under; the sweep it needs walks every token they have,
-    // so it is queued for the node's own thread and this answers at once.
-    http_->post("/v1/messaging/tokens/revoke",
-        authenticated([this, requireClient, clientUnregistered](const bazarish::http::Request& request,
+    // Taking a pass back. Exact - the account names what it issued - so this is
+    // done here and answered with what it did, rather than queued for a sweep.
+    // It is the only thing that stops a correspondent writing, so a client that
+    // does not hear the answer must ask again.
+    http_->post("/v1/messaging/passes/revoke",
+        authenticated([&store, requireClient, clientUnregistered](
+                          const bazarish::http::Request& request,
                           const std::string& user) -> bazarish::http::Response {
             if (requireClient(request, user).empty()) {
                 return clientUnregistered();
             }
             const nlohmann::json body = nlohmann::json::parse(request.body);
-            Bytes mask = fromBase64(body.at("mask").get<std::string>());
-            if (mask.size() != kDeliveryTokenSize) {
-                throw std::invalid_argument("delivery mask has wrong size");
+            const nlohmann::json& asked = body.at("passes");
+            if (asked.size() > kMaxPassesPerRequest) {
+                throw std::invalid_argument("too many delivery passes in one request");
             }
-            queueRevocation(user, std::move(mask));
-            return jsonResponse({{"queued", true}});
+            std::vector<Bytes> handles;
+            for (const nlohmann::json& entry : asked) {
+                handles.push_back(fromBase64(entry.get<std::string>()));
+            }
+            const std::size_t dropped = store.revokePasses(user, handles);
+            bazarish::log::info(
+                "revoked {} delivery pass(es) for {}", dropped, bazarish::log::redact(user));
+            return jsonResponse({{"revoked", dropped}});
         }));
 
     // --- Pending content ---

@@ -31,23 +31,23 @@ public:
     virtual std::vector<std::string> listClients(const std::string& user) = 0;
     virtual bool isClientRegistered(const std::string& user, const std::string& clientId) = 0;
 
-    // --- One-time delivery tokens ---
+    // --- Delivery passes ---
     //
-    // The tokens themselves are held, not their hashes: every token carries,
-    // under the mask it was minted with, the mark that says which mask that was,
-    // and revoking a correspondent means sweeping for that mark. A hash would
-    // hide it. The consequence is deliberate: what is stored here can be spent,
-    // so this directory is as sensitive as the mailbox beside it.
+    // What admits one correspondent's mail, for as long as the account that
+    // issued it lets them write. A pass does not expire and is not spent, so
+    // there is one of these per correspondent rather than one per delivery.
+    //
+    // Only the hash of a pass is held. The sender presents the pass itself, so
+    // what is on this disk recognises a delivery and cannot produce one - which
+    // is what the token directory beside it could not say.
 
-    virtual void registerTokens(const std::string& user, const std::vector<Bytes>& tokens) = 0;
-    // Atomically consumes the token. Returns false when it was not present
-    // (never registered, already consumed, or revoked).
-    virtual bool consumeToken(const std::string& user, const Bytes& token) = 0;
-    virtual std::size_t tokenCount(const std::string& user) = 0;
-    // Drops every token of this user's minted under `mask`, and returns how many
-    // went. Walks all of them, so it belongs on the node's own thread rather
-    // than on the one answering a request.
-    virtual std::size_t revokeTokens(const std::string& user, const Bytes& mask) = 0;
+    virtual void registerPasses(const std::string& user, const std::vector<Bytes>& handles) = 0;
+    virtual bool hasPass(const std::string& user, const Bytes& handle) = 0;
+    virtual std::size_t passCount(const std::string& user) = 0;
+    // Drops exactly these passes and returns how many were there. The account
+    // knows what it issued, so nothing is swept for and nothing else is touched.
+    virtual std::size_t revokePasses(
+        const std::string& user, const std::vector<Bytes>& handles) = 0;
 
     // --- Pending content ---
 
@@ -91,14 +91,6 @@ public:
     virtual void markSeen(const std::string& user, const std::string& deliveryId,
         std::int64_t receivedAt)
         = 0;
-
-    // Counts one tokenless contact request against the destination's own minute
-    // window and says whether it fits. Keyed by the destination's owner, not by
-    // the mailbox the envelope named, so the answer never depends on a guess.
-    // Drops token hashes registered before this instant. Tokens are one-time and
-    // may wait years to be spent, so the horizon is long; this only stops an
-    // abandoned mailbox's hashes from living forever.
-    virtual void purgeTokensRegisteredBefore(std::int64_t registeredBefore) = 0;
 
     virtual bool allowContactRequest(
         const std::string& user, std::int64_t now, std::size_t maxPerMinute)

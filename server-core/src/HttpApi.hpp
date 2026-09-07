@@ -190,14 +190,6 @@ private:
     std::int64_t reseedPackedAt_ = 0;
     // Periodic mailbox TTL sweep (the backstop for never-fully-acked mail).
     void mailboxJanitorLoop();
-    // A revocation waiting for the janitor thread: one user, one mask.
-    struct Revocation {
-        std::string user;
-        Bytes mask;
-    };
-    // Hands one to that thread and wakes it. Called from a request handler, so it
-    // does no work of its own.
-    void queueRevocation(const std::string& user, Bytes mask);
 
     Storage& storage_;
     DeliveryEngine& engine_;
@@ -215,8 +207,6 @@ private:
     std::condition_variable stopCv_;
     // Background mailbox TTL sweep (the backstop for never-fully-acked mail).
     std::thread janitorThread_;
-    // Guarded by stopMutex_, drained by the janitor thread.
-    std::vector<Revocation> revocations_;
     bool stopping_ = false;
 
     auth::ReplayCache replayCache_;

@@ -29,10 +29,10 @@ public:
     std::vector<std::string> listClients(const std::string& user) override;
     bool isClientRegistered(const std::string& user, const std::string& clientId) override;
 
-    void registerTokens(const std::string& user, const std::vector<Bytes>& tokens) override;
-    bool consumeToken(const std::string& user, const Bytes& token) override;
-    std::size_t tokenCount(const std::string& user) override;
-    std::size_t revokeTokens(const std::string& user, const Bytes& mask) override;
+    void registerPasses(const std::string& user, const std::vector<Bytes>& handles) override;
+    bool hasPass(const std::string& user, const Bytes& handle) override;
+    std::size_t passCount(const std::string& user) override;
+    std::size_t revokePasses(const std::string& user, const std::vector<Bytes>& handles) override;
 
     PutResult putBlob(const std::string& user, const std::string& blobId, const Bytes& data,
         const std::string& deliveryClass, std::int64_t receivedAt, std::uint64_t quotaBytes,
@@ -41,7 +41,6 @@ public:
     bool hasSeen(const std::string& user, const std::string& deliveryId) override;
     void markSeen(const std::string& user, const std::string& deliveryId,
         std::int64_t receivedAt) override;
-    void purgeTokensRegisteredBefore(std::int64_t registeredBefore) override;
     bool allowContactRequest(
         const std::string& user, std::int64_t now, std::size_t maxPerMinute) override;
     std::size_t countHeld(const std::string& user, const std::string& deliveryClass) override;

@@ -2,7 +2,7 @@
 #include "DiskStorage.hpp"
 
 #include <bazarish/Bytes.hpp>
-#include <bazarish/Tokens.hpp>
+#include <bazarish/Pass.hpp>
 
 #include <cstdio>
 #include <cstdlib>
@@ -73,38 +73,42 @@ int main()
     CHECK(storage.isClientRegistered(alice, "client1"));
     CHECK(storage.listClients(alice).size() == 2);
 
-    // --- Delivery tokens ---
     const Bytes secret = randomBytes(kDeliverySecretSize);
-    const Bytes forBob = deliveryTokenMask(secret, std::string(52, 'b'));
-    const Bytes token1 = generateDeliveryToken(forBob);
-    const Bytes token2 = generateDeliveryToken(forBob);
-    storage.registerTokens(alice, {token1, token2});
-    CHECK(storage.tokenCount(alice) == 2);
-    CHECK(storage.consumeToken(alice, token1));
-    // One-time: the second consume of the same token fails.
-    CHECK(!storage.consumeToken(alice, token1));
-    CHECK(storage.tokenCount(alice) == 1);
-    // The other one is spent the same way, and a spent token is gone for good.
-    CHECK(storage.consumeToken(alice, token2));
-    CHECK(storage.tokenCount(alice) == 0);
-    CHECK(!storage.consumeToken(alice, token2));
-
-    // --- Revoking one correspondent's tokens ---
-    const Bytes forCarol = deliveryTokenMask(secret, std::string(52, 'c'));
-    std::vector<Bytes> mixed;
-    for (int i = 0; i < 8; ++i) {
-        mixed.push_back(generateDeliveryToken(forBob));
-        mixed.push_back(generateDeliveryToken(forCarol));
+    // --- Delivery passes ---
+    // A pass is not spent: the same one admits delivery after delivery, which is
+    // the whole difference from the tokens above.
+    const Bytes passBob = deliveryPass(secret, std::string(52, 'b'));
+    const Bytes passCarol = deliveryPass(secret, std::string(52, 'c'));
+    const Bytes handleBob = deliveryPassHandle(passBob);
+    const Bytes handleCarol = deliveryPassHandle(passCarol);
+    storage.registerPasses(alice, {handleBob, handleCarol});
+    CHECK(storage.passCount(alice) == 2);
+    for (int i = 0; i < 100; ++i) {
+        CHECK(storage.hasPass(alice, handleBob));
     }
-    storage.registerTokens(alice, mixed);
-    CHECK(storage.tokenCount(alice) == 16);
-    CHECK(storage.revokeTokens(alice, forBob) == 8);
-    CHECK(storage.tokenCount(alice) == 8);
-    // Bob's are refused now; Carol's still spend.
-    CHECK(!storage.consumeToken(alice, mixed[0]));
-    CHECK(storage.consumeToken(alice, mixed[1]));
-    // Revoking the same mask twice drops nothing more.
-    CHECK(storage.revokeTokens(alice, forBob) == 0);
+    CHECK(storage.passCount(alice) == 2);
+    // Registering one already held is how a block is lifted, so it must not
+    // create a second entry.
+    storage.registerPasses(alice, {handleBob});
+    CHECK(storage.passCount(alice) == 2);
+    // The pass is presented; what is stored is its hash, and the hash itself
+    // does not admit anything.
+    CHECK(!storage.hasPass(alice, passBob));
+    // Nothing of the wrong shape is a pass - an empty handle would otherwise
+    // name the directory itself.
+    CHECK(!storage.hasPass(alice, Bytes{}));
+    CHECK(!storage.hasPass(alice, Bytes(bazarish::kDeliveryPassSize - 1, 0x11)));
+    CHECK_THROWS(storage.registerPasses(alice, {Bytes{1, 2, 3}}));
+
+    // Revocation is exact: it drops what it was given and leaves the rest.
+    CHECK(storage.revokePasses(alice, {handleBob}) == 1);
+    CHECK(!storage.hasPass(alice, handleBob));
+    CHECK(storage.hasPass(alice, handleCarol));
+    CHECK(storage.passCount(alice) == 1);
+    CHECK(storage.revokePasses(alice, {handleBob}) == 0);
+    // Lifting the block hands the same pass back, with nothing sent anywhere.
+    storage.registerPasses(alice, {handleBob});
+    CHECK(storage.hasPass(alice, handleBob));
 
     // --- Pending content: put, dedup, quota ---
     const Bytes blob(100, 0xab);
@@ -187,7 +191,7 @@ int main()
     CHECK(storage.listPending(bob, "bclient").empty());
     CHECK(!storage.hasSeen(bob, "nonce-fresh"));
     CHECK(!storage.isClientRegistered(bob, "bclient"));
-    CHECK(storage.tokenCount(bob) == 0);
+    CHECK(storage.passCount(bob) == 0);
 
     // --- Per-user storage quota override ---
     const std::string dave = makeUser(0x42);

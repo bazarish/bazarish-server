@@ -10,6 +10,8 @@
 #include "FederationRateLimiter.hpp"
 
 #include <bazarish/Bytes.hpp>
+#include <bazarish/Errors.hpp>
+#include <bazarish/Log.hpp>
 #include <bazarish/FederationFrame.hpp>
 
 #include <cstddef>
@@ -78,7 +80,11 @@ void federationServeOnce(Stream& stream, DeliveryEngine& engine, const std::int6
     // out of the same buffer, so nothing read ahead is lost.
     detail::FrameReader<Stream> reader(stream);
     const std::string headerLine = reader.line();
-    federationServeFrame(
+    // Whatever goes wrong in here, the caller is owed an answer. Closing the
+    // stream instead left it waiting out its own read deadline - a minute and a
+    // half on a card fetch - for a refusal that could have been immediate.
+    try {
+        federationServeFrame(
         headerLine,
         [&reader](std::size_t len) {
             // Never allocate what a peer claims: one byte past the protocol's
@@ -106,7 +112,14 @@ void federationServeOnce(Stream& stream, DeliveryEngine& engine, const std::int6
             return payload;
         },
         [&stream](const std::string& line) { detail::writeFederationHeaderLine(stream, line); },
-        engine, now, sealingKey, owner, getCard, signAck);
+            engine, now, sealingKey, owner, getCard, signAck);
+    } catch (const std::exception& error) {
+        bazarish::log::warn("serving a federation frame failed: {}", error.what());
+        detail::writeFederationHeaderLine(stream,
+            nlohmann::json({{"ok", false}, {"delivered", false},
+                {"errorCode", std::string(bazarish::toString(bazarish::ErrorCode::eDeliveryRejected))}})
+                .dump());
+    }
 }
 
 }  // namespace bazarish::server

@@ -50,6 +50,27 @@ void requireSafeId(const std::string& id)
     }
 }
 
+// The arrival stamp a mailbox is ordered by. Milliseconds, because two
+// deliveries for the same user land within the same second often enough that a
+// second-resolution stamp would leave their order to the filesystem.
+std::int64_t arrivalMillis()
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
+
+// What a record says about when it arrived, for ordering. A record written
+// before the mailbox had an order carries only its retention stamp, in seconds.
+std::int64_t arrivalOf(const nlohmann::json& meta)
+{
+    constexpr std::int64_t kMillisPerSecond = 1000;
+    if (meta.contains("receivedAtMs")) {
+        return meta.at("receivedAtMs").get<std::int64_t>();
+    }
+    return meta.at("receivedAt").get<std::int64_t>() * kMillisPerSecond;
+}
+
 std::vector<std::string> listDirectoryNames(const fs::path& dir)
 {
     std::vector<std::string> names;
@@ -230,8 +251,12 @@ Storage::PutResult DiskStorage::putBlob(const std::string& user, const std::stri
         // would sit in the mailbox until it fetched and acked itself.
         acked.push_back(alreadyAcked);
     }
+    // Two stamps, two jobs: receivedAt is the caller's clock and what the TTL
+    // sweep ages a record against; receivedAtMs is when this mailbox took the
+    // delivery, and is the order it hands the mailbox out in.
     const nlohmann::json metaBody = {
         {"receivedAt", receivedAt},
+        {"receivedAtMs", arrivalMillis()},
         {"class", deliveryClass},
         {"acked", acked},
     };
@@ -317,7 +342,14 @@ std::vector<Storage::PendingEntry> DiskStorage::listPending(const std::string& u
     requireUser(user);
     requireSafeId(clientId);
     const std::lock_guard<std::mutex> lock(mutex_);
-    std::vector<PendingEntry> pending;
+    // Arrival order, not directory order: a mailbox is a queue, and handing it
+    // out in whatever order the filesystem lists it in leaves a burst of
+    // messages to reach the reader shuffled.
+    struct Waiting {
+        std::int64_t arrivedAtMs = 0;
+        PendingEntry entry;
+    };
+    std::vector<Waiting> waiting;
     for (const std::string& blobId : listDirectoryNames(userDir(user) / "blobs")) {
         // A blob with no record beside it is not a delivery: a write that was
         // interrupted leaves its ".tmp" behind, and reading a record for that
@@ -339,8 +371,22 @@ std::vector<Storage::PendingEntry> DiskStorage::listPending(const std::string& u
             }
         }
         if (!acked) {
-            pending.push_back(PendingEntry{blobId, meta.at("class").get<std::string>()});
+            waiting.push_back(
+                {arrivalOf(meta), PendingEntry{blobId, meta.at("class").get<std::string>()}});
         }
+    }
+    // The id breaks a tie, so two deliveries stamped in the same millisecond are
+    // still handed out in one stable order rather than the filesystem's.
+    std::sort(waiting.begin(), waiting.end(), [](const Waiting& a, const Waiting& b) {
+        if (a.arrivedAtMs != b.arrivedAtMs) {
+            return a.arrivedAtMs < b.arrivedAtMs;
+        }
+        return a.entry.blobId < b.entry.blobId;
+    });
+    std::vector<PendingEntry> pending;
+    pending.reserve(waiting.size());
+    for (Waiting& item : waiting) {
+        pending.push_back(std::move(item.entry));
     }
     return pending;
 }

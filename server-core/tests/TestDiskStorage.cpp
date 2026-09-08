@@ -4,11 +4,13 @@
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Pass.hpp>
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
+#include <thread>
 
 // Minimal test support, mirroring the common library tests.
 #define CHECK(condition)                                                            \
@@ -151,6 +153,31 @@ int main()
     CHECK(storage.listPending(alice, "client2").empty());
     // Acking a deleted blob is a no-op.
     storage.ackBlob(alice, "msg1", "client2");
+
+    // --- The mailbox is handed out in arrival order ---
+    // Ids chosen to sort the other way round, so a listing that leaned on the
+    // filesystem (or on the ids) would fail this. The gap is what keeps two
+    // arrivals out of the same millisecond, which is the only case the id
+    // decides.
+    {
+        constexpr auto kStampGap = std::chrono::milliseconds(2);
+        CHECK(storage.putBlob(alice, "zzz", blob, "content", kNow, kQuota)
+            == Storage::PutResult::eStored);
+        std::this_thread::sleep_for(kStampGap);
+        CHECK(storage.putBlob(alice, "mmm", blob, "content", kNow, kQuota)
+            == Storage::PutResult::eStored);
+        std::this_thread::sleep_for(kStampGap);
+        CHECK(storage.putBlob(alice, "aaa", blob, "content", kNow, kQuota)
+            == Storage::PutResult::eStored);
+        CHECK((storage.listPending(alice, "client1")
+            == std::vector<Storage::PendingEntry>{
+                {"zzz", "content"}, {"mmm", "content"}, {"aaa", "content"}}));
+        for (const char* const id : {"zzz", "mmm", "aaa"}) {
+            storage.ackBlob(alice, id, "client1");
+            storage.ackBlob(alice, id, "client2");
+        }
+        CHECK(storage.listPending(alice, "client1").empty());
+    }
 
     // --- Retiring a client re-evaluates completeness ---
     CHECK(storage.putBlob(alice, "msg3", blob, "content", kNow, kQuota) == Storage::PutResult::eStored);

@@ -101,7 +101,9 @@ public:
     // above says how fast requests may come, this says how many may pile up.
     virtual std::size_t countHeld(const std::string& user, const std::string& deliveryClass) = 0;
 
-    // Blobs not yet acked by this client.
+    // Blobs not yet acked by this client, oldest arrival first. The order is
+    // part of the contract: a client shows a burst in the order its mailbox took
+    // it, and nothing else here knows that order.
     virtual std::vector<PendingEntry> listPending(const std::string& user,
         const std::string& clientId)
         = 0;

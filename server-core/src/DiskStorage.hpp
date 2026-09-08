@@ -15,7 +15,8 @@ namespace bazarish::server {
 //   users/<fingerprint>/clients/<clientId>   registered client marker
 //   users/<fingerprint>/tokens/<hash-hex>    registered token hash marker
 //   users/<fingerprint>/blobs/<blobId>       pending content
-//   users/<fingerprint>/meta/<blobId>.json   {"receivedAt": ..., "class": ..., "acked": [...]}
+//   users/<fingerprint>/meta/<blobId>.json   {"receivedAt": ..., "receivedAtMs": ...,
+//                                             "class": ..., "acked": [...]}
 //   users/<fingerprint>/seen/<deliveryId>     admitted-deliveryId marker (receivedAt text)
 //
 // Token consumption maps to unlink(), which the filesystem makes atomic.

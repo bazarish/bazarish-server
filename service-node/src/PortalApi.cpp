@@ -386,11 +386,8 @@ void PortalApi::setupWebRoutes()
     // operator put there, and nothing above it, can be asked for.
     for (const std::string& name : assets_.published()) {
         const WebAssets::File& file = assets_.file(name);
-        http_->get("/" + name, [&file](const http::Request&) {
-            http::Response response;
-            response.contentType = file.contentType;
-            response.body = file.body;
-            return response;
+        http_->get("/" + name, [&file](const http::Request& request) {
+            return serveWebAsset(file, request);
         });
     }
 

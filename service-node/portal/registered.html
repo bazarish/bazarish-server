@@ -1,4 +1,3 @@
-<!-- The account, on a node that serves it straight away. -->
   <section class="panel">
     <h2 class="panel-title">registered</h2>
     <ul class="facts">
@@ -7,12 +6,12 @@
     </ul>
     <p class="field-label">Server descriptor</p>
     <pre class="copy">{{descriptor}}</pre>
-    <p class="panel-note">Paste it into your client to connect it here.</p>
+    <p class="panel-note">Paste it into Bazarish App to connect this account here.</p>
   </section>
   <section class="panel">
     <h2 class="panel-title">delete this account</h2>
-    <p class="panel-note">Everything this server holds for your key goes: the certificate, the
-      mailbox and the address. Your key is yours and can register again.</p>
+    <p class="panel-note">Deleting drops the certificate, the mailbox and everything in it, and
+      the address stops being served. The same key can register here again.</p>
     <form method="post" action="/delete">
       <button class="btn btn-danger" type="submit">Delete my account</button>
     </form>

@@ -1,16 +1,16 @@
-<!-- The second half of deleting an account: no script is involved, so the
-     confirmation is a page of its own. -->
   <section class="panel">
     <h2 class="panel-title">delete this account</h2>
-    <p class="notice is-error">This cannot be undone. The mailbox and everything in it is
-      dropped, and the address stops being served.</p>
+    <p class="notice is-error">This cannot be undone. The mailbox and everything in it is dropped,
+      and the address stops being served.</p>
     <ul class="facts">
       <li><span>Mailbox</span>{{mailbox}}</li>
       <li><span>Devices</span>{{devices}}</li>
     </ul>
-    <form method="post" action="/delete">
-      <input type="hidden" name="confirm" value="yes">
-      <button class="btn btn-danger" type="submit">Delete it</button>
-    </form>
-    <p class="panel-note"><a href="/">Keep the account</a></p>
+    <div class="form-actions">
+      <form class="inline" method="post" action="/delete">
+        <input type="hidden" name="confirm" value="yes">
+        <button class="btn btn-danger" type="submit">Delete it</button>
+      </form>
+      <a class="btn btn-quiet" href="/">Keep the account</a>
+    </div>
   </section>

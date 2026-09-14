@@ -262,6 +262,11 @@ void testWebFlow()
     CHECK(script.status == 200);
     CHECK(script.contentType.find("javascript") != std::string::npos);
 
+    // Every Bazarish face draws from one kit and is lit by a phosphor of its
+    // own, so that two of them open side by side are not read as one. This one
+    // is the cyan of a messaging server.
+    CHECK(style.body.find("--bz-key: #14e2ff") != std::string::npos);
+
     const std::string challenge = between(page.body, "<pre class=\"copy\">", "</pre>");
     const std::string blob = signLoginBlob(identity, now(), challenge);
     const http::ClientResponse signedIn = postForm(port, "/login",
@@ -302,6 +307,12 @@ void testWebFlow()
     CHECK(done.body.find(StubCaptcha::kBody) == std::string::npos);
     CHECK(done.body.find("1.0 KiB of 20 MiB") != std::string::npos);
     CHECK(done.body.find("<span>Devices</span>2") != std::string::npos);
+
+    // Nothing a visitor receives carries a note to whoever wrote it.
+    CHECK(page.body.find("<!--") == std::string::npos);
+    CHECK(asked.body.find("<!--") == std::string::npos);
+    CHECK(done.body.find("<!--") == std::string::npos);
+    CHECK(script.body.find("console.") == std::string::npos);
 
     // An account's owner can end it from the browser: one page to confirm, one
     // post to do it.

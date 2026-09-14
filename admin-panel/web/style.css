@@ -1,5 +1,10 @@
-/* The Bazarish operator panel. Colours and type follow the Bazarish brand kit
-   (CC0); edit this file to make the panel yours, then restart the panel. */
+/* The Bazarish operator panel, where a fleet is watched and run. Colours and
+   type follow the Bazarish brand kit (CC0); edit this file to make the panel
+   yours, then restart it.
+
+   The sheets of the Bazarish faces are one kit: the same tokens, the same
+   components, the same shapes. Only the phosphor in :root and the shell
+   below differ. */
 
 @font-face {
     font-family: "Roboto Mono";
@@ -19,6 +24,7 @@
 :root {
     color-scheme: dark;
 
+    /* The screen. The same in every face of the fleet. */
     --bz-bg: #16191c;
     --bz-deep: #0d0f11;
     --bz-surface: #1b2026;
@@ -30,12 +36,14 @@
     --bz-ink-dim: #8b948c;
     --bz-ink-faint: #5e676a;
 
-    --bz-green-dim: #1f7a14;
-    --bz-green: #39ff14;
-
     --bz-accent: #f2f4f2;
     --bz-on-accent: #11151a;
 
+    /* Status. Also the same everywhere: what a colour means is learnt once and
+       read the same way on the next face. Green is well, amber is waiting, red
+       is wrong - whatever phosphor the face itself is lit by. */
+    --bz-ok: #1f7a14;
+    --bz-ok-lit: #39ff14;
     --bz-ok-bg: #0f2410;
     --bz-warn: #ffb454;
     --bz-warn-bg: #2a1e0a;
@@ -43,6 +51,16 @@
     --bz-err: #ff5b54;
     --bz-err-bg: #2a1112;
     --bz-err-line: #7a2b2b;
+
+    /* The phosphor this face is lit by, and the only thing in this sheet that
+       differs from the sheet of the next Bazarish face: headings, links, the
+       mark in front of a heading, the current tab, focus, and the ground under
+       a thing that has been chosen. The brand mark is not part of it - the
+       wordmark keeps its neon green everywhere and is never recoloured. */
+    --bz-key: #ffc24d;
+    --bz-key-dim: #8a6a14;
+    --bz-key-bg: #2a2109;
+    --bz-key-glow: rgba(255, 194, 77, 0.35);
 
     --bz-radius: 10px;
     --bz-radius-sm: 6px;
@@ -60,10 +78,503 @@ body {
     min-height: 100vh;
     background: var(--bz-bg);
     color: var(--bz-ink);
-    font: 400 15px/1.6 var(--bz-font);
+    font: 400 16px/1.6 var(--bz-font);
+    -webkit-font-smoothing: antialiased;
 }
 
-/* --- sign-in --- */
+/* --- tabs: where the reader is --- */
+
+/* One subject per tab, carrying the same slash the headings use. */
+.tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    border-bottom: 1px solid var(--bz-line);
+}
+
+.tab {
+    padding: 0.5rem 0.85rem;
+    background: transparent;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    color: var(--bz-ink-faint);
+    text-decoration: none;
+    font: inherit;
+    font-size: 0.72rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    cursor: pointer;
+}
+
+.tab::before {
+    content: "/ ";
+    color: var(--bz-line-2);
+}
+
+.tab:hover {
+    color: var(--bz-ink);
+}
+
+.tab.is-on {
+    color: var(--bz-ink);
+    border-bottom-color: var(--bz-key-dim);
+}
+
+.tab.is-on::before {
+    color: var(--bz-key);
+}
+
+/* --- the panel: one thing to do at a time --- */
+
+/* A panel is a card on the surface ladder rather than a stretch of bare canvas.
+   The ladder and the hairline do the work a shadow would do elsewhere; a dark
+   page with drop shadows on it reads as a light page turned down. */
+.panel {
+    margin-top: 1.25rem;
+    padding: 1.4rem 1.5rem;
+    background: var(--bz-surface);
+    border: 1px solid var(--bz-line);
+    border-radius: var(--bz-radius);
+}
+
+.panel-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--bz-key-dim);
+}
+
+/* The brand's slash marks the heading. */
+.panel-title::before {
+    content: "/";
+}
+
+.panel-note,
+.muted {
+    margin: 0.6rem 0 0;
+    color: var(--bz-ink-dim);
+    font-size: 0.85rem;
+    overflow-wrap: anywhere;
+}
+
+/* The label over a block inside a card. */
+.block-title {
+    margin: 1rem 0 0;
+    font-size: 0.66rem;
+    font-weight: 400;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--bz-ink-faint);
+}
+
+.hint {
+    margin: 0.45rem 0 0;
+    color: var(--bz-ink-faint);
+    font-size: 0.7rem;
+}
+
+/* --- fields --- */
+
+.field-label {
+    display: block;
+    margin: 1.25rem 0 0.4rem;
+    font-size: 0.7rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--bz-ink-faint);
+}
+
+.field {
+    width: 100%;
+    padding: 0.7rem 0.8rem;
+    background: var(--bz-deep);
+    color: var(--bz-ink);
+    border: 1px solid var(--bz-line-2);
+    border-radius: var(--bz-radius-sm);
+    font: inherit;
+    font-size: 0.8rem;
+}
+
+textarea.field {
+    min-height: 6.5rem;
+    resize: vertical;
+    word-break: break-all;
+}
+
+/* A placeholder has to read as an example and not as a figure already typed -
+   an amount field is exactly where that mistake costs something. */
+.field::placeholder {
+    color: var(--bz-ink-faint);
+    opacity: 1;
+    font-style: italic;
+}
+
+.field:focus-visible,
+.btn:focus-visible,
+.chip:focus-visible,
+.row:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--bz-bg), 0 0 0 4px var(--bz-key);
+}
+
+/* A block meant to be taken away: one click selects all of it. */
+.copy {
+    margin: 0;
+    padding: 0.75rem 0.9rem;
+    background: var(--bz-deep);
+    /* One rung below the card it sits in: a block meant to be taken away reads
+       as a hole in the surface, not another surface on top of it. */
+    border: 1px solid var(--bz-line);
+    border-radius: var(--bz-radius-sm);
+    color: var(--bz-ink);
+    font-size: 0.75rem;
+    line-height: 1.7;
+    white-space: pre-wrap;
+    word-break: break-all;
+    user-select: all;
+}
+
+/* One control and its label on a line: the label keeps its width so a column of
+   them lines up, and what is typed takes the rest. */
+.controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 1rem;
+}
+
+.controls .field {
+    flex: 1 1 12rem;
+    width: auto;
+}
+
+.controls textarea.field {
+    flex: 1 1 100%;
+    min-height: 4.5rem;
+}
+
+.controls .btn,
+.controls .btn-copy {
+    margin: 0;
+    flex: 0 0 auto;
+}
+
+.control-label {
+    flex: 0 0 11rem;
+    color: var(--bz-ink-dim);
+    font-size: 0.75rem;
+}
+
+.unit {
+    color: var(--bz-ink-faint);
+    font-size: 0.72rem;
+}
+
+/* Written under the field it is about, by the script, and empty otherwise. A
+   browser with no script sees nothing here and is told by the server instead. */
+.field-error {
+    margin: 0.4rem 0 0;
+    color: var(--bz-err);
+    font-size: 0.75rem;
+}
+
+.field-error:empty {
+    display: none;
+}
+
+.field.is-wrong {
+    border-color: var(--bz-err-line);
+}
+
+/* --- buttons --- */
+
+/* A link wearing a button's clothes. It carries no colour of its own: the
+   button classes below already say what each variant looks like, and repeating
+   one of them here would beat the others on specificity - which is how a quiet
+   button lost its hover and a danger one would have gone dark on dark. */
+a.btn {
+    display: inline-block;
+    text-decoration: none;
+}
+
+.btn {
+    margin-top: 1.25rem;
+    padding: 0.65rem 1.2rem;
+    background: var(--bz-accent);
+    color: var(--bz-on-accent);
+    border: 1px solid var(--bz-accent);
+    border-radius: var(--bz-radius-sm);
+    font: inherit;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    cursor: pointer;
+}
+
+.btn:hover {
+    background: #ffffff;
+    border-color: #ffffff;
+}
+
+.btn[disabled] {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.btn-quiet {
+    background: transparent;
+    border-color: var(--bz-line-2);
+    color: var(--bz-ink-dim);
+}
+
+.btn-quiet:hover {
+    background: transparent;
+    border-color: var(--bz-ink-faint);
+    color: var(--bz-ink);
+}
+
+/* What cannot be undone does not look like what can. */
+.btn-danger {
+    background: transparent;
+    border-color: var(--bz-err-line);
+    color: var(--bz-err);
+}
+
+.btn-danger:hover {
+    background: var(--bz-err-bg);
+    border-color: var(--bz-err);
+    color: var(--bz-err);
+}
+
+/* Added by the copy script; a browser without scripts never sees it. */
+.btn-copy {
+    margin-top: 0.6rem;
+    padding: 0.4rem 0.8rem;
+    font-size: 0.68rem;
+}
+
+/* A button that has to read as part of the text around it, because what it does
+   is small and the sentence explains it. */
+.as-link {
+    padding: 0;
+    background: transparent;
+    border: 0;
+    color: var(--bz-key-dim);
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+.as-link:hover {
+    color: var(--bz-key);
+}
+
+/* A form that sits inside a sentence. */
+.inline {
+    display: inline;
+    margin: 0;
+}
+
+/* An aside in the flow of a line, as one piece rather than three. */
+.aside {
+    color: var(--bz-ink-faint);
+    font-size: 0.75rem;
+}
+
+/* Two ways out of one form, side by side: the one that acts and the one that
+   leaves. */
+.form-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 1.25rem;
+}
+
+.form-actions .btn {
+    margin: 0;
+}
+
+/* The form's own action, on a line of its own at the end: nothing above it
+   takes effect until it is pressed. */
+.form-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--bz-line-2);
+}
+
+.form-footer .btn {
+    margin: 0;
+}
+
+.form-footer .hint {
+    flex: 1 1 14rem;
+    margin: 0;
+}
+
+/* --- a choice made by pressing one of a few --- */
+
+.chip {
+    padding: 0.4rem 0.8rem;
+    background: transparent;
+    border: 1px solid var(--bz-line-2);
+    border-radius: var(--bz-radius-sm);
+    color: var(--bz-ink-dim);
+    font: inherit;
+    font-size: 0.72rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    cursor: pointer;
+}
+
+.chip:hover {
+    border-color: var(--bz-ink-faint);
+    color: var(--bz-ink);
+}
+
+.chip.is-on {
+    border-color: var(--bz-key-dim);
+    background: var(--bz-key-bg);
+    color: var(--bz-ink);
+}
+
+/* --- notices --- */
+
+.notice {
+    margin: 1.25rem 0 0;
+    padding: 0.7rem 0.9rem;
+    border: 1px solid var(--bz-ok);
+    border-radius: var(--bz-radius-sm);
+    background: var(--bz-ok-bg);
+    color: var(--bz-ink);
+    font-size: 0.85rem;
+}
+
+.notice.is-error {
+    background: var(--bz-err-bg);
+    border-color: var(--bz-err-line);
+    color: var(--bz-err);
+}
+
+.notice.is-waiting {
+    background: var(--bz-warn-bg);
+    border-color: var(--bz-warn-line);
+    color: var(--bz-warn);
+}
+
+/* --- facts: a label and the value it names --- */
+
+.facts {
+    margin: 1.25rem 0 0;
+    padding: 0;
+    list-style: none;
+    font-size: 0.8rem;
+}
+
+.facts li {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.25rem 1rem;
+    padding: 0.4rem 0;
+    border-bottom: 1px dashed var(--bz-line);
+    color: var(--bz-ink);
+}
+
+.facts li:last-child {
+    border-bottom: 0;
+}
+
+/* The label is the small capitals; the value beside it is left alone - it is a
+   fingerprint or an address, and shouting it does not help anyone read it. */
+.facts span,
+.facts .fact-label {
+    color: var(--bz-ink-faint);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    font-size: 0.7rem;
+    align-self: center;
+}
+
+.facts b {
+    overflow-wrap: anywhere;
+}
+
+/* --- links in the body --- */
+
+/* Without this only the colophon was coloured and the rest fell back to the
+   browser's purple, which belongs to no palette here. A link wearing a button's
+   clothes is excluded: it takes the button's own colours, and this rule used to
+   beat them on specificity and put coloured text on a white button. */
+.panel a:not(.btn),
+.name a:not(.btn),
+.detail a:not(.btn),
+.card a:not(.btn),
+.more a:not(.btn) {
+    color: var(--bz-key-dim);
+}
+
+.panel a:not(.btn):hover,
+.name a:not(.btn):hover,
+.detail a:not(.btn):hover,
+.card a:not(.btn):hover,
+.more a:not(.btn):hover {
+    color: var(--bz-key);
+}
+
+/* --- where the reader is in a long list --- */
+
+.pager {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 1.25rem 0 0;
+}
+
+.pager .btn {
+    margin: 0;
+}
+
+.pager-where {
+    color: var(--bz-ink-faint);
+    font-size: 0.72rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+
+/* --- a value the face shows but does not own --- */
+
+/* Deliberately not a box: the reader should be able to tell what is theirs to
+   type without clicking it. */
+.readonly {
+    flex: 1 1 12rem;
+    min-width: 0;
+    padding: 0.55rem 0 0.55rem 0.7rem;
+    border-left: 2px solid var(--bz-line-2);
+    color: var(--bz-ink-dim);
+    font-size: 0.8rem;
+    overflow-wrap: anywhere;
+    user-select: text;
+}
+
+.readonly.is-unset {
+    color: var(--bz-ink-faint);
+    font-style: italic;
+}
+
+/* --- the door --- */
 
 body.centred {
     display: flex;
@@ -115,18 +626,6 @@ body.centred {
     text-transform: uppercase;
 }
 
-.fleets {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.35rem;
-    margin-bottom: 1.25rem;
-}
-
-.fleets .sidebar-note {
-    flex: 1 1 100%;
-    margin: 0 0 0.25rem;
-}
-
 .nav {
     margin: 0;
     padding: 0;
@@ -146,24 +645,22 @@ body.centred {
     text-transform: uppercase;
 }
 
+/* The mark in front of a heading, again: where the operator is reads the same
+   way in the sidebar, in the tab bar and above a section. */
 .nav a::before {
     content: "/";
     color: var(--bz-ink-faint);
     margin-right: 0.5rem;
 }
 
-.nav a:hover {
-    background: var(--bz-surface);
-    color: var(--bz-ink);
-}
-
+.nav a:hover,
 .nav a.is-current {
     background: var(--bz-surface);
     color: var(--bz-ink);
 }
 
 .nav a.is-current::before {
-    color: var(--bz-green);
+    color: var(--bz-key);
 }
 
 .sidebar-foot {
@@ -190,10 +687,32 @@ body.centred {
     font-weight: 700;
     letter-spacing: 0.18em;
     text-transform: uppercase;
-    color: var(--bz-green-dim);
+    color: var(--bz-key-dim);
 }
 
-/* --- cards & tables --- */
+@media (max-width: 46rem) {
+    .shell {
+        flex-direction: column;
+    }
+
+    .sidebar {
+        flex: 0 0 auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--bz-line);
+    }
+
+    .nav {
+        display: flex;
+        gap: 0.5rem;
+    }
+
+    .sidebar-foot {
+        border-top: 0;
+        padding-top: 0.75rem;
+    }
+}
+
+/* --- cards --- */
 
 .cards {
     display: grid;
@@ -229,50 +748,36 @@ body.centred {
 }
 
 .dot.is-up {
-    background: var(--bz-green);
+    background: var(--bz-ok-lit);
 }
 
 .dot.is-down {
     background: var(--bz-err);
 }
 
-.facts {
+/* A console lists more than a page does, so the same facts run tighter here and
+   the value sits under the right edge, where the eye comes back to it. */
+.card .facts,
+.detail .facts,
+.panel-box .facts {
     margin: 0;
-    padding: 0;
-    list-style: none;
     font-size: 0.78rem;
 }
 
-.facts li {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: space-between;
-    gap: 0.25rem 1rem;
+.card .facts li,
+.detail .facts li,
+.panel-box .facts li {
     padding: 0.3rem 0;
-    border-bottom: 1px dashed var(--bz-line);
 }
 
-.facts li:last-child {
-    border-bottom: 0;
-}
-
-/* The label is the small capitals; the value beside it is left alone - it is a
-   fingerprint or an address, and shouting it does not help anyone read it. */
-.facts .fact-label {
-    color: var(--bz-ink-faint);
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    font-size: 0.68rem;
-    align-self: center;
-}
-
-.facts b {
+.card .facts b,
+.detail .facts b,
+.panel-box .facts b {
     font-weight: 400;
-    overflow-wrap: anywhere;
     text-align: right;
 }
 
-/* --- users --- */
+/* --- a list of many --- */
 
 .toolbar {
     display: flex;
@@ -284,25 +789,6 @@ body.centred {
 
 .search {
     flex: 1 1 16rem;
-}
-
-.chip {
-    padding: 0.4rem 0.8rem;
-    background: transparent;
-    border: 1px solid var(--bz-line-2);
-    border-radius: var(--bz-radius-sm);
-    color: var(--bz-ink-dim);
-    font: inherit;
-    font-size: 0.72rem;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    cursor: pointer;
-}
-
-.chip.is-on {
-    border-color: var(--bz-green-dim);
-    color: var(--bz-ink);
-    background: var(--bz-ok-bg);
 }
 
 .flash-slot:empty {
@@ -394,14 +880,14 @@ body.centred {
 }
 
 .tag.is-approved {
-    border-color: var(--bz-green-dim);
+    border-color: var(--bz-ok);
     background: var(--bz-ok-bg);
     color: var(--bz-ink);
 }
 
 .tag.is-live {
-    border-color: var(--bz-green-dim);
-    color: var(--bz-green);
+    border-color: var(--bz-ok);
+    color: var(--bz-ok-lit);
 }
 
 .tag.is-banned {
@@ -409,6 +895,8 @@ body.centred {
     background: var(--bz-err-bg);
     color: var(--bz-err);
 }
+
+/* --- one record, opened --- */
 
 .detail,
 .panel-box {
@@ -440,8 +928,8 @@ body.centred {
     overflow-wrap: anywhere;
 }
 
-/* A copy mark beside the value it copies. Added by copy.js; a browser without
-   scripts never sees it. */
+/* A copy mark beside the value it copies. Added by the copy script; a browser
+   without scripts never sees it. */
 .fact-value {
     display: inline-flex;
     align-items: center;
@@ -482,8 +970,8 @@ body.centred {
 }
 
 .icon-copy.is-done {
-    color: var(--bz-green);
-    border-color: var(--bz-green-dim);
+    color: var(--bz-ok-lit);
+    border-color: var(--bz-ok);
 }
 
 .icon-copy.is-failed {
@@ -495,7 +983,8 @@ body.centred {
     margin: 0;
 }
 
-.btn-copy {
+.detail .btn-copy,
+.panel-box .btn-copy {
     margin: 0;
     padding: 0.35rem 0.7rem;
     font-size: 0.62rem;
@@ -509,28 +998,17 @@ body.centred {
     border-top: 1px solid var(--bz-line);
 }
 
-.block-title {
+.block .block-title {
     margin: 0;
-    font-size: 0.66rem;
-    font-weight: 400;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    color: var(--bz-ink-faint);
 }
 
-/* The controls of one block on a line: whatever is typed grows, the button that
-   acts on it keeps its size. */
-.controls {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.5rem;
+.block .controls {
     margin-top: 0.6rem;
 }
 
-.controls .field {
-    flex: 1 1 12rem;
-    width: auto;
+/* A list the operator types line by line. */
+.field-tall {
+    min-height: 5.5rem;
 }
 
 .controls .quota-input {
@@ -539,262 +1017,40 @@ body.centred {
     text-align: right;
 }
 
-.controls textarea.field {
-    flex: 1 1 100%;
-    min-height: 4.5rem;
+/* A section of one page, under a mark of its own. */
+.section {
+    margin-top: 2rem;
 }
 
-.controls .btn,
-.controls .btn-copy {
-    margin: 0;
-    flex: 0 0 auto;
-}
-
-.control-label {
-    flex: 0 0 11rem;
-    color: var(--bz-ink-dim);
-    font-size: 0.75rem;
-}
-
-.unit {
-    color: var(--bz-ink-faint);
-    font-size: 0.72rem;
-}
-
-.hint {
-    margin: 0.45rem 0 0;
-    color: var(--bz-ink-faint);
+.section-title {
+    margin: 0 0 0.75rem;
     font-size: 0.7rem;
-}
-
-/* The form's own action, on a line of its own at the end: nothing above it
-   takes effect until it is pressed. */
-.form-footer {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.75rem;
-    margin-top: 1.5rem;
-    padding-top: 1rem;
-    border-top: 1px solid var(--bz-line-2);
-}
-
-.form-footer .btn {
-    margin: 0;
-}
-
-.form-footer .hint {
-    flex: 1 1 14rem;
-    margin: 0;
-}
-
-/* --- fields, buttons, notices --- */
-
-.field-label {
-    display: block;
-    margin: 1rem 0 0.35rem;
-    font-size: 0.68rem;
+    font-weight: 400;
     letter-spacing: 0.16em;
     text-transform: uppercase;
     color: var(--bz-ink-faint);
 }
 
-.field {
-    width: 100%;
-    padding: 0.55rem 0.7rem;
-    background: var(--bz-deep);
-    color: var(--bz-ink);
-    border: 1px solid var(--bz-line-2);
-    border-radius: var(--bz-radius-sm);
-    font: inherit;
-    font-size: 0.8rem;
-}
-
-textarea.field {
-    min-height: 6rem;
-    resize: vertical;
-    word-break: break-all;
-}
-
-.field:focus-visible,
-.btn:focus-visible,
-.chip:focus-visible,
-.row:focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 2px var(--bz-bg), 0 0 0 4px var(--bz-green);
-}
-
-.copy {
-    margin: 0;
-    padding: 0.7rem 0.85rem;
-    background: var(--bz-deep);
-    border: 1px solid var(--bz-line);
-    border-radius: var(--bz-radius-sm);
-    font-size: 0.72rem;
-    line-height: 1.7;
-    white-space: pre-wrap;
-    word-break: break-all;
-    user-select: all;
-}
-
-.btn {
-    margin-top: 1rem;
-    padding: 0.55rem 1.1rem;
-    background: var(--bz-accent);
-    color: var(--bz-on-accent);
-    border: 1px solid var(--bz-accent);
-    border-radius: var(--bz-radius-sm);
-    font: inherit;
-    font-size: 0.72rem;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    cursor: pointer;
-}
-
-.btn:hover {
-    background: #ffffff;
-    border-color: #ffffff;
-}
-
-.btn[disabled] {
-    opacity: 0.5;
-    cursor: default;
-}
-
-.btn-quiet {
-    background: transparent;
-    border-color: var(--bz-line-2);
-    color: var(--bz-ink-dim);
-}
-
-.btn-quiet:hover {
-    background: transparent;
-    border-color: var(--bz-ink-faint);
-    color: var(--bz-ink);
-}
-
-/* What cannot be undone does not look like what can. */
-.btn-danger {
-    background: transparent;
-    border-color: var(--bz-err-line);
-    color: var(--bz-err);
-}
-
-.btn-danger:hover {
-    background: var(--bz-err-bg);
-    border-color: var(--bz-err);
-    color: var(--bz-err);
-}
-
-.panel-note,
-.muted {
-    color: var(--bz-ink-dim);
-    font-size: 0.8rem;
-}
-
-.notice {
-    margin: 1rem 0 0;
-    padding: 0.6rem 0.8rem;
-    border: 1px solid var(--bz-green-dim);
-    border-radius: var(--bz-radius-sm);
-    background: var(--bz-ok-bg);
-    font-size: 0.8rem;
-}
-
-.notice.is-error {
-    background: var(--bz-err-bg);
-    border-color: var(--bz-err-line);
-    color: var(--bz-err);
-}
-
-@media (max-width: 46rem) {
-    .shell {
-        flex-direction: column;
-    }
-
-    .sidebar {
-        flex: 0 0 auto;
-        border-right: 0;
-        border-bottom: 1px solid var(--bz-line);
-    }
-
-    .nav {
-        display: flex;
-        gap: 0.5rem;
-    }
-
-    .sidebar-foot {
-        border-top: 0;
-        padding-top: 0.75rem;
-    }
-}
-
-/* A list the operator types line by line (the facade URLs). */
-.field-tall {
-    min-height: 5.5rem;
-}
-
-/* --- settings: tabs, read-only values, restart marks --- */
-
-/* One subject per tab. The current one carries the same green slash the sidebar
-   uses, so "where am I" reads the same way in both places. */
-.tabs {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.35rem;
-    margin-bottom: 1rem;
-    border-bottom: 1px solid var(--bz-line);
-}
-
-.tab {
-    padding: 0.5rem 0.85rem;
-    background: transparent;
-    border: 0;
-    border-bottom: 2px solid transparent;
-    color: var(--bz-ink-faint);
-    font: inherit;
-    font-size: 0.72rem;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    cursor: pointer;
-}
-
-.tab::before {
+.section-title::before {
     content: "/ ";
     color: var(--bz-line-2);
 }
 
-.tab:hover {
-    color: var(--bz-ink);
+/* --- the fleet this panel is looking at --- */
+
+.fleets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-bottom: 1.25rem;
 }
 
-.tab.is-on {
-    color: var(--bz-ink);
-    border-bottom-color: var(--bz-green-dim);
+.fleets .sidebar-note {
+    flex: 1 1 100%;
+    margin: 0 0 0.25rem;
 }
 
-.tab.is-on::before {
-    color: var(--bz-green);
-}
-
-/* A value the panel shows but does not own. It is deliberately not a box: an
-   operator should be able to tell what is theirs to type without clicking it. */
-.readonly {
-    flex: 1 1 12rem;
-    min-width: 0;
-    padding: 0.55rem 0 0.55rem 0.7rem;
-    border-left: 2px solid var(--bz-line-2);
-    color: var(--bz-ink-dim);
-    font-size: 0.8rem;
-    overflow-wrap: anywhere;
-    user-select: text;
-}
-
-.readonly.is-unset {
-    color: var(--bz-ink-faint);
-    font-style: italic;
-}
+/* --- settings --- */
 
 /* Said next to the field, not in the hint below it: by the time an operator has
    typed the value, the sentence under it has been read and forgotten. */

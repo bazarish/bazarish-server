@@ -1,8 +1,7 @@
-<!-- The same account on a moderated node: it is served once the operator says
-     so. {{message}} is their note from the node config (empty if they wrote none). -->
   <section class="panel">
     <h2 class="panel-title">registered</h2>
-    <p class="panel-note">The operator approves accounts by hand: connect your client here, and it starts serving once they do.</p>
+    <p class="panel-note">The operator approves accounts by hand. Connect Bazarish App now; the
+      server starts serving the account once they do.</p>
     {{message}}
     <ul class="facts">
       <li><span>Mailbox</span>{{mailbox}}</li>
@@ -10,12 +9,12 @@
     </ul>
     <p class="field-label">Server descriptor</p>
     <pre class="copy">{{descriptor}}</pre>
-    <p class="panel-note">Paste it into your client to connect it here.</p>
+    <p class="panel-note">Paste it into Bazarish App to connect this account here.</p>
   </section>
   <section class="panel">
     <h2 class="panel-title">delete this account</h2>
-    <p class="panel-note">Everything this server holds for your key goes: the certificate, the
-      mailbox and the address. Your key is yours and can register again.</p>
+    <p class="panel-note">Deleting drops the certificate, the mailbox and everything in it, and
+      the address stops being served. The same key can register here again.</p>
     <form method="post" action="/delete">
       <button class="btn btn-danger" type="submit">Delete my account</button>
     </form>

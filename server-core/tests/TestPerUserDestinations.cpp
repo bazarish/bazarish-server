@@ -8,6 +8,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -27,7 +28,12 @@ using namespace bazarish::server;
 
 namespace {
 
-constexpr std::int64_t kNow = 1780000000;
+// Delegation terms for the transients this test issues. They are whole days
+// because that is what a delegation is: one b33 offline key per day. The long
+// one outlives the short one, which is what lets a reload see one record in date
+// and another past it at the same instant.
+constexpr int kShortTermDays = 1;
+constexpr int kLongTermDays = 2;
 
 std::string readFile(const std::filesystem::path& path)
 {
@@ -58,22 +64,50 @@ int main()
     const std::string alice = toBase32(Bytes(32, 0x01));
     const std::filesystem::path aliceFile = root / "i2p-user-dests" / alice;
 
+    // Real delegations, because a provision is refused unless the blob carries the
+    // b33 offline keys and runs out exactly when it says it does; and because what
+    // may be reused across a provision turns on the address served, which only a
+    // real blob has. Two issued from one master are a renewal: same address,
+    // different blob, and the longer term outlives the shorter.
+    const bazarish::i2p::Keys master = bazarish::i2p::Keys::generate();
+    const bazarish::i2p::Keys shortTerm = master.issueTransient(kShortTermDays);
+    const bazarish::i2p::Keys longTerm = master.issueTransient(kLongTermDays);
+    const bazarish::i2p::Keys otherMaster
+        = bazarish::i2p::Keys::generate().issueTransient(kShortTermDays);
+    const std::string transientA = toBase64(shortTerm.blob());
+    const std::string transientB = toBase64(longTerm.blob());
+    const std::string movedAway = toBase64(otherMaster.blob());
+    const std::int64_t shortExpiry = shortTerm.transientExpires();
+    const std::int64_t longExpiry = longTerm.transientExpires();
+    const std::int64_t movedAwayExpiry = otherMaster.transientExpires();
+    CHECK(shortTerm.b33OfflineKeyDays() == kShortTermDays);
+    CHECK(longTerm.b33OfflineKeyDays() == kLongTermDays);
+    CHECK(longExpiry > shortExpiry);
+
+    // A delegation that cannot publish is refused rather than served as an address
+    // nobody can reach: the declared expiry has to be the one inside the blob.
+    {
+        PerUserDestinations guard(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
+        const auto refused = [](const auto& call) {
+            try {
+                call();
+            } catch (const std::exception&) {
+                return true;
+            }
+            return false;
+        };
+        CHECK(refused([&] { guard.provision(alice, transientA, shortExpiry + 1); }));
+        CHECK(refused([&] { guard.provision(alice, toBase64(master.blob()), shortExpiry); }));
+        CHECK(!std::filesystem::exists(aliceFile));
+    }
+
     // With no live router, each destination's worker cannot publish: the test
     // exercises persistence and lifecycle without a live I2P transport.
     {
         PerUserDestinations dests(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
 
-        // Real transients, because what may be reused across a provision turns
-        // on the address they serve, and only a real blob has one. Two issued
-        // from one master are a renewal: same address, different blob.
-        const bazarish::i2p::Keys master = bazarish::i2p::Keys::generate();
-        const std::string transientA = toBase64(master.issueTransient(kNow + 1000).blob());
-        const std::string transientB = toBase64(master.issueTransient(kNow + 2000).blob());
-        const std::string movedAway
-            = toBase64(bazarish::i2p::Keys::generate().issueTransient(kNow + 1000).blob());
-
         // Provision persists the transient and registers the destination.
-        dests.provision(alice, transientA, kNow + 1000);
+        dests.provision(alice, transientA, shortExpiry);
         CHECK(std::filesystem::exists(aliceFile));
         CHECK(readFile(aliceFile).find(transientA) != std::string::npos);
         CHECK(dests.size() == 1);
@@ -98,18 +132,18 @@ int main()
         // State: provisioned but the session never published (no router) and the
         // transient is still in date -> "building"; past its expiry -> "expired";
         // an unknown user -> "".
-        CHECK(dests.stateFor(alice, kNow) == "building");
-        CHECK(dests.stateFor(alice, kNow + 2000) == "expired");
-        CHECK(dests.stateFor("nobody", kNow).empty());
+        CHECK(dests.stateFor(alice, shortExpiry - 1) == "building");
+        CHECK(dests.stateFor(alice, shortExpiry + 1) == "expired");
+        CHECK(dests.stateFor("nobody", shortExpiry - 1).empty());
 
         // Same transient: a no-op (still one destination).
-        dests.provision(alice, transientA, kNow + 1000);
+        dests.provision(alice, transientA, shortExpiry);
         CHECK(dests.size() == 1);
 
         // A renewal - a fresh transient of the same master, so the same address.
         // The file is updated and the keys are reused, or every contact holding
         // this user's card would stop being able to write to them.
-        dests.provision(alice, transientB, kNow + 2000);
+        dests.provision(alice, transientB, longExpiry);
         CHECK(dests.size() == 1);
         CHECK(readFile(aliceFile).find(transientB) != std::string::npos);
         CHECK(dests.servingKeyFor(alice)->publicDer() == servingA);
@@ -121,14 +155,14 @@ int main()
         // anyone who delivered, a stranger whose contact request was merely
         // stored included - so a signer carried across would let them prove the
         // new address is the same person.
-        dests.provision(alice, movedAway, kNow + 1000);
+        dests.provision(alice, movedAway, movedAwayExpiry);
         CHECK(dests.size() == 1);
         CHECK(dests.servingKeyFor(alice)->publicDer() != servingA);
         CHECK(fieldOf(aliceFile, "signingKey") != signingA);
 
         // And back to the address it started on, which is a fresh start of its
         // own: nothing of the abandoned one comes back either.
-        dests.provision(alice, transientA, kNow + 1000);
+        dests.provision(alice, transientA, shortExpiry);
         CHECK(fieldOf(aliceFile, "signingKey") != signingA);
 
         // Revoke forgets the destination and deletes the persisted transient.
@@ -143,8 +177,8 @@ int main()
     Bytes aliceServing;
     {
         PerUserDestinations writer(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
-        writer.provision(alice, "transient-reload", kNow + 1000);
-        writer.provision(bob, "transient-expired", kNow - 10);
+        writer.provision(alice, transientB, longExpiry);
+        writer.provision(bob, transientA, shortExpiry);
         // Two users on distinct personal destinations get distinct signing keys -
         // no shared server-wide signer to cluster them as co-located.
         CHECK(fieldOf(root / "i2p-user-dests" / bob, "signingKey")
@@ -155,27 +189,30 @@ int main()
     }
     {
         PerUserDestinations reloaded(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
-        reloaded.reloadPersisted(kNow);
+        reloaded.reloadPersisted(shortExpiry + 1);
         CHECK(reloaded.size() == 1);  // alice restored; bob's expired transient skipped
         // The serving key survives the restart (the user's card stays valid).
         CHECK(reloaded.servingKeyFor(alice)->publicDer() == aliceServing);
+        // A skipped record is not a removed one, and the rest of this test is
+        // about alice alone.
+        reloaded.revoke(bob);
     }
 
     // A delegation is a term, not a gift: once it runs out the destination comes
     // down and its record goes with it, so a restart does not raise it again.
     {
         PerUserDestinations dests(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
-        dests.provision(alice, "transient-lapsing", kNow + 100);
+        dests.provision(alice, transientA, shortExpiry);
         CHECK(dests.size() == 1);
-        CHECK(dests.sweepExpired(kNow) == 0);  // still within its term
+        CHECK(dests.sweepExpired(shortExpiry - 1) == 0);  // still within its term
         CHECK(dests.size() == 1);
-        CHECK(dests.sweepExpired(kNow + 101) == 1);
+        CHECK(dests.sweepExpired(shortExpiry + 1) == 1);
         CHECK(dests.size() == 0);
         CHECK(!std::filesystem::exists(root / "i2p-user-dests" / alice));
     }
     {
         PerUserDestinations reloaded(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
-        reloaded.reloadPersisted(kNow);
+        reloaded.reloadPersisted(shortExpiry - 1);
         CHECK(reloaded.size() == 0);  // nothing left to bring back
     }
 

@@ -23,13 +23,14 @@ namespace bazarish::server {
 
 class FederationRateLimiter;
 
-// Operates per-user federation destinations for paid users that own their I2P
-// key. The user delegates a time-boxed OFFLINE transient to the server, which
-// brings the destination up over I2P as a STANDARD LeaseSet2 (an
-// offline-signature destination cannot publish an encrypted LeaseSet2) with its
-// own inbound accept loop feeding the shared DeliveryEngine. The destination's
-// address equals the user's master b32, so it is stable as the user moves
-// between serving servers. Building a session triggers I2P tunnel construction,
+// Operates per-user federation destinations for users that own their I2P key.
+// The user delegates a time-boxed OFFLINE transient to the server, which brings
+// the destination up over I2P as an encrypted LeaseSet2, with its own inbound
+// accept loop feeding the shared DeliveryEngine. The delegation carries one
+// blinded-key-authorized transient per day, so the server publishes the
+// destination blinded without ever holding the master signing key: a floodfill
+// sees neither the address nor its tunnels. The address is derived from the
+// user's master, so it is stable as the user moves between serving servers. Building a session triggers I2P tunnel construction,
 // so each destination runs on its own worker thread and provisioning never
 // blocks the caller.
 class PerUserDestinations {
@@ -94,7 +95,7 @@ public:
     // nothing prepared (a commit for a rotation that was never started).
     bool commitServingKey(const std::string& userFp);
 
-    // userFp's personal destination address (the master b32), learned once the
+    // userFp's personal destination address (the master's b33), learned once the
     // destination publishes. Empty when the user has none or it is not up yet.
     std::string destinationFor(const std::string& userFp) const;
 
@@ -127,7 +128,7 @@ private:
         // delivered-acks this destination sends, so the signer is bound to the
         // destination, never the server root identity. Stable across renewals.
         std::shared_ptr<Key> signingKey;
-        // The published destination address (master b32); set once the
+        // The published destination address (the master's b33); set once the
         // destination builds. Guarded by mutex_.
         std::string dest;
         // The serving endpoint, so outbound federation can dial from it. Set once

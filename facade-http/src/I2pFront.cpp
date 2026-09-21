@@ -159,11 +159,9 @@ std::vector<std::string> I2pFront::start()
         const bazarish::i2p::Keys keys = raw.empty()
             ? bazarish::i2p::Keys::generate()
             : bazarish::i2p::Keys::fromBlob(bazarish::Bytes(raw.begin(), raw.end()));
-        // Encrypted LeaseSet2: the address clients dial is the blinded b33.
         std::shared_ptr<bazarish::i2p::Endpoint> endpoint
-            = router_->createEndpoint(bazarish::i2p::EndpointConfig{keys,
-                bazarish::i2p::LeaseSetKind::eEncrypted, options_.privacy,
-                options_.tunnelQuantity, true});
+            = router_->createEndpoint(bazarish::i2p::EndpointConfig{
+                keys, options_.privacy, options_.tunnelQuantity, true});
         if (raw.empty()) {
             const bazarish::Bytes blob = endpoint->privateBlob();
             writePrivateFile(keyPath, std::string(blob.begin(), blob.end()));

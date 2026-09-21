@@ -6,6 +6,7 @@
 #include <bazarish/Address.hpp>
 #include <bazarish/Clock.hpp>
 #include <bazarish/Crypto.hpp>
+#include <bazarish/I2pAddress.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/PrivateFile.hpp>
 #include <nlohmann/json.hpp>
@@ -193,11 +194,12 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
         raw->workers.emplace_back([this, raw, transientB64, userFp]() {
             try {
                 // The transient is a base64-encoded i2pd private-keys blob with an
-                // offline section; a STANDARD LeaseSet2 (offline-signature dests
-                // cannot publish an encrypted one), so the address is the master b32.
-                const bazarish::i2p::Keys keys = bazarish::i2p::Keys::fromBlob(fromBase64(transientB64));
+                // offline section and the b33 offline keys that authorize the
+                // blinded publication; the address is the master's b33.
+                const bazarish::i2p::Keys keys
+                    = bazarish::i2p::Keys::fromBlob(fromBase64(transientB64));
                 auto endpoint = router_->createEndpoint(bazarish::i2p::EndpointConfig{
-                    keys, bazarish::i2p::LeaseSetKind::eStandard, privacy_, tunnelQuantity_, true});
+                    keys, privacy_, tunnelQuantity_, true});
                 {
                     // Publish the resolved address for surfacing to the user and
                     // same-destination local delivery matching; keep the endpoint so
@@ -331,7 +333,8 @@ namespace {
 std::string addressOfTransient(const std::string& transientB64)
 {
     try {
-        return bazarish::i2p::Keys::fromBlob(fromBase64(transientB64)).base32();
+        return bazarish::i2p::routingHost(
+            bazarish::i2p::Keys::fromBlob(fromBase64(transientB64)).publicBase64());
     } catch (const std::exception&) {
         // error-hiding: allowed - an unparseable blob is answered by minting
         // fresh keys, which the caller does when this is empty.
@@ -357,11 +360,33 @@ std::string recordedAddress(const std::filesystem::path& path)
     }
 }
 
+// A delegation this server can actually publish from. Without the b33 offline
+// keys the destination would build its tunnels and then never publish: there is
+// no key to sign the outer layer of its encrypted LeaseSet with, and the address
+// would be unreachable while looking provisioned. Throws, so the refusal reaches
+// the user instead of becoming a silent outage.
+void requireUsableDelegation(const std::string& transientB64, const std::int64_t expiresUnix)
+{
+    const bazarish::i2p::Keys keys = bazarish::i2p::Keys::fromBlob(fromBase64(transientB64));
+    if (!keys.isOffline()) {
+        throw std::runtime_error("delegation carries the destination's own signing key");
+    }
+    if (keys.b33OfflineKeyDays() < 1) {
+        throw std::runtime_error("delegation carries no b33 offline keys");
+    }
+    if (keys.transientExpires() != expiresUnix) {
+        throw std::runtime_error("delegation runs out at "
+            + std::to_string(keys.transientExpires()) + ", not at the declared "
+            + std::to_string(expiresUnix));
+    }
+}
+
 }  // namespace
 
 void PerUserDestinations::provision(const std::string& userFp, const std::string& transientB64,
     const std::int64_t expiresUnix)
 {
+    requireUsableDelegation(transientB64, expiresUnix);
     reapRetired();
     const std::lock_guard<std::mutex> lock(mutex_);
     const auto existing = dests_.find(userFp);
@@ -601,6 +626,7 @@ void PerUserDestinations::reloadPersisted(const std::int64_t now)
                 continue;  // the offline transient has already expired
             }
             const std::string transientB64 = record.at("transient").get<std::string>();
+            requireUsableDelegation(transientB64, expiresUnix);
             // Reuse the persisted serving and signing keys (older records may
             // predate either; mint a missing one).
             const std::string sealingKeyPem = record.contains("sealingKey")

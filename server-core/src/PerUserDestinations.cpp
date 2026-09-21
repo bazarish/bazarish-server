@@ -3,9 +3,11 @@
 
 #include "Federation.hpp"
 
+#include <bazarish/Address.hpp>
 #include <bazarish/Clock.hpp>
 #include <bazarish/Crypto.hpp>
 #include <bazarish/Log.hpp>
+#include <bazarish/PrivateFile.hpp>
 #include <nlohmann/json.hpp>
 
 #include <chrono>
@@ -160,6 +162,13 @@ std::filesystem::path PerUserDestinations::destsDir() const
 
 std::filesystem::path PerUserDestinations::pathFor(const std::string& userFp) const
 {
+    // The record is named after the user, so the name has to be one. Every other
+    // store in this server checks it on the way in for the same reason: a
+    // fingerprint cannot leave the directory it is joined to, and anything that
+    // is not one might.
+    if (!bazarish::isFingerprint(userFp)) {
+        throw std::invalid_argument("not a fingerprint: no destination record is named that");
+    }
     return destsDir() / userFp;
 }
 
@@ -416,17 +425,16 @@ void PerUserDestinations::provision(const std::string& userFp, const std::string
     std::filesystem::create_directories(destsDir(), ec);
     const nlohmann::json record = {{"transient", transientB64}, {"expiresUnix", expiresUnix},
         {"address", address}, {"sealingKey", sealingKeyPem}, {"signingKey", signingKeyPem}};
-    const std::string text = record.dump();
-    {
-        std::ofstream out(pathFor(userFp), std::ios::binary | std::ios::trunc);
-        out.write(text.data(), static_cast<std::streamsize>(text.size()));
-        out.close();
-        if (!out) {
-            // This record is the destination: unwritten, the address is up now and
-            // gone at the next start, with the user unreachable and nothing said.
-            throw std::runtime_error("cannot persist the destination record for "
-                + bazarish::log::redact(userFp));
-        }
+    // This record is the destination, and it carries the user's serving sealing
+    // key and their federation signer in the clear - so it is written like every
+    // other key file here: owner-only, and put in place whole. Half-written, the
+    // address is up now and gone at the next start; readable, it is the key the
+    // user's mail is sealed to.
+    try {
+        writePrivateFile(pathFor(userFp), record.dump());
+    } catch (const std::exception& error) {
+        throw std::runtime_error("cannot persist the destination record for "
+            + bazarish::log::redact(userFp) + ": " + error.what());
     }
     teardownLocked(userFp);
     bringUp(userFp, transientB64, expiresUnix, sealingKeyPem, signingKeyPem);
@@ -450,13 +458,7 @@ void rewriteRecord(const std::filesystem::path& file,
         }
     }
     edit(record);
-    const std::string text = record.dump();
-    std::ofstream out(file, std::ios::binary | std::ios::trunc);
-    out.write(text.data(), static_cast<std::streamsize>(text.size()));
-    out.close();
-    if (!out) {
-        throw std::runtime_error("cannot persist the destination record for " + file.string());
-    }
+    writePrivateFile(file, record.dump());
 }
 
 }  // namespace

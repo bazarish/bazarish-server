@@ -50,3 +50,8 @@ bazarish_admin_add_test(TestConfig)
 bazarish_admin_add_test(TestPanelSettings)
 bazarish_admin_add_test(TestAdminAuth)
 bazarish_admin_add_test(TestServiceClient)
+bazarish_admin_add_test(TestLoginPage)
+# The sign-in page is drawn from the shipped web files, so the test renders the
+# real template rather than a stand-in that could escape what the real one does not.
+target_compile_definitions(TestLoginPage
+    PRIVATE BAZARISH_PANEL_WEB_DIR="${CMAKE_CURRENT_SOURCE_DIR}/web")

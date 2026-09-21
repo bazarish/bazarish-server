@@ -26,6 +26,7 @@ namespace {
 
 namespace http = bazarish::http;
 
+using bazarish::htmlEscape;
 using bazarish::nowSeconds;
 using bazarish::http::filled;
 
@@ -55,6 +56,18 @@ void sendJson(http::Response& response, const std::string& body, const int statu
 void sendError(http::Response& response, const int status, const std::string& message)
 {
     sendJson(response, nlohmann::json{{"error", message}}.dump(), status);
+}
+
+// The one refusal a sign-in page shows. The text is whatever the verifier threw,
+// and a verifier that could not parse what arrived quotes it back - so it is
+// escaped here. It was not, and a challenge field holding markup put that markup
+// in the page, in the panel's own origin, for whoever had been made to post it.
+std::string notice(const std::string& text)
+{
+    if (text.empty()) {
+        return {};
+    }
+    return "<p class=\"notice is-error\">" + htmlEscape(text) + "</p>";
 }
 
 void redirectTo(http::Response& response, const std::string& location)
@@ -179,8 +192,7 @@ void HttpApi::registerRoutes()
         return assets_.render("login.html",
             {
                 {"challenge", auth_.issueChallenge(nowSeconds())},
-                {"error", error.empty() ? std::string()
-                                        : "<p class=\"notice is-error\">" + error + "</p>"},
+                {"error", notice(error)},
             });
     };
 
@@ -190,8 +202,7 @@ void HttpApi::registerRoutes()
         return assets_.render("setup.html",
             {
                 {"challenge", auth_.issueChallenge(nowSeconds())},
-                {"error", error.empty() ? std::string()
-                                        : "<p class=\"notice is-error\">" + error + "</p>"},
+                {"error", notice(error)},
             });
     };
 

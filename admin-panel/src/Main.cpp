@@ -6,11 +6,11 @@
 #include <bazarish/Restart.hpp>
 
 #include <bazarish/Crypto.hpp>
+#include <bazarish/PrivateFile.hpp>
 
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
-#include <fstream>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -38,28 +38,8 @@ void printUsage()
         kVersion);
 }
 
-std::string readFileText(const fs::path& path)
-{
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        throw std::runtime_error("failed to open " + path.string());
-    }
-    return std::string(
-        (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-}
-
-void writePrivateFile(const fs::path& path, const std::string& text)
-{
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    if (!out) {
-        throw std::runtime_error("failed to open " + path.string());
-    }
-    out << text;
-    if (!out) {
-        throw std::runtime_error("failed to write " + path.string());
-    }
-    fs::permissions(path, fs::perms::owner_read | fs::perms::owner_write);
-}
+using bazarish::readFileText;
+using bazarish::writePrivateFile;
 
 // Loads the panel's own signing identity from the state directory, generating it
 // on first start. The panel signs every service call with it.

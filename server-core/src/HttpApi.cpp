@@ -5,6 +5,8 @@
 
 #include <bazarish/Cms.hpp>
 
+#include <bazarish/Clock.hpp>
+#include <bazarish/ConfigFile.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/Auth.hpp>
 #include <bazarish/HttpClient.hpp>
@@ -22,12 +24,9 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
-#include <ctime>
-#include <deque>
 #include <map>
 #include <memory>
 #include <stdexcept>
@@ -37,14 +36,13 @@
 
 namespace {
 
-// What a listener may be told to bind: TCP's range without port 0, which means
-// "any free port" and is never what an operator typed on purpose.
 // What a refused tunnel answers with. Any size does, since it is padded to a
 // step like everything else on this path; it exists only so that a refusal is
 // shaped like an answer.
 constexpr std::size_t kRefusalNoiseBytes = 64;
-constexpr int kMinPort = 1;
-constexpr int kMaxPort = 65535;
+
+// The reseed archive's path, served on the private listener.
+constexpr const char* kReseedPath = "/internal/i2pseeds.su3";
 
 
 using bazarish::Bytes;
@@ -69,11 +67,7 @@ std::string lowered(std::string name)
 // same machine or one hop away, and a client is waiting on the other end.
 constexpr int kNodeTimeoutSeconds = 5;
 
-std::int64_t nowSeconds()
-{
-    return static_cast<std::int64_t>(std::time(nullptr));
-}
-
+using bazarish::nowSeconds;
 
 Bytes bodyBytes(const bazarish::http::Request& request)
 {
@@ -91,30 +85,14 @@ bazarish::http::Response jsonResponse(const nlohmann::json& body)
     return {200, "application/json", {}, body.dump()};
 }
 
-bazarish::auth::Headers collectAuthHeaders(const bazarish::http::Request& request)
-{
-    bazarish::auth::Headers headers;
-    // Both schemes: the signature headers a request may present, and the session
-    // headers it may present instead. Collecting only the first set made every
-    // session-authenticated request look unsigned.
-    for (const char* const name : {bazarish::auth::kHeaderKeys,
-             bazarish::auth::kHeaderTimestamp, bazarish::auth::kHeaderSignatureClassical,
-             bazarish::auth::kHeaderSignaturePq, bazarish::auth::kHeaderSession,
-             bazarish::auth::kHeaderSeq, bazarish::auth::kHeaderMac}) {
-        if (request.hasHeader(name)) {
-            headers[name] = request.header(name);
-        }
-    }
-    return headers;
-}
+using bazarish::http::collectAuthHeaders;
 
 }  // namespace
 
 namespace bazarish::server {
 
-HttpApi::HttpApi(Storage& storage, DeliveryEngine& engine, const HttpApiOptions options)
+HttpApi::HttpApi(Storage& storage, const HttpApiOptions options)
     : storage_(storage)
-    , engine_(engine)
     , options_(options)
     , startedAt_(nowSeconds())
 {
@@ -555,8 +533,6 @@ void HttpApi::setupRoutes()
     const auto signedOnly
         = [authenticate](auto handler) { return authenticate(handler, /*allowSession=*/false); };
 
-    // Left unused below; kept as the single place both schemes are decided.
-
     Storage& store = storage_;
 
     // Returns the registered client ID of the request or reports
@@ -614,7 +590,10 @@ void HttpApi::setupRoutes()
                 const std::string asked = request.query("wait");
                 if (!asked.empty()) {
                     try {
-                        wait = std::min(std::stoi(asked), maxWait);
+                        // Clamped at both ends: a negative wait made the timer
+                        // fire at once, so a client asking for it turned the long
+                        // poll into a tight loop against the mailbox.
+                        wait = std::clamp(std::stoi(asked), 0, maxWait);
                     } catch (const std::exception& error) {
                         bazarish::log::debug("bad wait '{}': {}", asked, error.what());
                     }
@@ -709,9 +688,7 @@ void HttpApi::setupRoutes()
     http_->get("/v1/messaging/clients",
         authenticated([&store](const bazarish::http::Request& request,
                           const std::string& user) -> bazarish::http::Response {
-            const auto header = request.headers.find("x-bazarish-client");
-            const std::string caller
-                = header != request.headers.end() ? header->second : std::string();
+            const std::string caller = request.header("X-Bazarish-Client");
             nlohmann::json clients = nlohmann::json::array();
             for (const std::string& clientId : store.listClients(user)) {
                 // What this device still holds: the mail it has not acked. A
@@ -737,7 +714,7 @@ void HttpApi::setupRoutes()
     // clearnet is the portal, which is on it anyway. Nothing is authenticated
     // here and nothing needs to be: every RouterInfo inside is signed by the
     // router it describes.
-    http_->get("/internal/i2pseeds.su3",
+    http_->get(std::string(kReseedPath),
         [this](const bazarish::http::Request&) -> bazarish::http::Response {
             const std::string archive = reseedArchive();
             if (archive.empty()) {
@@ -826,10 +803,6 @@ void HttpApi::setupRoutes()
             return jsonResponse({{"ok", true}});
         });
 
-    // --- Operator-internal: what the storage occupies ---
-    //
-    // The panel shows this next to the sum of the quotas: the two answer
-    // different questions, and only this one is measured.
     // --- Operator-internal: this server's own configuration ---
     //
     // Everything an operator would otherwise edit over SSH. The log level and
@@ -926,9 +899,10 @@ void HttpApi::setupRoutes()
                     if (host.empty()) {
                         throw std::invalid_argument("a listener needs a host to bind");
                     }
-                    if (port < kMinPort || port > kMaxPort) {
+                    if (port < bazarish::kMinPort || port > bazarish::kMaxPort) {
                         throw std::invalid_argument("a port is between "
-                            + std::to_string(kMinPort) + " and " + std::to_string(kMaxPort));
+                            + std::to_string(bazarish::kMinPort) + " and "
+                            + std::to_string(bazarish::kMaxPort));
                     }
                     values.listenHost = host;
                     values.listenPort = port;
@@ -1167,7 +1141,11 @@ void HttpApi::setupRoutes()
             }
             std::vector<Bytes> handles;
             for (const nlohmann::json& entry : asked) {
-                handles.push_back(fromBase64(entry.get<std::string>()));
+                Bytes handle = fromBase64(entry.get<std::string>());
+                if (handle.size() != kDeliveryPassSize) {
+                    throw std::invalid_argument("delivery pass handle has wrong size");
+                }
+                handles.push_back(std::move(handle));
             }
             const std::size_t dropped = store.revokePasses(user, handles);
             bazarish::log::info(
@@ -1229,10 +1207,10 @@ void HttpApi::setupRoutes()
         authenticated([this, requireClient, clientUnregistered](
                           const bazarish::http::Request& request,
                           const std::string& user) -> bazarish::http::Response {
-            if (requireClient(request, user).empty()) {
+            const std::string caller = requireClient(request, user);
+            if (caller.empty()) {
                 return clientUnregistered();
             }
-            const std::string caller = requireClient(request, user);
             const nlohmann::json body = nlohmann::json::parse(request.body);
             const std::string deliveryId = body.at("deliveryId").get<std::string>();
             const Bytes payload = fromBase64(body.at("payload").get<std::string>());

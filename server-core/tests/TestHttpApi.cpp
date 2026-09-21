@@ -124,8 +124,6 @@ int main()
     httpOptions.assignDestination = [serverDest, serverServingKey](const std::string&) {
         return DestinationAssignment{serverDest, serverServingKey, "home"};
     };
-    // Stub blob proxy: records the unsend (DELETE) op so the test can assert the
-    // endpoint validated and forwarded it without a live router.
     // Operator-internal per-user destination: stub the manager so the test can
     // assert the endpoint authenticates and dispatches provision/revoke. The
     // operator is authorised by signature (its fingerprint), not a shared secret.
@@ -163,7 +161,7 @@ int main()
     };
     httpOptions.revokeI2pDest = [&](const std::string& user) { revokedUser = user; };
 
-    HttpApi api(storage, engine, httpOptions);
+    HttpApi api(storage, httpOptions);
 
     const int port = api.bindToAnyPort("127.0.0.1");
     CHECK(port > 0);

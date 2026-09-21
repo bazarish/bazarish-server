@@ -3,6 +3,7 @@
 
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Log.hpp>
+#include <bazarish/PrivateFile.hpp>
 
 #include <stdexcept>
 
@@ -16,7 +17,6 @@
 #include <array>
 #include <chrono>
 #include <exception>
-#include <fstream>
 #include <iterator>
 #include <system_error>
 #include <utility>
@@ -36,32 +36,8 @@ constexpr int kReadyWaitSeconds = 300;
 constexpr int kDrainMillis = 60000;
 constexpr int kDrainPollMillis = 50;
 
-std::string readFileText(const std::filesystem::path& path)
-{
-    std::ifstream in(path, std::ios::binary);
-    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-}
-
-void writePrivateFile(const std::filesystem::path& path, const std::string& text)
-{
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    out.write(text.data(), static_cast<std::streamsize>(text.size()));
-    out.close();
-    if (!out) {
-        // This is the destination's private key: a half-written one costs the
-        // address on the next start, so it is a hard failure, not a warning.
-        throw std::runtime_error("cannot write " + path.string());
-    }
-    std::error_code ec;
-    std::filesystem::permissions(path,
-        std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
-        std::filesystem::perm_options::replace, ec);
-    if (ec) {
-        // Refusing to run is better than serving from a key file others can read.
-        throw std::runtime_error(
-            "cannot restrict permissions on " + path.string() + ": " + ec.message());
-    }
-}
+using bazarish::readFileText;
+using bazarish::writePrivateFile;
 
 // A connected socket to the facade's own listener, or -1.
 int connectLocal(const std::string& host, const int port)

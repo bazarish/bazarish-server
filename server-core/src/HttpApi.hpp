@@ -1,11 +1,11 @@
 // Bazarish project (c) 2026
 #pragma once
 
-#include "DeliveryEngine.hpp"
 #include "ServerSettings.hpp"
 #include "Storage.hpp"
 
 #include <bazarish/Auth.hpp>
+#include <bazarish/Clock.hpp>
 #include <bazarish/Bytes.hpp>
 #include <bazarish/HttpServer.hpp>
 
@@ -13,23 +13,24 @@
 
 #include <condition_variable>
 #include <cstdint>
-#include <deque>
 #include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
-#include <set>
 #include <string>
 #include <thread>
 #include <vector>
 
 namespace bazarish::server {
 
+// The port a service-node URL means when it names none.
+inline constexpr int kDefaultHttpPort = 80;
+
 // Where a service-node URL points. Shared with the server's own startup, which
 // resolves the same setting for its card lookups.
 struct ServiceNodeAddress {
     std::string host;
-    int port = 80;
+    int port = kDefaultHttpPort;
 };
 ServiceNodeAddress parseServiceNodeUrl(const std::string& url);
 
@@ -75,7 +76,7 @@ struct HttpApiOptions {
     // sweep. The primary cleanup is delete-on-all-devices-acked; this only
     // bounds mail for a device that never returns (or a user with no registered
     // clients). 0 disables the sweep.
-    std::int64_t mailboxRetentionSeconds = 30 * 24 * 3600;
+    std::int64_t mailboxRetentionSeconds = 30 * kSecondsPerDay;
     // Fingerprints of the identities authorised to call the operator-internal
     // endpoints (quota, per-user destination) and /healthz. The caller proves
     // possession by signing the request (hybrid auth); no shared secret. The
@@ -107,12 +108,12 @@ struct HttpApiOptions {
     // disables local delivery (every send federates).
     AssignDestinationFn assignDestination;
 
-    // What this server's storage actually occupies on disk, for the operator
-    // panel. Quotas say what has been promised; only the filesystem says what has
-    // been used. Empty = the endpoint answers that it cannot tell.
     // A slice of this server's netDb, for the reseed archive below. Absent when
     // the server runs without a router, and then it serves no archive.
     std::function<std::vector<Bytes>(std::size_t count)> reseedSample;
+    // What this server's storage actually occupies on disk, for the operator
+    // panel. Quotas say what has been promised; only the filesystem says what has
+    // been used. Empty = the endpoint answers that it cannot tell.
     std::function<std::uint64_t()> diskUsage;
     // Longest a client may ask to be held on the event face. Anything longer is
     // clamped: an idle I2P stream that lives too long is torn down under us.
@@ -142,7 +143,7 @@ struct HttpApiOptions {
 // itself, so this server is never asked who its users write to.
 class HttpApi {
 public:
-    HttpApi(Storage& storage, DeliveryEngine& engine, HttpApiOptions options);
+    HttpApi(Storage& storage, HttpApiOptions options);
     // What a waiting client is parked on. Without it the event route is not
     // registered at all and clients fall back to polling.
     void setEventGate(EventGate* gate) { eventGate_ = gate; }
@@ -192,7 +193,6 @@ private:
     void mailboxJanitorLoop();
 
     Storage& storage_;
-    DeliveryEngine& engine_;
     const HttpApiOptions options_;
 
     std::unique_ptr<bazarish::http::Server> http_;

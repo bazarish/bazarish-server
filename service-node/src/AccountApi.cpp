@@ -2,6 +2,8 @@
 #include "AccountApi.hpp"
 
 #include <bazarish/Auth.hpp>
+#include <bazarish/Clock.hpp>
+#include <bazarish/ConfigFile.hpp>
 #include <bazarish/Tunnel.hpp>
 #include <bazarish/Certificates.hpp>
 #include <bazarish/Descriptor.hpp>
@@ -14,7 +16,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include <ctime>
+#include <algorithm>
 #include <filesystem>
 #include <optional>
 #include <stdexcept>
@@ -23,13 +25,10 @@ namespace {
 
 // What an operator may set from the panel. A captcha shorter than this is not a
 // test at all, and one longer is a wall; a lifetime under a minute expires while
-// the person is still typing. Ports are TCP's own range without 0, which means
-// "any free port" and is never what someone typed on purpose.
+// the person is still typing.
 constexpr int kMinCaptchaLength = 3;
 constexpr int kMaxCaptchaLength = 12;
 constexpr std::int64_t kMinCaptchaTtlSeconds = 60;
-constexpr int kMinPort = 1;
-constexpr int kMaxPort = 65535;
 
 // The knobs an API built without a shared settings object runs on. The portal
 // owns the words a login is signed under, so nothing here fills them in. Written
@@ -54,22 +53,8 @@ using bazarish::ErrorCode;
 
 namespace http = bazarish::http;
 
-std::int64_t nowSeconds()
-{
-    return static_cast<std::int64_t>(std::time(nullptr));
-}
-
-// The routes are written as "fill in the response"; the engine hands one back.
-using Filler = std::function<void(const http::Request&, http::Response&)>;
-
-http::Handler filled(Filler handler)
-{
-    return [handler = std::move(handler)](const http::Request& request) {
-        http::Response response;
-        handler(request, response);
-        return response;
-    };
-}
+using bazarish::nowSeconds;
+using bazarish::http::filled;
 
 Bytes bodyBytes(const http::Request& request)
 {
@@ -90,21 +75,14 @@ void respondJson(http::Response& response, const nlohmann::json& body)
     response.body = body.dump();
 }
 
-bazarish::auth::Headers collectAuthHeaders(const http::Request& request)
-{
-    bazarish::auth::Headers headers;
-    for (const char* const name : {bazarish::auth::kHeaderKeys,
-             bazarish::auth::kHeaderTimestamp, bazarish::auth::kHeaderSignatureClassical,
-             bazarish::auth::kHeaderSignaturePq}) {
-        if (request.hasHeader(name)) {
-            headers[name] = request.header(name);
-        }
-    }
-    return headers;
-}
+using bazarish::http::collectAuthHeaders;
 
-// How many accounts a listing answers with when the caller names no limit.
+// How many accounts a listing answers with when the caller names no limit, and
+// the most it will answer with however large a limit is asked for. A page is
+// built record by record out of the stores, so an unbounded one is a node
+// building a million of them because a query string said so.
 constexpr std::size_t kDefaultUserPageSize = 50;
+constexpr std::size_t kMaxUserPageSize = 500;
 
 // What a banned key is told when the operator left the reason empty.
 const char* const kDefaultBanReason = "Banned";
@@ -139,11 +117,10 @@ std::size_t parsedCount(const std::string& text, const std::size_t fallback)
 std::int64_t sweepDeadline(
     const std::int64_t idleSince, const bazarish::service::NodeSettings::Values& settings)
 {
-    constexpr std::int64_t kSecondsPerDay = 24 * 3600;
     if (settings.idleDeleteDays <= 0 || idleSince == 0) {
         return 0;  // the operator keeps them forever
     }
-    return idleSince + settings.idleDeleteDays * kSecondsPerDay;
+    return idleSince + settings.idleDeleteDays * bazarish::kSecondsPerDay;
 }
 
 // What a waiting account's owner is told: the operator's own words for this
@@ -313,7 +290,7 @@ nlohmann::json AccountApi::userRecord(
         {"quotaBytes",
             held.has_value() ? held->quotaBytes
                              : (grant.has_value() ? grant->quotaBytes
-                                                 : settings().defaultQuotaBytes)},
+                                                 : values.defaultQuotaBytes)},
         {"registered", held.has_value()},
         {"grantPending", grant.has_value()},
         {"approval",
@@ -429,7 +406,9 @@ void AccountApi::setupRoutes()
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const std::string query = lowercased(request.query("q"));
             const std::string state = request.query("state");
-            const std::size_t limit = parsedCount(request.query("limit"), kDefaultUserPageSize);
+            const std::size_t limit
+                = std::min(parsedCount(request.query("limit"), kDefaultUserPageSize),
+                    kMaxUserPageSize);
             const std::size_t offset = parsedCount(request.query("offset"), 0);
 
             nlohmann::json users = nlohmann::json::array();
@@ -689,9 +668,10 @@ void AccountApi::setupRoutes()
                 if (wantedHost.empty()) {
                     throw std::invalid_argument("a " + key + " address needs a host");
                 }
-                if (wantedPort < kMinPort || wantedPort > kMaxPort) {
-                    throw std::invalid_argument("a port is between " + std::to_string(kMinPort)
-                        + " and " + std::to_string(kMaxPort));
+                if (wantedPort < bazarish::kMinPort || wantedPort > bazarish::kMaxPort) {
+                    throw std::invalid_argument("a port is between "
+                        + std::to_string(bazarish::kMinPort) + " and "
+                        + std::to_string(bazarish::kMaxPort));
                 }
                 host = wantedHost;
                 port = wantedPort;
@@ -979,11 +959,18 @@ void AccountApi::setupRoutes()
             // The ceiling is the protocol's: a server that could hold a longer
             // delegation than this would keep operating someone's address after
             // they decided to leave.
-            constexpr std::int64_t kSecondsPerDay = 24 * 3600;
-            if (expiresUnix > now + kMaxDelegationDays * kSecondsPerDay) {
+            if (expiresUnix > now + kMaxDelegationDays * bazarish::kSecondsPerDay) {
                 respondError(response, 400, ErrorCode::eDeliveryRejected,
                     "a delegation may run at most " + std::to_string(kMaxDelegationDays)
                         + " days");
+                return;
+            }
+            // And forwards: a term that has already run out raises an address the
+            // next sweep takes straight back down, which reads to its owner as a
+            // delegation that worked and then silently did not.
+            if (!transient.empty() && expiresUnix <= now) {
+                respondError(response, 400, ErrorCode::eDeliveryRejected,
+                    "this delegation has already run out");
                 return;
             }
             if (!options_.publishI2pTransient(user, transient, expiresUnix)) {
@@ -1198,27 +1185,28 @@ void AccountApi::setupRoutes()
     // portal, not here. Nothing on this node is for sale, so there is no service
     // catalogue: the only variables are whether a captcha is required and
     // whether an operator has to approve the account.
+    // One snapshot for the whole answer: read field by field, an operator saving
+    // a change mid-call is answered half in the old terms and half in the new.
     const auto portalHandler = [this](const http::Request&, http::Response& response) {
-            const NodeSettings::Values live = settings();
-            nlohmann::json links = nlohmann::json::array();
-            for (const std::string& link :
-                live.portalLinks.empty() ? options_.portalLinks : live.portalLinks) {
-                links.push_back(link);
-            }
-            respondJson(response,
-                {
-                    {"message", settings().portalMessage.empty() ? options_.portalMessage
-                                                                : settings().portalMessage},
-                    {"links", links},
-                    {"registration",
-                        {
-                            {"captcha", settings().requireCaptcha},
-                            {"requiresApproval",
-                                settings().requireApproval},
-                            {"message", settings().registrationMessage},
-                        }},
-                    {"quotaBytes", settings().defaultQuotaBytes},
-                });
+        const NodeSettings::Values live = settings();
+        nlohmann::json links = nlohmann::json::array();
+        for (const std::string& link :
+            live.portalLinks.empty() ? options_.portalLinks : live.portalLinks) {
+            links.push_back(link);
+        }
+        respondJson(response,
+            {
+                {"message",
+                    live.portalMessage.empty() ? options_.portalMessage : live.portalMessage},
+                {"links", links},
+                {"registration",
+                    {
+                        {"captcha", live.requireCaptcha},
+                        {"requiresApproval", live.requireApproval},
+                        {"message", live.registrationMessage},
+                    }},
+                {"quotaBytes", live.defaultQuotaBytes},
+            });
     };
     // Unauthenticated, and reachable both ways for the same reason as the rest:
     // a client asks for it through its server's tunnel, where the facade cannot

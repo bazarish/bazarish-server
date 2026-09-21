@@ -7,16 +7,17 @@
 #include "PerUserDestinations.hpp"
 
 #include <bazarish/Certificates.hpp>
+#include <bazarish/Clock.hpp>
 #include <bazarish/ConfigFile.hpp>
 #include <bazarish/Crypto.hpp>
 #include <bazarish/I2p.hpp>
 #include <bazarish/Log.hpp>
+#include <bazarish/PrivateFile.hpp>
 #include <bazarish/Restart.hpp>
 
 #include <bazarish/HttpClient.hpp>
 #include <nlohmann/json.hpp>
 
-#include <ctime>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -46,12 +47,7 @@ constexpr int kServiceNodeTimeoutSeconds = 5;
 // routing, and a minute of staleness costs a first-contact fetch one retry -
 // against a blocking round trip on a delivery thread for every asker.
 constexpr std::int64_t kCardCacheSeconds = 60;
-// The port a service-node URL means when it names none.
-constexpr int kDefaultHttpPort = 80;
 
-// Where a --service-node URL points. The HTTP client takes a host and a port,
-// not a URL, and the scheme is always plain http here (the node listens on
-// loopback).
 void printUsage()
 {
     std::printf(
@@ -72,32 +68,9 @@ void printUsage()
         kVersion);
 }
 
-std::int64_t nowSeconds()
-{
-    return static_cast<std::int64_t>(std::time(nullptr));
-}
-
-std::string readFileText(const fs::path& path)
-{
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        throw std::runtime_error("failed to open " + path.string());
-    }
-    return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-}
-
-void writePrivateFile(const fs::path& path, const std::string& text)
-{
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    if (!out) {
-        throw std::runtime_error("failed to open " + path.string());
-    }
-    out << text;
-    if (!out) {
-        throw std::runtime_error("failed to write " + path.string());
-    }
-    fs::permissions(path, fs::perms::owner_read | fs::perms::owner_write);
-}
+using bazarish::nowSeconds;
+using bazarish::readFileText;
+using bazarish::writePrivateFile;
 
 // Loads the server identity from the state directory, generating it on
 // first start.
@@ -154,7 +127,15 @@ int main(const int argc, const char** argv)
             kDefaultPort});
     const std::string host = listen.host;
     const int port = listen.port;
-    const bool enableI2p = config.flag("i2p.enabled", true);
+    // Delivery is routed purely by I2P destination, so the server must operate
+    // one: there is no non-I2P transport, and a server without a router is not a
+    // server this protocol can run. Refused here, so nothing below has to ask.
+    if (!config.flag("i2p.enabled", true)) {
+        std::fprintf(stderr,
+            "I2P federation is required: \"i2p\": {\"enabled\": false} is not a server this "
+            "protocol can run (delivery is routed by I2P destination).\n");
+        return 2;
+    }
     bazarish::server::DeliveryEngineOptions engineOptions;
     const std::vector<std::string> operatorFingerprints = config.list("operators");
     const std::string serviceNodeUrl = config.text("serviceNode");
@@ -173,9 +154,17 @@ int main(const int argc, const char** argv)
     // I2P ceiling. Operators on a constrained uplink can lower it.
     const int tunnelQuantity = static_cast<int>(
         config.number("i2p.tunnelQuantity", bazarish::i2p::kMaxTunnelQuantity));
-    // Inbound deliveries per peer dest per 60s.
+    // The same range the panel enforces on the same setting. Checked here too, or
+    // the one input that is never reviewed is the one with no bound on it.
+    if (tunnelQuantity < 1 || tunnelQuantity > bazarish::i2p::kMaxTunnelQuantity) {
+        std::fprintf(stderr, "config: i2p.tunnelQuantity is between 1 and %d\n",
+            bazarish::i2p::kMaxTunnelQuantity);
+        return 2;
+    }
+    // Inbound deliveries per peer dest, and the window they are counted over.
     const std::size_t federationRateLimit
         = static_cast<std::size_t>(config.number("federationRateLimit", 240));
+    constexpr std::int64_t kFederationRateWindowSeconds = bazarish::kSecondsPerMinute;
     // TTL backstop for never-fully-acked mail (0 = off).
     const std::int64_t mailboxRetentionDays = config.number("mailboxRetentionDays", 30);
     bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
@@ -190,15 +179,6 @@ int main(const int argc, const char** argv)
     // libi2pd's own logging is off by default; the config turns it on for
     // debugging.
     const bool i2pLog = config.flag("i2p.log", false);
-
-    // Delivery is routed purely by I2P destination, so the server must operate
-    // one: --i2p is required (there is no non-I2P transport).
-    if (!enableI2p) {
-        std::fprintf(stderr,
-            "I2P federation is required: \"i2p\": {\"enabled\": false} is not a server this "
-            "protocol can run (delivery is routed by I2P destination).\n");
-        return 2;
-    }
 
     bazarish::log::setComponent("server-core");
     bazarish::log::setLevel(logLevel);
@@ -243,10 +223,10 @@ int main(const int argc, const char** argv)
     // one-time transients, so there is no shared address to attribute or block.
     std::unique_ptr<bazarish::i2p::Router> router;
     std::unique_ptr<bazarish::server::FederationRateLimiter> federationLimiter;
-    // Declared before `federation` so it OUTLIVES it (federation holds a raw pointer
-    // to the pool); the router, declared earlier, outlives the pool's warmer thread.
+    // Declared last of the three, so it is destroyed first: it holds raw pointers
+    // to the router and to the limiter above, and its threads use both.
     std::unique_ptr<bazarish::server::PerUserDestinations> perUserDests;
-    if (enableI2p) {
+    {
         bazarish::log::info("starting embedded I2P router (building tunnels)...");
         // The embedded router (server role: relays transit). State under <state>/i2p.
         router = std::make_unique<bazarish::i2p::Router>(
@@ -255,17 +235,17 @@ int main(const int argc, const char** argv)
         // Inbound federation accountability is per-connecting-destination: one
         // limiter, shared across every accept loop (home destination, address
         // pool, per-user destinations), so a single peer cannot flood us.
-        // --federation-rate-limit 0 disables it.
+        // A federationRateLimit of 0 disables it.
         if (federationRateLimit > 0) {
             federationLimiter = std::make_unique<bazarish::server::FederationRateLimiter>(
-                federationRateLimit, 60);
+                federationRateLimit, kFederationRateWindowSeconds);
         }
 
         // First-contact card fetch (op "card"): answer a peer's sealed query for
         // a local user's contact card by looking it up at the service node by
         // fingerprint. Served on the home and per-user accept loops so a
-        // descriptor pointing at either resolves. Only when
-        // --service-node is set (else CARD_UNKNOWN).
+        // descriptor pointing at either resolves. Only when serviceNode is
+        // configured (else CARD_UNKNOWN).
         bazarish::server::GetCardFn getCard;
         if (!serviceNodeUrl.empty()) {
             // A card answer is the same for everyone who asks and changes only
@@ -281,8 +261,7 @@ int main(const int argc, const char** argv)
             getCard = [serviceNodeUrl, cache](const std::string& fp,
                           const std::string& view) -> std::optional<bazarish::Bytes> {
                 const std::string key = fp + "\n" + view;
-                const std::int64_t now
-                    = static_cast<std::int64_t>(std::time(nullptr));
+                const std::int64_t now = nowSeconds();
                 {
                     const std::lock_guard<std::mutex> lock(cache->mutex);
                     const auto found = cache->entries.find(key);
@@ -339,10 +318,19 @@ int main(const int argc, const char** argv)
     // the facade, whose addresses live in the server descriptor.
     const bazarish::Bytes card = bazarish::ServerCard::issue(
         identity, bazarish::Key::fromPublicDer(sealing.publicDer()), nowSeconds());
+    // Public, so it is not written as a private file - but it is written checked:
+    // a card silently truncated by a full disk is one the service node reads back
+    // and refuses, with nothing here saying why.
     {
-        std::ofstream out(stateDir / "server-card.der", std::ios::binary | std::ios::trunc);
+        const fs::path cardPath = stateDir / "server-card.der";
+        std::ofstream out(cardPath, std::ios::binary | std::ios::trunc);
         out.write(reinterpret_cast<const char*>(card.data()),
             static_cast<std::streamsize>(card.size()));
+        out.close();
+        if (!out) {
+            std::fprintf(stderr, "cannot write %s\n", cardPath.string().c_str());
+            return 1;
+        }
     }
 
     bazarish::server::HttpApiOptions httpOptions;
@@ -352,19 +340,11 @@ int main(const int argc, const char** argv)
     // storage-usage endpoint matches what a user without an override actually gets.
     httpOptions.defaultQuotaBytes = engineOptions.defaultQuotaBytes;
     httpOptions.mailboxRetentionSeconds
-        = mailboxRetentionDays > 0 ? mailboxRetentionDays * 24 * 3600 : 0;
-    // Resolve a user's serving destination + key: their own destination, or
-    // nothing. There is deliberately no shared fallback - a user without a
-    // destination is simply not served yet, because any shared address would
-    // make every user behind it provably co-located. Used to short-circuit only
-    // same-destination deliveries (a send to the sender's own destination) and
-    // to surface the destination to the user.
-    if (router) {
-        // The netDb this server hands out in its reseed archive. Sampled at
-        // random per packing, which is once an hour.
-        httpOptions.reseedSample
-            = [](const std::size_t count) { return bazarish::i2p::sampleRouterInfos(count); };
-    }
+        = mailboxRetentionDays > 0 ? mailboxRetentionDays * bazarish::kSecondsPerDay : 0;
+    // The netDb this server hands out in its reseed archive. Sampled at random
+    // per packing, which is once an hour.
+    httpOptions.reseedSample
+        = [](const std::size_t count) { return bazarish::i2p::sampleRouterInfos(count); };
     // What the mailboxes actually take up. Walked on demand (the panel asks for
     // it when an operator opens the settings page), not tracked, so it cannot
     // drift from the filesystem.
@@ -382,25 +362,24 @@ int main(const int argc, const char** argv)
         }
         return used;
     };
+    // Resolve a user's serving destination + key: their own destination, or
+    // nothing. There is deliberately no shared fallback - a user without a
+    // destination is simply not served yet, because any shared address would make
+    // every user behind it provably co-located.
     httpOptions.assignDestination
         = [&perUserDests](const std::string& user) -> bazarish::server::DestinationAssignment {
         // The address may be empty until the session builds - then no local
         // short-circuit matches and the delivery federates, which is safe.
-        if (perUserDests) {
-            const std::shared_ptr<bazarish::Key> key = perUserDests->servingKeyFor(user);
-            if (key) {
-                const std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
-                return {perUserDests->destinationFor(user), key,
-                    perUserDests->stateFor(user, now)};
-            }
+        const std::shared_ptr<bazarish::Key> key = perUserDests->servingKeyFor(user);
+        if (!key) {
+            return {std::string(), nullptr, "none"};
         }
-        return {std::string(), nullptr, "none"};
+        return {perUserDests->destinationFor(user), key,
+            perUserDests->stateFor(user, nowSeconds())};
     };
-    // Proxy blob ops over I2P for clients without their own embedded router, via
-    // the server's dedicated blob client endpoint (independent of federation).
-    // Unsend (DELETE) is a small whole-body op; downloads (GET) stream so a large
-    // blob is never buffered whole here.
-    if (perUserDests) {
+    // What the operator's service node pushes here: a user's delegated address,
+    // and the two phases of rotating the key their contacts seal to.
+    {
         httpOptions.provisionI2pDest = [&perUserDests](const std::string& user,
                                            const std::string& transientB64,
                                            const std::int64_t expiresUnix) {
@@ -451,7 +430,7 @@ int main(const int argc, const char** argv)
         }
     };
 
-    bazarish::server::HttpApi api(storage, engine, httpOptions);
+    bazarish::server::HttpApi api(storage, httpOptions);
 
     // Stopping happens on the switch's own thread: a handler must not stop the
     // server it is still answering on.

@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #include "ServiceClient.hpp"
 
+#include <bazarish/Clock.hpp>
 #include <bazarish/Auth.hpp>
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Crypto.hpp>
@@ -16,10 +17,7 @@ namespace bazarish::admin {
 
 namespace {
 
-std::int64_t nowSeconds()
-{
-    return static_cast<std::int64_t>(std::time(nullptr));
-}
+using bazarish::nowSeconds;
 
 // The panel and the services it manages sit on the same machine, so a request
 // that takes this long is a service that is down, not a busy one.

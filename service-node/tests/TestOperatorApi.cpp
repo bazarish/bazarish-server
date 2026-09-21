@@ -3,6 +3,7 @@
 
 #include "SubscriptionStore.hpp"
 
+#include <bazarish/Clock.hpp>
 #include <bazarish/Auth.hpp>
 #include <bazarish/Certificates.hpp>
 #include <bazarish/Crypto.hpp>
@@ -41,10 +42,7 @@ namespace http = bazarish::http;
 
 using Headers = std::map<std::string, std::string>;
 
-std::int64_t nowSeconds()
-{
-    return static_cast<std::int64_t>(std::time(nullptr));
-}
+using bazarish::nowSeconds;
 
 Headers signedHeaders(const Identity& identity, const std::string& method, const std::string& path,
     const std::string& body)

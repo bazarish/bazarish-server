@@ -7,6 +7,8 @@
 #include <bazarish/Health.hpp>
 
 #include <bazarish/HttpClient.hpp>
+#include <bazarish/Clock.hpp>
+#include <bazarish/ConfigFile.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <bazarish/I2p.hpp>
@@ -36,18 +38,17 @@ namespace bazarish::facade {
 
 namespace {
 
-// What a listener may be told to bind, and how many destinations one facade may
-// be asked to publish. The port range is TCP's without 0, which means "any free
-// port"; the destination ceiling is a guard against a typo that would have the
-// facade build tunnels for hours.
-constexpr int kMinPort = 1;
-constexpr int kMaxPort = 65535;
+// How many destinations one facade may be asked to publish: a guard against a
+// typo that would have it build tunnels for hours.
 constexpr int kMaxI2pDestinations = 8;
-
 
 // How long the facade waits on a backend. Longer than the event face's own cap,
 // so a held request is answered by the backend rather than cut short here.
 constexpr int kUpstreamTimeoutSeconds = 60;
+// And how much longer the front holds the client than it holds the backend. The
+// client must not be cut off first, or a backend answering at its own deadline
+// would have nobody left to answer to.
+constexpr int kFrontReadSlackSeconds = 30;
 
 
 // Backends a request can be routed to.
@@ -61,26 +62,11 @@ bool startsWith(const std::string& text, const std::string& prefix)
     return text.size() >= prefix.size() && text.compare(0, prefix.size(), prefix) == 0;
 }
 
-std::int64_t nowSeconds()
-{
-    return std::chrono::duration_cast<std::chrono::seconds>(
-        std::chrono::system_clock::now().time_since_epoch())
-        .count();
-}
+using bazarish::nowSeconds;
 
 // Collects the four request-auth headers from a request into the map the auth
 // primitives expect.
-bazarish::auth::Headers collectAuthHeaders(const bazarish::http::Request& request)
-{
-    bazarish::auth::Headers headers;
-    for (const char* const name : {bazarish::auth::kHeaderKeys, bazarish::auth::kHeaderTimestamp,
-             bazarish::auth::kHeaderSignatureClassical, bazarish::auth::kHeaderSignaturePq}) {
-        if (request.hasHeader(name)) {
-            headers[name] = request.header(name);
-        }
-    }
-    return headers;
-}
+using bazarish::http::collectAuthHeaders;
 
 // The path portion of a request target, without the query string.
 std::string pathOf(const std::string& target)
@@ -198,7 +184,7 @@ int Facade::bindToAnyPort(const std::string& host, const int port)
     options.port = port;
     // A forwarded long poll is held here as well, so the front has to be able to
     // wait without spending a thread on each client.
-    options.readTimeout = std::chrono::seconds(kUpstreamTimeoutSeconds + 30);
+    options.readTimeout = std::chrono::seconds(kUpstreamTimeoutSeconds + kFrontReadSlackSeconds);
     http_ = std::make_unique<bazarish::http::Server>(options);
     setupRoutes();
     try {
@@ -439,9 +425,10 @@ void Facade::setupOpsRoutes()
                     if (wantedHost.empty()) {
                         throw std::invalid_argument("a " + key + " address needs a host");
                     }
-                    if (wantedPort < kMinPort || wantedPort > kMaxPort) {
+                    if (wantedPort < bazarish::kMinPort || wantedPort > bazarish::kMaxPort) {
                         throw std::invalid_argument("a port is between "
-                            + std::to_string(kMinPort) + " and " + std::to_string(kMaxPort));
+                            + std::to_string(bazarish::kMinPort) + " and "
+                            + std::to_string(bazarish::kMaxPort));
                     }
                     host = wantedHost;
                     port = wantedPort;

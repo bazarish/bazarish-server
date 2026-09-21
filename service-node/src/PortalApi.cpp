@@ -6,6 +6,7 @@
 
 #include <bazarish/HttpClient.hpp>
 #include <bazarish/HttpServer.hpp>
+#include <bazarish/Clock.hpp>
 #include <bazarish/Log.hpp>
 
 #include <functional>
@@ -15,7 +16,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <ctime>
 #include <exception>
 #include <filesystem>
 #include <iterator>
@@ -30,24 +30,11 @@ namespace {
 // private channel without ever serving something much older than it has.
 constexpr std::int64_t kReseedHoldSeconds = 300;
 
-std::int64_t nowSeconds()
-{
-    return static_cast<std::int64_t>(std::time(nullptr));
-}
-
 namespace http = bazarish::http;
 
-// The routes are written as "fill in the response"; the engine hands one back.
-using Filler = std::function<void(const http::Request&, http::Response&)>;
-
-http::Handler filled(Filler handler)
-{
-    return [handler = std::move(handler)](const http::Request& request) {
-        http::Response response;
-        handler(request, response);
-        return response;
-    };
-}
+using bazarish::nowSeconds;
+using bazarish::htmlEscape;
+using bazarish::http::filled;
 
 void respondJson(http::Response& response, const nlohmann::json& body)
 {
@@ -56,34 +43,6 @@ void respondJson(http::Response& response, const nlohmann::json& body)
 }
 
 // Escapes a string for safe interpolation into HTML text or a quoted attribute.
-std::string htmlEscape(const std::string& s)
-{
-    std::string out;
-    out.reserve(s.size());
-    for (const char c : s) {
-        switch (c) {
-        case '&':
-            out += "&amp;";
-            break;
-        case '<':
-            out += "&lt;";
-            break;
-        case '>':
-            out += "&gt;";
-            break;
-        case '"':
-            out += "&quot;";
-            break;
-        case '\'':
-            out += "&#39;";
-            break;
-        default:
-            out += c;
-        }
-    }
-    return out;
-}
-
 void sendHtml(http::Response& response, const std::string& html, const int status = 200)
 {
     response.status = status;
@@ -101,7 +60,6 @@ void redirectTo(http::Response& response, const std::string& location)
 }
 
 constexpr std::size_t kSizeTextBytes = 32;
-constexpr std::int64_t kSecondsPerDay = 24 * 3600;
 
 // A human-readable byte size for the free quota (powers of 1024).
 std::string bytesHuman(const std::uint64_t bytes)

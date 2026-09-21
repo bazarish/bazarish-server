@@ -3,6 +3,7 @@
 
 #include <bazarish/Auth.hpp>
 #include <bazarish/Bytes.hpp>
+#include <bazarish/Clock.hpp>
 #include <bazarish/Crypto.hpp>
 #include <bazarish/Health.hpp>
 
@@ -12,7 +13,6 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
-#include <ctime>
 #include <string>
 #include <thread>
 
@@ -32,22 +32,8 @@ namespace {
 
 namespace http = bazarish::http;
 
-std::int64_t nowSeconds()
-{
-    return static_cast<std::int64_t>(std::time(nullptr));
-}
-
-auth::Headers collectAuthHeaders(const http::Request& request)
-{
-    auth::Headers headers;
-    for (const char* const name : {auth::kHeaderKeys, auth::kHeaderTimestamp,
-             auth::kHeaderSignatureClassical, auth::kHeaderSignaturePq}) {
-        if (request.hasHeader(name)) {
-            headers[name] = request.header(name);
-        }
-    }
-    return headers;
-}
+using bazarish::nowSeconds;
+using bazarish::http::collectAuthHeaders;
 
 }  // namespace
 

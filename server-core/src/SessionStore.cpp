@@ -4,6 +4,9 @@
 #include <bazarish/Auth.hpp>
 #include <bazarish/Crypto.hpp>
 
+#include <climits>
+#include <stdexcept>
+
 namespace bazarish::server {
 
 namespace {
@@ -13,6 +16,9 @@ constexpr std::size_t kSessionIdChars = 32;
 // requests arrive out of order; this is the width of that reordering, not a
 // replay window (the sequence check below is what stops replays).
 constexpr std::uint64_t kHandleWindow = 64;
+// Bytes drawn for the lifetime jitter. Two: the window is an hour wide and the
+// point is that clients do not all renew at once, not unpredictability.
+constexpr std::size_t kJitterBytes = 2;
 }  // namespace
 
 std::string SessionStore::open(const std::string& user, const Bytes& secret, const std::int64_t now,
@@ -27,9 +33,9 @@ std::string SessionStore::open(const std::string& user, const Bytes& secret, con
     // leaked one is worth little.
     const std::int64_t span
         = auth::kSessionMaxLifetimeSeconds - auth::kSessionMinLifetimeSeconds;
+    const Bytes draw = randomBytes(kJitterBytes);
     const std::int64_t jitter
-        = span > 0 ? static_cast<std::int64_t>(randomBytes(2)[0] << 8 | randomBytes(1)[0]) % span
-                   : 0;
+        = span > 0 ? static_cast<std::int64_t>(draw[0] << CHAR_BIT | draw[1]) % span : 0;
     Session session;
     session.id = id;
     session.user = user;
@@ -38,6 +44,22 @@ std::string SessionStore::open(const std::string& user, const Bytes& secret, con
     session.expiresUnix = now + auth::kSessionMinLifetimeSeconds + jitter;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
+        const auto found = sessions_.find(id);
+        if (found != sessions_.end() && found->second.expiresUnix > now) {
+            // Opening twice on one secret is the same session, not a new one.
+            // Overwriting it put lastSeq back to zero, and this session's own
+            // spent sequence numbers became usable again.
+            if (found->second.user != user) {
+                throw std::runtime_error("this session secret is already another account's");
+            }
+            if (outExpiresUnix != nullptr) {
+                *outExpiresUnix = found->second.expiresUnix;
+            }
+            return id;
+        }
+        if (found != sessions_.end()) {
+            forgetHandlesLocked(found->second);  // lapsed: its handles go with it
+        }
         sessions_[id] = session;
         indexHandlesLocked(session);
     }

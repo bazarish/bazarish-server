@@ -5,6 +5,8 @@
 
 #include <bazarish/Address.hpp>
 #include <bazarish/Certificates.hpp>
+#include <bazarish/Clock.hpp>
+#include <bazarish/ConfigFile.hpp>
 #include <bazarish/Crypto.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <bazarish/Log.hpp>
@@ -13,7 +15,6 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
-#include <ctime>
 #include <exception>
 #include <functional>
 #include <future>
@@ -25,29 +26,13 @@ namespace {
 
 namespace http = bazarish::http;
 
-std::int64_t nowSeconds()
-{
-    return static_cast<std::int64_t>(std::time(nullptr));
-}
+using bazarish::nowSeconds;
+using bazarish::http::filled;
 
 const char* const kCookieName = "adminsession";
-
-// What a listener may be told to bind: TCP's range without port 0, which means
-// "any free port" and is never what an operator typed on purpose.
-constexpr int kMinPort = 1;
-constexpr int kMaxPort = 65535;
-
-// The routes are written as "fill in the response"; the engine hands one back.
-using Filler = std::function<void(const http::Request&, http::Response&)>;
-
-http::Handler filled(Filler handler)
-{
-    return [handler = std::move(handler)](const http::Request& request) {
-        http::Response response;
-        handler(request, response);
-        return response;
-    };
-}
+// The attributes every one of this panel's cookies carries. Written once: three
+// copies of a cookie line are three places for one of them to lose a flag.
+const char* const kCookieAttributes = "; HttpOnly; SameSite=Strict; Path=/";
 
 void sendHtml(http::Response& response, const std::string& html, const int status = 200)
 {
@@ -102,9 +87,9 @@ std::string urlEncoded(const std::string& text)
 
 std::string humanizeUptime(const std::int64_t seconds)
 {
-    constexpr std::int64_t kSecondsPerMinute = 60;
-    constexpr std::int64_t kSecondsPerHour = 3600;
-    constexpr std::int64_t kSecondsPerDay = 86400;
+    using bazarish::kSecondsPerDay;
+    using bazarish::kSecondsPerHour;
+    using bazarish::kSecondsPerMinute;
     if (seconds >= kSecondsPerDay) {
         return std::to_string(seconds / kSecondsPerDay) + "d "
             + std::to_string((seconds % kSecondsPerDay) / kSecondsPerHour) + "h";
@@ -237,7 +222,7 @@ void HttpApi::registerRoutes()
             bazarish::log::info("this panel is now administered by {}", fingerprint);
             const std::string token = sessions_.create(nowSeconds());
             response.headers["Set-Cookie"]
-                = std::string(kCookieName) + "=" + token + "; HttpOnly; SameSite=Strict; Path=/";
+                = std::string(kCookieName) + "=" + token + kCookieAttributes;
             redirectTo(response, "/");
         } catch (const std::exception& error) {
             bazarish::log::warn("panel setup refused: {}", error.what());
@@ -264,7 +249,7 @@ void HttpApi::registerRoutes()
             auth_.login(request.param("challenge"), request.param("blob"), nowSeconds());
             const std::string token = sessions_.create(nowSeconds());
             response.headers["Set-Cookie"]
-                = std::string(kCookieName) + "=" + token + "; HttpOnly; SameSite=Strict; Path=/";
+                = std::string(kCookieName) + "=" + token + kCookieAttributes;
             redirectTo(response, "/");
         } catch (const std::exception& error) {
             bazarish::log::warn("panel sign-in refused: {}", error.what());
@@ -275,7 +260,7 @@ void HttpApi::registerRoutes()
     http_->post("/logout", filled([this](const http::Request& request, http::Response& response) {
         sessions_.destroy(request.cookie(kCookieName));
         response.headers["Set-Cookie"]
-            = std::string(kCookieName) + "=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0";
+            = std::string(kCookieName) + "=" + kCookieAttributes + "; Max-Age=0";
         redirectTo(response, "/login");
     }));
 
@@ -635,9 +620,10 @@ void HttpApi::registerRoutes()
                 if (host.empty()) {
                     throw std::invalid_argument("a listener needs a host to bind");
                 }
-                if (port < kMinPort || port > kMaxPort) {
+                if (port < bazarish::kMinPort || port > bazarish::kMaxPort) {
                     throw std::invalid_argument("a port is between "
-                        + std::to_string(kMinPort) + " and " + std::to_string(kMaxPort));
+                        + std::to_string(bazarish::kMinPort) + " and "
+                        + std::to_string(bazarish::kMaxPort));
                 }
                 panel.listenHost = host;
                 panel.listenPort = port;

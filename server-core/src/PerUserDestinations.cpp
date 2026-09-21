@@ -3,12 +3,12 @@
 
 #include "Federation.hpp"
 
+#include <bazarish/Clock.hpp>
 #include <bazarish/Crypto.hpp>
 #include <bazarish/Log.hpp>
 #include <nlohmann/json.hpp>
 
 #include <chrono>
-#include <ctime>
 #include <exception>
 #include <fstream>
 #include <functional>
@@ -45,11 +45,6 @@ constexpr int kWatchdogTickSeconds = 2;
 // How long a worker waits between checks for its destination to finish building.
 constexpr int kEndpointPollMillis = 200;
 
-
-std::int64_t nowSeconds()
-{
-    return static_cast<std::int64_t>(std::time(nullptr));
-}
 
 }  // namespace
 

@@ -11,7 +11,9 @@
 #include <bazarish/Certificates.hpp>
 #include <bazarish/ConfigFile.hpp>
 #include <bazarish/Crypto.hpp>
+#include <bazarish/Clock.hpp>
 #include <bazarish/Log.hpp>
+#include <bazarish/PrivateFile.hpp>
 #include <bazarish/Restart.hpp>
 #include <bazarish/ServerDescriptor.hpp>
 
@@ -67,28 +69,8 @@ bazarish::Bytes readFileBytes(const fs::path& path)
         std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
 }
 
-std::string readFileText(const fs::path& path)
-{
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        throw std::runtime_error("failed to open " + path.string());
-    }
-    return std::string(
-        std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-}
-
-void writePrivateFile(const fs::path& path, const std::string& text)
-{
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    if (!out) {
-        throw std::runtime_error("failed to open " + path.string());
-    }
-    out << text;
-    if (!out) {
-        throw std::runtime_error("failed to write " + path.string());
-    }
-    fs::permissions(path, fs::perms::owner_read | fs::perms::owner_write);
-}
+using bazarish::readFileText;
+using bazarish::writePrivateFile;
 
 // Loads the service node's own signing identity from the state directory,
 // generating it on first start. The node signs its operator pushes (quota,
@@ -524,15 +506,15 @@ int main(const int argc, const char** argv)
                                   revoke = [&operatorPush](const std::string& user) {
                                       return operatorPush.publish(user, std::string(), 0);
                                   }]() {
-        constexpr std::int64_t kSecondsPerDay = 24 * 3600;
+
         while (true) {
             std::this_thread::sleep_for(std::chrono::hours(1));
             const std::int64_t idleDays = settings->get().idleDeleteDays;
             if (idleDays <= 0) {
                 continue;  // the operator keeps them forever
             }
-            const std::int64_t idleSeconds = idleDays * kSecondsPerDay;
-            const std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
+            const std::int64_t idleSeconds = idleDays * bazarish::kSecondsPerDay;
+            const std::int64_t now = bazarish::nowSeconds();
             // Registrations that never became accounts are known to the grant
             // store only; served accounts are known to both.
             std::set<std::string> users;

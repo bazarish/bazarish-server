@@ -41,7 +41,10 @@ namespace {
 // shaped like an answer.
 constexpr std::size_t kRefusalNoiseBytes = 64;
 
-// The reseed archive's path, served on the private listener.
+// Paths served on the private listener alone, for the operator's own side of
+// the machine. They are not part of the client API and nothing carried in a
+// tunnel may name one.
+constexpr const char* kInternalPrefix = "/internal/";
 constexpr const char* kReseedPath = "/internal/i2pseeds.su3";
 
 
@@ -319,6 +322,30 @@ void HttpApi::serveTunnel(
         // A frame that will not open, or will not decode into a request: same
         // uniform refusal, same reason written down.
         bazarish::log::debug("tunnel frame did not open: {}", error.what());
+        refuse();
+        return;
+    }
+    // A tunnel carries the client API and nothing else. Two paths are refused
+    // here rather than dispatched:
+    //
+    //   the tunnel path itself - a carried frame that named it went back into
+    //   this function, and each layer copies the body it was handed, so one
+    //   request of a few megabytes cost gigabytes and the process was killed
+    //   for it. Nothing legitimate nests, and the header of Tunnel.hpp always
+    //   said a tunnel cannot open another one;
+    //
+    //   the internal prefix - it is the operator's side of the machine, reached
+    //   on the private listener, and a client is not on it.
+    //
+    // Refused like any frame that will not decode: whoever forwards this learns
+    // nothing from the answer, and the reason is written down here.
+    if (carried.path == bazarish::tunnel::kTunnelPath) {
+        bazarish::log::debug("a tunnel frame carried another tunnel frame");
+        refuse();
+        return;
+    }
+    if (carried.path.rfind(kInternalPrefix, 0) == 0) {
+        bazarish::log::debug("a tunnel frame named an internal path: {}", carried.path);
         refuse();
         return;
     }
@@ -707,13 +734,13 @@ void HttpApi::setupRoutes()
             return jsonResponse({{"ok", true}});
         }));
 
-    // The reseed archive, for the portal to publish. Deliberately outside
-    // /v1/messaging/: a facade forwards that prefix and a facade is an I2P
-    // address, while a reseed is the one thing a client needs BEFORE it has I2P.
-    // So this path is reachable only on the private listener, and what faces the
-    // clearnet is the portal, which is on it anyway. Nothing is authenticated
-    // here and nothing needs to be: every RouterInfo inside is signed by the
-    // router it describes.
+    // The reseed archive, for the portal to publish. A client reaches this server
+    // through a facade, and a facade is an I2P address - while a reseed is the one
+    // thing a client needs BEFORE it has I2P. So it is served on the private
+    // listener and nowhere else (a tunnel naming this prefix is refused above),
+    // and what faces the clearnet is the portal, which is on it anyway. Nothing
+    // is authenticated here and nothing needs to be: every RouterInfo inside is
+    // signed by the router it describes.
     http_->get(std::string(kReseedPath),
         [this](const bazarish::http::Request&) -> bazarish::http::Response {
             const std::string archive = reseedArchive();

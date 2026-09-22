@@ -693,9 +693,12 @@ worse than one that cannot do it.
 
 1. `Backend::eGateway` beside `eEmbedded` and `eSam`, and `RouterConfig` gains
    the gateway's secret URL, its SPKI pin, its SNI and its token.
-2. `EndpointConfig::keys` becomes optional, and the six client sites that create
-   a destination stop minting one. The embedded backend mints when none is
-   given, which is what it did inside `generateKeys()` a line earlier anyway.
+2. `generateKeys()` on this backend mints locally and the transport does not
+   use it: the gateway mints the destination's own and never sends it. The key
+   is minted because every caller mints before it creates, and it costs one
+   keygen. `privateBlob()` and `publicBase64()` throw rather than answer with
+   something empty, which is where an assumption that the address came from
+   those keys is caught.
 3. `common/src/I2pGateway.cpp`: `RouterBackend`, `EndpointBackend` and
    `StreamBackend` over the session's sockets, built by `makeGatewayRouter`. It
    attaches a socket to every realtime endpoint and every file transfer, reuses
@@ -708,5 +711,22 @@ worse than one that cannot do it.
    distinguish three: it names the gateway beside the router numbers, drops the
    proxy row, and stops reading the on-disk netDb count, which means nothing
    when there is no local netDb.
+
+## What is not built yet
+
+Written down rather than discovered later.
+
+- **Two co-located clients still meet over I2P for a stream.** The shortcut is
+  done for raw datagrams, which is the case it was asked for: a call between two
+  friends on one gateway never leaves the machine. A stream needs the two
+  clients' windows reconciled through a queue, and that is not something to
+  write before there is a transfer to measure it against.
+- **The client does not yet churn its control socket, and sends no decoys.** The
+  daemon serves decoys and the reachability check uses one, so the half that has
+  to exist on the far side exists. The timers are the client's own work.
+- **Nothing has run against a live I2P network.** The daemon, the wire and the
+  transport are proved end to end against each other, including a destination
+  the gateway minted and named; what is untested is a tunnel actually carrying
+  something.
 7. One global setting switches the router off. The library stays linked, because
    the account's own destination is still minted on the device.

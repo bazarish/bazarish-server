@@ -30,9 +30,9 @@ class FederationRateLimiter;
 // blinded-key-authorized transient per day, so the server publishes the
 // destination blinded without ever holding the master signing key: a floodfill
 // sees neither the address nor its tunnels. The address is derived from the
-// user's master, so it is stable as the user moves between serving servers. Building a session triggers I2P tunnel construction,
-// so each destination runs on its own worker thread and provisioning never
-// blocks the caller.
+// user's master, so it is stable as the user moves between serving servers.
+// Building a session triggers I2P tunnel construction, so each destination runs
+// on its own worker thread and provisioning never blocks the caller.
 class PerUserDestinations {
 public:
     // router may be null (provision/reload then only persist + register state;

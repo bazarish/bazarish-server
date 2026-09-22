@@ -374,10 +374,10 @@ void requireUsableDelegation(const std::string& transientB64, const std::int64_t
     if (keys.b33OfflineKeyDays() < 1) {
         throw std::runtime_error("delegation carries no b33 offline keys");
     }
-    if (keys.transientExpires() != expiresUnix) {
-        throw std::runtime_error("delegation runs out at "
-            + std::to_string(keys.transientExpires()) + ", not at the declared "
-            + std::to_string(expiresUnix));
+    const std::int64_t expires = keys.transientExpires();
+    if (expires != expiresUnix) {
+        throw std::runtime_error("delegation runs out at " + std::to_string(expires)
+            + ", not at the declared " + std::to_string(expiresUnix));
     }
 }
 

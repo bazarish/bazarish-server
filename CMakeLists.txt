@@ -29,7 +29,6 @@ find_package(OpenSSL REQUIRED)
 
 add_library(bazarish_gateway_lib STATIC
     src/Gateway.cpp
-    src/Protocol.cpp
     src/Settings.cpp
     src/Sessions.cpp
     src/StreamBook.cpp
@@ -52,6 +51,5 @@ function(bazarish_gateway_add_test name)
 endfunction()
 
 bazarish_gateway_add_test(TestGateway)
-bazarish_gateway_add_test(TestProtocol)
 bazarish_gateway_add_test(TestSessions)
 bazarish_gateway_add_test(TestStreamBook)

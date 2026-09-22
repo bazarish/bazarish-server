@@ -1,7 +1,7 @@
 // Bazarish project (c) 2026
 #pragma once
 
-#include "Protocol.hpp"
+#include <bazarish/GatewayProtocol.hpp>
 #include "Sessions.hpp"
 #include "Settings.hpp"
 

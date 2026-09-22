@@ -2,7 +2,7 @@
 #pragma once
 
 #include "Flows.hpp"
-#include "Protocol.hpp"
+#include <bazarish/GatewayProtocol.hpp>
 
 #include <bazarish/Bytes.hpp>
 

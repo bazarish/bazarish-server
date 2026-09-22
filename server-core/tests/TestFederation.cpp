@@ -477,6 +477,34 @@ int main()
         CHECK(result.signature.empty());
     }
 
+    // A request whose very first line does not arrive is still answered. It used
+    // to be read before the guard that promises a reply, so a stream that
+    // stumbled on its own request line left the sender with nothing to read -
+    // which it can only report as the stream having closed.
+    {
+        int fds[2];
+        CHECK(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0);
+        SocketStream serverStream(fds[0]);
+        SocketStream clientStream(fds[1]);
+        std::thread serverThread([&engine, &serverStream]() {
+            federationServeOnce(serverStream, engine, kNow);
+        });
+        // A request line begun and then cut off: the writer goes away without a
+        // newline, which is what a dropped stream looks like from this side.
+        const std::string truncated = "{\"op\":\"deli";
+        CHECK(::write(fds[1], truncated.data(), truncated.size())
+            == static_cast<ssize_t>(truncated.size()));
+        CHECK(::shutdown(fds[1], SHUT_WR) == 0);
+        std::string answer;
+        char byte = 0;
+        while (::read(fds[1], &byte, 1) == 1 && byte != '\n') {
+            answer.push_back(byte);
+        }
+        serverThread.join();
+        CHECK(!answer.empty());
+        CHECK(answer.find("DELIVERY_REJECTED") != std::string::npos);
+    }
+
     std::filesystem::remove_all(root);
     return 0;
 }

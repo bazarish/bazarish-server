@@ -79,11 +79,14 @@ void federationServeOnce(Stream& stream, DeliveryEngine& engine, const std::int6
     // One reader for the whole frame: the header and the payload behind it come
     // out of the same buffer, so nothing read ahead is lost.
     detail::FrameReader<Stream> reader(stream);
-    const std::string headerLine = reader.line();
-    // Whatever goes wrong in here, the caller is owed an answer. Closing the
+    // Whatever goes wrong from here, the caller is owed an answer. Closing the
     // stream instead left it waiting out its own read deadline - a minute and a
-    // half on a card fetch - for a refusal that could have been immediate.
+    // half on a card fetch - for a refusal that could have been immediate. The
+    // request line is read inside this too: it used to be read before, so a
+    // stream that stumbled on its own first line was answered with nothing, and
+    // the sender could only report that the stream had closed.
     try {
+        const std::string headerLine = reader.line();
         federationServeFrame(
         headerLine,
         [&reader](std::size_t len) {

@@ -51,5 +51,6 @@ function(bazarish_gateway_add_test name)
 endfunction()
 
 bazarish_gateway_add_test(TestGateway)
+bazarish_gateway_add_test(TestGatewayClient)
 bazarish_gateway_add_test(TestSessions)
 bazarish_gateway_add_test(TestStreamBook)

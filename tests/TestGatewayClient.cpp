@@ -145,7 +145,63 @@ int main()
     CHECK(rejoined["session"] == cookie);
     again.socket->close();
 
+    // And the transport itself: a router whose engine is somebody else's.
+    router.start();
+    i2p::RouterConfig gatewayConfig;
+    gatewayConfig.backend = i2p::Backend::eGateway;
+    gatewayConfig.gatewayHost = "127.0.0.1";
+    gatewayConfig.gatewayPort = port;
+    gatewayConfig.gatewayPath = kPath;
+    gatewayConfig.gatewayToken = kToken;
+    gatewayConfig.gatewayTls = false;
+    i2p::Router borrowed(gatewayConfig);
+
+    const i2p::Capabilities what = borrowed.capabilities();
+    CHECK(what.routerCounters);
+    CHECK(what.destinationCounters);
+    CHECK(!what.netDbSample);
+    CHECK(!what.proxy);
+    CHECK(!what.offlineKeys);
+
+    borrowed.start();
+    CHECK(borrowed.running());
+
+    // The gateway mints the destination: the client sends no key and gets back
+    // an address.
+    const std::shared_ptr<i2p::Endpoint> mine = borrowed.createEndpoint(
+        i2p::EndpointConfig{borrowed.generateKeys(), i2p::Privacy::eMinimal, 2,
+            /*published=*/false, "Test", {}});
+    CHECK(mine != nullptr);
+    const std::string host = mine->routingHost();
+    CHECK(host.size() > 50);
+    CHECK(host.find(".b32.i2p") != std::string::npos);
+
+    // What the gateway holds it does not hand over, and asking says so rather
+    // than answering with something empty.
+    bool refusedKey = false;
+    try {
+        (void)mine->privateBlob();
+    } catch (const std::exception&) {
+        refusedKey = true;
+    }
+    CHECK(refusedKey);
+    bool refusedProxy = false;
+    try {
+        borrowed.setSocksProxy("127.0.0.1", 9050);
+    } catch (const std::exception&) {
+        refusedProxy = true;
+    }
+    CHECK(refusedProxy);
+
+    // The status view sees this session's destinations and nothing else.
+    const std::vector<i2p::LocalDestination> seen = borrowed.localDestinations();
+    CHECK(seen.size() == 1);
+    CHECK(seen.front().host == host);
+
+    mine->stop();
+    borrowed.stop();
     gateway.stop();
+    router.stop();
     std::filesystem::remove_all(root);
     std::printf("TestGatewayClient ok\n");
     return 0;

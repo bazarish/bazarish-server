@@ -1,7 +1,7 @@
 // Bazarish project (c) 2026
 #pragma once
 
-#include "StreamBook.hpp"
+#include <bazarish/GatewayStreamBook.hpp>
 
 #include <bazarish/I2p.hpp>
 #include <bazarish/WebSocket.hpp>

@@ -31,7 +31,6 @@ add_library(bazarish_gateway_lib STATIC
     src/Gateway.cpp
     src/Settings.cpp
     src/Sessions.cpp
-    src/StreamBook.cpp
 )
 target_include_directories(bazarish_gateway_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(bazarish_gateway_lib PUBLIC Bazarish::Common Threads::Threads)
@@ -53,4 +52,3 @@ endfunction()
 bazarish_gateway_add_test(TestGateway)
 bazarish_gateway_add_test(TestGatewayClient)
 bazarish_gateway_add_test(TestSessions)
-bazarish_gateway_add_test(TestStreamBook)

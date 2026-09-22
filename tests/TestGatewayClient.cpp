@@ -145,8 +145,10 @@ int main()
     CHECK(rejoined["session"] == cookie);
     again.socket->close();
 
-    // And the transport itself: a router whose engine is somebody else's.
-    router.start();
+    // And the transport itself: a router whose engine is somebody else's. The
+    // engine behind the gateway is never started: minting a destination and
+    // naming it needs keys, not tunnels, and a test that waited for tunnels
+    // would be a test of the network.
     i2p::RouterConfig gatewayConfig;
     gatewayConfig.backend = i2p::Backend::eGateway;
     gatewayConfig.gatewayHost = "127.0.0.1";
@@ -201,7 +203,6 @@ int main()
     mine->stop();
     borrowed.stop();
     gateway.stop();
-    router.stop();
     std::filesystem::remove_all(root);
     std::printf("TestGatewayClient ok\n");
     return 0;

@@ -55,6 +55,12 @@ Gateway::~Gateway()
     stop();
 }
 
+std::size_t Gateway::sockets() const
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    return connections_.size();
+}
+
 http::Response Gateway::notFound() const
 {
     http::Response response;
@@ -269,9 +275,16 @@ std::shared_ptr<Session> Gateway::sessionFor(const http::Socket* const socket) c
     return found == connections_.end() ? nullptr : found->second.session;
 }
 
-http::SocketPtr Gateway::outlet(const Session& session, const http::SocketPtr& own)
+http::SocketPtr Gateway::outletFor(const Session& session, const StreamEntry& stream)
 {
-    return own ? own : session.control;
+    if (stream.socket) {
+        return stream.socket;
+    }
+    const auto found = session.endpoints.find(stream.endpoint);
+    if (found != session.endpoints.end() && found->second->socket) {
+        return found->second->socket;
+    }
+    return session.control;
 }
 
 void Gateway::onFrame(const http::SocketPtr& socket, const Frame& frame)
@@ -698,7 +711,7 @@ void Gateway::pump(
     // larger one is a credit that says less than the last one, and a data frame
     // that overtakes another is a corrupted stream.
     const std::lock_guard<std::mutex> lock(mutex_);
-    const http::SocketPtr out = outlet(*session, entry->socket);
+    const http::SocketPtr out = outletFor(*session, *entry);
     if (!out) {
         return;
     }
@@ -726,7 +739,7 @@ void Gateway::pump(
     const std::shared_ptr<Session> theirs = entry->peerSession.lock();
     if (moved > 0 && other != nullptr && theirs != nullptr) {
         other->book.consumed(moved);
-        const http::SocketPtr back = outlet(*theirs, other->socket);
+        const http::SocketPtr back = outletFor(*theirs, *other);
         if (back) {
             back->send(encodeCredit(other->id, other->book.consumedTotal()));
         }
@@ -789,7 +802,7 @@ void Gateway::readLoop(
         if (got == 0) {
             break;
         }
-        const http::SocketPtr out = outlet(*session, entry->socket);
+        const http::SocketPtr out = outletFor(*session, *entry);
         if (!out) {
             std::this_thread::sleep_for(kWindowWait);
             continue;
@@ -797,7 +810,7 @@ void Gateway::readLoop(
         entry->book.wrote(buffer.data(), got);
         out->send(encode(FrameType::eStreamData, entry->id, buffer.data(), got));
     }
-    const http::SocketPtr out = outlet(*session, entry->socket);
+    const http::SocketPtr out = outletFor(*session, *entry);
     if (out && entry->running.load()) {
         entry->book.finishSending();
         out->send(encode(FrameType::eStreamClose, entry->id));
@@ -840,7 +853,7 @@ void Gateway::onStreamData(const std::shared_ptr<Session>& session,
     entry->stream->writeAll(frame.body.data(), frame.body.size());
     // The I2P stream has them, which is what leaving this side's hands means.
     entry->book.consumed(frame.body.size());
-    const http::SocketPtr out = outlet(*session, entry->socket);
+    const http::SocketPtr out = outletFor(*session, *entry);
     if (out) {
         out->send(encodeCredit(entry->id, entry->book.consumedTotal()));
     }

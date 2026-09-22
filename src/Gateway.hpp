@@ -38,6 +38,10 @@ public:
     // everything for it that arrived without the token.
     http::Response notFound() const;
 
+    // How many sockets this gateway is holding, across every session: one per
+    // session's control, plus one for each flow that has a lane of its own.
+    std::size_t sockets() const;
+
 private:
     // True only for a request at the secret path carrying the right token. The
     // token is compared in constant time, because it is the secret that varies
@@ -80,9 +84,10 @@ private:
     };
 
     std::shared_ptr<Session> sessionFor(const http::Socket* socket) const;
-    // Where a flow's frames go: its own socket when one is attached, the
-    // session's control socket otherwise.
-    static http::SocketPtr outlet(const Session& session, const http::SocketPtr& own);
+    // A stream's own socket, else its destination's, else the session's
+    // control. A destination raised for one transfer has a socket of its own,
+    // and everything on it rides that.
+    static http::SocketPtr outletFor(const Session& session, const StreamEntry& stream);
 
     // Accepting callers and waiting for datagrams both block, so both are a
     // thread of their own.

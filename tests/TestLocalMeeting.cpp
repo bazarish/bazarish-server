@@ -6,6 +6,8 @@
 #include <bazarish/I2p.hpp>
 
 #include <chrono>
+#include <functional>
+#include <thread>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -29,6 +31,18 @@ i2p::RouterConfig borrowedFrom(const int port)
     config.gatewayToken = kToken;
     config.gatewayTls = false;
     return config;
+}
+
+bool waitFor(const std::function<bool()>& done)
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(kWaitSeconds);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (done()) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    return done();
 }
 
 std::string readAll(i2p::Stream& stream, const std::size_t expected)
@@ -64,8 +78,10 @@ int main()
 
     i2p::RouterConfig routerConfig;
     routerConfig.dataDir = root / "i2p";
+    // Never started. Two clients of one gateway meet inside it, so nothing here
+    // needs a router that is on the network - and a router that was never on it
+    // is the plainest possible proof that nothing went over I2P.
     i2p::Router engine(routerConfig);
-    engine.start();
 
     Gateway gateway(settings, engine);
     const int port = gateway.start();
@@ -90,7 +106,17 @@ int main()
     i2p::EndpointConfig dialling{bob.generateKeys()};
     dialling.privacy = i2p::Privacy::eMinimal;
     dialling.published = false;
+    // Raised for one transfer, so it takes a socket of its own at creation and
+    // everything on it rides that instead of sharing with control.
+    dialling.bulk = true;
     const std::shared_ptr<i2p::Endpoint> his = bob.createEndpoint(dialling);
+
+    // Two control sockets, and a third for the destination raised for the
+    // transfer. Without the lane this would be two, and the bytes below would
+    // still pass - so the count is what proves the lane and not the transfer.
+    // Waited for rather than read at once: the client's handshake returns
+    // before the gateway has finished counting the connection.
+    CHECK(waitFor([&]() { return gateway.sockets() == 3; }));
 
     // A dial that never touches a tunnel answers at once. On a router with no
     // netDb at all - which is what this test has - one that did would not answer
@@ -148,7 +174,6 @@ int main()
     bob.stop();
     alice.stop();
     gateway.stop();
-    engine.stop();
     std::filesystem::remove_all(root);
     std::printf("TestLocalMeeting ok\n");
     return 0;

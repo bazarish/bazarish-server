@@ -38,6 +38,10 @@ target_include_directories(bazarish_gateway_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DI
 target_link_libraries(bazarish_gateway_lib PUBLIC Bazarish::Common Threads::Threads)
 target_compile_options(bazarish_gateway_lib PRIVATE -Wall -Wextra -Werror)
 
+add_executable(bazarish-gateway src/Main.cpp)
+target_link_libraries(bazarish-gateway PRIVATE bazarish_gateway_lib)
+target_compile_options(bazarish-gateway PRIVATE -Wall -Wextra -Werror)
+
 enable_testing()
 function(bazarish_gateway_add_test name)
     add_executable(${name} tests/${name}.cpp)

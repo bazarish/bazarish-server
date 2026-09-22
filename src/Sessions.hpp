@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #pragma once
 
+#include "Flows.hpp"
 #include "Protocol.hpp"
 
 #include <bazarish/Bytes.hpp>
@@ -44,6 +45,14 @@ public:
     // repeat gets the answer it already earned rather than a second endpoint.
     void remember(std::uint32_t ref, Bytes answer);
     const Bytes* answered(std::uint32_t ref) const;
+
+    // What this session holds. The gateway drives them; the session owns them,
+    // so that everything a session has goes when the session does.
+    // The socket carrying this session's control. Everything with no socket of
+    // its own rides it.
+    http::SocketPtr control;
+    std::map<std::uint32_t, std::shared_ptr<EndpointEntry>> endpoints;
+    std::map<std::uint32_t, std::shared_ptr<StreamEntry>> streams;
 
 private:
     std::string cookie_;

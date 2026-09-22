@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 
 namespace bazarish::gateway {
 
@@ -28,36 +29,76 @@ public:
     // Throws when it would overrun the window, which is a caller that ignored
     // room() rather than a peer doing anything wrong.
     void wrote(const void* data, std::size_t size);
-    std::uint64_t sent() const { return sent_; }
+    std::uint64_t sent() const
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        return sent_;
+    }
     // What the peer says it has consumed. Cumulative and never backwards, so a
     // credit lost with a socket costs nothing: the next one says the same
     // thing, only more of it.
     void peerCredited(std::uint64_t total);
-    std::uint64_t credited() const { return credited_; }
+    std::uint64_t credited() const
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        return credited_;
+    }
     // Bytes handed over that have not left this device yet.
-    std::size_t pending() const { return static_cast<std::size_t>(sent_ - credited_); }
+    std::size_t pending() const
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        return static_cast<std::size_t>(sent_ - credited_);
+    }
 
     // After a socket died: what the peer says it received decides what goes out
     // again. Everything below it is dropped, everything above it is returned in
     // order, and it must be sent before any new data on this stream.
     Bytes replay(std::uint64_t peerReceived);
 
-    void finishSending() { finishedSending_ = true; }
-    bool finishedSending() const { return finishedSending_; }
+    void finishSending()
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        finishedSending_ = true;
+    }
+    bool finishedSending() const
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        return finishedSending_;
+    }
 
     // --- what this side receives ---
 
     // Throws when the peer sent more than the window it was granted.
     void tookIn(std::size_t size);
-    std::uint64_t received() const { return received_; }
+    std::uint64_t received() const
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        return received_;
+    }
     // The application read them, which is what a credit says.
     void consumed(std::size_t size);
-    std::uint64_t consumedTotal() const { return consumed_; }
+    std::uint64_t consumedTotal() const
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        return consumed_;
+    }
 
-    void peerFinished() { peerFinished_ = true; }
-    bool peerHasFinished() const { return peerFinished_; }
+    void peerFinished()
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        peerFinished_ = true;
+    }
+    bool peerHasFinished() const
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        return peerFinished_;
+    }
 
 private:
+    // A reader thread fills the send side while the socket thread credits it,
+    // and the receive side is the other way round. One lock, because the work
+    // under it is arithmetic.
+    mutable std::mutex mutex_;
     std::uint64_t sent_ = 0;
     std::uint64_t credited_ = 0;
     // The offset in the stream of the first byte still held, which is what

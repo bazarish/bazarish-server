@@ -132,7 +132,7 @@ while two files move holds four.
 | Socket | Carries |
 |---|---|
 | main | The handshake, every control frame, and the data of any stream that has no socket of its own |
-| a flow socket | One stream's data, credits and end, or one realtime endpoint's datagrams |
+| a flow socket | One destination's traffic: a realtime endpoint's datagrams, or every stream on a destination raised for a single transfer |
 
 A WebSocket message cannot be interleaved with another, and the delay is anyway
 not the message but the queue behind it: the file sender keeps 128 KiB
@@ -156,7 +156,17 @@ and the gateway answers `ok` with its own count, which is the same exchange a
 resumed session makes and makes migration lossless whenever it happens. A
 realtime endpoint has no counts: datagrams are not replayed.
 
-A flow is attached **when it is created** and not afterwards. The counts make a
+A flow is attached **when it is created** and not afterwards. What is attached
+is the **destination**, not the stream: a client raises a destination of its own
+for each file it sends or fetches, so the code that creates it knows what it is
+for, and a socket taken at that moment has nothing in flight to reorder.
+Everything on that destination then rides it.
+
+A stream on a shared destination - a facade link, a lookup - stays on the main
+socket. Those are a request and an answer, and a connection each would be a
+connection for nothing.
+
+ The counts make a
 move lossless; they do not make it ordered. Frames already queued on the socket
 being left arrive behind frames on the one being joined, and for a stream that
 is a corrupted transfer rather than a slow one. Ordering a live move would need
@@ -730,10 +740,6 @@ worse than one that cannot do it.
 
 Written down rather than discovered later.
 
-- **A bulk stream does not get a socket of its own.** It shares the main one
-  with control, because the only way to give it one would be to move it after it
-  has started, and a move is ordered by nothing. Attaching at creation needs the
-  transport to know which stream will be bulk, which it cannot see.
 - **The client does not yet churn its control socket, and sends no decoys.** The
   daemon serves decoys and the reachability check uses one, so the half that has
   to exist on the far side exists. The timers are the client's own work.

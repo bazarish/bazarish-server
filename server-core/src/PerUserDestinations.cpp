@@ -208,27 +208,30 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
                     raw->dest = endpoint->routingHost();
                     raw->endpoint = endpoint;
                 }
-                // The endpoint exists at once; being reachable means its LeaseSet is
-                // published, which needs tunnels and a floodfill that answers. Say
-                // which of the two has happened, and never the second for the first.
-                bool published = false;
+                // The endpoint exists at once; what is waited for here is a
+                // LeaseSet and the tunnels to carry it. That a floodfill has TAKEN
+                // it is not knowable from here - the engine offers no confirmation
+                // an embedder can read - so this says the destination is up and
+                // never that it is findable. A first dial at a destination this
+                // young can still miss, which is why a lookup asks more than once.
+                bool up = false;
                 for (int waited = 0; waited < kPublishWaitSeconds && raw->running.load();
                      waited += kPublishPollSeconds) {
-                    published = endpoint->waitReady(std::chrono::seconds(kPublishPollSeconds));
-                    if (published) {
+                    up = endpoint->waitReady(std::chrono::seconds(kPublishPollSeconds));
+                    if (up) {
                         break;
                     }
                 }
                 if (!raw->running.load()) {
-                    return;  // torn down while its LeaseSet was still publishing
+                    return;  // torn down while it was still building
                 }
-                if (published) {
-                    bazarish::log::info("per-user i2p destination published for {}",
+                if (up) {
+                    bazarish::log::info("per-user i2p destination up for {}",
                         bazarish::log::redact(userFp));
                 } else {
                     bazarish::log::warn(
-                        "per-user i2p destination for {} not published after {} s; the router "
-                        "keeps retrying, the account is unreachable until it succeeds",
+                        "per-user i2p destination for {} has no LeaseSet after {} s; the router "
+                        "keeps building, the account is unreachable until it has one",
                         bazarish::log::redact(userFp), kPublishWaitSeconds);
                 }
                 serveLoop(raw, userFp);

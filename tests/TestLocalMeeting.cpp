@@ -1,0 +1,155 @@
+// Bazarish project (c) 2026
+#include "Gateway.hpp"
+
+#include "TestUtil.hpp"
+
+#include <bazarish/I2p.hpp>
+
+#include <chrono>
+#include <filesystem>
+#include <string>
+#include <vector>
+
+using namespace bazarish;
+using namespace bazarish::gateway;
+
+namespace {
+
+constexpr const char* kPath = "/2b8e61a0d7c4";
+constexpr const char* kToken = "a-third-static-token";
+constexpr int kWaitSeconds = 20;
+
+i2p::RouterConfig borrowedFrom(const int port)
+{
+    i2p::RouterConfig config;
+    config.backend = i2p::Backend::eGateway;
+    config.gatewayHost = "127.0.0.1";
+    config.gatewayPort = port;
+    config.gatewayPath = kPath;
+    config.gatewayToken = kToken;
+    config.gatewayTls = false;
+    return config;
+}
+
+std::string readAll(i2p::Stream& stream, const std::size_t expected)
+{
+    std::string got;
+    std::vector<char> buffer(256);
+    while (got.size() < expected) {
+        const std::size_t read = stream.readSome(buffer.data(), buffer.size());
+        if (read == 0) {
+            break;
+        }
+        got.append(buffer.data(), read);
+    }
+    return got;
+}
+
+}  // namespace
+
+int main()
+{
+    const std::filesystem::path root
+        = std::filesystem::temp_directory_path() / "bazarish-gateway-meeting-test";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+
+    Settings settings;
+    settings.listenHost = "127.0.0.1";
+    settings.listenPort = 0;
+    settings.basePath = kPath;
+    settings.token = kToken;
+    settings.stateDir = root / "state";
+    settings.notFoundBody = "<html>nothing</html>";
+
+    i2p::RouterConfig routerConfig;
+    routerConfig.dataDir = root / "i2p";
+    i2p::Router engine(routerConfig);
+    engine.start();
+
+    Gateway gateway(settings, engine);
+    const int port = gateway.start();
+    CHECK(port > 0);
+
+    // Two clients of one gateway, each with a session of its own.
+    i2p::Router alice(borrowedFrom(port));
+    i2p::Router bob(borrowedFrom(port));
+    alice.start();
+    bob.start();
+
+    // Alice publishes an address. Bob dials it. Both are this gateway's own, so
+    // nothing goes out to the network: it already knows which destination is
+    // which, having minted both.
+    i2p::EndpointConfig serving{alice.generateKeys()};
+    serving.privacy = i2p::Privacy::eMinimal;
+    serving.published = true;
+    const std::shared_ptr<i2p::Endpoint> hers = alice.createEndpoint(serving);
+    const std::string host = hers->routingHost();
+    CHECK(host.find(".b32.i2p") != std::string::npos);
+
+    i2p::EndpointConfig dialling{bob.generateKeys()};
+    dialling.privacy = i2p::Privacy::eMinimal;
+    dialling.published = false;
+    const std::shared_ptr<i2p::Endpoint> his = bob.createEndpoint(dialling);
+
+    // A dial that never touches a tunnel answers at once. On a router with no
+    // netDb at all - which is what this test has - one that did would not answer
+    // before the deadline, so arriving here is the proof.
+    const std::unique_ptr<i2p::Stream> out
+        = his->connect(host, std::chrono::seconds(kWaitSeconds));
+    CHECK(out != nullptr);
+
+    std::string caller;
+    const std::unique_ptr<i2p::Stream> in
+        = hers->accept(caller, std::chrono::seconds(kWaitSeconds));
+    CHECK(in != nullptr);
+    // The gateway can name the caller because it minted his destination.
+    CHECK(!caller.empty());
+
+    // Bytes both ways, unchanged.
+    const std::string question = "who is there";
+    out->writeAll(question.data(), question.size());
+    CHECK(readAll(*in, question.size()) == question);
+
+    const std::string answer = "somebody on the same gateway";
+    in->writeAll(answer.data(), answer.size());
+    CHECK(readAll(*out, answer.size()) == answer);
+
+    // More than one message, in order, and more than one window's worth so the
+    // credit that paces the pair is exercised rather than skipped.
+    std::string bulk;
+    // More than one window, so the credit that paces the pair is exercised
+    // rather than skipped: without it this would deadlock at the window's edge.
+    while (bulk.size() < 3 * kStreamWindowBytes) {
+        bulk += "0123456789abcdef";
+    }
+    out->writeAll(bulk.data(), bulk.size());
+    CHECK(readAll(*in, bulk.size()) == bulk);
+
+    // An end is an end on the other side too, and it arrives behind the bytes
+    // it ends rather than in front of them.
+    const std::string last = "goodbye";
+    in->writeAll(last.data(), last.size());
+    in->close();
+    std::string tail;
+    std::vector<char> buffer(64);
+    for (;;) {
+        const std::size_t read = out->readSome(buffer.data(), buffer.size());
+        if (read == 0) {
+            break;
+        }
+        tail.append(buffer.data(), read);
+    }
+    CHECK(tail == last);
+
+    out->close();
+    his->stop();
+    hers->stop();
+    bob.stop();
+    alice.stop();
+    gateway.stop();
+    engine.stop();
+    std::filesystem::remove_all(root);
+    std::printf("TestLocalMeeting ok\n");
+    return 0;
+}

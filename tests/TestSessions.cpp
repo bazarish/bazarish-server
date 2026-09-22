@@ -51,9 +51,9 @@ int main()
 
     // The sweep names what it dropped and leaves what is still standing.
     second->addSocket();
-    const std::vector<std::string> gone = store.sweep(kStart + 2 + kTtl);
+    const std::vector<std::shared_ptr<Session>> gone = store.sweep(kStart + 2 + kTtl);
     CHECK(gone.size() == 1);
-    CHECK(gone.front() == first->cookie());
+    CHECK(gone.front() == first);
     CHECK(store.size() == 1);
     CHECK(store.find(second->cookie(), kStart + 2 + kTtl) == second);
 

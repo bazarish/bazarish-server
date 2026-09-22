@@ -98,12 +98,12 @@ void SessionStore::close(const std::string& cookie)
     sessions_.erase(cookie);
 }
 
-std::vector<std::string> SessionStore::sweep(const std::int64_t now)
+std::vector<std::shared_ptr<Session>> SessionStore::sweep(const std::int64_t now)
 {
-    std::vector<std::string> gone;
+    std::vector<std::shared_ptr<Session>> gone;
     for (auto at = sessions_.begin(); at != sessions_.end();) {
         if (at->second->expired(now, ttlSeconds_)) {
-            gone.push_back(at->first);
+            gone.push_back(at->second);
             at = sessions_.erase(at);
         } else {
             ++at;

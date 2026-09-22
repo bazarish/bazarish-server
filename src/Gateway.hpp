@@ -98,6 +98,10 @@ private:
     void statusLoop();
     void teardown(const std::shared_ptr<Session>& session,
         const std::shared_ptr<StreamEntry>& entry, Fault fault);
+    // Stops everything a session holds. A worker thread holds its session
+    // alive, so a session nobody sweeps properly is a session that runs for
+    // ever.
+    void retire(const std::shared_ptr<Session>& session);
 
     // Every published destination this gateway operates, by the host peers
     // route to. A dial that lands in here is two of its own clients, and there
@@ -108,6 +112,16 @@ private:
     };
     std::shared_ptr<EndpointEntry> localFor(
         const std::string& host, std::shared_ptr<Session>& owner) const;
+    // Joins two of this gateway's own clients, so their bytes never leave the
+    // process. Answers the dialler and tells the other side it has a caller.
+    bool meetLocally(const std::shared_ptr<Session>& session,
+        const std::shared_ptr<EndpointEntry>& from, std::uint32_t stream,
+        const std::shared_ptr<Session>& owner, const std::shared_ptr<EndpointEntry>& to,
+        const http::SocketPtr& answerTo);
+    // Moves what is waiting into this side's client as far as its window
+    // allows, and credits the other side for what actually left.
+    void pump(const std::shared_ptr<Session>& session,
+        const std::shared_ptr<StreamEntry>& entry);
 
     Settings settings_;
     i2p::Router& router_;

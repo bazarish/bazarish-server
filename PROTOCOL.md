@@ -156,8 +156,16 @@ and the gateway answers `ok` with its own count, which is the same exchange a
 resumed session makes and makes migration lossless whenever it happens. A
 realtime endpoint has no counts: datagrams are not replayed.
 
-A flow may be attached at any moment, including in the middle of it. Until it
-is, a stream's data rides the main socket, and the counts make the move safe.
+A flow is attached **when it is created** and not afterwards. The counts make a
+move lossless; they do not make it ordered. Frames already queued on the socket
+being left arrive behind frames on the one being joined, and for a stream that
+is a corrupted transfer rather than a slow one. Ordering a live move would need
+a sequence number this wire does not carry, and carrying one to serve a case
+nobody has measured is not a trade worth making yet. A realtime endpoint takes
+its socket at creation, before there is anything to reorder; a stream stays
+where it started. What `attach` is for, then, is a socket that died and is being
+replaced - where there is nothing in flight on the old one because there is no
+old one.
 
 ### Losing one
 
@@ -542,6 +550,12 @@ or `raw-send` is the routing host of a **published** endpoint this gateway
 operates, for any of its sessions, it connects the two directly and nothing
 goes out over I2P.
 
+Both kinds are joined this way. A call's datagrams are handed straight across; a
+stream becomes a pair of halves inside the gateway, each with the window its own
+client granted. Bytes from one side wait in the other's queue until that side's
+window has room, and only what has actually left is credited back - crediting a
+queue would be telling a sender its bytes had gone when they had only moved.
+
 The point is the call. Two friends on one gateway currently send audio out
 through their own tunnels, across the network and back in through the other's,
 paying a round trip and a share of every tunnel's loss to reach a destination
@@ -716,11 +730,10 @@ worse than one that cannot do it.
 
 Written down rather than discovered later.
 
-- **Two co-located clients still meet over I2P for a stream.** The shortcut is
-  done for raw datagrams, which is the case it was asked for: a call between two
-  friends on one gateway never leaves the machine. A stream needs the two
-  clients' windows reconciled through a queue, and that is not something to
-  write before there is a transfer to measure it against.
+- **A bulk stream does not get a socket of its own.** It shares the main one
+  with control, because the only way to give it one would be to move it after it
+  has started, and a move is ordered by nothing. Attaching at creation needs the
+  transport to know which stream will be bulk, which it cannot see.
 - **The client does not yet churn its control socket, and sends no decoys.** The
   daemon serves decoys and the reachability check uses one, so the half that has
   to exist on the far side exists. The timers are the client's own work.

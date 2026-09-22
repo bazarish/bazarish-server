@@ -78,8 +78,9 @@ public:
     void close(const std::string& cookie);
 
     // Drops every session whose last socket dropped longer ago than the term,
-    // and returns their cookies so the caller can tear down what they held.
-    std::vector<std::string> sweep(std::int64_t now);
+    // and hands them back: what they hold has to be stopped, and only the
+    // caller knows how.
+    std::vector<std::shared_ptr<Session>> sweep(std::int64_t now);
 
     std::size_t size() const { return sessions_.size(); }
 

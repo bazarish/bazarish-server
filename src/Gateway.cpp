@@ -140,9 +140,10 @@ void Gateway::socketOpened(const http::SocketPtr& socket, const http::Request& r
     const std::int64_t now = nowSeconds();
     const std::string cookie = request.header(kSessionHeader);
     bool full = false;
+    std::vector<std::shared_ptr<Session>> swept;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
-        sessions_.sweep(now);
+        swept = sessions_.sweep(now);
         Connection connection;
         if (!cookie.empty()) {
             connection.session = sessions_.find(cookie, now);
@@ -161,9 +162,48 @@ void Gateway::socketOpened(const http::SocketPtr& socket, const http::Request& r
             connections_.emplace(socket.get(), connection);
         }
     }
+    for (const std::shared_ptr<Session>& gone : swept) {
+        retire(gone);
+    }
     if (full) {
         fail(socket, 0, Fault::eRefused, "this session holds as many sockets as it may");
         socket->close();
+    }
+}
+
+void Gateway::retire(const std::shared_ptr<Session>& session)
+{
+    std::vector<std::shared_ptr<EndpointEntry>> endpoints;
+    std::vector<std::shared_ptr<StreamEntry>> streams;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto& [id, endpoint] : session->endpoints) {
+            (void)id;
+            published_.erase(endpoint->host);
+            endpoints.push_back(endpoint);
+        }
+        for (const auto& [id, stream] : session->streams) {
+            (void)id;
+            streams.push_back(stream);
+        }
+        session->endpoints.clear();
+        session->streams.clear();
+    }
+    for (const std::shared_ptr<StreamEntry>& stream : streams) {
+        stream->running.store(false);
+        if (stream->stream) {
+            stream->stream->close();
+        }
+        if (stream->reader.joinable()) {
+            stream->reader.join();
+        }
+    }
+    for (const std::shared_ptr<EndpointEntry>& endpoint : endpoints) {
+        endpoint->running.store(false);
+        endpoint->endpoint->stop();
+        if (endpoint->worker.joinable()) {
+            endpoint->worker.join();
+        }
     }
 }
 
@@ -541,6 +581,23 @@ void Gateway::onStreamOpen(const std::shared_ptr<Session>& session,
             return;
         }
     }
+    // Both ends this gateway's own is not a dial at all. It knows which
+    // destination is which - it minted both - so sending the bytes out through
+    // two tunnel sets to arrive back in the same process would be work done to
+    // get where it started.
+    std::shared_ptr<Session> owner;
+    std::shared_ptr<EndpointEntry> to;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        to = localFor(host, owner);
+        if (to != nullptr && to->raw) {
+            to = nullptr;
+        }
+    }
+    if (to != nullptr && meetLocally(session, from, frame.ref, owner, to, socket)) {
+        return;
+    }
+
     // The dial blocks, and it may hold the deadline the caller gave it, so it
     // does not run on the socket's thread.
     std::thread([this, session, from, ref = frame.ref, host, deadline, socket]() {
@@ -589,6 +646,91 @@ void Gateway::dial(const std::shared_ptr<Session>& session,
         answerTo->send(answer);
     }
     entry->reader = std::thread([this, session, entry]() { readLoop(session, entry); });
+}
+
+bool Gateway::meetLocally(const std::shared_ptr<Session>& session,
+    const std::shared_ptr<EndpointEntry>& from, const std::uint32_t stream,
+    const std::shared_ptr<Session>& owner, const std::shared_ptr<EndpointEntry>& to,
+    const http::SocketPtr& answerTo)
+{
+    auto here = std::make_shared<StreamEntry>();
+    auto there = std::make_shared<StreamEntry>();
+    here->id = stream;
+    here->endpoint = from->id;
+    there->endpoint = to->id;
+    here->peer = there;
+    here->peerSession = owner;
+    there->peer = here;
+    there->peerSession = session;
+
+    http::SocketPtr control;
+    Bytes answer;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        control = owner->control;
+        if (!control) {
+            // The other side has no socket to be told on. Let the dial go out
+            // over I2P instead of failing it: a client whose control socket is
+            // between lives is still reachable at its address.
+            return false;
+        }
+        // The gateway allocates the odd half of the space for a caller it
+        // announces, here as everywhere.
+        there->id = owner->ids().next();
+        session->streams.emplace(here->id, here);
+        owner->streams.emplace(there->id, there);
+        answer = encode(FrameType::eStreamOpened, stream);
+        session->remember(stream, answer);
+    }
+    answerTo->send(answer);
+    // The caller's destination, which the gateway can name because it minted it.
+    control->send(encodeJson(FrameType::eStreamInbound, there->id,
+        {{"endpoint", to->id}, {"peer", from->endpoint->publicBase64()}}));
+    return true;
+}
+
+void Gateway::pump(
+    const std::shared_ptr<Session>& session, const std::shared_ptr<StreamEntry>& entry)
+{
+    // Everything here goes out under the one lock, because two pumps can run at
+    // once - one driven by data arriving, one by a credit - and what orders
+    // their frames is this lock and nothing else. A credit that overtakes a
+    // larger one is a credit that says less than the last one, and a data frame
+    // that overtakes another is a corrupted stream.
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const http::SocketPtr out = outlet(*session, entry->socket);
+    if (!out) {
+        return;
+    }
+    std::size_t moved = 0;
+    while (!entry->waiting.empty()) {
+        const std::size_t piece
+            = std::min({entry->book.room(), kMaxBodyBytes, entry->waiting.size()});
+        if (piece == 0) {
+            break;
+        }
+        entry->book.wrote(entry->waiting.data(), piece);
+        out->send(encode(FrameType::eStreamData, entry->id, entry->waiting.data(), piece));
+        entry->waiting.erase(
+            entry->waiting.begin(), entry->waiting.begin() + static_cast<std::ptrdiff_t>(piece));
+        moved += piece;
+    }
+    if (entry->waiting.empty() && entry->endAfterDrain) {
+        entry->endAfterDrain = false;
+        entry->book.finishSending();
+        out->send(encode(FrameType::eStreamClose, entry->id));
+    }
+    // What left this side is what the other side may now be told it is rid of.
+    // Crediting it any earlier would be crediting a queue.
+    const std::shared_ptr<StreamEntry> other = entry->peer.lock();
+    const std::shared_ptr<Session> theirs = entry->peerSession.lock();
+    if (moved > 0 && other != nullptr && theirs != nullptr) {
+        other->book.consumed(moved);
+        const http::SocketPtr back = outlet(*theirs, other->socket);
+        if (back) {
+            back->send(encodeCredit(other->id, other->book.consumedTotal()));
+        }
+    }
 }
 
 void Gateway::acceptLoop(
@@ -675,6 +817,26 @@ void Gateway::onStreamData(const std::shared_ptr<Session>& session,
         return;
     }
     entry->book.tookIn(frame.body.size());
+
+    const std::shared_ptr<StreamEntry> peer = entry->peer.lock();
+    const std::shared_ptr<Session> theirs = entry->peerSession.lock();
+    if (peer != nullptr && theirs != nullptr) {
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            peer->waiting.insert(peer->waiting.end(), frame.body.begin(), frame.body.end());
+        }
+        // The credit for these bytes comes from the far side's window, not from
+        // this one: they have not left until its client has room for them.
+        pump(theirs, peer);
+        return;
+    }
+
+    if (!entry->stream) {
+        // The pair this belonged to is gone, and there is no network leg under
+        // it to fall back to.
+        fail(socket, frame.ref, Fault::eClosed, "that stream's far side has gone");
+        return;
+    }
     entry->stream->writeAll(frame.body.data(), frame.body.size());
     // The I2P stream has them, which is what leaving this side's hands means.
     entry->book.consumed(frame.body.size());
@@ -697,6 +859,10 @@ void Gateway::onStreamCredit(const std::shared_ptr<Session>& session,
         return;
     }
     entry->book.peerCredited(decodeCredit(frame));
+    // Room here is room for what the other side is waiting to send.
+    if (!entry->peer.expired()) {
+        pump(session, entry);
+    }
 }
 
 void Gateway::onStreamEnd(const std::shared_ptr<Session>& session,
@@ -715,6 +881,20 @@ void Gateway::onStreamEnd(const std::shared_ptr<Session>& session,
         return;
     }
     entry->book.peerFinished();
+
+    const std::shared_ptr<StreamEntry> peer = entry->peer.lock();
+    const std::shared_ptr<Session> theirs = entry->peerSession.lock();
+    if (peer != nullptr && theirs != nullptr) {
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            peer->endAfterDrain = true;
+            peer->peer.reset();
+        }
+        // What is still waiting goes first: an end that overtakes the bytes it
+        // ends is a truncated file.
+        pump(theirs, peer);
+        return;
+    }
     teardown(session, entry, Fault::eClosed);
 }
 

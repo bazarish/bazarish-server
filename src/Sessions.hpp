@@ -6,6 +6,7 @@
 
 #include <bazarish/Bytes.hpp>
 
+#include <chrono>
 #include <cstdint>
 #include <deque>
 #include <map>
@@ -51,6 +52,12 @@ public:
     // The socket carrying this session's control. Everything with no socket of
     // its own rides it.
     http::SocketPtr control;
+    // A control socket that has just said hello, until the client has told it
+    // what it received. Nothing new may go out on it before the bytes it is
+    // owed: a stream whose replay arrives after newer data is a corrupted
+    // stream. Zero once the resume is in, or once the grace has run out for a
+    // client that had nothing to resume.
+    std::chrono::steady_clock::time_point replayDue{};
     std::map<std::uint32_t, std::shared_ptr<EndpointEntry>> endpoints;
     std::map<std::uint32_t, std::shared_ptr<StreamEntry>> streams;
 

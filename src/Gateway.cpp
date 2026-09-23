@@ -25,6 +25,12 @@ constexpr std::size_t kDecoyPageBytes = 32 * 1024;
 // cap of its own.
 constexpr std::size_t kSocketMessageBytes = kMaxFrameBytes;
 
+// How long a control socket that has just said hello is held back from sending
+// anything of its own. The resume it is waiting for is the client's next frame,
+// so this is only the backstop for a client that sends none - one that had
+// nothing to resume, or that went quiet between the two.
+constexpr std::chrono::seconds kReplayGrace{5};
+
 std::size_t drawBetween(const std::size_t low, const std::size_t high)
 {
     if (high <= low) {
@@ -342,7 +348,33 @@ http::SocketPtr Gateway::outletFor(const Session& session, const StreamEntry& st
     if (found != session.endpoints.end() && found->second->socket) {
         return found->second->socket;
     }
+    if (session.replayDue > std::chrono::steady_clock::now()) {
+        // The control socket is new and still owes this stream its replay.
+        // What is waiting stays waiting; the pump that follows the resume
+        // takes it out behind the bytes it belongs after.
+        return nullptr;
+    }
     return session.control;
+}
+
+void Gateway::replayDone(const std::shared_ptr<Session>& session)
+{
+    std::vector<std::shared_ptr<StreamEntry>> held;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        if (session->replayDue == std::chrono::steady_clock::time_point{}) {
+            return;
+        }
+        session->replayDue = {};
+        for (const auto& [id, entry] : session->streams) {
+            (void)id;
+            held.push_back(entry);
+        }
+    }
+    // What could not go out while the replay was owed goes out now.
+    for (const std::shared_ptr<StreamEntry>& entry : held) {
+        pump(session, entry);
+    }
 }
 
 void Gateway::onFrame(const http::SocketPtr& socket, const Frame& frame)
@@ -374,6 +406,11 @@ void Gateway::onFrame(const http::SocketPtr& socket, const Frame& frame)
         lane != nullptr && lane != socket) {
         fail(socket, frame.ref, Fault::eWrongLane, "that flow does not ride this socket");
         return;
+    }
+    if (frame.type != FrameType::eResume) {
+        // The client is talking about something else, so the resume it might
+        // have sent is not coming.
+        replayDone(session);
     }
     switch (frame.type) {
         case FrameType::eAttach: onAttach(socket, frame); return;
@@ -422,6 +459,12 @@ void Gateway::onHello(const http::SocketPtr& socket, const Frame& frame)
         // phone out of its own session.
         replaced = connection.session->control;
         connection.session->control = socket;
+        // A rejoining client is owed whatever it did not confirm receiving, and
+        // that goes out when its resume names the counts. Until then this
+        // socket carries nothing new of its own.
+        connection.session->replayDue = connection.session->streams.empty()
+            ? std::chrono::steady_clock::time_point{}
+            : std::chrono::steady_clock::now() + kReplayGrace;
     }
 
     // What is still standing. A client reconciles by absence: anything of its
@@ -1085,6 +1128,7 @@ void Gateway::onResume(const std::shared_ptr<Session>& session,
             out->send(encode(FrameType::eStreamData, id, again.data() + at, piece));
         }
     }
+    replayDone(session);
 }
 
 void Gateway::onAttach(const http::SocketPtr& socket, const Frame& frame)

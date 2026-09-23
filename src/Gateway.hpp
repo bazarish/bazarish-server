@@ -103,6 +103,9 @@ private:
     // control. A destination raised for one transfer has a socket of its own,
     // and everything on it rides that.
     static http::SocketPtr outletFor(const Session& session, const StreamEntry& stream);
+    // The control socket has said what it owed (or nothing was owed): what
+    // waited for its replay goes out now.
+    void replayDone(const std::shared_ptr<Session>& session);
     // Which socket a data frame was supposed to arrive on, or none when the
     // frame is not one or names nothing.
     http::SocketPtr laneFor(const Session& session, const Frame& frame) const;

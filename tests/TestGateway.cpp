@@ -250,6 +250,24 @@ int main()
     CHECK(bodyJson(complaint)["code"] == "bad-frame");
     nonsense.socket.reset();
 
+    // A request the client never saw answered is sent again with the same
+    // reference when its socket is replaced. The gateway answers the repeat
+    // from what it already did: the same address, not a second destination.
+    Dialled twiceOver = dial(io, port, kToken, {});
+    CHECK(twiceOver.socket != nullptr);
+    (void)greet(*twiceOver.socket);
+    const nlohmann::json ask = {{"kind", "stream"}, {"privacy", "minimal"}, {"tunnels", 2},
+        {"published", false}, {"realtime", false}};
+    send(*twiceOver.socket, encodeJson(FrameType::eEndpointCreate, 6, ask));
+    const Frame once = receive(*twiceOver.socket);
+    CHECK(once.type == FrameType::eOk);
+    send(*twiceOver.socket, encodeJson(FrameType::eEndpointCreate, 6, ask));
+    const Frame repeat = receive(*twiceOver.socket);
+    CHECK(repeat.type == FrameType::eOk);
+    CHECK(bodyJson(repeat)["host"] == bodyJson(once)["host"]);
+    twiceOver.socket->close(websocket::close_code::normal, ignored);
+    twiceOver.socket.reset();
+
     // A session that outlives nothing is swept, and what it held goes with it.
     // The destination below is published, so the gateway is holding a thread
     // for it: a sweep that could not join one would hang here rather than fail.

@@ -172,7 +172,7 @@ int main()
     // an address.
     const std::shared_ptr<i2p::Endpoint> mine = borrowed.createEndpoint(
         i2p::EndpointConfig{borrowed.generateKeys(), i2p::Privacy::eMinimal, 2,
-            /*published=*/false, "Test", {}});
+            /*published=*/false, "Test", "an account"});
     CHECK(mine != nullptr);
     const std::string host = mine->routingHost();
     CHECK(host.size() > 50);
@@ -218,6 +218,11 @@ int main()
     const std::vector<i2p::LocalDestination> seen = borrowed.localDestinations();
     CHECK(seen.size() == 1);
     CHECK(seen.front().host == host);
+    // What it is for is the client's own note, kept here because it never went
+    // to the gateway. Without it every row on the status page read
+    // "Destination" and said nothing.
+    CHECK(seen.front().label == "Test");
+    CHECK(seen.front().owner == "an account");
 
     mine->stop();
     borrowed.stop();

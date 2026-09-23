@@ -195,6 +195,25 @@ int main()
     }
     CHECK(refusedProxy);
 
+    // Everything the status view reads, in the order it reads it. It used to
+    // ask whether the transport was SAM instead of asking what it can answer,
+    // and the answer for a gateway went out as an exception through a Qt slot.
+    CHECK(borrowed.running());
+    CHECK(borrowed.knownRouters() >= 0);
+    CHECK(borrowed.transportPeers().empty());
+    if (what.proxy) {
+        (void)borrowed.proxyState();
+    }
+    bool proxyRefused = false;
+    try {
+        (void)borrowed.proxyState();
+    } catch (const std::exception&) {
+        proxyRefused = true;
+    }
+    // Unguarded it throws, which is the whole reason the guard has to be the
+    // capability and not a guess about which transport is underneath.
+    CHECK(proxyRefused);
+
     // The status view sees this session's destinations and nothing else.
     const std::vector<i2p::LocalDestination> seen = borrowed.localDestinations();
     CHECK(seen.size() == 1);

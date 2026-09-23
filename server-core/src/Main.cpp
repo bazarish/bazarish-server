@@ -229,8 +229,10 @@ int main(const int argc, const char** argv)
     {
         bazarish::log::info("starting embedded I2P router (building tunnels)...");
         // The embedded router (server role: relays transit). State under <state>/i2p.
-        router = std::make_unique<bazarish::i2p::Router>(
-            bazarish::i2p::RouterConfig{stateDir / "i2p", bazarish::i2p::Role::eServer});
+        bazarish::i2p::RouterConfig routerConfig;
+        routerConfig.dataDir = stateDir / "i2p";
+        routerConfig.role = bazarish::i2p::Role::eServer;
+        router = std::make_unique<bazarish::i2p::Router>(routerConfig);
 
         // Inbound federation accountability is per-connecting-destination: one
         // limiter, shared across every accept loop (home destination, address

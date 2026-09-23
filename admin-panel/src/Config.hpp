@@ -14,11 +14,19 @@ namespace bazarish::admin {
 // shared secret travels in the config.
 struct ServiceEntry {
     std::string name;
-    std::string kind;  // server-core | service-node | facade
+    std::string kind;  // server-core | service-node | facade | gateway
     std::string url;   // e.g. http://127.0.0.1:8420
+    // A gateway answers at a secret path and only to requests carrying its
+    // token. The path is part of the URL; the token is here, or comes in the
+    // URL's fragment, which is how a gateway's address is handed out.
+    std::string token;
 
     friend bool operator==(const ServiceEntry&, const ServiceEntry&) = default;
 };
+
+// Moves a "#token" fragment out of the URL and into the token field, so one
+// pasted address and a separately named host and token end up the same shape.
+void takeTokenFromUrl(ServiceEntry& entry);
 
 // The panel configuration, loaded from a JSON file at startup. An admin pastes
 // their own Bazarish fingerprint (from `bazarish-client whoami`) into `admin`,

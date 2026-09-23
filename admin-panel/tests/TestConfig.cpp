@@ -105,6 +105,22 @@ int main()
     CHECK_THROWS(Config::fromJson(R"({"admin": "fp", "services": [
         {"name": "x", "kind": "server-core"}]})"));
 
+    // A gateway is reached at a secret path and only with its token. One
+    // pasted address carries both, and is stored as the two things it is.
+    const Config pasted = Config::fromJson(R"({"admin": "fp", "services": [
+        {"name": "gate", "kind": "gateway",
+         "url": "https://gate.example/f3a9c2e1#a-long-token"}]})");
+    CHECK(pasted.fleets.at(0).services.at(0).url == "https://gate.example/f3a9c2e1");
+    CHECK(pasted.fleets.at(0).services.at(0).token == "a-long-token");
+
+    // A host named on its own takes the token beside it, which is what a
+    // gateway on a local network looks like.
+    const Config named = Config::fromJson(R"({"admin": "fp", "services": [
+        {"name": "gate", "kind": "gateway",
+         "url": "http://192.168.0.70:8440/f3a9c2e1", "token": "a-long-token"}]})");
+    CHECK(named.fleets.at(0).services.at(0).url == "http://192.168.0.70:8440/f3a9c2e1");
+    CHECK(named.fleets.at(0).services.at(0).token == "a-long-token");
+
     std::printf("TestConfig: all checks passed\n");
     return 0;
 }

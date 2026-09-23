@@ -13,9 +13,19 @@ namespace {
 // What a deployment is made of. The alias service is not here: it is one central
 // service for the whole project, not part of anyone's server, and an operator of
 // a server has nothing to do with it.
-const char* const kKnownKinds[] = {"server-core", "service-node", "facade"};
+const char* const kKnownKinds[] = {"server-core", "service-node", "facade", "gateway"};
 
 }  // namespace
+
+void takeTokenFromUrl(ServiceEntry& entry)
+{
+    const auto hash = entry.url.find('#');
+    if (hash == std::string::npos) {
+        return;
+    }
+    entry.token = entry.url.substr(hash + 1);
+    entry.url = entry.url.substr(0, hash);
+}
 
 bool isKnownServiceKind(const std::string& kind)
 {
@@ -68,6 +78,8 @@ Config Config::fromJson(const std::string& text)
             entry.name = item.at("name").get<std::string>();
             entry.kind = item.at("kind").get<std::string>();
             entry.url = item.at("url").get<std::string>();
+            entry.token = item.value("token", std::string());
+            takeTokenFromUrl(entry);
             if (!isKnownServiceKind(entry.kind)) {
                 throw std::runtime_error("config: unknown service kind \"" + entry.kind + "\"");
             }

@@ -33,7 +33,7 @@ nlohmann::json fleetsJson(const std::vector<Fleet>& fleets)
         nlohmann::json services = nlohmann::json::array();
         for (const ServiceEntry& service : fleet.services) {
             services.push_back({{"name", service.name}, {"kind", service.kind},
-                {"url", service.url}});
+                {"url", service.url}, {"token", service.token}});
         }
         list.push_back({{"name", fleet.name}, {"services", services}});
     }

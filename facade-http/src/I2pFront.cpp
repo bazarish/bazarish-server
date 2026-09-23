@@ -148,8 +148,10 @@ std::vector<std::string> I2pFront::start()
 {
     std::error_code ec;
     std::filesystem::create_directories(options_.stateDir, ec);
-    router_ = std::make_unique<bazarish::i2p::Router>(
-        bazarish::i2p::RouterConfig{options_.stateDir / "i2p", bazarish::i2p::Role::eServer});
+    bazarish::i2p::RouterConfig routerConfig;
+    routerConfig.dataDir = options_.stateDir / "i2p";
+    routerConfig.role = bazarish::i2p::Role::eServer;
+    router_ = std::make_unique<bazarish::i2p::Router>(routerConfig);
 
     std::vector<std::string> hosts;
     for (std::size_t i = 0; i < options_.destinations; ++i) {

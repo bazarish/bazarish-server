@@ -1278,7 +1278,7 @@
             name.value = service ? service.name : "";
             row.appendChild(name);
             var kind = element("select", "field service-kind");
-            ["server-core", "service-node", "facade"].forEach(function (known) {
+            ["server-core", "service-node", "facade", "gateway"].forEach(function (known) {
                 var option = document.createElement("option");
                 option.value = known;
                 option.textContent = known;
@@ -1293,10 +1293,22 @@
             url.placeholder = "http://127.0.0.1:8420";
             url.value = service ? service.url : "";
             row.appendChild(url);
+            // A gateway answers at a secret path and only to requests carrying
+            // its token. One pasted address carries both; a host named on its
+            // own needs the token beside it.
+            var token = element("input", "field");
+            token.type = "text";
+            token.placeholder = "token";
+            token.value = service ? (service.token || "") : "";
+            token.hidden = kind.value !== "gateway";
+            row.appendChild(token);
+            kind.addEventListener("change", function () {
+                token.hidden = kind.value !== "gateway";
+            });
             var drop = element("button", "chip", "remove");
             row.appendChild(drop);
-            var entry = { fleet: fleetName, name: name, kind: kind, url: url, row: row,
-                dropped: false };
+            var entry = { fleet: fleetName, name: name, kind: kind, url: url, token: token,
+                row: row, dropped: false };
             drop.addEventListener("click", function () {
                 entry.dropped = true;
                 row.remove();
@@ -1350,7 +1362,8 @@
                     return {
                         name: entry.name.value.trim(),
                         kind: entry.kind.value,
-                        url: entry.url.value.trim()
+                        url: entry.url.value.trim(),
+                        token: entry.token.value.trim()
                     };
                 });
                 var incomplete = services.filter(function (service) {

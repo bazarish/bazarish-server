@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #include "ServiceClient.hpp"
 
+#include <bazarish/GatewayProtocol.hpp>
+
 #include <bazarish/Clock.hpp>
 #include <bazarish/Auth.hpp>
 #include <bazarish/Bytes.hpp>
@@ -25,23 +27,33 @@ constexpr int kConnectTimeoutSeconds = 2;
 constexpr int kExchangeTimeoutSeconds = 3;
 // The port a service URL means when it names none.
 constexpr int kDefaultHttpPort = 80;
+constexpr int kDefaultHttpsPort = 443;
 
 // Where a service URL points: the client takes a host and a port, not a URL.
+// A gateway also carries the path it answers at, and may be reached over TLS -
+// it is the one service that need not be on this machine.
 struct Address {
     std::string host;
     int port = kDefaultHttpPort;
+    std::string path;
+    bool tls = false;
 };
 
 Address parseUrl(const std::string& url)
 {
     std::string rest = url;
-    if (const std::string scheme = "http://"; rest.rfind(scheme, 0) == 0) {
+    Address address;
+    if (const std::string scheme = "https://"; rest.rfind(scheme, 0) == 0) {
         rest = rest.substr(scheme.size());
+        address.tls = true;
+        address.port = kDefaultHttpsPort;
+    } else if (const std::string plain = "http://"; rest.rfind(plain, 0) == 0) {
+        rest = rest.substr(plain.size());
     }
     if (const auto slash = rest.find('/'); slash != std::string::npos) {
+        address.path = rest.substr(slash);
         rest = rest.substr(0, slash);
     }
-    Address address;
     if (const auto colon = rest.find(':'); colon == std::string::npos) {
         address.host = rest;
     } else {
@@ -66,19 +78,27 @@ bazarish::http::ClientOptions clientOptions()
 bazarish::http::ClientResponse call(const ServiceEntry& service, const Identity& identity,
     const std::string& method, const std::string& target, const std::string& body)
 {
-    const std::string path = target.substr(0, target.find('?'));
+    const Address address = parseUrl(service.url);
+    // A gateway answers under a path nobody guesses, and the signature has to
+    // cover the path the service will verify - which is the whole of it.
+    const std::string full = address.path + target;
+    const std::string path = full.substr(0, full.find('?'));
     const auth::Headers signature = auth::signRequest(
         identity, nowSeconds(), method, path, Bytes(body.begin(), body.end()));
     bazarish::http::ClientRequest out;
     out.method = method;
-    out.target = target;
+    out.target = full;
     out.headers = std::map<std::string, std::string>(signature.begin(), signature.end());
+    if (!service.token.empty()) {
+        out.headers[bazarish::gateway::kTokenHeader] = service.token;
+    }
     out.body = body;
     if (!body.empty()) {
         out.contentType = "application/json";
     }
-    const Address address = parseUrl(service.url);
-    return bazarish::http::request(address.host, address.port, out, clientOptions());
+    bazarish::http::ClientOptions options = clientOptions();
+    options.tls = address.tls;
+    return bazarish::http::request(address.host, address.port, out, options);
 }
 
 // Pulls a human message out of an error envelope body, falling back to the

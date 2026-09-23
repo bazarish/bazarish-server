@@ -113,7 +113,7 @@ int main()
         wanted.consumer.role = "Administrator";
         wanted.listenPort = 9460;
         wanted.fleets = {Fleet{"alpha", {ServiceEntry{"core", "server-core",
-                                            "http://127.0.0.1:8420"}}}};
+                                            "http://127.0.0.1:8420", {}}}}};
         settings->set(wanted);
 
         const nlohmann::json written = read(path);

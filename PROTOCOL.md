@@ -268,8 +268,9 @@ gateway, and it stays held while the client has no socket at all; what arrives
 in the gap waits in the stream's window and is delivered on the next attach.
 
 The price is stated plainly: `kControlGapMax` is the longest a message can sit
-at the gateway before the client hears about it. That is the trade, and it is
-the operator's to set - all five figures, the two decoy delays and the three
+at the gateway before the client hears about it, and it is two seconds because
+a break the user can feel is a break not worth taking. That is the trade, and it
+is the operator's to set - all five figures, the two decoy delays and the three
 that pace the socket, are settings with the protocol's own numbers as their
 default.
 
@@ -714,7 +715,7 @@ worse than one that cannot do it.
 | `kDecoyRequestMaxBytes` | 2048 | The largest, past which a request stops looking like one |
 | `kControlSocketMinLife` | 1 s | The shortest life of a control socket before it is replaced |
 | `kControlSocketMaxLife` | 300 s | The longest. A connection older than this stops looking like a page view |
-| `kControlGapMax` | 30 s | The longest wait before the next control socket, and therefore the longest a message can sit at the gateway. Well inside `kSessionTtlSeconds`, which is what keeps the session alive across the gap |
+| `kControlGapMax` | 2 s | The longest wait before the next control socket, and therefore the longest a message can sit at the gateway. The break is the client's own doing and must not be felt; what an observer sees is how many connections there were and how long each lived, not the dead time between them, so a short gap costs the cover nothing |
 | `kStreamWindowBytes` | 262144 | The in-flight allowance per stream per direction. It is also the retained buffer a reconnect replays from, and the most an unaccepted inbound stream can cost the gateway |
 | `kDialRetryDelay` | 2 s | How often a dial is re-issued while the deadline holds, matching the SAM backend |
 | `kInboundQueue` | 8 | Unaccepted inbound streams per endpoint before the client resets the oldest |

@@ -161,6 +161,9 @@ void Gateway::socketOpened(const http::SocketPtr& socket, const http::Request& r
             // router that restarted.
             connection.session = sessions_.open(now);
         }
+        if (connection.resumed) {
+            ++rejoins_;
+        }
         if (connection.session->full()) {
             full = true;
         } else {
@@ -311,6 +314,7 @@ void Gateway::onFrame(const http::SocketPtr& socket, const Frame& frame)
     }
     switch (frame.type) {
         case FrameType::eAttach: onAttach(socket, frame); return;
+        case FrameType::eResume: onResume(session, socket, frame); return;
         case FrameType::eEndpointCreate: onEndpointCreate(session, socket, frame); return;
         case FrameType::eEndpointStop: onEndpointStop(session, socket, frame); return;
         case FrameType::eStreamOpen: onStreamOpen(session, socket, frame); return;
@@ -353,6 +357,25 @@ void Gateway::onHello(const http::SocketPtr& socket, const Frame& frame)
         connection.session->control = socket;
     }
 
+    // What is still standing. A client reconciles by absence: anything of its
+    // own that these lists do not name is gone, whatever the reason.
+    nlohmann::json endpoints = nlohmann::json::array();
+    nlohmann::json streams = nlohmann::json::array();
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto& [id, endpoint] : connection.session->endpoints) {
+            endpoints.push_back({{"id", id}, {"kind", endpoint->raw ? "raw" : "stream"},
+                {"ready", endpoint->ready}, {"host", endpoint->host},
+                {"tunnelsIn", endpoint->inboundTunnels},
+                {"tunnelsOut", endpoint->outboundTunnels}, {"leaseSets", endpoint->leaseSets}});
+        }
+        for (const auto& [id, stream] : connection.session->streams) {
+            streams.push_back({{"id", id}, {"endpoint", stream->endpoint},
+                {"received", stream->book.received()},
+                {"finished", stream->book.finishedSending()}});
+        }
+    }
+
     const nlohmann::json ready = {
         {"version", kProtocolVersion},
         {"i2pd", i2p::routerVersion()},
@@ -361,8 +384,8 @@ void Gateway::onHello(const http::SocketPtr& socket, const Frame& frame)
                 {"proxy", false}, {"offlineKeys", false}}},
         {"session", connection.session->cookie()},
         {"resumed", connection.resumed},
-        {"endpoints", nlohmann::json::array()},
-        {"streams", nlohmann::json::array()},
+        {"endpoints", endpoints},
+        {"streams", streams},
         {"lost", nlohmann::json::array()},
     };
     socket->send(encodeJson(FrameType::eReady, frame.ref, ready));
@@ -920,6 +943,40 @@ void Gateway::teardown(const std::shared_ptr<Session>&,
     }
     if (entry->reader.joinable()) {
         entry->reader.join();
+    }
+}
+
+void Gateway::onResume(const std::shared_ptr<Session>& session,
+    const http::SocketPtr& socket, const Frame& frame)
+{
+    const nlohmann::json body = bodyJson(frame);
+    const auto found = body.find("streams");
+    if (found == body.end() || !found->is_array()) {
+        fail(socket, frame.ref, Fault::eBadFrame, "a resume names the streams it is resuming");
+        return;
+    }
+    for (const nlohmann::json& said : *found) {
+        const std::uint32_t id = said.value("id", 0U);
+        std::shared_ptr<StreamEntry> entry;
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            entry = streamOf(*session, id);
+        }
+        if (entry == nullptr) {
+            continue;  // gone since; the client learns that from the lists
+        }
+        // Everything the client did not confirm receiving goes out again, in
+        // order, before any new data on this stream.
+        const Bytes again = entry->book.replay(said.value("received", std::uint64_t{0}));
+        const std::lock_guard<std::mutex> lock(mutex_);
+        const http::SocketPtr out = outletFor(*session, *entry);
+        if (!out) {
+            continue;
+        }
+        for (std::size_t at = 0; at < again.size(); at += kMaxBodyBytes) {
+            const std::size_t piece = std::min(kMaxBodyBytes, again.size() - at);
+            out->send(encode(FrameType::eStreamData, id, again.data() + at, piece));
+        }
     }
 }
 

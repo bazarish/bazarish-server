@@ -269,7 +269,17 @@ in the gap waits in the stream's window and is delivered on the next attach.
 
 The price is stated plainly: `kControlGapMax` is the longest a message can sit
 at the gateway before the client hears about it. That is the trade, and it is
-the operator's to set.
+the operator's to set - all five figures, the two decoy delays and the three
+that pace the socket, are settings with the protocol's own numbers as their
+default.
+
+What a replacement must not cost is a byte. A stream riding the control socket
+is put back by the resume exchange: the gateway names what it received, the
+client names what it received, and each resends what the other has not
+confirmed. Data frames written into the gap are **not** queued for the next
+socket - their bytes are still held against their window, and the replay puts
+them back in order. Queueing them as well would send them twice, once behind the
+replay.
 
 During a call none of this hides much, because a flow socket is up for the
 length of the call and fifty small packets a second is a call. Cover is for the
@@ -740,12 +750,10 @@ worse than one that cannot do it.
 
 Written down rather than discovered later.
 
-- **The client does not yet churn its control socket, and sends no decoys.** The
-  daemon serves decoys and the reachability check uses one, so the half that has
-  to exist on the far side exists. The timers are the client's own work.
 - **Nothing has run against a live I2P network.** The daemon, the wire and the
-  transport are proved end to end against each other, including a destination
-  the gateway minted and named; what is untested is a tunnel actually carrying
-  something.
+  transport are proved end to end against each other - a destination the gateway
+  minted and named, two of its own clients meeting inside it, and a transfer
+  carried across nine replacements of the socket under it. What is untested is a
+  tunnel actually carrying something.
 7. One global setting switches the router off. The library stays linked, because
    the account's own destination is still minted on the device.

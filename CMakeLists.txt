@@ -49,6 +49,7 @@ function(bazarish_gateway_add_test name)
     add_test(NAME ${name} COMMAND ${name})
 endfunction()
 
+bazarish_gateway_add_test(TestControlChurn)
 bazarish_gateway_add_test(TestGateway)
 bazarish_gateway_add_test(TestGatewayClient)
 bazarish_gateway_add_test(TestLocalMeeting)

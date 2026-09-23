@@ -41,6 +41,10 @@ public:
     // How many sockets this gateway is holding, across every session: one per
     // session's control, plus one for each flow that has a lane of its own.
     std::size_t sockets() const;
+    // How many times a client has come back to a session it already had. A
+    // client replaces its control socket on purpose, so this counts the churn
+    // rather than any kind of trouble.
+    std::size_t rejoins() const { return rejoins_.load(); }
 
 private:
     // True only for a request at the secret path carrying the right token. The
@@ -56,6 +60,8 @@ private:
     void onFrame(const http::SocketPtr& socket, const Frame& frame);
     void onHello(const http::SocketPtr& socket, const Frame& frame);
     void onAttach(const http::SocketPtr& socket, const Frame& frame);
+    void onResume(const std::shared_ptr<Session>& session, const http::SocketPtr& socket,
+        const Frame& frame);
     void onEndpointCreate(const std::shared_ptr<Session>& session,
         const http::SocketPtr& socket, const Frame& frame);
     void onEndpointStop(const std::shared_ptr<Session>& session, const http::SocketPtr& socket,
@@ -136,6 +142,7 @@ private:
     std::map<const http::Socket*, Connection> connections_;
     std::map<std::string, Local> published_;
     std::thread status_;
+    std::atomic<std::size_t> rejoins_{0};
     std::atomic<bool> running_{false};
 };
 

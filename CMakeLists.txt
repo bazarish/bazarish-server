@@ -40,6 +40,16 @@ add_executable(bazarish-gateway src/Main.cpp)
 target_link_libraries(bazarish-gateway PRIVATE bazarish_gateway_lib)
 target_compile_options(bazarish-gateway PRIVATE -Wall -Wextra -Werror)
 
+# A live check against a real gateway. Not an add_test: it needs one running,
+# the way i2p_smoke needs a network.
+# The address parser lives with the client core, which a gateway build leaves
+# out; the one file comes along rather than the whole of it.
+add_executable(gateway_smoke tests/GatewaySmoke.cpp
+    ${BAZARISH_COMMON_DIR}/client/GatewayAddress.cpp)
+target_link_libraries(gateway_smoke PRIVATE bazarish_gateway_lib)
+target_include_directories(gateway_smoke PRIVATE ${BAZARISH_COMMON_DIR}/client)
+target_compile_options(gateway_smoke PRIVATE -Wall -Wextra -Werror)
+
 enable_testing()
 function(bazarish_gateway_add_test name)
     add_executable(${name} tests/${name}.cpp)

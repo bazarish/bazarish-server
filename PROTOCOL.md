@@ -340,7 +340,6 @@ it answers.
 | 0x26 | `stream-reset` | both | stream | `{"code": "..."}` |
 | 0x30 | `raw-send` | client | endpoint | u16 BE host length, host, payload |
 | 0x31 | `raw-recv` | gateway | endpoint | payload |
-| 0x40 | `router-status` | gateway | 0 | `{"known": n, "floodfills": n, "in": n, "out": n, "peers": [...]}` |
 
 An unknown type closes the socket: a gateway that ignores what it does not
 understand is a gateway that silently does half of what was asked.
@@ -616,7 +615,7 @@ chosen.
 
 | Capability | Under a gateway | Why |
 |---|---|---|
-| `routerCounters` | true | They are the gateway's router's own numbers: routers known, floodfills, tunnels, transport peers. They describe a machine the client already trusts with its traffic, and they are what the connection progress and the I2P status view read |
+| `routerCounters` | false | Routers known, floodfills, tunnels, transport peers: they are the gateway's router's, and that router is shared by everyone using it. A client does not show them, so it is not told them |
 | `destinationCounters` | true | Tunnels and held LeaseSets per destination, pushed with `endpoint-status`, for the endpoints of this session and no others |
 | `netDbSample` | false | A slice of the netDb is what a server packs into a private reseed. A client never asks for one |
 | `proxy` | false | The gateway's clearnet side is its operator's configuration, not a client's |
@@ -656,28 +655,22 @@ After a reconnect the client joins its registry to the `endpoints` list of
 `ready` by identifier, and drops whatever `lost` names. The panel then shows
 what actually survived, rather than what the client last remembered.
 
-### The numbers above them
+### What is not shown
 
-The panel's other half is the router itself: routers known, floodfills, tunnels,
-transport peers, the engine's version. Under a gateway every one of these is
-answerable and every one of them is shown - `router-status` carries the counters
-and the peers, `ready` carries the version - because a status view that goes
-blank the moment the router moves is a status view that punishes the user for a
-setting.
+The panel's other half, for a router in this process, is the router itself:
+routers known, floodfills, tunnels, transport peers. None of it appears under a
+gateway and none of it is sent. Those numbers describe the gateway's machine and
+everyone else using it, not this account, and a panel that showed them would be
+telling a device that runs no router that it knows four thousand of them.
 
-They are shown **saying whose they are**. A phone that runs no router at all,
-displaying four thousand known routers as though they were its own, is telling
-the user something false about their own device; one line naming the gateway
-makes the same four thousand numbers true. The numbers belong to a machine the
-user chose and trusts with their traffic, and there is nothing to hide about
-them - only something to label.
+In their place the panel says where the router is - the host, without the path
+that opens it - and nothing more. There is no state here to put a light on: the
+destinations below carry their own.
 
-What the gateway does not answer is shown as not known, and never as zero. The
-proxy row is absent under a gateway rather than reading as a direct connection,
-because `proxy` is false and the gateway's clearnet side is its operator's
-business. And the netDb count the panel reads off the disk while the router is
-stopped is an embedded-only fact: there is no local netDb under a gateway, and a
-count left over from some earlier run would be a number about nothing.
+The proxy row is absent for the same reason, and the netDb count the panel reads
+off the disk while a router is stopped is an embedded-only fact: there is no
+local netDb under a gateway, and a count left from an earlier run would be a
+number about nothing.
 
 ## Errors
 

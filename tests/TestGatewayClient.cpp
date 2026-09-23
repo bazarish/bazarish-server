@@ -159,7 +159,9 @@ int main()
     i2p::Router borrowed(gatewayConfig);
 
     const i2p::Capabilities what = borrowed.capabilities();
-    CHECK(what.routerCounters);
+    // What a gateway's router knows of the network describes that machine and
+    // everyone else using it, so it is neither shown nor sent.
+    CHECK(!what.routerCounters);
     CHECK(what.destinationCounters);
     CHECK(!what.netDbSample);
     CHECK(!what.proxy);
@@ -199,7 +201,7 @@ int main()
     // ask whether the transport was SAM instead of asking what it can answer,
     // and the answer for a gateway went out as an exception through a Qt slot.
     CHECK(borrowed.running());
-    CHECK(borrowed.knownRouters() >= 0);
+    CHECK(borrowed.knownRouters() == 0);
     CHECK(borrowed.transportPeers().empty());
     if (what.proxy) {
         (void)borrowed.proxyState();

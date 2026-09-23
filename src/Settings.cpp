@@ -66,6 +66,12 @@ Settings Settings::from(const ConfigView& config)
         throw std::runtime_error("\"decoy.minBytes\" and \"decoy.maxBytes\" name a range");
     }
 
+    settings.sessionTtlSeconds
+        = config.number("sessionTtlSeconds", kSessionTtl.count());
+    if (settings.sessionTtlSeconds <= 0) {
+        throw std::runtime_error("\"sessionTtlSeconds\" is a term, not a switch");
+    }
+
     const std::string notFoundFile = config.text("notFound");
     settings.notFoundBody
         = notFoundFile.empty() ? std::string(kNginxNotFound) : readFile(notFoundFile);

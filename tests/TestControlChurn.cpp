@@ -128,6 +128,10 @@ int main()
     // transfer wearing a test's name.
     CHECK(gateway.rejoins() >= 2);
 
+    // Nothing was refused along the way. A test that passes while the gateway
+    // is turning frames away is a test that proves less than it looks.
+    CHECK(gateway.refusals() == 0);
+
     out->close();
     in->close();
     his->stop();

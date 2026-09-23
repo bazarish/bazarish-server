@@ -168,6 +168,10 @@ int main()
     }
     CHECK(tail == last);
 
+    // Nothing was refused along the way. A test that passes while the gateway
+    // is turning frames away is a test that proves less than it looks.
+    CHECK(gateway.refusals() == 0);
+
     out->close();
     his->stop();
     hers->stop();

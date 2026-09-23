@@ -33,6 +33,11 @@ struct Settings {
     // right path with the wrong token are indistinguishable.
     std::string notFoundBody;
     std::string serverName = "nginx";
+    // How long a session outlives its last socket. The client drops its own on
+    // purpose, so this is the other half of the trade its gap setting makes:
+    // long enough for a lift or a handover, short enough that an abandoned
+    // phone does not cost tunnels for ever.
+    std::int64_t sessionTtlSeconds = kSessionTtl.count();
 
     // Throws when something mandatory is missing or makes no sense.
     static Settings from(const ConfigView& config);

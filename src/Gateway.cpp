@@ -41,6 +41,7 @@ std::size_t drawBetween(const std::size_t low, const std::size_t high)
 Gateway::Gateway(Settings settings, i2p::Router& router)
     : settings_(std::move(settings))
     , router_(router)
+    , sessions_(settings_.sessionTtlSeconds)
     , server_([&]() {
         http::Server::Options options;
         options.host = settings_.listenHost;
@@ -199,6 +200,7 @@ void Gateway::retire(const std::shared_ptr<Session>& session)
         session->streams.clear();
     }
     for (const std::shared_ptr<StreamEntry>& stream : streams) {
+        orphan(stream);
         stream->running.store(false);
         if (stream->stream) {
             stream->stream->close();
@@ -250,6 +252,7 @@ void Gateway::socketClosed(const http::SocketPtr& socket)
 void Gateway::fail(const http::SocketPtr& socket, const std::uint32_t ref, const Fault fault,
     const std::string& why)
 {
+    ++refused_;
     const nlohmann::json body = {{"code", faultName(fault)}, {"message", why}};
     socket->send(encodeJson(FrameType::eError, ref, body));
 }
@@ -312,6 +315,14 @@ void Gateway::onFrame(const http::SocketPtr& socket, const Frame& frame)
             return;
         }
     }
+    // A data frame belongs on the socket its flow rides. One that works by
+    // accident is one that stops working under load, which is exactly when the
+    // lane was supposed to matter.
+    if (const http::SocketPtr lane = laneFor(*session, frame);
+        lane != nullptr && lane != socket) {
+        fail(socket, frame.ref, Fault::eWrongLane, "that flow does not ride this socket");
+        return;
+    }
     switch (frame.type) {
         case FrameType::eAttach: onAttach(socket, frame); return;
         case FrameType::eResume: onResume(session, socket, frame); return;
@@ -341,6 +352,7 @@ void Gateway::onHello(const http::SocketPtr& socket, const Frame& frame)
     }
 
     Connection connection;
+    http::SocketPtr replaced;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
         const auto found = connections_.find(socket.get());
@@ -354,6 +366,9 @@ void Gateway::onHello(const http::SocketPtr& socket, const Frame& frame)
         }
         found->second.greeted = true;
         connection = found->second;
+        // A socket that has not noticed it is dead must not be able to hold a
+        // phone out of its own session.
+        replaced = connection.session->control;
         connection.session->control = socket;
     }
 
@@ -374,6 +389,10 @@ void Gateway::onHello(const http::SocketPtr& socket, const Frame& frame)
                 {"received", stream->book.received()},
                 {"finished", stream->book.finishedSending()}});
         }
+    }
+
+    if (replaced && replaced != socket) {
+        replaced->close();
     }
 
     const nlohmann::json ready = {
@@ -413,6 +432,26 @@ std::shared_ptr<StreamEntry> streamOf(const Session& session, const std::uint32_
 }
 
 }  // namespace
+
+http::SocketPtr Gateway::laneFor(const Session& session, const Frame& frame) const
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    switch (frame.type) {
+        case FrameType::eStreamData:
+        case FrameType::eStreamCredit:
+        case FrameType::eStreamClose:
+        case FrameType::eStreamReset: {
+            const std::shared_ptr<StreamEntry> entry = streamOf(session, frame.ref);
+            return entry == nullptr ? nullptr : outletFor(session, *entry);
+        }
+        case FrameType::eRawSend: {
+            const std::shared_ptr<EndpointEntry> entry = endpointOf(session, frame.ref);
+            return entry == nullptr ? nullptr : entry->socket;
+        }
+        default:
+            return nullptr;
+    }
+}
 
 std::shared_ptr<EndpointEntry> Gateway::localFor(
     const std::string& host, std::shared_ptr<Session>& owner) const
@@ -517,13 +556,14 @@ void Gateway::onEndpointStop(const std::shared_ptr<Session>& session,
     // A stopped destination is finished with, and so is everything on it.
     entry->running.store(false);
     entry->endpoint->stop();
-    for (const std::shared_ptr<StreamEntry>& orphan : orphans) {
-        orphan->running.store(false);
-        if (orphan->stream) {
-            orphan->stream->close();
+    for (const std::shared_ptr<StreamEntry>& stranded : orphans) {
+        orphan(stranded);
+        stranded->running.store(false);
+        if (stranded->stream) {
+            stranded->stream->close();
         }
-        if (orphan->reader.joinable()) {
-            orphan->reader.join();
+        if (stranded->reader.joinable()) {
+            stranded->reader.join();
         }
     }
     if (entry->worker.joinable()) {
@@ -932,6 +972,21 @@ void Gateway::onStreamEnd(const std::shared_ptr<Session>& session,
         return;
     }
     teardown(session, entry, Fault::eClosed);
+}
+
+void Gateway::orphan(const std::shared_ptr<StreamEntry>& entry)
+{
+    const std::shared_ptr<StreamEntry> peer = entry->peer.lock();
+    const std::shared_ptr<Session> theirs = entry->peerSession.lock();
+    if (peer == nullptr || theirs == nullptr) {
+        return;
+    }
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        peer->endAfterDrain = true;
+        peer->peer.reset();
+    }
+    pump(theirs, peer);
 }
 
 void Gateway::teardown(const std::shared_ptr<Session>&,

@@ -14,6 +14,7 @@
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include <thread>
 #include <string>
 #include <vector>
 
@@ -136,6 +137,9 @@ int main()
     settings.decoyMinBytes = kDecoyLow;
     settings.decoyMaxBytes = kDecoyHigh;
     settings.notFoundBody = "<html>nothing</html>";
+    // Seconds instead of minutes, so a sweep can be watched rather than argued
+    // about.
+    settings.sessionTtlSeconds = 2;
 
     i2p::RouterConfig routerConfig;
     routerConfig.dataDir = root / "i2p";
@@ -243,6 +247,35 @@ int main()
     CHECK(complaint.type == FrameType::eError);
     CHECK(bodyJson(complaint)["code"] == "bad-frame");
     nonsense.socket.reset();
+
+    // A session that outlives nothing is swept, and what it held goes with it.
+    // The destination below is published, so the gateway is holding a thread
+    // for it: a sweep that could not join one would hang here rather than fail.
+    Dialled held = dial(io, port, kToken, {});
+    CHECK(held.socket != nullptr);
+    const std::string doomed = greet(*held.socket)["body"]["session"];
+    send(*held.socket,
+        encodeJson(FrameType::eEndpointCreate, 4,
+            {{"kind", "stream"}, {"privacy", "minimal"}, {"tunnels", 2},
+                {"published", true}, {"realtime", false}}));
+    const Frame made = receive(*held.socket);
+    CHECK(made.type == FrameType::eOk);
+    CHECK(!bodyJson(made)["host"].get<std::string>().empty());
+    held.socket->close(websocket::close_code::normal, ignored);
+    held.socket.reset();
+
+    std::this_thread::sleep_for(std::chrono::seconds(settings.sessionTtlSeconds + 1));
+
+    // The next connection sweeps it: the cookie names nothing, and the client
+    // is told so in one field rather than left to find out.
+    Dialled after = dial(io, port, kToken, doomed);
+    CHECK(after.socket != nullptr);
+    const nlohmann::json born = greet(*after.socket);
+    CHECK(born["body"]["resumed"] == false);
+    CHECK(born["body"]["session"] != doomed);
+    CHECK(born["body"]["endpoints"].empty());
+    after.socket->close(websocket::close_code::normal, ignored);
+    after.socket.reset();
 
     gateway.stop();
     std::filesystem::remove_all(root);

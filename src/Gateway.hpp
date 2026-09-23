@@ -34,9 +34,6 @@ public:
     void stop();
     int port() const;
 
-    // The one answer to everything that is not for this gateway, and to
-    // everything for it that arrived without the token.
-    http::Response notFound() const;
 
     // How many sockets this gateway is holding, across every session: one per
     // session's control, plus one for each flow that has a lane of its own.
@@ -45,8 +42,15 @@ public:
     // client replaces its control socket on purpose, so this counts the churn
     // rather than any kind of trouble.
     std::size_t rejoins() const { return rejoins_.load(); }
+    // How many frames this gateway has refused. A client that is speaking the
+    // protocol produces none, so a test that sees one has found something its
+    // own assertions did not.
+    std::size_t refusals() const { return refused_.load(); }
 
 private:
+    // The one answer to everything that is not for this gateway, and to
+    // everything for it that arrived without the token.
+    http::Response notFound() const;
     // True only for a request at the secret path carrying the right token. The
     // token is compared in constant time, because it is the secret that varies
     // between two requests to the same path.
@@ -94,6 +98,9 @@ private:
     // control. A destination raised for one transfer has a socket of its own,
     // and everything on it rides that.
     static http::SocketPtr outletFor(const Session& session, const StreamEntry& stream);
+    // Which socket a data frame was supposed to arrive on, or none when the
+    // frame is not one or names nothing.
+    http::SocketPtr laneFor(const Session& session, const Frame& frame) const;
 
     // Accepting callers and waiting for datagrams both block, so both are a
     // thread of their own.
@@ -109,6 +116,9 @@ private:
     void statusLoop();
     void teardown(const std::shared_ptr<Session>& session,
         const std::shared_ptr<StreamEntry>& entry, Fault fault);
+    // Tells the other half of a pair that this one has gone. Without it the
+    // survivor waits for bytes from a stream that no longer exists.
+    void orphan(const std::shared_ptr<StreamEntry>& entry);
     // Stops everything a session holds. A worker thread holds its session
     // alive, so a session nobody sweeps properly is a session that runs for
     // ever.
@@ -136,13 +146,14 @@ private:
 
     Settings settings_;
     i2p::Router& router_;
-    http::Server server_;
     SessionStore sessions_;
+    http::Server server_;
     mutable std::mutex mutex_;
     std::map<const http::Socket*, Connection> connections_;
     std::map<std::string, Local> published_;
     std::thread status_;
     std::atomic<std::size_t> rejoins_{0};
+    std::atomic<std::size_t> refused_{0};
     std::atomic<bool> running_{false};
 };
 

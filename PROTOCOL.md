@@ -672,6 +672,18 @@ off the disk while a router is stopped is an embedded-only fact: there is no
 local netDb under a gateway, and a count left from an earlier run would be a
 number about nothing.
 
+## The health report
+
+`GET <base path>/healthz` answers the fleet's health report and what this
+gateway is holding: sessions, destinations, streams, sockets, rejoins and
+refusals. It takes the token like everything else at that path, and on top of
+it a signature from a fingerprint the operator listed - the token says the
+request may reach the gateway, the signature says who is asking.
+
+It is not on a socket of its own, as the other services put theirs. A well-known
+`/healthz` on the public address would tell a scan that this host runs a
+gateway, which is the one thing the secret path is for.
+
 ## Errors
 
 | Code | Meaning |

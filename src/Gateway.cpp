@@ -1,7 +1,9 @@
 // Bazarish project (c) 2026
 #include "Gateway.hpp"
 
+#include <bazarish/Auth.hpp>
 #include <bazarish/Clock.hpp>
+#include <bazarish/Health.hpp>
 #include <bazarish/Hmac.hpp>
 #include <bazarish/Log.hpp>
 
@@ -48,6 +50,7 @@ Gateway::Gateway(Settings settings, i2p::Router& router)
         options.port = settings_.listenPort;
         return options;
     }())
+    , startedAt_(nowSeconds())
 {
 }
 
@@ -74,10 +77,56 @@ http::Response Gateway::notFound() const
 
 bool Gateway::admitted(const http::Request& request) const
 {
-    if (request.path != settings_.basePath) {
+    if (request.path != settings_.basePath && request.path != healthPath()) {
         return false;
     }
     return service::constantTimeEqual(request.header(kTokenHeader), settings_.token);
+}
+
+std::string Gateway::healthPath() const
+{
+    return settings_.basePath + "/healthz";
+}
+
+http::Response Gateway::health(const http::Request& request) const
+{
+    try {
+        auth::authorizeRequest(http::collectAuthHeaders(request), nowSeconds(), request.method,
+            request.path, Bytes(), settings_.operators);
+    } catch (const std::exception& error) {
+        bazarish::log::debug("gateway: health refused: {}", error.what());
+        return {403, "application/json", {},
+            R"({"error":{"message":"operator authentication required"}})"};
+    }
+    // What only this gateway can report: how many sessions it is holding, what
+    // they hold, and how much it has had to turn away.
+    std::size_t sessions = 0;
+    std::size_t endpoints = 0;
+    std::size_t streams = 0;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        std::set<const Session*> seen;
+        for (const auto& [socket, connection] : connections_) {
+            (void)socket;
+            if (!seen.insert(connection.session.get()).second) {
+                continue;
+            }
+            ++sessions;
+            endpoints += connection.session->endpoints.size();
+            streams += connection.session->streams.size();
+        }
+    }
+    const nlohmann::json extras = {
+        {"sessions", sessions},
+        {"destinations", endpoints},
+        {"streams", streams},
+        {"sockets", sockets()},
+        {"rejoins", rejoins()},
+        {"refused", refusals()},
+        {"i2pd", i2p::routerVersion()},
+    };
+    return {200, "application/json", {},
+        health::reportJson("gateway", kVersion, startedAt_, nowSeconds(), extras.dump())};
 }
 
 http::Response Gateway::decoy() const
@@ -118,7 +167,10 @@ int Gateway::start()
     // A decoy is an ordinary request to the same place under the same token.
     // Everything else, at any path and by any method, is the one 404.
     const http::Handler answer = [this](const http::Request& request) {
-        return admitted(request) ? decoy() : notFound();
+        if (!admitted(request)) {
+            return notFound();
+        }
+        return request.path == healthPath() ? health(request) : decoy();
     };
     for (const char* method : {"GET", "POST", "PUT", "DELETE", "HEAD"}) {
         server_.route(method, "(.*)", answer);
@@ -1084,17 +1136,12 @@ void Gateway::statusLoop()
         if (!running_.load()) {
             break;
         }
+        // Only what a client shows: its own destinations. What this router
+        // knows of the network is this machine's, and everyone else's who uses
+        // it, so it is not sent.
         std::vector<i2p::LocalDestination> local;
-        int known = 0;
-        int floodfills = 0;
-        int inbound = 0;
-        int outbound = 0;
         try {
             local = router_.localDestinations();
-            known = router_.knownRouters();
-            floodfills = router_.floodfills();
-            inbound = router_.inboundTunnels();
-            outbound = router_.outboundTunnels();
         } catch (const std::exception&) {
             continue;
         }
@@ -1136,10 +1183,6 @@ void Gateway::statusLoop()
                             {{"ready", ready}, {"host", entry->host}, {"tunnelsIn", in},
                                 {"tunnelsOut", out}, {"leaseSets", leases}}));
                 }
-                outgoing.emplace_back(session->control,
-                    encodeJson(FrameType::eRouterStatus, 0,
-                        {{"known", known}, {"floodfills", floodfills}, {"in", inbound},
-                            {"out", outbound}}));
             }
         }
         for (const auto& [socket, frame] : outgoing) {

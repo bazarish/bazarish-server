@@ -15,7 +15,6 @@
 
 namespace {
 
-constexpr const char* kVersion = "0.0.1";
 // The router is given this long to have tunnels before the daemon says it is
 // serving. It serves either way: a client that arrives early waits on its own
 // destination, not on this.
@@ -42,8 +41,9 @@ void printUsage()
                 "\"basePath\" and \"token\" are mandatory and have no defaults: a\n"
                 "gateway that came up without them would be one anybody could\n"
                 "walk into. TLS, the public address and the cover site belong to\n"
-                "the front this listens behind.\n",
-        kVersion);
+                "the front this listens behind. \"operators\" names who may read\n"
+                "<basePath>/healthz. The README has the rest.\n",
+        bazarish::gateway::kVersion);
 }
 
 }  // namespace
@@ -51,7 +51,7 @@ void printUsage()
 int main(const int argc, const char** argv)
 {
     if (argc == 2 && std::strcmp(argv[1], "--version") == 0) {
-        std::printf("bazarish-gateway %s\n", kVersion);
+        std::printf("bazarish-gateway %s\n", bazarish::gateway::kVersion);
         return 0;
     }
     if (argc != 3 || std::strcmp(argv[1], "--config") != 0) {
@@ -80,7 +80,7 @@ int main(const int argc, const char** argv)
 
     bazarish::gateway::Gateway gateway(settings, router);
     const int port = gateway.start();
-    std::printf("bazarish-gateway %s listening on %s:%d\n", kVersion, settings.listenHost.c_str(),
+    std::printf("bazarish-gateway %s listening on %s:%d\n", bazarish::gateway::kVersion, settings.listenHost.c_str(),
         port);
     std::fflush(stdout);
 

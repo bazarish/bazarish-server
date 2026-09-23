@@ -56,6 +56,11 @@ private:
     // between two requests to the same path.
     bool admitted(const http::Request& request) const;
     http::Response decoy() const;
+    // The health report the admin panel reads. It lives behind the same secret
+    // path and the same token as everything else here: a well-known path would
+    // tell a scan that this host runs a gateway.
+    http::Response health(const http::Request& request) const;
+    std::string healthPath() const;
 
     void socketOpened(const http::SocketPtr& socket, const http::Request& request);
     void socketMessage(const http::SocketPtr& socket, const std::vector<unsigned char>& message);
@@ -154,6 +159,7 @@ private:
     std::thread status_;
     std::atomic<std::size_t> rejoins_{0};
     std::atomic<std::size_t> refused_{0};
+    std::int64_t startedAt_ = 0;
     std::atomic<bool> running_{false};
 };
 

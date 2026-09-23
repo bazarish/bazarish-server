@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #include "Gateway.hpp"
 
+#include <bazarish/Clock.hpp>
+
 #include "TestUtil.hpp"
 
 #include <utility>
@@ -41,7 +43,7 @@ struct Answer {
 };
 
 Answer request(const int port, const std::string& method, const std::string& path,
-    const std::string& token)
+    const std::string& token, const auth::Headers& signed_ = {})
 {
     asio::io_context io;
     tcp::socket socket(io);
@@ -51,6 +53,9 @@ Answer request(const int port, const std::string& method, const std::string& pat
     out.set(bhttp::field::host, "127.0.0.1");
     if (!token.empty()) {
         out.set(kTokenHeader, token);
+    }
+    for (const auto& [name, value] : signed_) {
+        out.set(name, value);
     }
     out.prepare_payload();
     bhttp::write(socket, out);
@@ -140,6 +145,8 @@ int main()
     // Seconds instead of minutes, so a sweep can be watched rather than argued
     // about.
     settings.sessionTtlSeconds = 2;
+    const Identity operatorIdentity = Identity::generate();
+    settings.operators.push_back(operatorIdentity.fingerprint());
 
     i2p::RouterConfig routerConfig;
     routerConfig.dataDir = root / "i2p";
@@ -166,6 +173,30 @@ int main()
     CHECK(wrongToken.body == stranger.body);
     CHECK(wrongToken.status == stranger.status);
     CHECK(deepPath.body == stranger.body);
+
+    // The health report lives behind the same secret path and token: a
+    // well-known /healthz would tell a scan that this host runs a gateway.
+    const std::string healthPath = std::string(kPath) + "/healthz";
+    CHECK(request(port, "GET", healthPath, {}).body == stranger.body);
+    CHECK(request(port, "GET", healthPath, "not-the-token").body == stranger.body);
+    // With the token but no operator signature it is refused, not served.
+    CHECK(request(port, "GET", healthPath, kToken).status == 403);
+    // Signed by somebody who is not an operator here, likewise.
+    const Identity stranger2 = Identity::generate();
+    CHECK(request(port, "GET", healthPath, kToken,
+              auth::signRequest(stranger2, nowSeconds(), "GET", healthPath, Bytes()))
+              .status
+        == 403);
+    // And signed by the operator it names, the report comes back.
+    const Answer reported = request(port, "GET", healthPath, kToken,
+        auth::signRequest(operatorIdentity, nowSeconds(), "GET", healthPath, Bytes()));
+    CHECK(reported.status == 200);
+    const nlohmann::json report = nlohmann::json::parse(reported.body);
+    CHECK(report["service"] == "gateway");
+    CHECK(report.contains("sessions"));
+    CHECK(report.contains("destinations"));
+    CHECK(report.contains("sockets"));
+    CHECK(report["refused"] == 0);
 
     // A decoy: random in, random out, and the client does not say how much
     // comes back.

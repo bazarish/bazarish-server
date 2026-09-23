@@ -66,6 +66,10 @@ Settings Settings::from(const ConfigView& config)
         throw std::runtime_error("\"decoy.minBytes\" and \"decoy.maxBytes\" name a range");
     }
 
+    for (const std::string& fingerprint : config.list("operators")) {
+        settings.operators.push_back(fingerprint);
+    }
+
     settings.sessionTtlSeconds
         = config.number("sessionTtlSeconds", kSessionTtl.count());
     if (settings.sessionTtlSeconds <= 0) {

@@ -12,6 +12,8 @@
 
 namespace bazarish::gateway {
 
+inline constexpr const char* kVersion = "0.0.1";
+
 // Everything the daemon runs on. The secret path and the token are mandatory
 // and have no defaults: a gateway that came up without them would be a gateway
 // anybody could walk into, and a default nobody changed is the same thing.
@@ -33,6 +35,10 @@ struct Settings {
     // right path with the wrong token are indistinguishable.
     std::string notFoundBody;
     std::string serverName = "nginx";
+    // Who may read the health report: operator fingerprints, as everywhere else
+    // in the fleet. Empty means nobody, which is what a gateway nobody
+    // administers should answer.
+    std::vector<std::string> operators;
     // How long a session outlives its last socket. The client drops its own on
     // purpose, so this is the other half of the trade its gap setting makes:
     // long enough for a lift or a handover, short enough that an abandoned

@@ -7,7 +7,7 @@
 #include <array>
 
 #include <bazarish/Resolve.hpp>
-#include "FederationRateLimiter.hpp"
+#include <bazarish/RateLimiter.hpp>
 
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Errors.hpp>
@@ -69,7 +69,7 @@ inline constexpr std::size_t kMaxDiscardBytes = 4 * kMaxMessagePayloadBytes;
 // serving when over the limit). An unknown op throws.
 template <class Stream>
 void federationServeOnce(Stream& stream, DeliveryEngine& engine, const std::int64_t now,
-    const std::string& peerDest = std::string(), FederationRateLimiter* const limiter = nullptr,
+    const std::string& peerDest = std::string(), RateLimiter* const limiter = nullptr,
     const Key* const sealingKey = nullptr, const std::string& owner = std::string(),
     const GetCardFn& getCard = {}, const SignAckFn& signAck = {})
 {

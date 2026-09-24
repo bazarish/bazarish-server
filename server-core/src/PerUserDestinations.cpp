@@ -53,7 +53,7 @@ constexpr int kEndpointPollMillis = 200;
 
 PerUserDestinations::PerUserDestinations(bazarish::i2p::Router* const router,
     DeliveryEngine& engine, std::filesystem::path stateDir, const bazarish::i2p::Privacy privacy,
-    const int tunnelQuantity, FederationRateLimiter* const limiter)
+    const int tunnelQuantity, RateLimiter* const limiter)
     : router_(router)
     , engine_(engine)
     , stateDir_(std::move(stateDir))

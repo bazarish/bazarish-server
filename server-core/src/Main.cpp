@@ -1,7 +1,7 @@
 // Bazarish project (c) 2026
 #include "DeliveryEngine.hpp"
 #include "DiskStorage.hpp"
-#include "FederationRateLimiter.hpp"
+#include <bazarish/RateLimiter.hpp>
 #include "EventGate.hpp"
 #include "HttpApi.hpp"
 #include "PerUserDestinations.hpp"
@@ -222,7 +222,7 @@ int main(const int argc, const char** argv)
     // arrives on each user's destination and outbound discovery dials from
     // one-time transients, so there is no shared address to attribute or block.
     std::unique_ptr<bazarish::i2p::Router> router;
-    std::unique_ptr<bazarish::server::FederationRateLimiter> federationLimiter;
+    std::unique_ptr<bazarish::RateLimiter> federationLimiter;
     // Declared last of the three, so it is destroyed first: it holds raw pointers
     // to the router and to the limiter above, and its threads use both.
     std::unique_ptr<bazarish::server::PerUserDestinations> perUserDests;
@@ -239,7 +239,7 @@ int main(const int argc, const char** argv)
         // pool, per-user destinations), so a single peer cannot flood us.
         // A federationRateLimit of 0 disables it.
         if (federationRateLimit > 0) {
-            federationLimiter = std::make_unique<bazarish::server::FederationRateLimiter>(
+            federationLimiter = std::make_unique<bazarish::RateLimiter>(
                 federationRateLimit, kFederationRateWindowSeconds);
         }
 

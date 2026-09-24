@@ -21,7 +21,6 @@
 
 namespace bazarish::server {
 
-class FederationRateLimiter;
 
 // Operates per-user federation destinations for users that own their I2P key.
 // The user delegates a time-boxed OFFLINE transient to the server, which brings
@@ -40,7 +39,7 @@ public:
     PerUserDestinations(bazarish::i2p::Router* router, DeliveryEngine& engine,
         std::filesystem::path stateDir, bazarish::i2p::Privacy privacy,
         int tunnelQuantity = bazarish::i2p::kDefaultTunnelQuantity,
-        FederationRateLimiter* limiter = nullptr);
+        RateLimiter* limiter = nullptr);
     ~PerUserDestinations();
 
     PerUserDestinations(const PerUserDestinations&) = delete;
@@ -165,7 +164,7 @@ private:
     const std::filesystem::path stateDir_;
     const bazarish::i2p::Privacy privacy_;
     const int tunnelQuantity_;
-    FederationRateLimiter* const limiter_;
+    RateLimiter* const limiter_;
     GetCardFn getCard_;
     mutable std::mutex mutex_;
     std::map<std::string, std::unique_ptr<Destination>> dests_;

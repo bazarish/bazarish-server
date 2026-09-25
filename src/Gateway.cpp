@@ -968,10 +968,18 @@ void Gateway::readLoop(
         entry->book.wrote(buffer.data(), got);
         out->send(encode(FrameType::eStreamData, entry->id, buffer.data(), got));
     }
-    const http::SocketPtr out = outletFor(*session, *entry);
-    if (out && entry->running.load()) {
-        entry->book.finishSending();
-        out->send(encode(FrameType::eStreamClose, entry->id));
+    // The end goes out the same way the bytes did, and with the same patience:
+    // said best-effort, it was lost whenever the control socket happened to be
+    // between lives - and a client that is never told its stream ended waits out
+    // its own read deadline and then writes into a stream this gateway no longer
+    // has. The drain path already knows how to hold an end until there is
+    // somewhere to put it.
+    if (entry->running.load()) {
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            entry->endAfterDrain = true;
+        }
+        pump(session, entry);
     }
 }
 

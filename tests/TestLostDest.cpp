@@ -93,7 +93,8 @@ int main()
 
     // Told, not found out: the handshake names what the gateway holds, and this
     // destination is not in it.
-    CHECK(waitFor([&]() { return !before->ready(); }));
+    CHECK(waitFor([&]() { return before->lost(); }));
+    CHECK(!before->ready());
     CHECK(before->connect("anything.b32.i2p", std::chrono::seconds(1)) == nullptr);
 
     // And not a frame was spent on it. Without the reconciliation above, every

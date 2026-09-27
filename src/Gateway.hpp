@@ -154,8 +154,11 @@ private:
 
     Settings settings_;
     i2p::Router& router_;
-    SessionStore sessions_;
+    // Before the sessions, so it outlives them: a session holds the sockets
+    // this server made, and a socket destroyed after its server reaches into
+    // an io_context that is already gone.
     http::Server server_;
+    SessionStore sessions_;
     mutable std::mutex mutex_;
     std::map<const http::Socket*, Connection> connections_;
     std::map<std::string, Local> published_;

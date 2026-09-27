@@ -49,13 +49,13 @@ std::size_t drawBetween(const std::size_t low, const std::size_t high)
 Gateway::Gateway(Settings settings, i2p::Router& router)
     : settings_(std::move(settings))
     , router_(router)
-    , sessions_(settings_.sessionTtlSeconds)
     , server_([&]() {
         http::Server::Options options;
         options.host = settings_.listenHost;
         options.port = settings_.listenPort;
         return options;
     }())
+    , sessions_(settings_.sessionTtlSeconds)
     , startedAt_(nowSeconds())
 {
 }

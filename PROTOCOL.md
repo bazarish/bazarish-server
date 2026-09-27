@@ -359,17 +359,19 @@ The client sends `hello` as its first frame. The gateway answers `ready`:
   "endpoints": [ { "id": 2, "kind": "stream", "ready": true,
                    "host": "<b33>.b32.i2p", "tunnelsIn": 3, "tunnelsOut": 3,
                    "leaseSets": 2 } ],
-  "streams":   [ { "id": 4, "endpoint": 2, "received": 81920, "finished": false } ],
-  "lost":      [ 6 ]
+  "streams":   [ { "id": 4, "endpoint": 2, "received": 81920, "finished": false } ]
 }
 ```
 
-On a fresh session `resumed` is false and the three lists are empty. A version
-the gateway does not speak gets `error` with code `version` and a close; there
-is no negotiation, because there is one version.
+On a fresh session `resumed` is false and both lists are empty. A version the
+gateway does not speak gets `error` with code `version` and a close; there is no
+negotiation, because there is one version.
 
-On a resumed session, `endpoints` and `streams` are what is still standing and
-`lost` names what died in the gap; the client resets those locally. Each stream
+`endpoints` and `streams` are what is still standing, and that is the whole
+statement: a destination or a stream the list does not name is gone, whether the
+session was rejoined without it or is a new session that never held it. The
+client resets those locally on every attach, and needs no separate account of
+what died - one would say the same thing twice and could disagree. Each stream
 reports how many payload bytes the **gateway** has received on it. The client
 answers `resume` with the same count for its own direction, and then both sides:
 
@@ -425,8 +427,8 @@ the gateway keeps what it answered for the session's life, and a repeat gets the
 recorded answer rather than a second endpoint.
 
 **Everything the gateway pushes** needs no replay at all, because `ready`
-carries the whole picture: the endpoints that exist, the streams that exist, and
-what died. A snapshot on every attach supersedes any sequence of pushes that
+carries the whole picture: the endpoints that exist and the streams that exist.
+A snapshot on every attach supersedes any sequence of pushes that
 might have been missed, which is why `endpoint-status` and `stream-inbound` need
 no numbering of their own. This is the reason the resume state is a list and not
 a log.
@@ -652,8 +654,9 @@ applied for politeness: the endpoints of another session are not in this
 session's registry to begin with, and the gateway is never asked for a list.
 
 After a reconnect the client joins its registry to the `endpoints` list of
-`ready` by identifier, and drops whatever `lost` names. The panel then shows
-what actually survived, rather than what the client last remembered.
+`ready` by identifier, and drops every destination that list does not name. The
+panel then shows what actually survived, rather than what the client last
+remembered.
 
 ### What is not shown
 

@@ -500,7 +500,6 @@ void Gateway::onHello(const http::SocketPtr& socket, const Frame& frame)
         {"resumed", connection.resumed},
         {"endpoints", endpoints},
         {"streams", streams},
-        {"lost", nlohmann::json::array()},
     };
     socket->send(encodeJson(FrameType::eReady, frame.ref, ready));
 }

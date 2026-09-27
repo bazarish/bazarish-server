@@ -48,7 +48,7 @@ The service node sits behind a [facade](https://github.com/bazarish/facade-http)
 which routes `/v1/account/*` to it.
 
 `portal.listen` opens the browser-facing portal: one JS-free page where a user
-proves their key and reads a captcha, which is the whole registration.
+proves their key, which is the whole registration.
 `portal.assets` points at the portal's web files (`portal/` in this
 repository: page shell, stylesheet, logo, fonts) - edit them to restyle the
 portal without rebuilding. They are read once and served from memory, so a

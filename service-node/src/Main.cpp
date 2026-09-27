@@ -4,7 +4,6 @@
 #include "PortalApi.hpp"
 #include "NodeSettings.hpp"
 #include "OperatorPush.hpp"
-#include <bazarish/SelfHostedCaptcha.hpp>
 #include "SubscriptionStore.hpp"
 
 #include <bazarish/Bytes.hpp>
@@ -88,7 +87,7 @@ bazarish::Identity loadOrCreateIdentity(const fs::path& stateDir)
 
 // Portal onboarding presentation, parsed from the config. The message and
 // links are advertised by the discovery endpoint so a client knows where to
-// register; the captcha block governs free registration.
+// register.
 struct PortalConfig {
     std::string message;
     // What the portal calls itself and where a user reaches it, in the words the
@@ -108,9 +107,6 @@ struct PortalConfig {
     // Clearnet addresses a client with no router yet asks for a slice of netdb.
     // They carry nothing else.
     std::vector<std::string> reseeds;
-    bool captchaEnabled = true;
-    int captchaLength = 5;
-    std::int64_t captchaTtlSeconds = 300;
 };
 
 // Who may be served on this node. Open registration serves an account the
@@ -199,12 +195,6 @@ NodeConfig loadNodeConfig(const fs::path& path)
         }
         if (portal.contains("reseeds")) {
             config.portal.reseeds = portal.at("reseeds").get<std::vector<std::string>>();
-        }
-        if (portal.contains("captcha")) {
-            const nlohmann::json& captcha = portal.at("captcha");
-            config.portal.captchaEnabled = captcha.value("enabled", true);
-            config.portal.captchaLength = captcha.value("length", 5);
-            config.portal.captchaTtlSeconds = captcha.value("ttlSeconds", std::int64_t{300});
         }
     }
     config.allowFacadeWithoutI2pForDevPurposes
@@ -336,12 +326,9 @@ int main(const int argc, const char** argv)
             .registrationMessage = nodeConfig.registration.message,
             .portalMessage = nodeConfig.portal.message,
             .loginConsumer = portalConsumer(nodeConfig),
-            .requireCaptcha = nodeConfig.portal.captchaEnabled,
             .facades = nodeConfig.portal.facades,
             .reseeds = nodeConfig.portal.reseeds,
             .portalLinks = nodeConfig.portal.links,
-            .captchaLength = nodeConfig.portal.captchaLength,
-            .captchaTtlSeconds = nodeConfig.portal.captchaTtlSeconds,
             .logLevel = nodeConfig.logLevelText,
             .listenHost = nodeConfig.listen.host,
             .listenPort = nodeConfig.listen.port,
@@ -355,7 +342,6 @@ int main(const int argc, const char** argv)
     options.defaultQuotaBytes = nodeConfig.freeStorageBytes;
     options.portalMessage = nodeConfig.portal.message;
     options.portalLinks = nodeConfig.portal.links;
-    options.freeRegistrationCaptcha = nodeConfig.portal.captchaEnabled;
     options.registration = nodeConfig.registration.requireApproval
         ? bazarish::service::AccountApiOptions::Registration::eApproval
         : bazarish::service::AccountApiOptions::Registration::eOpen;
@@ -408,7 +394,6 @@ int main(const int argc, const char** argv)
 
     bazarish::service::AccountApi api(store, grants, options);
 
-    static std::unique_ptr<bazarish::service::SelfHostedCaptcha> captcha;
     static std::unique_ptr<bazarish::service::PortalApi> portal;
     static std::thread portalThread;
 
@@ -424,7 +409,7 @@ int main(const int argc, const char** argv)
     });
     *restartHook = [&restart]() { restart.request(); };
 
-    // The browser-facing portal (sign-in-with-key, captcha registration, ...),
+    // The browser-facing portal (sign-in-with-key, which is the registration),
     // sharing the grant store with the account API. Secrets are per-run; a
     // restart simply invalidates outstanding challenges/sessions.
     if (portalPort > 0) {
@@ -433,9 +418,6 @@ int main(const int argc, const char** argv)
                                  "pages from files, not from the binary");
             return 2;
         }
-        captcha = std::make_unique<bazarish::service::SelfHostedCaptcha>(
-            bazarish::toHex(bazarish::randomBytes(16)), nodeConfig.portal.captchaLength,
-            nodeConfig.portal.captchaTtlSeconds);
         bazarish::service::PortalApiOptions portalOptions;
         portalOptions.serverFingerprint = card.server;
         // Where the archive comes from. The portal publishes it because the
@@ -458,7 +440,6 @@ int main(const int argc, const char** argv)
         // fingerprint plus its configured facade URLs, shown in the cabinet.
         portalOptions.serverDescriptor = bazarish::encodeServerDescriptor(
             {card.server, nodeConfig.portal.facades, nodeConfig.portal.reseeds});
-        portalOptions.requireCaptcha = nodeConfig.portal.captchaEnabled;
         portalOptions.challengeSecret = bazarish::toHex(bazarish::randomBytes(16));
         portalOptions.sessionSecret = bazarish::toHex(bazarish::randomBytes(16));
         portalOptions.defaultQuotaBytes = options.defaultQuotaBytes;
@@ -486,7 +467,7 @@ int main(const int argc, const char** argv)
             bazarish::log::info("account deleted by its owner: {}", bazarish::log::redact(user));
         };
         try {
-            portal = std::make_unique<bazarish::service::PortalApi>(portalOptions, *captcha, grants);
+            portal = std::make_unique<bazarish::service::PortalApi>(portalOptions, grants);
         } catch (const std::exception& error) {
             bazarish::log::error("portal not started: {}", error.what());
             return 2;

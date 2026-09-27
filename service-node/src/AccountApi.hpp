@@ -48,7 +48,6 @@ struct AccountApiOptions {
     // Asked for by the panel once a setting only a start reads has been written.
     // Empty answers that this node cannot restart itself rather than pretending.
     std::function<void()> requestRestart;
-    bool freeRegistrationCaptcha = false;
 
     // Pushes the user's offline I2P transient (or, with an empty transient, a
     // revoke) to the messaging server's per-user-destination endpoint. Empty =

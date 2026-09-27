@@ -4,7 +4,6 @@
 #include "GrantStore.hpp"
 #include "NodeSettings.hpp"
 
-#include <bazarish/Captcha.hpp>
 #include <bazarish/WebAssets.hpp>
 #include <bazarish/LoginChallenge.hpp>
 #include <bazarish/PortalSession.hpp>
@@ -45,10 +44,6 @@ struct PortalApiOptions {
     // nothing on this node is for sale. The initial value; an operator can
     // change it while the node runs (see settings).
     std::uint64_t defaultQuotaBytes = 50 * 1024 * 1024;
-    // When false, registration is open to any logged-in (sign-in-with-key) user
-    // without solving a captcha. Advertised to clients via the discovery
-    // endpoint's freeRegistration.captcha flag, so the two cannot disagree.
-    bool requireCaptcha = true;
     // Whether an account this node registers still waits for an operator before
     // it is served. The page has to say so at registration: the account is only
     // marked pending once a client redeems the grant, and until then nothing
@@ -88,15 +83,15 @@ struct PortalApiOptions {
 // The service node's web portal (browser-facing). It exposes two faces on one
 // HTTP server, sharing all state:
 //   * a JSON API under /portal/* for programmatic clients (sign-in-with-key
-//     login, captcha, register);
+//     login, register);
 //   * a server-rendered, JS-free page at / so a user can onboard from a plain
 //     browser. The private key never enters the browser: the page shows a
 //     challenge the user signs in their client and pastes back.
-// There is no account area to visit afterwards: the page is a two-step flow -
-// prove the key, read the captcha - and the second step is the registration.
+// There is no account area to visit afterwards and no second step: proving the
+// key is the registration.
 class PortalApi {
 public:
-    PortalApi(PortalApiOptions options, Captcha& captcha, GrantStore& grants);
+    PortalApi(PortalApiOptions options, GrantStore& grants);
     ~PortalApi();
 
     bool listen(const std::string& host, int port);
@@ -135,7 +130,6 @@ private:
     PortalApiOptions options_;
     std::shared_ptr<NodeSettings> settings_;
     WebAssets assets_;
-    Captcha& captcha_;
     GrantStore& grants_;
     LoginChallenge login_;
     PortalSession session_;

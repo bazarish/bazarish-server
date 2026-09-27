@@ -30,10 +30,6 @@ public:
         // compares with the address bar. Live, because renaming a deployment or
         // moving it behind another address must not need a restart.
         LoginConsumer loginConsumer;
-        // Whether registering means solving a captcha on the portal. With it
-        // off, a client registers itself the moment it connects - there is no
-        // page to visit and nothing to type.
-        bool requireCaptcha = true;
         // Where clients reach this server: I2P addresses, because that is the only
         // way a client ever talks to it. The descriptor a user pastes is these
         // plus the server's fingerprint, so the operator edits the list and not
@@ -45,10 +41,6 @@ public:
         // Where a person is told they can onboard: the portal's public links,
         // handed to clients by the discovery endpoint.
         std::vector<std::string> portalLinks;
-        // The captcha a person solves on the portal. Both are read when the
-        // captcha is built, so a change to them waits for a restart.
-        int captchaLength = 0;
-        std::int64_t captchaTtlSeconds = 0;
         // How much this node says. Applied the moment it is set.
         std::string logLevel;
         // The three addresses this node was started on: its operator API, its

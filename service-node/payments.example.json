@@ -22,9 +22,8 @@
   },
 
   "portal": {
-    "_comment": "Onboarding advertised by GET /v1/account/portal. links should list at least one browser URL (mirrors / onion / clearnet). captcha.enabled=false opens free registration to any signed-in key without a captcha.",
+    "_comment": "Onboarding advertised by GET /v1/account/portal. links should list at least one browser URL (mirrors / onion / clearnet). Proving a key is the registration; registration.requireApproval decides whether an operator has to approve it.",
     "message": "Register on the Bazarish portal to start messaging.",
-    "links": ["https://portal.example", "http://portalmirroronion.b32.i2p"],
-    "captcha": { "enabled": true, "length": 5, "ttlSeconds": 300 }
+    "links": ["https://portal.example", "http://portalmirroronion.b32.i2p"]
   }
 }

@@ -10,11 +10,10 @@
 
 namespace bazarish::service {
 
-// Pending entitlement grants, set by the portal once a user has passed the
-// captcha (free tier) or paid (paid tier), and consumed when the Client submits
-// the corresponding user-signed certificate. This is how a browser flow (no
-// private key) authorises an artifact only the Client can sign: the portal
-// grants, the Client submits, the node checks the grant.
+// Pending entitlement grants, set when a user proves their key, and consumed
+// when the Client submits the corresponding user-signed certificate. This is how
+// a browser flow (no private key) authorises an artifact only the Client can
+// sign: the portal grants, the Client submits, the node checks the grant.
 //
 // Layout: <root>/grants/<fingerprint>.json  { "subscription": {...}? }
 class GrantStore {

@@ -115,7 +115,6 @@ int main()
     NodeSettings::Values initial;
     initial.loginConsumer
         = LoginConsumer{"Bazarish stand", "http://127.0.0.1:8431", "Account owner"};
-    initial.requireCaptcha = true;
     initial.logLevel = "info";
     initial.defaultQuotaBytes = options.defaultQuotaBytes;
     const auto settings = std::make_shared<NodeSettings>(configPath, initial);
@@ -319,16 +318,12 @@ int main()
         CHECK(bazarish::log::level() == bazarish::log::Level::eInfo);
 
         // Startup values are written for the next start rather than applied now.
-        const std::string wiring = nlohmann::json{{"captchaLength", 7},
-            {"portalListen", {{"host", "0.0.0.0"}, {"port", 8531}}}}
-                                       .dump();
+        const std::string wiring
+            = nlohmann::json{{"portalListen", {{"host", "0.0.0.0"}, {"port", 8531}}}}.dump();
         CHECK(call(port, panel, "PUT", "/v1/account/settings", wiring).status == 200);
         std::ifstream rewritten(configPath);
         const nlohmann::json onDiskAgain = nlohmann::json::parse(rewritten);
-        CHECK(onDiskAgain.at("portal").at("captcha").at("length").get<int>() == 7);
         CHECK(onDiskAgain.at("portal").at("listen").at("port").get<int>() == 8531);
-        const std::string tooShort = nlohmann::json{{"captchaLength", 1}}.dump();
-        CHECK(call(port, panel, "PUT", "/v1/account/settings", tooShort).status == 400);
         const std::string badPort = nlohmann::json{{"listen", {{"port", 0}}}}.dump();
         CHECK(call(port, panel, "PUT", "/v1/account/settings", badPort).status == 400);
 

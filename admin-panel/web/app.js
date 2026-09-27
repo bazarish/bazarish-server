@@ -628,7 +628,7 @@
 
     // Settings are grouped by what they are about, not by what type they are: an
     // operator looking for "who may sign in" should not have to read past the
-    // captcha to find it. One tab is one subject, and each saves on its own.
+    // addresses to find it. One tab is one subject, and each saves on its own.
     var kSettingsTabs = [
         { id: "registration", label: "Registration" },
         { id: "portal", label: "Portal" },
@@ -883,19 +883,6 @@
             "Open: an account is served as soon as it registers. Moderated: it waits for you.",
             [{ value: false, label: "open" }, { value: true, label: "moderated" }],
             Boolean(data.requireApproval));
-        var captcha = chipRow(how,
-            "Captcha: a person registers on the portal. No captcha: a client registers itself"
-            + " the moment it connects, and nobody visits a page.",
-            [{ value: true, label: "captcha" }, { value: false, label: "no captcha" }],
-            data.requireCaptcha !== false);
-        var length = fieldRow(how, "Captcha length", data.captchaLength, {
-            type: "number", narrow: true, min: 3, unit: "characters", restart: true,
-            hint: "How many characters a person has to read off the image."
-        });
-        var ttl = fieldRow(how, "Captcha lifetime", data.captchaTtlSeconds, {
-            type: "number", narrow: true, min: 60, unit: "seconds", restart: true,
-            hint: "How long one captcha stays valid before a new one is drawn."
-        });
 
         var says = section(form, "What people are told");
         var portalMessage = textareaBlock(says, data.portalMessage,
@@ -912,9 +899,6 @@
                     method: "PUT", path: withFleet("/api/settings"),
                     body: {
                         requireApproval: moderated(),
-                        requireCaptcha: captcha(),
-                        captchaLength: Number(length.value) || 0,
-                        captchaTtlSeconds: Number(ttl.value) || 0,
                         portalMessage: portalMessage.value.trim(),
                         registrationMessage: waiting.value.trim()
                     }

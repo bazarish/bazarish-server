@@ -26,13 +26,9 @@ const char* const kPortalMessageKey = "message";
 const char* const kPortalNameKey = "name";
 const char* const kPortalAddressKey = "address";
 const char* const kPortalRoleKey = "role";
-const char* const kCaptchaKey = "captcha";
-const char* const kCaptchaEnabledKey = "enabled";
 const char* const kFacadesKey = "facades";
 const char* const kReseedsKey = "reseeds";
 const char* const kLinksKey = "links";
-const char* const kCaptchaLengthKey = "length";
-const char* const kCaptchaTtlKey = "ttlSeconds";
 const char* const kLogLevelKey = "logLevel";
 const char* const kListenKey = "listen";
 const char* const kMessagingKey = "messaging";
@@ -93,9 +89,6 @@ void NodeSettings::persist(const Values& values) const
     if (values.loginConsumer.role != values_.loginConsumer.role) {
         file.set({kPortalKey, kPortalRoleKey}, values.loginConsumer.role);
     }
-    if (values.requireCaptcha != values_.requireCaptcha) {
-        file.set({kPortalKey, kCaptchaKey, kCaptchaEnabledKey}, values.requireCaptcha);
-    }
     if (values.facades != values_.facades) {
         file.set({kPortalKey, kFacadesKey}, values.facades);
     }
@@ -104,12 +97,6 @@ void NodeSettings::persist(const Values& values) const
     }
     if (values.portalLinks != values_.portalLinks) {
         file.set({kPortalKey, kLinksKey}, values.portalLinks);
-    }
-    if (values.captchaLength != values_.captchaLength) {
-        file.set({kPortalKey, kCaptchaKey, kCaptchaLengthKey}, values.captchaLength);
-    }
-    if (values.captchaTtlSeconds != values_.captchaTtlSeconds) {
-        file.set({kPortalKey, kCaptchaKey, kCaptchaTtlKey}, values.captchaTtlSeconds);
     }
     if (values.logLevel != values_.logLevel) {
         file.set({kLogLevelKey}, values.logLevel);

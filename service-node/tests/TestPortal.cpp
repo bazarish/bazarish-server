@@ -103,7 +103,6 @@ void testPortalDiscovery()
     options.serverFingerprint = "server-fp";
     options.portalMessage = "Register at the portal";
     options.portalLinks = {"https://portal.example/a", "http://abc.onion/b"};
-    options.freeRegistrationCaptcha = true;
     options.defaultQuotaBytes = 20 * 1024 * 1024;
     options.registration = AccountApiOptions::Registration::eApproval;
     options.registrationMessage = "write to the operator";
@@ -129,7 +128,9 @@ void testPortalDiscovery()
     // registration and the one quota everybody gets.
     CHECK(!body.contains("services"));
     const nlohmann::json& registration = body.at("registration");
-    CHECK(registration.at("captcha").get<bool>());
+    // Two modes and no third: either an operator approves the account or the
+    // server takes it as it comes. There is nothing here for a client to solve.
+    CHECK(!registration.contains("captcha"));
     CHECK(registration.at("requiresApproval").get<bool>());
     CHECK(registration.at("message").get<std::string>() == "write to the operator");
     CHECK(body.at("quotaBytes").get<std::uint64_t>() == 20 * 1024 * 1024);
@@ -139,27 +140,6 @@ void testPortalDiscovery()
     fs::remove_all(root);
 }
 
-
-// A captcha the test can answer: what is under test here is the portal's flow,
-// not the drawing.
-class StubCaptcha : public Captcha {
-public:
-    static constexpr const char* kId = "stub-captcha-id";
-    static constexpr const char* kAnswer = "42";
-    static constexpr const char* kBody = "<svg id=\"stub-captcha\"></svg>";
-
-    std::string name() const override { return "stub"; }
-
-    CaptchaChallenge issue(std::int64_t) override
-    {
-        return CaptchaChallenge{kId, "image/svg+xml", kBody};
-    }
-
-    bool verify(const std::string& id, const std::string& answer, std::int64_t) override
-    {
-        return id == kId && answer == kAnswer;
-    }
-};
 
 std::string urlEncoded(const std::string& text)
 {
@@ -202,14 +182,13 @@ std::string between(const std::string& text, const std::string& open, const std:
     return text.substr(from, end - from);
 }
 
-// The whole portal: prove a key, read a captcha, and that is the account. There
-// is no third step and no account area behind it.
+// The whole portal: prove a key, and that is the account. There is no second
+// step and no account area behind it.
 void testWebFlow()
 {
     namespace fs = std::filesystem;
     const fs::path root = fs::temp_directory_path() / ("bazarish-portal-web-" + toHex(randomBytes(8)));
     GrantStore grants(root);
-    StubCaptcha captcha;
 
     const Identity identity = Identity::generate();
     PortalApiOptions options;
@@ -219,7 +198,6 @@ void testWebFlow()
     options.challengeSecret = toHex(randomBytes(16));
     options.sessionSecret = toHex(randomBytes(16));
     options.assetsDirectory = BAZARISH_PORTAL_ASSETS_DIR;
-    options.requireCaptcha = true;
 
     std::string deleted;
     options.deleteAccount = [&](const std::string& user) {
@@ -232,7 +210,7 @@ void testWebFlow()
         return PortalApiOptions::Usage{1024, 20 * 1024 * 1024, 2};
     };
 
-    PortalApi portal(options, captcha, grants);
+    PortalApi portal(options, grants);
     const int port = portal.bindToAnyPort("127.0.0.1");
     CHECK(port > 0);
     std::thread portalThread([&portal]() { (void)portal.listenAfterBind(); });
@@ -246,9 +224,8 @@ void testWebFlow()
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     CHECK(page.status == 200);
-    // Signed out: the key step is the live one, and no captcha is given away.
+    // Signed out: the key step is the only one, and nothing is granted yet.
     CHECK(page.body.find("sign in with your key") != std::string::npos);
-    CHECK(page.body.find(StubCaptcha::kBody) == std::string::npos);
 
     // The portal's own files are served beside the page.
     const http::ClientResponse style = call(port, "GET", "/style.css");
@@ -275,24 +252,12 @@ void testWebFlow()
     const std::string cookie = between(signedIn.headers.at("set-cookie") + ";", "session=", ";");
     CHECK(!cookie.empty());
 
-    // Signed in and unregistered: the captcha is the page.
+    // Signing in was the registration: the page that follows it states the
+    // account, and there is no step in between to post.
     const http::ClientResponse asked = call(port, "GET", "/", {{"Cookie", "session=" + cookie}});
     CHECK(asked.status == 200);
-    CHECK(asked.body.find(StubCaptcha::kBody) != std::string::npos);
     CHECK(asked.body.find(identity.fingerprint()) != std::string::npos);
-
-    // A wrong code registers nobody.
-    const http::ClientResponse refused = postForm(port, "/register",
-        std::string("captchaId=") + StubCaptcha::kId + "&captchaAnswer=nope",
-        "session=" + cookie);
-    CHECK(refused.status == 403);
-    CHECK(!grants.peekSubscription(identity.fingerprint()).has_value());
-
-    // The right code is the registration itself.
-    const http::ClientResponse registered = postForm(port, "/register",
-        std::string("captchaId=") + StubCaptcha::kId + "&captchaAnswer=" + StubCaptcha::kAnswer,
-        "session=" + cookie);
-    CHECK(registered.status == 303);
+    CHECK(postForm(port, "/register", "", "session=" + cookie).status == 404);
     const std::optional<GrantStore::SubscriptionGrant> grant
         = grants.peekSubscription(identity.fingerprint());
     CHECK(grant.has_value());
@@ -304,7 +269,6 @@ void testWebFlow()
     CHECK(done.status == 200);
     CHECK(done.body.find("registered") != std::string::npos);
     CHECK(done.body.find(options.serverDescriptor) != std::string::npos);
-    CHECK(done.body.find(StubCaptcha::kBody) == std::string::npos);
     CHECK(done.body.find("1.0 KiB of 20 MiB") != std::string::npos);
     CHECK(done.body.find("<span>Devices</span>2") != std::string::npos);
 
@@ -330,7 +294,7 @@ void testWebFlow()
         CHECK(!grants.peekSubscription(identity.fingerprint()).has_value());
     }
 
-    // A banned key is told so and gets nothing else: no captcha, no terms.
+    // A banned key is told so and gets nothing else: no account, no terms.
     {
         const Identity refused = Identity::generate();
         grants.ban(refused.fingerprint(), "Spam", now());
@@ -347,13 +311,7 @@ void testWebFlow()
             = call(port, "GET", "/", {{"Cookie", "session=" + banned}});
         CHECK(shown.status == 200);
         CHECK(shown.body.find("Spam") != std::string::npos);
-        CHECK(shown.body.find(StubCaptcha::kBody) == std::string::npos);
-
-        const http::ClientResponse tried = postForm(port, "/register",
-            std::string("captchaId=") + StubCaptcha::kId + "&captchaAnswer="
-                + StubCaptcha::kAnswer,
-            "session=" + banned);
-        CHECK(tried.status == 403);
+        // Signing in registers everyone else; a ban is what stops it.
         CHECK(!grants.peekSubscription(refused.fingerprint()).has_value());
     }
 

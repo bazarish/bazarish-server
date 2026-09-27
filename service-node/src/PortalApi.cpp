@@ -47,8 +47,8 @@ void sendHtml(http::Response& response, const std::string& html, const int statu
 {
     response.status = status;
     response.contentType = "text/html; charset=utf-8";
-    // Every page carries a single-use challenge or a single-use captcha, so a
-    // page served from a cache would be a page that no longer works.
+    // Every page carries a single-use challenge, so a page served from a cache
+    // would be a page that no longer works.
     response.headers["Cache-Control"] = "no-store";
     response.body = html;
 }
@@ -98,7 +98,6 @@ bazarish::service::NodeSettings::Values valuesFrom(
     values.requireApproval = options.requiresApproval;
     values.registrationMessage = options.registrationMessage;
     values.loginConsumer = options.consumer;
-    values.requireCaptcha = options.requireCaptcha;
     values.defaultQuotaBytes = options.defaultQuotaBytes;
     return values;
 }
@@ -107,14 +106,13 @@ bazarish::service::NodeSettings::Values valuesFrom(
 
 namespace bazarish::service {
 
-PortalApi::PortalApi(PortalApiOptions options, Captcha& captcha, GrantStore& grants)
+PortalApi::PortalApi(PortalApiOptions options, GrantStore& grants)
     : options_(std::move(options))
     , settings_(options_.settings
               ? options_.settings
               : std::make_shared<NodeSettings>(
                     std::filesystem::path(), valuesFrom(options_)))
     , assets_(options_.assetsDirectory)
-    , captcha_(captcha)
     , grants_(grants)
     , login_(options_.challengeSecret, options_.consumer)
     , session_(options_.sessionSecret, options_.sessionTtlSeconds)
@@ -226,19 +224,9 @@ void PortalApi::setupRoutes()
         }
     }));
 
-    // A captcha to present before free registration.
-    http_->get("/portal/captcha", filled([this](const http::Request&, http::Response& response) {
-        const CaptchaChallenge challenge = captcha_.issue(nowSeconds());
-        respondJson(response,
-            {
-                {"captchaId", challenge.id},
-                {"contentType", challenge.contentType},
-                {"body", challenge.body},
-            });
-    }));
-
-    // Free registration: a logged-in user passes the captcha; the node records a
-    // pending subscription grant the Client then redeems with its signed cert.
+    // Registration: proving the key is the whole of it, so a logged-in user who
+    // is not banned gets the pending subscription grant the Client then redeems
+    // with its signed cert.
     http_->post(
         "/portal/register", filled([this](const http::Request& request, http::Response& response) {
             std::string userId;
@@ -254,21 +242,6 @@ void PortalApi::setupRoutes()
                 response.status = 403;
                 respondJson(response, {{"error", "banned"}, {"message", ban->reason}});
                 return;
-            }
-            if (settings().requireCaptcha) {
-                const nlohmann::json body = nlohmann::json::parse(request.body, nullptr, false);
-                if (body.is_discarded() || !body.contains("captchaId")
-                    || !body.contains("captchaAnswer")) {
-                    response.status = 400;
-                    respondJson(response, {{"error", "bad request"}});
-                    return;
-                }
-                if (!captcha_.verify(body.at("captchaId").get<std::string>(),
-                        body.at("captchaAnswer").get<std::string>(), nowSeconds())) {
-                    response.status = 403;
-                    respondJson(response, {{"error", "captcha failed"}});
-                    return;
-                }
             }
             grants_.grantSubscription(userId, settings().defaultQuotaBytes,
                 nowSeconds());
@@ -361,10 +334,11 @@ void PortalApi::setupWebRoutes()
     http_->get("/", filled([this, sessionUser](
                         const http::Request& request, http::Response& response) {
         const std::string user = sessionUser(request);
-        // A node that asks for no captcha has nothing left to ask: proving the
-        // key is the registration, so it happens as the key is proven instead of
-        // behind a button that would only repeat the question.
-        if (!user.empty() && !settings().requireCaptcha && !grants_.peekBan(user).has_value()
+        // Proving the key is the registration, so it happens as the key is
+        // proven instead of behind a button that would only repeat the question.
+        // A moderated node grants the same thing and holds the account until an
+        // operator approves it.
+        if (!user.empty() && !grants_.peekBan(user).has_value()
             && !grants_.peekSubscription(user).has_value()) {
             grants_.grantSubscription(user, settings().defaultQuotaBytes,
                 nowSeconds());
@@ -424,30 +398,6 @@ void PortalApi::setupWebRoutes()
         }
         options_.deleteAccount(user);
         response.headers["Set-Cookie"] = "session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0";
-        redirectTo(response, "/");
-    }));
-
-    // Reading the captcha is the registration: there is no further step, and no
-    // account area to move on to.
-    http_->post("/register", filled([this, sessionUser](
-                                 const http::Request& request, http::Response& response) {
-        const std::string user = sessionUser(request);
-        if (user.empty()) {
-            redirectTo(response, "/");
-            return;
-        }
-        if (grants_.peekBan(user).has_value()) {
-            sendHtml(response, homePage(user, std::string()), 403);
-            return;
-        }
-        if (settings().requireCaptcha
-            && !captcha_.verify(
-                request.param("captchaId"), request.param("captchaAnswer"), nowSeconds())) {
-            sendHtml(response, homePage(user, "That is not the code. Here is another one."), 403);
-            return;
-        }
-        grants_.grantSubscription(user, settings().defaultQuotaBytes,
-            nowSeconds());
         redirectTo(response, "/");
     }));
 }
@@ -511,7 +461,7 @@ std::string PortalApi::homePage(const std::string& user, const std::string& erro
 
     const std::string session
         = assets_.render("session.html", {{"fingerprint", htmlEscape(user)}});
-    // A refused key is told so and nothing else: no captcha, no terms, no way in.
+    // A refused key is told so and nothing else: no terms, no way in.
     if (const std::optional<GrantStore::Ban> ban = grants_.peekBan(user); ban.has_value()) {
         return assets_.render("page.html",
             {
@@ -528,25 +478,17 @@ std::string PortalApi::homePage(const std::string& user, const std::string& erro
 
     const std::map<std::string, std::string> account = accountValues(user, subscription);
 
+    // A signed-in key that is not banned was registered as it signed in, so
+    // there is no third state to draw here.
     std::string title;
     std::string content;
     if (approval.has_value() && approval->pending()) {
         title = "Waiting";
         content = assets_.render("waiting.html", account);
-    } else if (subscription.has_value() || approval.has_value()) {
+    } else {
         title = "Registered";
         content = assets_.render(
             settings().requireApproval ? "registered-approval.html" : "registered.html", account);
-    } else {
-        title = "Register";
-        const CaptchaChallenge challenge = captcha_.issue(nowSeconds());
-        content = assets_.render("register.html",
-            {
-                {"quota", htmlEscape(bytesHuman(settings().defaultQuotaBytes))},
-                {"captcha", challenge.body},
-                {"captchaId", htmlEscape(challenge.id)},
-                {"error", notice(error, "is-error")},
-            });
     }
 
     return assets_.render("page.html",

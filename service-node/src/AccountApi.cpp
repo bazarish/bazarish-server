@@ -23,13 +23,6 @@
 
 namespace {
 
-// What an operator may set from the panel. A captcha shorter than this is not a
-// test at all, and one longer is a wall; a lifetime under a minute expires while
-// the person is still typing.
-constexpr int kMinCaptchaLength = 3;
-constexpr int kMaxCaptchaLength = 12;
-constexpr std::int64_t kMinCaptchaTtlSeconds = 60;
-
 // The knobs an API built without a shared settings object runs on. The portal
 // owns the words a login is signed under, so nothing here fills them in. Written
 // field by field so a new setting cannot arrive here as a silent zero.
@@ -41,7 +34,6 @@ bazarish::service::NodeSettings::Values valuesFrom(
         = options.registration == bazarish::service::AccountApiOptions::Registration::eApproval;
     values.registrationMessage = options.registrationMessage;
     values.portalMessage = options.portalMessage;
-    values.requireCaptcha = options.freeRegistrationCaptcha;
     values.portalLinks = options.portalLinks;
     values.defaultQuotaBytes = options.defaultQuotaBytes;
     return values;
@@ -528,15 +520,12 @@ void AccountApi::setupRoutes()
                             {"place", values.loginConsumer.place},
                             {"role", values.loginConsumer.role},
                         }},
-                    {"requireCaptcha", values.requireCaptcha},
                     {"facades", values.facades},
                     {"reseeds", values.reseeds},
                     {"descriptor",
                         encodeServerDescriptor(
                             {options_.serverFingerprint, values.facades, values.reseeds})},
                     {"portalLinks", values.portalLinks},
-                    {"captchaLength", values.captchaLength},
-                    {"captchaTtlSeconds", values.captchaTtlSeconds},
                     {"logLevel", values.logLevel},
                     {"listen", {{"host", values.listenHost}, {"port", values.listenPort}}},
                     {"portalListen",
@@ -579,9 +568,6 @@ void AccountApi::setupRoutes()
                     throw std::invalid_argument(error.what());
                 }
                 values.loginConsumer = wanted;
-            }
-            if (body.contains("requireCaptcha")) {
-                values.requireCaptcha = body.at("requireCaptcha").get<bool>();
             }
             if (body.contains("facades")) {
                 std::vector<std::string> facades;
@@ -632,21 +618,6 @@ void AccountApi::setupRoutes()
                     }
                 }
                 values.portalLinks = std::move(links);
-            }
-            if (body.contains("captchaLength")) {
-                values.captchaLength = body.at("captchaLength").get<int>();
-                if (values.captchaLength < kMinCaptchaLength
-                    || values.captchaLength > kMaxCaptchaLength) {
-                    throw std::invalid_argument("a captcha is between "
-                        + std::to_string(kMinCaptchaLength) + " and "
-                        + std::to_string(kMaxCaptchaLength) + " characters");
-                }
-            }
-            if (body.contains("captchaTtlSeconds")) {
-                values.captchaTtlSeconds = body.at("captchaTtlSeconds").get<std::int64_t>();
-                if (values.captchaTtlSeconds < kMinCaptchaTtlSeconds) {
-                    throw std::invalid_argument("a captcha nobody can read in time is a wall");
-                }
             }
             if (body.contains("logLevel")) {
                 const std::string level = body.at("logLevel").get<std::string>();
@@ -1148,18 +1119,12 @@ void AccountApi::setupRoutes()
             respondJson(response, {{"user", user}, {"card", toBase64(account->card)}});
         }));
 
-    // Registering without a page to visit. Only when the operator asks for no
-    // captcha: a captcha is a person's proof that they are one, and a client
-    // cannot stand in for it. The account is granted exactly what the portal
-    // grants, approval included, so the two doors lead to the same place.
+    // Registering without a page to visit. The account is granted exactly what
+    // the portal grants, approval included, so the two doors lead to the same
+    // place.
     clientRoute("POST", "/v1/account/registration",
         [this](const http::Request&, http::Response& response,
                           const std::string& user) {
-            if (settings().requireCaptcha) {
-                respondError(response, 403, ErrorCode::eDeliveryRejected,
-                    "this server registers on its portal");
-                return;
-            }
             if (const std::optional<GrantStore::Ban> ban = grants_.peekBan(user);
                 ban.has_value()) {
                 respondError(response, 403, ErrorCode::eDeliveryRejected, ban->reason);
@@ -1181,10 +1146,9 @@ void AccountApi::setupRoutes()
         });
 
     // Onboarding discovery: where to register and on what terms. Unauthenticated
-    // - the client shows the message and link(s); registration happens on the
-    // portal, not here. Nothing on this node is for sale, so there is no service
-    // catalogue: the only variables are whether a captcha is required and
-    // whether an operator has to approve the account.
+    // - the client shows the message and link(s). Nothing on this node is for
+    // sale, so there is no service catalogue: the only variable is whether an
+    // operator has to approve the account.
     // One snapshot for the whole answer: read field by field, an operator saving
     // a change mid-call is answered half in the old terms and half in the new.
     const auto portalHandler = [this](const http::Request&, http::Response& response) {
@@ -1201,7 +1165,6 @@ void AccountApi::setupRoutes()
                 {"links", links},
                 {"registration",
                     {
-                        {"captcha", live.requireCaptcha},
                         {"requiresApproval", live.requireApproval},
                         {"message", live.registrationMessage},
                     }},

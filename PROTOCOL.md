@@ -61,7 +61,7 @@ transfer and the media destination of a call.
 | Server authentication | The client pins the SHA-256 of the server's SPKI. The SNI is whatever the client's configuration says, and the gateway accepts any |
 | Client authentication | A secret URL **and** a static token in the `X-Bazarish-Gateway` header. Both, or nothing |
 | Session | The cookie of a session to rejoin, in `X-Bazarish-Session`. Absent on a first connection |
-| Keepalive | The gateway pings every `kKeepaliveSeconds`; no pong within `kPongTimeoutSeconds` drops the socket |
+| Keepalive | The gateway pings every `kKeepalive`; no pong within `kPongTimeout` drops the socket |
 
 ### Getting in, and not getting in
 
@@ -108,7 +108,7 @@ written for is a phone's.
   static secret**: the cookie names a session, it does not authorise one. A
   cookie alone opens nothing.
 - While a socket is attached, the session does not expire. When the socket
-  drops, the session lives `kSessionTtlSeconds` longer, and a reconnect within
+  drops, the session lives `kSessionTtl` longer, and a reconnect within
   that window rejoins it with every destination and stream still standing.
 - A session that expires takes its destinations and streams with it, and its
   cookie stops naming anything. The next connection gets a new session and a new
@@ -711,7 +711,7 @@ worse than one that cannot do it.
 
 | Name | Value | Why this value |
 |---|---|---|
-| `kSessionTtlSeconds` | 300 | How long a session outlives its socket. Long enough for a lift, a tunnel or a handover; short enough that an abandoned phone costs the gateway five minutes of tunnels |
+| `kSessionTtl` | 300 s | How long a session outlives its socket. Long enough for a lift, a tunnel or a handover; short enough that an abandoned phone costs the gateway five minutes of tunnels |
 | `kSessionCookieBytes` | 32 | The session cookie, from the system's random source |
 | `kMaxFrameBytes` | 16384 | A WebSocket message cannot be interleaved with another, so this is the longest anything can be held by one already going out. It matters most on the main socket, where a stream with no socket of its own shares with control |
 | `kMaxSocketsPerSession` | 16 | The main one, a call, and enough transfers that the link is the limit rather than the protocol |
@@ -728,9 +728,9 @@ worse than one that cannot do it.
 | `kDialRetryDelay` | 2 s | How often a dial is re-issued while the deadline holds, matching the SAM backend |
 | `kInboundQueue` | 8 | Unaccepted inbound streams per endpoint before the client resets the oldest |
 | `kDatagramQueue` | 64 | Received datagrams held per endpoint, at either end |
-| `kKeepaliveSeconds` | 30 | How often the gateway pings |
-| `kPongTimeoutSeconds` | 15 | A silent peer after a ping is a dead socket |
-| `kStatusPeriodSeconds` | 2 | How often `router-status` is pushed |
+| `kKeepalive` | 30 s | How often the gateway pings |
+| `kPongTimeout` | 15 s | A silent peer after a ping is a dead socket |
+| `kStatusPeriod` | 250 ms | How often a destination's status is looked at, and pushed when it changed. A fraction of a second because a caller waits for a destination to be ready before it dials, so this is added to every destination that is created |
 
 ## What this asks of the client
 

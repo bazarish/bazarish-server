@@ -25,7 +25,7 @@ if(NOT TARGET bazarish_common)
 endif()
 
 find_package(Threads REQUIRED)
-find_package(OpenSSL REQUIRED)
+find_package(OpenSSL 3.5 REQUIRED)
 
 add_library(bazarish_gateway_lib STATIC
     src/Gateway.cpp

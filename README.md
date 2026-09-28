@@ -17,7 +17,7 @@ cmake --build build -j4
 ctest --test-dir build
 ```
 
-CMake >= 3.20, C++20, OpenSSL >= 3.0.
+CMake >= 3.20, C++20, OpenSSL >= 3.5.
 
 ## Configuring
 

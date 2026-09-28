@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #include "Gateway.hpp"
 
+#include "TestRouter.hpp"
 #include "TestUtil.hpp"
 
 #include <bazarish/I2p.hpp>
@@ -62,11 +63,9 @@ int main()
     settings.stateDir = root / "state";
     settings.notFoundBody = "<html>nothing</html>";
 
-    i2p::RouterConfig routerConfig;
-    routerConfig.dataDir = root / "i2p";
-    // Never started. Nothing here goes to the network: a destination this
-    // gateway minted is one it can lose without any of it.
-    i2p::Router engine(routerConfig);
+    // Kept off the network: a destination this gateway minted is one it can lose
+    // without any of it.
+    i2p::Router engine(i2p::offlineRouter(root / "i2p"));
 
     std::unique_ptr<Gateway> first = std::make_unique<Gateway>(settings, engine);
     const int port = first->start();

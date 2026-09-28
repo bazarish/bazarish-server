@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #include "Gateway.hpp"
 
+#include "TestRouter.hpp"
 #include "TestUtil.hpp"
 
 #include <bazarish/WebSocketClient.hpp>
@@ -79,9 +80,7 @@ int main()
     settings.decoyMaxBytes = 1024;
     settings.notFoundBody = "<html>nothing</html>";
 
-    i2p::RouterConfig routerConfig;
-    routerConfig.dataDir = root / "i2p";
-    i2p::Router router(routerConfig);
+    i2p::Router router(i2p::offlineRouter(root / "i2p"));
 
     Gateway gateway(settings, router);
     const int port = gateway.start();

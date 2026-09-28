@@ -3,6 +3,7 @@
 
 #include <bazarish/Clock.hpp>
 
+#include "TestRouter.hpp"
 #include "TestUtil.hpp"
 
 #include <utility>
@@ -148,9 +149,7 @@ int main()
     const Identity operatorIdentity = Identity::generate();
     settings.operators.push_back(operatorIdentity.fingerprint());
 
-    i2p::RouterConfig routerConfig;
-    routerConfig.dataDir = root / "i2p";
-    i2p::Router router(routerConfig);
+    i2p::Router router(i2p::offlineRouter(root / "i2p"));
 
     Gateway gateway(settings, router);
     const int port = gateway.start();

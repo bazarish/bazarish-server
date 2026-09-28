@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #include "Gateway.hpp"
 
+#include "TestRouter.hpp"
 #include "TestUtil.hpp"
 
 #include <bazarish/I2p.hpp>
@@ -63,10 +64,9 @@ int main()
     settings.decoyMaxBytes = 2048;
     settings.notFoundBody = "<html>nothing</html>";
 
-    i2p::RouterConfig routerConfig;
-    routerConfig.dataDir = root / "i2p";
-    // Never started: two clients of one gateway meet inside it.
-    i2p::Router engine(routerConfig);
+    // Two clients of one gateway meet inside it, so this engine has no business
+    // on the network and is kept off it.
+    i2p::Router engine(i2p::offlineRouter(root / "i2p"));
 
     Gateway gateway(settings, engine);
     const int port = gateway.start();

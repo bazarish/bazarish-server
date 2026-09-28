@@ -33,7 +33,7 @@ target_link_libraries(bazarish_service_lib PUBLIC Bazarish::Common Threads::Thre
 target_compile_options(bazarish_service_lib PRIVATE -Wall -Wextra -Werror)
 # The HTTPS leg of common's HTTP client (hosted payment gateways) needs the TLS
 # library; OpenSSL::Crypto already comes transitively via common.
-find_package(OpenSSL 3.0 REQUIRED)
+find_package(OpenSSL 3.5 REQUIRED)
 target_link_libraries(bazarish_service_lib PUBLIC OpenSSL::SSL)
 
 add_executable(bazarish-service-node src/Main.cpp)

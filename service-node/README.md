@@ -1,33 +1,47 @@
 # Bazarish - service-node
 
-User management for the [Bazarish](https://github.com/bazarish/docs-main)
-messenger, kept as a separate process from the messaging logic: subscriptions,
-aliases and first-contact lookup.
+Account management for the [Bazarish](https://github.com/bazarish/docs-main)
+messenger, kept as a separate process from the messaging logic: who has an
+account here, what their destination is, and what they are allowed.
 
-A service node is bound to one messaging server by that server's card (passed
-at startup), from which it takes the server fingerprint that subscription
-certificates must name. Authenticated requests carry the caller's hybrid
-identity; a caller may only act on certificates naming its own UID.
+A service node is bound to one messaging server by that server's card (passed at
+startup), from which it takes the server fingerprint a card must name.
+Authenticated requests carry the caller's hybrid identity, and a caller may only
+act on its own account.
+
+Names are not this node's business: an alias belongs to `alias-resolver`, which
+is a service of its own and is not reached through here.
 
 ## What it does
 
-- **Subscriptions** - verifies and stores user-signed subscription
-  certificates (hybrid signature, names this server, unexpired, within the max
-  term); renewal is a fresh certificate. Returns quota and the server card.
-- **Aliases** - registers user-signed nickname certificates; `ALIAS_TAKEN`
-  when owned by another user.
-- **Resolution** - `GET /v1/account/resolve?alias=X` returns the alias trust
-  chain; `GET /v1/account/contact?user=X` returns a user's subscription
-  certificate, which carries the serving server and the sealing **prekey** a
-  first-contact sender uses to E2E-encrypt the contact request.
+- **Registration**, in one of two modes and no third. Open: proving a key is the
+  registration, whether it is proven in the portal or by a client calling
+  `POST /v1/account/registration`. Moderated (`registration.requireApproval`):
+  the account is created the same way and waits for an operator, which the client
+  learns as `ACCOUNT_PENDING_APPROVAL`. An account has **no term** - it lives
+  while its owner keeps a destination delegated here, and an idle one is swept
+  after `registration.idleDeleteDays`.
+- **The user's own destination.** `POST /v1/account/i2p-dest` takes the offline
+  transient that lets the messaging server operate the address; `i2p-status`
+  says how long the current one lasts so any device knows when to issue the next;
+  `undelegate` takes an account out of service without deleting it.
+- **The contact card.** `POST /v1/account/card` stores the user-signed card and
+  is what redeems a registration into an account; `serving-key` and
+  `serving-key/commit` rotate the per-user serving key, the node preparing and
+  the user signing, so a rotation that stops halfway changes nothing.
+- **Quota.** This node grants it, stores it and pushes it to the messaging
+  server, which would otherwise keep serving its own default.
+- **The operator's face**: listing and searching accounts, ban/unban, approve,
+  live settings and a restart request - all signed with an operator identity, and
+  what `admin-panel` drives.
 
 ## Build
 
-Requires CMake >= 3.20, C++20, OpenSSL >= 3.0. `common` is a submodule.
+Requires CMake >= 3.20, C++20, OpenSSL >= 3.5. `common` is a submodule.
 
 ```bash
-git clone --recurse-submodules https://github.com/bazarish/service-node
-cmake -S . -B build && cmake --build build -j
+git clone --recurse-submodules https://github.com/bazarish/bazarish-server
+cmake -S bazarish-server -B build && cmake --build build -j4
 ctest --test-dir build
 ```
 
@@ -44,8 +58,8 @@ place to look, one place to change - and the admin panel edits the same file one
 value at a time, leaving the rest of it, comments included, untouched.
 
 The server card is produced by the messaging server and binds this node to it.
-The service node sits behind a [facade](https://github.com/bazarish/facade-http),
-which routes `/v1/account/*` to it.
+The service node sits behind the facade (`facade-http` in this repository), which
+routes `/v1/account/*` to it.
 
 `portal.listen` opens the browser-facing portal: one JS-free page where a user
 proves their key, which is the whole registration.

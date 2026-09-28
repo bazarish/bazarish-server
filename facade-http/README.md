@@ -3,10 +3,16 @@
 The HTTP facade for the [Bazarish](https://github.com/bazarish/docs-main)
 messenger: the "last mile" between a client and the server infrastructure.
 
-A transparent reverse proxy that routes client requests by path prefix:
+It forwards exactly two requests to the messaging server and answers everything
+else with the same bare 404:
 
-- `/v1/messaging/*` -> the [messaging server](https://github.com/bazarish/server-core)
-- `/v1/account/*` -> the [service node](https://github.com/bazarish/service-node)
+- `POST /t` - the sealed tunnel every client request travels inside. The real
+  method, path and headers are encrypted, so the facade cannot tell a message
+  from a mailbox poll, and the service node is reached through the same tunnel
+  rather than by a path of its own.
+- `GET /v1/server/card` - the signed server card, which is what lets a client
+  seal that tunnel in the first place. Public by nature and identical for every
+  caller, so serving it tells nobody anything.
 
 The facade holds **no keys and no content at rest**; it parses nothing and
 stores nothing identifying. Compromising it must not damage the server
@@ -17,11 +23,11 @@ to clients.
 
 ## Build
 
-Requires CMake >= 3.20, C++20, OpenSSL >= 3.0. `common` is a submodule.
+Requires CMake >= 3.20, C++20, OpenSSL >= 3.5. `common` is a submodule.
 
 ```bash
-git clone --recurse-submodules https://github.com/bazarish/facade-http
-cmake -S . -B build && cmake --build build -j
+git clone --recurse-submodules https://github.com/bazarish/bazarish-server
+cmake -S bazarish-server -B build && cmake --build build -j4
 ctest --test-dir build
 ```
 
@@ -34,11 +40,12 @@ bazarish-facade-http --config <path>
 Everything is in that file (see `config.example.json`); nothing is settable on
 the command line.
 
-`basePath` is mandatory and stripped before forwarding: the whole clearnet
-API, the unauthenticated first reseed included, is reachable only under that
-secret prefix, and clients learn it only from the facade URL in the server
-descriptor. Anything else - an unknown path, the API root, `/healthz` - is the
-same bare 404, so a scan of the host learns nothing. The signed canonical request
+`basePath` is mandatory and stripped before forwarding: what the facade serves
+is reachable only under that secret prefix, and clients learn it only from the
+facade URL in the server descriptor. The reseed archive is not here - it is
+served by the portal, which is what faces the clearnet. Anything else - an
+unknown path, the API root, `/healthz` - is the same bare 404, so a scan of the
+host learns nothing. The signed canonical request
 path is the post-strip path, so signatures verify on the backend regardless.
 
 Set `"public": true` instead only when a fronting reverse proxy already publishes this

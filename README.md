@@ -8,8 +8,8 @@ implement is specified in the `docs-main` repository; the desktop client
 | Directory | Binary | Role |
 |---|---|---|
 | `server-core` | `bazarish-server` | message delivery, mailboxes, federation over I2P |
-| `service-node` | `bazarish-service-node` | registration, subscription, account portal |
-| `facade-http` | `bazarish-facade-http` | the client-facing last mile (REST), a dumb pipe |
+| `service-node` | `bazarish-service-node` | registration, accounts, the browser portal |
+| `facade-http` | `bazarish-facade-http` | the client-facing last mile: a sealed tunnel, forwarded blind |
 | `admin-panel` | `bazarish-admin-panel` | operator UI, authenticated by identity signature |
 | `common` | - | submodule of `common-cpp`: crypto, I2P transport, embedded i2pd |
 
@@ -33,7 +33,7 @@ the part that goes wherever the user is.
 ```
 git clone --recurse-submodules https://github.com/bazarish/bazarish-server
 cmake -S bazarish-server -B build
-cmake --build build -j
+cmake --build build -j4
 ctest --test-dir build
 ```
 

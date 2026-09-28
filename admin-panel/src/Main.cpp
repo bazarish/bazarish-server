@@ -30,11 +30,10 @@ void printUsage()
         "       bazarish-admin-panel --version\n"
         "\n"
         "Monitors and manages Bazarish services from one web interface. The panel\n"
-        "signs every service call with its own identity (kept in <state>); add the\n"
-        "printed fingerprint to each service's --operator-fingerprint. Sign in by\n"
-        "signing a challenge with your client (bazarish-client sign-login); only the\n"
-        "admin identity named in the config may sign in, and no backend needs to be\n"
-        "online to log in.\n",
+        "signs every service call with its own identity (kept in <state>); put the\n"
+        "printed fingerprint in each service's \"operators\" list. Sign in by signing\n"
+        "the panel's challenge in your client; only an admin identity named in the\n"
+        "config may sign in, and no backend needs to be online to log in.\n",
         kVersion);
 }
 
@@ -119,7 +118,7 @@ int main(const int argc, const char** argv)
 
     std::printf("bazarish-admin-panel %s\n", kVersion);
     std::printf("panel operator fingerprint: %s\n", identity.fingerprint().c_str());
-    std::printf("add this fingerprint to each service's --operator-fingerprint\n");
+    std::printf("put this fingerprint in each service's \"operators\" list\n");
     std::printf("listening on %s:%d\n", host.c_str(), port);
     if (unclaimed) {
         // A fresh install: no administrator yet, and the first key to sign in

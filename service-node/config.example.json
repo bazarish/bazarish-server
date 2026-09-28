@@ -28,9 +28,14 @@
     "facades": []
   },
 
+  // Two modes and no third. requireApproval false: proving a key is the whole
+  // registration. true: the account is created the same way and waits for an
+  // operator, and "message" is what it is shown meanwhile. idleDeleteDays is how
+  // long an account with no destination delegated here is kept before it is
+  // deleted - the delegation is the only sign of life a server has.
   "registration": {
     "requireApproval": false,
     "message": "",
-    "ttlDays": 7
+    "idleDeleteDays": 180
   }
 }

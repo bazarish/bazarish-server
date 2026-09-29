@@ -1,15 +1,11 @@
 // Bazarish project (c) 2026
 #include "Gateway.hpp"
 
+#include "Relay.hpp"
 #include "TestRouter.hpp"
 #include "TestUtil.hpp"
 
 #include <bazarish/I2p.hpp>
-
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
 
 #include <atomic>
 #include <chrono>
@@ -17,10 +13,8 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <thread>
-#include <utility>
 #include <vector>
 
 using namespace bazarish;
@@ -34,142 +28,6 @@ constexpr int kWaitSeconds = 30;
 // One datagram larger than a frame can carry, which is what an I2P raw datagram
 // is allowed to be: the router takes up to 32 KiB.
 constexpr std::size_t kOversizeBytes = 20000;
-constexpr std::size_t kRelayBufferBytes = 16384;
-constexpr int kBacklog = 16;
-
-// A plain TCP relay in front of the gateway, so one connection can be cut the
-// way a phone changing network cuts one, leaving the others alone.
-class Relay {
-public:
-    explicit Relay(const int to)
-        : to_(to)
-    {
-        listen_ = ::socket(AF_INET, SOCK_STREAM, 0);
-        CHECK(listen_ >= 0);
-        const int one = 1;
-        const int reusable
-            = ::setsockopt(listen_, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
-        sockaddr_in address{};
-        address.sin_family = AF_INET;
-        address.sin_addr.s_addr = ::inet_addr("127.0.0.1");
-        const int bound = ::bind(listen_, reinterpret_cast<sockaddr*>(&address), sizeof address);
-        socklen_t length = sizeof address;
-        const int named = ::getsockname(listen_, reinterpret_cast<sockaddr*>(&address), &length);
-        const int listening = ::listen(listen_, kBacklog);
-        CHECK(reusable == 0);
-        CHECK(bound == 0);
-        CHECK(named == 0);
-        CHECK(listening == 0);
-        port_ = ntohs(address.sin_port);
-        accepter_ = std::thread([this]() { accepting(); });
-    }
-
-    ~Relay()
-    {
-        running_.store(false);
-        ::shutdown(listen_, SHUT_RDWR);
-        ::close(listen_);
-        if (accepter_.joinable()) {
-            accepter_.join();
-        }
-        cutAll();
-        for (std::thread& pump : pumps_) {
-            if (pump.joinable()) {
-                pump.join();
-            }
-        }
-    }
-
-    Relay(const Relay&) = delete;
-    Relay& operator=(const Relay&) = delete;
-
-    int port() const { return port_; }
-
-    // How many connections have been made through it, which is how a socket
-    // taken again is told from one that never came back.
-    std::size_t connections() const
-    {
-        const std::lock_guard<std::mutex> lock(mutex_);
-        return pairs_.size();
-    }
-
-    // Cuts the nth connection this relay took, counting from zero.
-    void cut(const std::size_t which)
-    {
-        const std::lock_guard<std::mutex> lock(mutex_);
-        CHECK(which < pairs_.size());
-        ::shutdown(pairs_[which].first, SHUT_RDWR);
-        ::shutdown(pairs_[which].second, SHUT_RDWR);
-    }
-
-private:
-    void cutAll()
-    {
-        const std::lock_guard<std::mutex> lock(mutex_);
-        for (const auto& [in, out] : pairs_) {
-            ::shutdown(in, SHUT_RDWR);
-            ::shutdown(out, SHUT_RDWR);
-        }
-    }
-
-    void accepting()
-    {
-        while (running_.load()) {
-            const int in = ::accept(listen_, nullptr, nullptr);
-            if (in < 0) {
-                return;
-            }
-            const int out = ::socket(AF_INET, SOCK_STREAM, 0);
-            sockaddr_in address{};
-            address.sin_family = AF_INET;
-            address.sin_addr.s_addr = ::inet_addr("127.0.0.1");
-            address.sin_port = htons(static_cast<std::uint16_t>(to_));
-            if (out < 0
-                || ::connect(out, reinterpret_cast<sockaddr*>(&address), sizeof address) != 0) {
-                ::close(in);
-                ::close(out);
-                continue;
-            }
-            {
-                const std::lock_guard<std::mutex> lock(mutex_);
-                pairs_.emplace_back(in, out);
-            }
-            pumps_.emplace_back([in, out]() { pump(in, out); });
-            pumps_.emplace_back([in, out]() { pump(out, in); });
-        }
-    }
-
-    static void pump(const int from, const int to)
-    {
-        std::vector<char> buffer(kRelayBufferBytes);
-        for (;;) {
-            const ssize_t got = ::recv(from, buffer.data(), buffer.size(), 0);
-            if (got <= 0) {
-                ::shutdown(to, SHUT_RDWR);
-                return;
-            }
-            ssize_t sent = 0;
-            while (sent < got) {
-                const ssize_t wrote = ::send(to, buffer.data() + sent,
-                    static_cast<std::size_t>(got - sent), MSG_NOSIGNAL);
-                if (wrote <= 0) {
-                    ::shutdown(from, SHUT_RDWR);
-                    return;
-                }
-                sent += wrote;
-            }
-        }
-    }
-
-    int to_;
-    int listen_ = -1;
-    int port_ = 0;
-    std::atomic<bool> running_{true};
-    std::thread accepter_;
-    std::vector<std::thread> pumps_;
-    mutable std::mutex mutex_;
-    std::vector<std::pair<int, int>> pairs_;
-};
 
 i2p::RouterConfig borrowedFrom(const int port)
 {

@@ -386,7 +386,8 @@ answers `resume` with the same count for its own direction, and then both sides:
 
 - drop from their retained buffer everything the peer has confirmed,
 - resend what is beyond it, in order, before any new data on that stream,
-- recompute the credit window from the confirmed count.
+- recompute the credit window from the confirmed count,
+- say again, for every live stream, how much they have consumed of it.
 
 Nothing more is needed to make a reconnect lossless, and nothing less is enough:
 a socket dies with bytes in flight, and a stream that quietly loses those bytes
@@ -545,9 +546,17 @@ them. Overrunning the window closes the socket.
 
 A credit is **cumulative** - the total consumed so far, not an increment - which
 is what makes it the same number the resume exchange asks for and what makes a
-credit lost with a socket cost nothing: the next one says the same thing with
-more of it. It is eight bytes, because nothing promises a file stays under four
-gigabytes.
+credit lost with a socket cost almost nothing: the next one says the same thing
+with more of it. It is eight bytes, because nothing promises a file stays under
+four gigabytes.
+
+Almost, because there is a case with no next one. A sender whose window is full
+sends nothing; nothing moves at the other end, so nothing credits it again; and
+the credit that would have opened the window went with the socket. The transfer
+is then finished as far as the wire is concerned while a window of it sits in a
+queue. So **both sides say their counts again on a socket that has just been
+handed over**: a cumulative credit per live stream, which is idempotent by
+construction and costs one frame each.
 
 A `stream-close` and a `stream-reset` ride the stream's own socket with its
 data, not the main one. Sent on the main socket they would overtake bytes still

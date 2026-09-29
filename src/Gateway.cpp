@@ -400,6 +400,15 @@ void Gateway::replayDone(const std::shared_ptr<Session>& session)
     // What could not go out while the replay was owed goes out now.
     for (const std::shared_ptr<StreamEntry>& entry : held) {
         pump(session, entry);
+        // And what the client is owed is said again. A credit is the whole count
+        // consumed so far, so repeating it costs one frame - and the socket that
+        // went may have taken the only credit this stream will ever have: a
+        // sender whose window is full sends nothing, so nothing moves, so
+        // nothing credits it again. That is a transfer stopped for good.
+        const std::lock_guard<std::mutex> lock(mutex_);
+        if (const http::SocketPtr out = outletFor(*session, *entry)) {
+            out->send(encodeCredit(entry->id, entry->book.consumedTotal()));
+        }
     }
 }
 

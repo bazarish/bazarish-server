@@ -46,6 +46,9 @@ public:
     // protocol produces none, so a test that sees one has found something its
     // own assertions did not.
     std::size_t refusals() const { return refused_.load(); }
+    // How many dials it has issued over I2P. Two of its own clients meeting
+    // inside it are not a dial, and a question asked twice is one dial.
+    std::size_t dials() const { return dials_.load(); }
 
 private:
     // The one answer to everything that is not for this gateway, and to
@@ -173,6 +176,7 @@ private:
     std::thread status_;
     std::atomic<std::size_t> rejoins_{0};
     std::atomic<std::size_t> refused_{0};
+    std::atomic<std::size_t> dials_{0};
     std::int64_t startedAt_ = 0;
     std::atomic<bool> running_{false};
 };

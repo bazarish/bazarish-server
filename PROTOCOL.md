@@ -199,7 +199,10 @@ old one.
 
 A client may hold `kMaxSocketsPerSession` at once; beyond that the gateway
 answers `refused` - and the destination that was refused a lane keeps asking for
-one, so it gets its own queue as soon as there is room. A data frame for a flow that is not attached to the socket it
+one, so it gets its own queue as soon as there is room. It keeps two of them back
+for control: the socket it has, and the one that replaces it before the gateway
+has noticed the first go. A session filled to the limit could not be handed a new
+control socket at all. A data frame for a flow that is not attached to the socket it
 arrived on is refused with `wrong-lane` rather than quietly carried: a lane that
 works by accident is one that stops working under load, which is exactly when it
 was supposed to matter.

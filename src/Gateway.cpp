@@ -129,6 +129,7 @@ http::Response Gateway::health(const http::Request& request) const
         {"sockets", sockets()},
         {"rejoins", rejoins()},
         {"refused", refusals()},
+        {"dials", dials()},
         {"i2pd", i2p::routerVersion()},
     };
     return {200, "application/json", {},
@@ -857,6 +858,7 @@ void Gateway::onStreamOpen(const std::shared_ptr<Session>& session,
 
     // The dial blocks, and it may hold the deadline the caller gave it, so it
     // does not run on the socket's thread.
+    ++dials_;
     std::thread([this, session, from, ref = frame.ref, host, deadline, socket]() {
         dial(session, from, ref, host, deadline, socket);
     }).detach();

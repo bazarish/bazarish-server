@@ -36,6 +36,9 @@ constexpr const char* kToken = "a-static-token";
 // How long after its term a swept session may take to go, since the sweep runs
 // on the status thread's own clock.
 constexpr int kSweepGraceSeconds = 5;
+// Long enough for the dial to be re-asked while it is still running, short
+// enough that the test waits it out rather than the other way round.
+constexpr int kDialDeadlineSeconds = 4;
 constexpr std::size_t kDecoyLow = 1024;
 constexpr std::size_t kDecoyHigh = 4096;
 
@@ -302,6 +305,34 @@ int main()
     CHECK(bodyJson(repeat)["host"] == bodyJson(once)["host"]);
     twiceOver.socket->close(websocket::close_code::normal, ignored);
     twiceOver.socket.reset();
+
+    // A dial that outlives the socket that asked for it is asked for again with
+    // the same reference, because the client saw no answer. That is one dial,
+    // not two: two would be two streams wearing one identifier, which is two
+    // sets of bytes arriving as one.
+    // Counted from here: the refusals above are this test's own doing.
+    const std::size_t refusedBefore = gateway.refusals();
+    Dialled asking = dial(io, port, kToken, {});
+    CHECK(asking.socket != nullptr);
+    (void)greet(*asking.socket);
+    send(*asking.socket,
+        encodeJson(FrameType::eEndpointCreate, 8,
+            {{"kind", "stream"}, {"privacy", "minimal"}, {"tunnels", 2},
+                {"published", false}, {"realtime", false}}));
+    CHECK(receive(*asking.socket).type == FrameType::eOk);
+    const nlohmann::json dialAsk = {{"endpoint", 8},
+        {"host", "anything.b32.i2p"}, {"deadline", kDialDeadlineSeconds}};
+    send(*asking.socket, encodeJson(FrameType::eStreamOpen, 10, dialAsk));
+    send(*asking.socket, encodeJson(FrameType::eStreamOpen, 10, dialAsk));
+    // On a router with no netDb the dial cannot land, so the answer is the
+    // refusal it ends in - once.
+    const Frame dialled = receive(*asking.socket);
+    CHECK(dialled.type == FrameType::eStreamReset);
+    CHECK(dialled.ref == 10);
+    CHECK(gateway.dials() == 1);
+    CHECK(gateway.refusals() == refusedBefore);
+    asking.socket->close(websocket::close_code::normal, ignored);
+    asking.socket.reset();
 
     // A session that outlives nothing is swept, and what it held goes with it.
     // The destination below is published, so the gateway is holding a thread

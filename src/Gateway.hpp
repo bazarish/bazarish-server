@@ -111,6 +111,9 @@ private:
     // The control socket has said what it owed (or nothing was owed): what
     // waited for its replay goes out now.
     void replayDone(const std::shared_ptr<Session>& session);
+    // What follows a replay, whether one was sent or the grace ran out: every
+    // stream drains and is told again how much of it has been consumed.
+    void afterReplay(const std::shared_ptr<Session>& session);
     // Which socket a data frame was supposed to arrive on, or none when the
     // frame is not one or names nothing.
     http::SocketPtr laneFor(const Session& session, const Frame& frame) const;

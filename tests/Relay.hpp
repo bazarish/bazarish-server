@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <mutex>
 #include <thread>
@@ -82,6 +83,12 @@ public:
     // rather than as long as a reconnect takes.
     void hold(const bool refusing) { refusing_.store(refusing); }
 
+    // Swallows what comes back towards the client without closing anything, so
+    // the far side's writes succeed and the client sees none of them. Cutting
+    // afterwards loses exactly those bytes, which is what a socket dying under a
+    // write does and what no test can arrange by timing.
+    void stall(const bool holding) { stalling_.store(holding); }
+
     // Cuts the nth connection this relay took, counting from zero.
     void cut(const std::size_t which)
     {
@@ -127,12 +134,12 @@ private:
                 const std::lock_guard<std::mutex> lock(mutex_);
                 pairs_.emplace_back(in, out);
             }
-            pumps_.emplace_back([in, out]() { pump(in, out); });
-            pumps_.emplace_back([in, out]() { pump(out, in); });
+            pumps_.emplace_back([this, in, out]() { pump(in, out, false); });
+            pumps_.emplace_back([this, in, out]() { pump(out, in, true); });
         }
     }
 
-    static void pump(const int from, const int to)
+    void pump(const int from, const int to, const bool stallable)
     {
         std::vector<char> buffer(kRelayBufferBytes);
         for (;;) {
@@ -140,6 +147,9 @@ private:
             if (got <= 0) {
                 ::shutdown(to, SHUT_RDWR);
                 return;
+            }
+            while (stallable && stalling_.load() && running_.load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
             ssize_t sent = 0;
             while (sent < got) {
@@ -159,6 +169,7 @@ private:
     int port_ = 0;
     std::atomic<bool> running_{true};
     std::atomic<bool> refusing_{false};
+    std::atomic<bool> stalling_{false};
     std::thread accepter_;
     std::vector<std::thread> pumps_;
     mutable std::mutex mutex_;

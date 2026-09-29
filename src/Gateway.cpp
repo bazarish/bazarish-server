@@ -385,13 +385,21 @@ http::SocketPtr Gateway::answerOn(const Session& session, const http::SocketPtr&
 
 void Gateway::replayDone(const std::shared_ptr<Session>& session)
 {
-    std::vector<std::shared_ptr<StreamEntry>> held;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
         if (session->replayDue == std::chrono::steady_clock::time_point{}) {
             return;
         }
         session->replayDue = {};
+    }
+    afterReplay(session);
+}
+
+void Gateway::afterReplay(const std::shared_ptr<Session>& session)
+{
+    std::vector<std::shared_ptr<StreamEntry>> held;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
         for (const auto& [id, entry] : session->streams) {
             (void)id;
             held.push_back(entry);
@@ -1231,6 +1239,15 @@ void Gateway::onResume(const std::shared_ptr<Session>& session,
         fail(socket, frame.ref, Fault::eBadFrame, "a resume names the streams it is resuming");
         return;
     }
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        // Lifted before the replay goes out, not after: the gate is there to
+        // hold everything else behind these frames, and asking outletFor while
+        // it is up refuses the very frames it is waiting for - the replay was
+        // dropped on the floor and the bytes lost with the socket were never
+        // seen again.
+        session->replayDue = {};
+    }
     for (const nlohmann::json& said : *found) {
         const std::uint32_t id = said.value("id", 0U);
         std::shared_ptr<StreamEntry> entry;
@@ -1254,7 +1271,8 @@ void Gateway::onResume(const std::shared_ptr<Session>& session,
             out->send(encode(FrameType::eStreamData, id, again.data() + at, piece));
         }
     }
-    replayDone(session);
+    // What waited for the replay goes out behind it.
+    afterReplay(session);
 }
 
 void Gateway::onAttach(const http::SocketPtr& socket, const Frame& frame)

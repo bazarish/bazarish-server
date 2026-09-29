@@ -33,6 +33,9 @@ namespace {
 
 constexpr const char* kPath = "/f3a9c2e1b7d4";
 constexpr const char* kToken = "a-static-token";
+// How long after its term a swept session may take to go, since the sweep runs
+// on the status thread's own clock.
+constexpr int kSweepGraceSeconds = 5;
 constexpr std::size_t kDecoyLow = 1024;
 constexpr std::size_t kDecoyHigh = 4096;
 
@@ -225,7 +228,9 @@ int main()
     CHECK(ready["ref"] == 2);
     CHECK(ready["body"]["version"] == kProtocolVersion);
     CHECK(ready["body"]["resumed"] == false);
-    CHECK(ready["body"]["capabilities"]["routerCounters"] == true);
+    // What this gateway's router knows of the network describes that machine
+    // and everyone else on it, so it is not answered and not sent.
+    CHECK(ready["body"]["capabilities"]["routerCounters"] == false);
     CHECK(ready["body"]["capabilities"]["proxy"] == false);
     CHECK(ready["body"]["capabilities"]["offlineKeys"] == false);
     const std::string cookie = ready["body"]["session"];
@@ -314,10 +319,19 @@ int main()
     held.socket->close(websocket::close_code::normal, ignored);
     held.socket.reset();
 
-    std::this_thread::sleep_for(std::chrono::seconds(settings.sessionTtlSeconds + 1));
+    // It is swept without waiting for anybody to connect: a gateway whose only
+    // client has gone would otherwise hold that client's tunnels up until the
+    // next one happened to arrive. What the sweep did is visible on the router
+    // itself - the destinations it was holding for those sessions are gone.
+    const auto sweptBy = std::chrono::steady_clock::now()
+        + std::chrono::seconds(settings.sessionTtlSeconds + kSweepGraceSeconds);
+    while (!router.localDestinations().empty() && std::chrono::steady_clock::now() < sweptBy) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    CHECK(router.localDestinations().empty());
 
-    // The next connection sweeps it: the cookie names nothing, and the client
-    // is told so in one field rather than left to find out.
+    // And the cookie now names nothing: the client is told so in one field
+    // rather than left to find out.
     Dialled after = dial(io, port, kToken, doomed);
     CHECK(after.socket != nullptr);
     const nlohmann::json born = greet(*after.socket);

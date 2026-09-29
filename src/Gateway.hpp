@@ -81,8 +81,9 @@ private:
         const Frame& frame);
     void onStreamCredit(const std::shared_ptr<Session>& session, const http::SocketPtr& socket,
         const Frame& frame);
-    void onStreamEnd(const std::shared_ptr<Session>& session, const http::SocketPtr& socket,
-        const Frame& frame);
+    // An end names only its stream: it is not refused, so there is nothing to
+    // say back on the socket it came in on.
+    void onStreamEnd(const std::shared_ptr<Session>& session, const Frame& frame);
     void onRawSend(const std::shared_ptr<Session>& session, const http::SocketPtr& socket,
         const Frame& frame);
     void fail(const http::SocketPtr& socket, std::uint32_t ref, Fault fault,
@@ -103,6 +104,10 @@ private:
     // control. A destination raised for one transfer has a socket of its own,
     // and everything on it rides that.
     static http::SocketPtr outletFor(const Session& session, const StreamEntry& stream);
+    // Where an answer goes now, which need not be where the question came from:
+    // a dial holds its deadline, and the socket that asked can be gone by then.
+    // Called with the lock held.
+    static http::SocketPtr answerOn(const Session& session, const http::SocketPtr& asked);
     // The control socket has said what it owed (or nothing was owed): what
     // waited for its replay goes out now.
     void replayDone(const std::shared_ptr<Session>& session);

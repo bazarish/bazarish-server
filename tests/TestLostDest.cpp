@@ -96,6 +96,13 @@ int main()
     CHECK(!before->ready());
     CHECK(before->connect("anything.b32.i2p", std::chrono::seconds(1)) == nullptr);
 
+    // Waiting on it is waiting for nothing, and says so at once rather than
+    // holding the caller for a deadline meant for tunnels that are still being
+    // built. A file transfer waits three minutes on one of these.
+    const auto asked = std::chrono::steady_clock::now();
+    CHECK(!before->waitReady(std::chrono::seconds(kWaitSeconds)));
+    CHECK(std::chrono::steady_clock::now() - asked < std::chrono::seconds(1));
+
     // And not a frame was spent on it. Without the reconciliation above, every
     // dial from it is asked for and refused - once per attempt, forever, because
     // a control socket is up and so nothing else ever calls the session dead.

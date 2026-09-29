@@ -122,6 +122,10 @@ written for is a phone's.
   replacements.
 - The cookie lives in memory only. It is a credential with a five minute life,
   and a credential like that has no business in a file.
+- A client that stops its router stops its destinations first, and drops the
+  cookie: the term a session gets is for a connection that broke, not for
+  somebody who has just turned I2P off and would not expect his addresses to
+  stay published and reachable for five minutes more.
 
 ## Sockets
 
@@ -184,13 +188,18 @@ old one.
   transfer stopped.
 - **A realtime endpoint** whose socket drops has its datagrams dropped until the
   client attaches a new one. Audio that arrives late has already been played
-  past, and putting it behind a file to arrive later still helps nobody.
+  past, and putting it behind a file to arrive later still helps nobody. The
+  client attaches one again by itself, without being asked and without being
+  told the lane went: it owes itself a lane for every destination that asked for
+  one, whether the lane died or never opened, and a lane nobody takes again is a
+  call that is silent for the rest of its life.
 - **The main socket** dropping costs the session nothing while a flow socket is
   still up: the session lives while **any** socket is attached, and the five
   minutes begin when the last one drops.
 
 A client may hold `kMaxSocketsPerSession` at once; beyond that the gateway
-answers `refused`. A data frame for a flow that is not attached to the socket it
+answers `refused` - and the destination that was refused a lane keeps asking for
+one, so it gets its own queue as soon as there is room. A data frame for a flow that is not attached to the socket it
 arrived on is refused with `wrong-lane` rather than quietly carried: a lane that
 works by accident is one that stops working under load, which is exactly when it
 was supposed to matter.
@@ -352,7 +361,7 @@ The client sends `hello` as its first frame. The gateway answers `ready`:
 {
   "version": 1,
   "i2pd": "2.61.0",
-  "capabilities": { "routerCounters": true, "destinationCounters": true,
+  "capabilities": { "routerCounters": false, "destinationCounters": true,
                     "netDbSample": false, "proxy": false, "offlineKeys": false },
   "session": "<cookie>",
   "resumed": true,
@@ -392,9 +401,11 @@ side reports whether it has finished sending, along with how much it has
 received.
 
 Datagrams are not replayed. They are best effort by construction, and what was
-in flight when the socket died is simply lost. What the gateway received for an
-endpoint while nobody was attached is delivered after the resume, up to
-`kDatagramQueue` per endpoint, oldest dropped.
+in flight when the socket died is simply lost. Nothing is held for an endpoint
+whose lane is away either: a datagram that arrives while there is nowhere to put
+it is dropped, because audio kept back and delivered late has been played past
+already. `kDatagramQueue` bounds what the receiving client holds for a reader
+that has not come for it yet, oldest dropped.
 
 ### Why counts and not acknowledgements
 
@@ -425,6 +436,13 @@ the next control socket with **the same `ref`**. Identifiers are never reused
 inside a session, so a `ref` is an idempotency key that costs nothing to have:
 the gateway keeps what it answered for the session's life, and a repeat gets the
 recorded answer rather than a second endpoint.
+
+A dial is the case where there is no answer to record yet: it may hold a minute
+of deadline, and a socket can die under it. A repeat that names a dial still
+running is not answered twice and does not start a second one - it is dropped,
+and the dial that is already running answers once, on whatever socket the
+session has by then. Two dials behind one identifier would be two streams
+wearing it, which is two sets of bytes arriving as one.
 
 **Everything the gateway pushes** needs no replay at all, because `ready`
 carries the whole picture: the endpoints that exist and the streams that exist.
@@ -499,12 +517,15 @@ not in the netDb yet is a reason to try again, not a reason to fail.
 
 The dial ends in `stream-opened`, or in `stream-reset` with `unreachable`,
 `timeout` or `refused`. A dial in flight when the socket drops keeps going: the
-deadline belongs to the session, not to the connection.
+deadline belongs to the session, not to the connection, and its answer goes out
+on the socket the session has when it is ready rather than the one that asked.
 
 An endpoint created with `published: true` accepts callers. The gateway pushes
 `stream-inbound` with an odd identifier of its own as soon as a peer connects,
 and the stream is live from that moment; the client's `accept()` hands out what
-it has been pushed. A client holding more than `kInboundQueue` unaccepted
+it has been pushed. The push waits for a control socket if there is none at that
+moment - the client replaces its own on purpose, and a caller nobody is told
+about is a caller whose far side waits out its deadline for nothing. A client holding more than `kInboundQueue` unaccepted
 streams on one endpoint resets the oldest.
 
 ### Flow control
@@ -706,6 +727,12 @@ gateway, which is the one thing the secret path is for.
 An operation the gateway cannot perform is an error. It is never a zero, an
 empty list or a quiet success: a transport that hides what it did not do is
 worse than one that cannot do it.
+
+An end is the exception, and not because it is convenient: a `stream-close` or
+`stream-reset` naming a stream the gateway has already retired says exactly what
+the gateway already did. The far side ended and the client is saying so a moment
+later, or a dial never landed and the client is closing what was never opened.
+Both sides agree, so there is nothing to refuse.
 
 ## Constants
 

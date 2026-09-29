@@ -11,6 +11,7 @@
 #include <deque>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -60,6 +61,11 @@ public:
     std::chrono::steady_clock::time_point replayDue{};
     std::map<std::uint32_t, std::shared_ptr<EndpointEntry>> endpoints;
     std::map<std::uint32_t, std::shared_ptr<StreamEntry>> streams;
+    // Dials this session has running. A client re-sends a request its socket
+    // died under, with the same reference; until the dial answers there is
+    // nothing yet to answer the repeat from, and starting a second dial would
+    // put two streams behind one identifier.
+    std::set<std::uint32_t> dialling;
 
 private:
     std::string cookie_;
@@ -88,6 +94,9 @@ public:
     // and hands them back: what they hold has to be stopped, and only the
     // caller knows how.
     std::vector<std::shared_ptr<Session>> sweep(std::int64_t now);
+    // The same, for all of them at once: what a daemon on its way out has to
+    // stop before it takes away the lock they are held under.
+    std::vector<std::shared_ptr<Session>> drain();
 
     std::size_t size() const { return sessions_.size(); }
 

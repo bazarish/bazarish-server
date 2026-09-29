@@ -6,8 +6,10 @@
 
 #include <bazarish/I2p.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <functional>
+#include <memory>
 #include <thread>
 #include <filesystem>
 #include <string>
@@ -166,6 +168,30 @@ int main()
         tail.append(buffer.data(), read);
     }
     CHECK(tail == last);
+
+    // A destination that is stopped ends the reads on it. The engine in this
+    // process does that with one flag its streams share; a borrowed destination
+    // has to be told, and a reader that is not told waits for bytes from an
+    // address nobody operates any more.
+    const std::unique_ptr<i2p::Stream> second
+        = his->connect(host, std::chrono::seconds(kWaitSeconds));
+    CHECK(second != nullptr);
+    std::string another;
+    const std::unique_ptr<i2p::Stream> taken
+        = hers->accept(another, std::chrono::seconds(kWaitSeconds));
+    CHECK(taken != nullptr);
+    std::atomic<bool> ended{false};
+    std::thread reader([&]() {
+        std::vector<char> idle(64);
+        try {
+            (void)taken->readSome(idle.data(), idle.size());
+        } catch (const std::exception&) {
+        }
+        ended.store(true);
+    });
+    hers->stop();
+    CHECK(waitFor([&]() { return ended.load(); }));
+    reader.join();
 
     // Nothing was refused along the way. A test that passes while the gateway
     // is turning frames away is a test that proves less than it looks.

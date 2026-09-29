@@ -114,12 +114,24 @@ int main()
     std::string got;
     std::vector<char> buffer(4096);
     in->setReadTimeout(std::chrono::seconds(kWaitSeconds));
-    while (got.size() < sent.size()) {
-        const std::size_t read = in->readSome(buffer.data(), buffer.size());
-        if (read == 0) {
-            break;
+    try {
+        while (got.size() < sent.size()) {
+            const std::size_t read = in->readSome(buffer.data(), buffer.size());
+            if (read == 0) {
+                break;
+            }
+            got.append(buffer.data(), read);
         }
-        got.append(buffer.data(), read);
+    } catch (const std::exception& error) {
+        // A stall that says nothing cannot be chased. What splits the case in
+        // half is whether the sender still holds the bytes - then it is waiting
+        // for a window - or has handed them over, which puts them at the
+        // gateway. The check below turns this into an ordinary failure.
+        std::printf("stalled: %s\n  got %zu of %zu, sender holds %zu, rejoins %zu,"
+                    " refusals %zu, sockets %zu\n",
+            error.what(), got.size(), sent.size(), out->pendingBytes(), gateway.rejoins(),
+            gateway.refusals(), gateway.sockets());
+        std::fflush(stdout);
     }
     CHECK(got.size() == sent.size());
     CHECK(got == sent);

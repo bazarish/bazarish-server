@@ -613,6 +613,7 @@ void Gateway::onEndpointCreate(const std::shared_ptr<Session>& session,
     // The client sends no key and holds none: it says what the destination is
     // for, and the gateway mints, builds and publishes it.
     i2p::EndpointConfig config{router_.generateKeys()};
+    config.traffic = kind == "raw" ? i2p::Traffic::eRaw : i2p::Traffic::eStream;
     config.privacy = privacy.value();
     const int asked = static_cast<int>(body.value("tunnels", i2p::kDefaultTunnelQuantity));
     config.tunnelQuantity = std::clamp(asked, 1, i2p::kMaxTunnelQuantity);
@@ -718,6 +719,12 @@ void Gateway::onRawSend(const std::shared_ptr<Session>& session, const http::Soc
         from = endpointOf(*session, frame.ref);
         if (from == nullptr) {
             fail(socket, frame.ref, Fault::eNoEndpoint, "no such destination on this session");
+            return;
+        }
+        if (!from->raw) {
+            // The mirror of what a dial from a raw destination gets: the two
+            // kinds are exclusive, and this one has no datagram half.
+            fail(socket, frame.ref, Fault::eUnsupported, "that destination carries streams");
             return;
         }
         peer = localFor(sent.host, peerSession);

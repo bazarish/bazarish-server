@@ -206,6 +206,7 @@ std::shared_ptr<i2p::Endpoint> mediaOn(i2p::Router& router)
     i2p::EndpointConfig config{router.generateKeys()};
     config.privacy = i2p::Privacy::eMinimal;
     config.published = true;
+    config.traffic = i2p::Traffic::eRaw;
     config.realtime = true;
     config.label = "Call media";
     return router.createEndpoint(config);
@@ -265,6 +266,13 @@ int main()
     CHECK(mediaFlows(*his, *hers));
     CHECK(mediaFlows(*hers, *his));
 
+    // What it carries is what it was made for. A destination opened for
+    // datagrams has no streaming half, and says so where the caller is rather
+    // than a deadline later at the far end.
+    CHECK_THROWS(his->connect(hers->routingHost(), std::chrono::seconds(1)));
+    std::string nobody;
+    CHECK_THROWS(his->accept(nobody, std::chrono::seconds(1)));
+
     // A payload no frame can carry is dropped where it is written. The router
     // drops one it cannot carry and says nothing; a send that threw would take
     // the caller's thread with it, and one written onto the lane would take the
@@ -291,6 +299,19 @@ int main()
     CHECK(!hers->lost());
     CHECK(mediaFlows(*his, *hers));
     CHECK(mediaFlows(*hers, *his));
+
+    // What it carries and which lane it belongs on are two questions. A
+    // destination that says datagrams and asks for no media lane gets a
+    // destination for datagrams, which is what a client could not ask for while
+    // the kind was read off the lane hint.
+    i2p::EndpointConfig quiet{bob.generateKeys()};
+    quiet.privacy = i2p::Privacy::eMinimal;
+    quiet.published = true;
+    quiet.traffic = i2p::Traffic::eRaw;
+    quiet.realtime = false;
+    const std::shared_ptr<i2p::Endpoint> aside = bob.createEndpoint(quiet);
+    CHECK(mediaFlows(*aside, *hers));
+    aside->stop();
 
     // Nothing was refused along the way. A test that passes while the gateway
     // turns frames away proves less than it looks.

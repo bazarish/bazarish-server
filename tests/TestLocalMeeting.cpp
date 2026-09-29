@@ -133,6 +133,11 @@ int main()
     // The gateway can name the caller because it minted his destination.
     CHECK(!caller.empty());
 
+    // And the mirror: a destination opened for streams has no datagram half.
+    const std::string noise = "media";
+    CHECK_THROWS(his->sendRawDatagram(host, noise.data(), noise.size()));
+    CHECK_THROWS(hers->receiveRawDatagram(std::chrono::milliseconds(10)));
+
     // Bytes both ways, unchanged.
     const std::string question = "who is there";
     out->writeAll(question.data(), question.size());

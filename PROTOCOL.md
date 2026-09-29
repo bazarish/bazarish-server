@@ -478,6 +478,12 @@ destination's base64, only the host it gives a peer.
 Repliable datagrams are not in version 1. Nothing in the client sends or
 receives one, and a kind that no caller has is a kind that cannot be tested.
 
+On the client's side of the seam this is `EndpointConfig::traffic`, said by
+whoever raises the destination. It is not read off `realtime`: that names the
+lane a destination belongs on, which is a different question from what rides it,
+and the two coinciding in one client today is not a reason to make one speak for
+the other.
+
 `endpoint-create` deliberately does **not** carry a label or an owner. Those
 name what a destination is for and whose it is; they exist for a status view on
 the client's own screen, the gateway has no use for them, and a gateway that is

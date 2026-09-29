@@ -64,8 +64,38 @@ int main(const int argc, const char** argv)
     std::printf("[smoke] the gateway's router knows %d routers, %d floodfills\n",
         router.knownRouters(), router.floodfills());
 
+    // The media leg, which is what a call rides: destinations that carry raw
+    // datagrams, each with a socket of its own, and a datagram each way. Both
+    // are this gateway's own, so it hands the bytes across inside itself - what
+    // this proves is the kind, the lane and the frames over the real front,
+    // not I2P.
+    const auto media = [&router]() {
+        i2p::EndpointConfig config{router.generateKeys()};
+        config.privacy = i2p::Privacy::eMinimal;
+        config.published = true;
+        config.traffic = i2p::Traffic::eRaw;
+        config.realtime = true;
+        config.label = "Call media";
+        return router.createEndpoint(config);
+    };
+    const std::shared_ptr<i2p::Endpoint> caller = media();
+    const std::shared_ptr<i2p::Endpoint> callee = media();
+    const std::string audio = "twenty milliseconds of nothing";
+    caller->sendRawDatagram(callee->routingHost(), audio.data(), audio.size());
+    const bool heard
+        = callee->receiveRawDatagram(std::chrono::milliseconds(5000)).size() == audio.size();
+    callee->sendRawDatagram(caller->routingHost(), audio.data(), audio.size());
+    const bool answered
+        = caller->receiveRawDatagram(std::chrono::milliseconds(5000)).size() == audio.size();
+    std::printf("[smoke] media both ways: %s\n",
+        heard && answered ? "heard" : (heard ? "one way only" : "nothing arrived"));
+
+    caller->stop();
+    callee->stop();
     mine->stop();
     router.stop();
-    std::printf("[smoke] %s\n", ready ? "ok" : "reachable, but its router has no tunnels yet");
-    return ready ? 0 : 1;
+    const bool ok = ready && heard && answered;
+    std::printf("[smoke] %s\n",
+        ok ? "ok" : (ready ? "tunnels, but the media leg did not carry" : "no tunnels"));
+    return ok ? 0 : 1;
 }

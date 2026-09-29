@@ -81,12 +81,23 @@ int main(const int argc, const char** argv)
     const std::shared_ptr<i2p::Endpoint> caller = media();
     const std::shared_ptr<i2p::Endpoint> callee = media();
     const std::string audio = "twenty milliseconds of nothing";
-    caller->sendRawDatagram(callee->routingHost(), audio.data(), audio.size());
-    const bool heard
-        = callee->receiveRawDatagram(std::chrono::milliseconds(5000)).size() == audio.size();
-    callee->sendRawDatagram(caller->routingHost(), audio.data(), audio.size());
-    const bool answered
-        = caller->receiveRawDatagram(std::chrono::milliseconds(5000)).size() == audio.size();
+    // Asked the way a call asks: a short burst, and the first frame back is
+    // enough. One datagram sent the instant a destination is made races its own
+    // lane onto the wire, and a datagram that finds no lane is dropped by
+    // design - which is a fact about media and not a fault to report.
+    constexpr int kBurst = 20;
+    constexpr std::chrono::milliseconds kBurstGap{50};
+    const auto carries = [&audio](i2p::Endpoint& from, i2p::Endpoint& to) {
+        for (int frame = 0; frame < kBurst; ++frame) {
+            from.sendRawDatagram(to.routingHost(), audio.data(), audio.size());
+            if (to.receiveRawDatagram(kBurstGap).size() == audio.size()) {
+                return true;
+            }
+        }
+        return false;
+    };
+    const bool heard = carries(*caller, *callee);
+    const bool answered = carries(*callee, *caller);
     std::printf("[smoke] media both ways: %s\n",
         heard && answered ? "heard" : (heard ? "one way only" : "nothing arrived"));
 

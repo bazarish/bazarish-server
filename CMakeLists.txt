@@ -17,10 +17,8 @@ set(BAZARISH_COMMON_DIR "${_bazarish_common_default}" CACHE PATH
     "Path to the bazarish common library repository")
 if(NOT TARGET bazarish_common)
     # A gateway runs a router and serves clients; it is not a client itself, so
-    # the client core in common stays out of this build. The embedded engine is
-    # the whole point of the daemon and is required.
+    # the client core in common stays out of this build.
     set(BAZARISH_WITH_CLIENT OFF CACHE BOOL "Build the client core library" FORCE)
-    set(BAZARISH_WITH_I2PD ON CACHE BOOL "Build the embedded libi2pd_bazarish target" FORCE)
     add_subdirectory(${BAZARISH_COMMON_DIR} bazarish-common)
 endif()
 

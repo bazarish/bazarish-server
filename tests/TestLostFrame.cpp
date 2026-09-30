@@ -90,12 +90,12 @@ int main()
     reader.start();
     writer.start();
 
-    i2p::EndpointConfig serving{reader.generateKeys()};
+    i2p::EndpointConfig serving;
     serving.privacy = i2p::Privacy::eMinimal;
     serving.published = true;
     const std::shared_ptr<i2p::Endpoint> theirs = reader.createEndpoint(serving);
 
-    i2p::EndpointConfig dialling{writer.generateKeys()};
+    i2p::EndpointConfig dialling;
     dialling.privacy = i2p::Privacy::eMinimal;
     dialling.published = false;
     const std::shared_ptr<i2p::Endpoint> mine = writer.createEndpoint(dialling);

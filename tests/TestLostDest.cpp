@@ -74,7 +74,7 @@ int main()
     i2p::Router client(borrowedFrom(port));
     client.start();
 
-    i2p::EndpointConfig wanted{client.generateKeys()};
+    i2p::EndpointConfig wanted;
     wanted.privacy = i2p::Privacy::eMinimal;
     wanted.published = false;
     const std::shared_ptr<i2p::Endpoint> before = client.createEndpoint(wanted);
@@ -110,7 +110,7 @@ int main()
 
     // A destination raised now belongs to the session that is actually there,
     // and carries a stream like any other.
-    i2p::EndpointConfig serving{client.generateKeys()};
+    i2p::EndpointConfig serving;
     serving.privacy = i2p::Privacy::eMinimal;
     serving.published = true;
     const std::shared_ptr<i2p::Endpoint> hers = client.createEndpoint(serving);

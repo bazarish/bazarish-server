@@ -506,16 +506,20 @@ endpoint is finished with, and its identifier is not reused.
 
 ### What this costs the client's seam
 
-`EndpointConfig` carries `Keys` today, and under a gateway there are none to
-carry. The keys become optional - absent means "the transport mints this" - and
-the six places in the client that create a destination stop minting one first.
-They are all one-time destinations and none of them looks at the key
-afterwards, so nothing else moves.
+`EndpointConfig::keys` is optional and absent means "the transport mints this".
+A client leaves it empty everywhere: every destination it raises is one-time and
+none of them looks at the key afterwards. Under a gateway there is no other
+choice, and a key handed to this backend is **refused** rather than ignored - one
+that travelled would break the only rule the trust model has, and one quietly
+ignored would leave the caller believing an address is its key's.
 
-On this backend `Router::generateKeys()`, `Endpoint::privateBlob()` and
-`Endpoint::publicBase64()` throw. That is not a gap to be papered over with an
-empty string: a caller that wants the private key of a destination it does not
-hold is a caller that is about to be wrong about something.
+There is no `Router::generateKeys()`. A caller that wants a key of its own - the
+account's own destination, which belongs to the user and is never operated here -
+mints it with `Keys::generate()`, which needs no router. On this backend
+`Endpoint::privateBlob()` and `Endpoint::publicBase64()` throw. That is not a gap
+to be papered over with an empty string: a caller that wants the private key of a
+destination it does not hold is a caller that is about to be wrong about
+something.
 
 ## Streams
 
@@ -781,12 +785,10 @@ Both sides agree, so there is nothing to refuse.
 
 1. `Backend::eGateway` beside `eEmbedded` and `eSam`, and `RouterConfig` gains
    the gateway's secret URL, its SPKI pin, its SNI and its token.
-2. `generateKeys()` on this backend mints locally and the transport does not
-   use it: the gateway mints the destination's own and never sends it. The key
-   is minted because every caller mints before it creates, and it costs one
-   keygen. `privateBlob()` and `publicBase64()` throw rather than answer with
-   something empty, which is where an assumption that the address came from
-   those keys is caught.
+2. Nothing client-side mints a key for a destination: `EndpointConfig::keys`
+   stays empty and the transport mints. `privateBlob()` and `publicBase64()`
+   throw rather than answer with something empty, which is where an assumption
+   that the address came from a key of the caller's is caught.
 3. `common/src/I2pGateway.cpp`: `RouterBackend`, `EndpointBackend` and
    `StreamBackend` over the session's sockets, built by `makeGatewayRouter`. It
    attaches a socket to every realtime endpoint and every file transfer, reuses

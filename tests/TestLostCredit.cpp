@@ -116,12 +116,12 @@ int main()
     sender.start();
     receiver.start();
 
-    i2p::EndpointConfig serving{receiver.generateKeys()};
+    i2p::EndpointConfig serving;
     serving.privacy = i2p::Privacy::eMinimal;
     serving.published = true;
     const std::shared_ptr<i2p::Endpoint> theirs = receiver.createEndpoint(serving);
 
-    i2p::EndpointConfig dialling{sender.generateKeys()};
+    i2p::EndpointConfig dialling;
     dialling.privacy = i2p::Privacy::eMinimal;
     dialling.published = false;
     const std::shared_ptr<i2p::Endpoint> mine = sender.createEndpoint(dialling);

@@ -171,13 +171,25 @@ int main()
 
     // The gateway mints the destination: the client sends no key and gets back
     // an address.
-    const std::shared_ptr<i2p::Endpoint> mine = borrowed.createEndpoint(
-        i2p::EndpointConfig{borrowed.generateKeys(), i2p::Privacy::eMinimal, 2,
-            /*published=*/false, "Test", "an account"});
+    i2p::EndpointConfig wanted;
+    wanted.privacy = i2p::Privacy::eMinimal;
+    wanted.tunnelQuantity = 2;
+    wanted.published = false;
+    wanted.label = "Test";
+    wanted.owner = "an account";
+    const std::shared_ptr<i2p::Endpoint> mine = borrowed.createEndpoint(wanted);
     CHECK(mine != nullptr);
     const std::string host = mine->routingHost();
     CHECK(host.size() > 50);
     CHECK(host.find(".b32.i2p") != std::string::npos);
+
+    // And a key of one's own is not something this transport takes: it operates
+    // what it mints, so a key handed to it would either travel - the one thing
+    // the trust model forbids - or be ignored, leaving the caller wrong about
+    // where its address came from.
+    i2p::EndpointConfig ofMyOwn;
+    ofMyOwn.keys = i2p::Keys::generate();
+    CHECK_THROWS(borrowed.createEndpoint(ofMyOwn));
 
     // What the gateway holds it does not hand over, and asking says so rather
     // than answering with something empty.

@@ -97,14 +97,14 @@ int main()
     // Alice publishes an address. Bob dials it. Both are this gateway's own, so
     // nothing goes out to the network: it already knows which destination is
     // which, having minted both.
-    i2p::EndpointConfig serving{alice.generateKeys()};
+    i2p::EndpointConfig serving;
     serving.privacy = i2p::Privacy::eMinimal;
     serving.published = true;
     const std::shared_ptr<i2p::Endpoint> hers = alice.createEndpoint(serving);
     const std::string host = hers->routingHost();
     CHECK(host.find(".b32.i2p") != std::string::npos);
 
-    i2p::EndpointConfig dialling{bob.generateKeys()};
+    i2p::EndpointConfig dialling;
     dialling.privacy = i2p::Privacy::eMinimal;
     dialling.published = false;
     // Raised for one transfer, so it takes a socket of its own at creation and

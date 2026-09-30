@@ -629,8 +629,8 @@ void Gateway::onEndpointCreate(const std::shared_ptr<Session>& session,
     }
 
     // The client sends no key and holds none: it says what the destination is
-    // for, and the gateway mints, builds and publishes it.
-    i2p::EndpointConfig config{router_.generateKeys()};
+    // for, and the engine here mints, builds and publishes it.
+    i2p::EndpointConfig config;
     config.traffic = kind == "raw" ? i2p::Traffic::eRaw : i2p::Traffic::eStream;
     config.privacy = privacy.value();
     const int asked = static_cast<int>(body.value("tunnels", i2p::kDefaultTunnelQuantity));

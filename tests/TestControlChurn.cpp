@@ -79,12 +79,12 @@ int main()
 
     // Neither destination is raised for a transfer, so the stream rides the
     // control socket - which is the one being replaced underneath it.
-    i2p::EndpointConfig serving{alice.generateKeys()};
+    i2p::EndpointConfig serving;
     serving.privacy = i2p::Privacy::eMinimal;
     serving.published = true;
     const std::shared_ptr<i2p::Endpoint> hers = alice.createEndpoint(serving);
 
-    i2p::EndpointConfig dialling{bob.generateKeys()};
+    i2p::EndpointConfig dialling;
     dialling.privacy = i2p::Privacy::eMinimal;
     dialling.published = false;
     const std::shared_ptr<i2p::Endpoint> his = bob.createEndpoint(dialling);

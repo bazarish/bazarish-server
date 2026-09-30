@@ -61,7 +61,7 @@ bool waitFor(const std::function<bool()>& done)
 
 std::shared_ptr<i2p::Endpoint> mediaOn(i2p::Router& router)
 {
-    i2p::EndpointConfig config{router.generateKeys()};
+    i2p::EndpointConfig config;
     config.privacy = i2p::Privacy::eMinimal;
     config.published = true;
     config.traffic = i2p::Traffic::eRaw;
@@ -162,7 +162,7 @@ int main()
     // destination that says datagrams and asks for no media lane gets a
     // destination for datagrams, which is what a client could not ask for while
     // the kind was read off the lane hint.
-    i2p::EndpointConfig quiet{bob.generateKeys()};
+    i2p::EndpointConfig quiet;
     quiet.privacy = i2p::Privacy::eMinimal;
     quiet.published = true;
     quiet.traffic = i2p::Traffic::eRaw;

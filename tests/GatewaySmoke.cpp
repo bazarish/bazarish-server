@@ -50,7 +50,7 @@ int main(const int argc, const char** argv)
     std::printf("[smoke] session open, counters %s\n",
         router.capabilities().routerCounters ? "answered" : "refused");
 
-    i2p::EndpointConfig endpointConfig{router.generateKeys()};
+    i2p::EndpointConfig endpointConfig;
     endpointConfig.privacy = i2p::Privacy::eMinimal;
     endpointConfig.published = true;
     const std::shared_ptr<i2p::Endpoint> mine = router.createEndpoint(endpointConfig);
@@ -70,7 +70,7 @@ int main(const int argc, const char** argv)
     // this proves is the kind, the lane and the frames over the real front,
     // not I2P.
     const auto media = [&router]() {
-        i2p::EndpointConfig config{router.generateKeys()};
+        i2p::EndpointConfig config;
         config.privacy = i2p::Privacy::eMinimal;
         config.published = true;
         config.traffic = i2p::Traffic::eRaw;

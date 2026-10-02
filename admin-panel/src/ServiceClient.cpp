@@ -13,7 +13,6 @@
 
 #include <chrono>
 #include <map>
-#include <ctime>
 
 namespace bazarish::admin {
 
@@ -25,44 +24,6 @@ using bazarish::nowSeconds;
 // that takes this long is a service that is down, not a busy one.
 constexpr int kConnectTimeoutSeconds = 2;
 constexpr int kExchangeTimeoutSeconds = 3;
-// The port a service URL means when it names none.
-constexpr int kDefaultHttpPort = 80;
-constexpr int kDefaultHttpsPort = 443;
-
-// Where a service URL points: the client takes a host and a port, not a URL.
-// A gateway also carries the path it answers at, and may be reached over TLS -
-// it is the one service that need not be on this machine.
-struct Address {
-    std::string host;
-    int port = kDefaultHttpPort;
-    std::string path;
-    bool tls = false;
-};
-
-Address parseUrl(const std::string& url)
-{
-    std::string rest = url;
-    Address address;
-    if (const std::string scheme = "https://"; rest.rfind(scheme, 0) == 0) {
-        rest = rest.substr(scheme.size());
-        address.tls = true;
-        address.port = kDefaultHttpsPort;
-    } else if (const std::string plain = "http://"; rest.rfind(plain, 0) == 0) {
-        rest = rest.substr(plain.size());
-    }
-    if (const auto slash = rest.find('/'); slash != std::string::npos) {
-        address.path = rest.substr(slash);
-        rest = rest.substr(0, slash);
-    }
-    if (const auto colon = rest.find(':'); colon == std::string::npos) {
-        address.host = rest;
-    } else {
-        address.host = rest.substr(0, colon);
-        address.port = std::stoi(rest.substr(colon + 1));
-    }
-    return address;
-}
-
 bazarish::http::ClientOptions clientOptions()
 {
     bazarish::http::ClientOptions options;
@@ -78,9 +39,10 @@ bazarish::http::ClientOptions clientOptions()
 bazarish::http::ClientResponse call(const ServiceEntry& service, const Identity& identity,
     const std::string& method, const std::string& target, const std::string& body)
 {
-    const Address address = parseUrl(service.url);
-    // A gateway answers under a path nobody guesses, and the signature has to
-    // cover the path the service will verify - which is the whole of it.
+    // A gateway is the one service that need not be on this machine: it answers
+    // under a path nobody guesses, and may be reached over TLS. The signature has
+    // to cover the path the service will verify - which is the whole of it.
+    const bazarish::http::Url address = bazarish::http::parseUrl(service.url);
     const std::string full = address.path + target;
     const std::string path = full.substr(0, full.find('?'));
     const auth::Headers signature = auth::signRequest(
@@ -114,8 +76,8 @@ std::string errorMessage(const bazarish::http::ClientResponse& result)
             return body.at("error").at("message").get<std::string>();
         }
     } catch (const std::exception&) {
-        // Not an error envelope: the HTTP status below is the whole answer, so
-        // nothing is lost - the parse failure IS the information.
+        // error-hiding: allowed - not an error envelope, so the HTTP status below is
+        // the whole answer and the parse failure IS the information.
     }
     return "HTTP " + std::to_string(result.status);
 }
@@ -153,7 +115,6 @@ HealthResult probeHealth(const ServiceEntry& service, const Identity& identity)
         out.requestsLastHour = body.value("requestsLastHour", static_cast<std::uint64_t>(0));
         out.requestsLastDay = body.value("requestsLastDay", static_cast<std::uint64_t>(0));
         out.inFlight = body.value("inFlight", static_cast<std::uint64_t>(0));
-        // The server adds what only it has: warm destinations to send from.
         out.reachable = true;
     } catch (const std::exception& error) {
         out.error = std::string("bad health body: ") + error.what();

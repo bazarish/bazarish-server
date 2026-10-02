@@ -6,14 +6,13 @@
 #include "PanelSettings.hpp"
 #include "SessionStore.hpp"
 
+#include <bazarish/Restart.hpp>
 #include <bazarish/WebAssets.hpp>
 
-#include <condition_variable>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
-#include <cstdint>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <string>
 
@@ -55,15 +54,14 @@ public:
     HttpApi(const HttpApi&) = delete;
     HttpApi& operator=(const HttpApi&) = delete;
 
-    bool listen(const std::string& host, int port);
-    int bindToAnyPort(const std::string& host);
-    bool listenAfterBind();
-    bool isRunning() const;
+    // Binds and starts serving (port 0 lets the kernel pick). Returns the bound
+    // port, 0 when the socket could not be taken.
+    int bind(const std::string& host, int port);
+    // Parks the caller until stop(). The engine serves on its own threads.
+    void wait();
     void stop();
 
 private:
-    // Binds on a chosen port (0 lets the kernel pick) and starts serving.
-    int bindToAnyPort(const std::string& host, int port);
     void registerRoutes();
     // The service of a kind inside one fleet, or null when that fleet has none.
     // A fleet named by nothing is the first one, which is what a single
@@ -81,12 +79,7 @@ private:
     SessionStore sessions_;
     WebAssets assets_;
     std::unique_ptr<bazarish::http::Server> http_;
-    bool running_ = false;
-
-    // listenAfterBind() parks the caller's thread here until stop() releases it.
-    std::mutex stopMutex_;
-    std::condition_variable stopCv_;
-    bool stopping_ = false;
+    bazarish::StopGate stopGate_;
 };
 
 }  // namespace bazarish::admin

@@ -15,12 +15,10 @@ namespace bazarish::admin {
 // The panel login policy: a challenge it issued, a valid signature over it, and a
 // signer that matches one of the configured admin identities.
 //
-// The challenge store and the wire contract are the common ones every portal
-// uses, so what the panel asks an operator to sign is what a client already
-// knows how to show: base64(JSON {v, nonce, ts, consumer, tag}), naming this
-// panel, signed as the body of the canonical BZ-LOGIN request. The secret
-// binding those challenges is minted per run - a restart simply invalidates
-// outstanding ones, and there is nothing to configure or to leak.
+// The challenge store and the wire contract are the common ones every portal uses,
+// so what the panel asks an operator to sign is what a client already knows how to
+// show. The secret binding those challenges is minted per run: a restart
+// invalidates outstanding ones, and there is nothing to configure or to leak.
 class AdminAuth {
 public:
     explicit AdminAuth(std::shared_ptr<PanelSettings> settings);

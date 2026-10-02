@@ -26,20 +26,6 @@ const char* const kListenHostKey = "host";
 const char* const kListenPortKey = "port";
 const char* const kFleetsKey = "fleets";
 
-nlohmann::json fleetsJson(const std::vector<Fleet>& fleets)
-{
-    nlohmann::json list = nlohmann::json::array();
-    for (const Fleet& fleet : fleets) {
-        nlohmann::json services = nlohmann::json::array();
-        for (const ServiceEntry& service : fleet.services) {
-            services.push_back({{"name", service.name}, {"kind", service.kind},
-                {"url", service.url}, {"token", service.token}});
-        }
-        list.push_back({{"name", fleet.name}, {"services", services}});
-    }
-    return list;
-}
-
 }  // namespace
 
 PanelSettings::PanelSettings(fs::path configPath, Config initial)
@@ -86,24 +72,15 @@ void PanelSettings::persist(const Config& values) const
         throw std::runtime_error("this panel was started without a config file to write to");
     }
     ConfigFile file(configPath_);
-    if (values.admins != values_.admins) {
-        file.set({kAdminKey}, values.admins);
-    }
-    if (values.consumer.name != values_.consumer.name) {
-        file.set({kConsumerKey, kConsumerNameKey}, values.consumer.name);
-    }
-    if (values.consumer.place != values_.consumer.place) {
-        file.set({kConsumerKey, kConsumerPlaceKey}, values.consumer.place);
-    }
-    if (values.consumer.role != values_.consumer.role) {
-        file.set({kConsumerKey, kConsumerRoleKey}, values.consumer.role);
-    }
-    if (values.listenHost != values_.listenHost) {
-        file.set({kListenKey, kListenHostKey}, values.listenHost);
-    }
-    if (values.listenPort != values_.listenPort) {
-        file.set({kListenKey, kListenPortKey}, values.listenPort);
-    }
+    setIfChanged(file, {kAdminKey}, values.admins, values_.admins);
+    setIfChanged(file, {kConsumerKey, kConsumerNameKey}, values.consumer.name,
+        values_.consumer.name);
+    setIfChanged(file, {kConsumerKey, kConsumerPlaceKey}, values.consumer.place,
+        values_.consumer.place);
+    setIfChanged(file, {kConsumerKey, kConsumerRoleKey}, values.consumer.role,
+        values_.consumer.role);
+    setIfChanged(file, {kListenKey, kListenHostKey}, values.listenHost, values_.listenHost);
+    setIfChanged(file, {kListenKey, kListenPortKey}, values.listenPort, values_.listenPort);
     if (values.fleets != values_.fleets) {
         file.set({kFleetsKey}, fleetsJson(values.fleets));
     }

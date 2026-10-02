@@ -135,12 +135,13 @@ int main(const int argc, const char** argv)
     bazarish::RestartSwitch restart([&api]() { api->stop(); });
     *restartHook = [&restart]() { restart.request(); };
 
-    if (!api->listen(host, port)) {
+    if (api->bind(host, port) <= 0) {
         if (restart.requested()) {
             return bazarish::kRestartExitCode;
         }
         std::fprintf(stderr, "failed to listen on %s:%d\n", host.c_str(), port);
         return 1;
     }
+    api->wait();
     return restart.requested() ? bazarish::kRestartExitCode : 0;
 }

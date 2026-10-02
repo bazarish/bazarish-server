@@ -9,8 +9,8 @@ Access is restricted to the configured Bazarish identities. There are no passwor
 and no account database: the operator places their own fingerprint in the
 configuration, and signing in consists of signing a challenge with the client.
 
-1. Take the account's fingerprint from the client and enter it in the
-   configuration field `admin`.
+1. Take the account's fingerprint from the client (its signature window shows it)
+   and enter it in the configuration field `admin`.
 2. Open `/login`; the page presents a challenge.
 3. Sign the challenge in the client, which is where the key is.
 4. Submit the resulting blob. The panel verifies the hybrid signature **locally**
@@ -54,10 +54,11 @@ repository) - edit them to restyle the panel, then restart it.
 
 The panel is a co-located operations tool. It reaches services on their private
 listen addresses; `/healthz` and the operator endpoints are not exposed through
-the facade or over I2P. The facade's own `/healthz` is on the private socket its
-`opsListen` opens, never on its client-facing one - there it would answer a
-caller who does not know the secret base path - so the panel is configured with
-that ops address, not with the published facade URL.
+the facade or over I2P. Everything the facade answers for an operator - health,
+settings, restart - is on the private socket its `opsListen` opens, never on its
+client-facing one, where any of it would admit a facade is there to a caller who
+does not know the secret base path. So the panel is configured with that ops
+address, not with the published facade URL.
 
 ## Configuration
 
@@ -76,7 +77,7 @@ ctest --test-dir build
 ```
 
 Requires CMake >= 3.20, C++20, OpenSSL >= 3.5. Uses the shared `common` library
-(git submodule at `./common`, or a sibling `../common` checkout in the workspace).
+(the repository's submodule at `./common`).
 
 ## Run
 

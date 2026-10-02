@@ -9,19 +9,13 @@
 
 namespace bazarish::admin {
 
-// The panel's own configuration while it runs, and the writer that puts it back
-// in the file it was read from.
+// The panel's own configuration while it runs, and the writer that puts it back in
+// the file it was read from, one value at a time - so the panel is administered
+// from the panel rather than by editing JSON over SSH.
 //
-// It is the counterpart of the node's settings object: the same discipline (one
-// value at a time, patched into the operator's own file) applied to the panel
-// itself, so the panel can be administered from the panel - who may sign in, the
-// words it signs under, and the deployments it manages - instead of by editing
-// JSON over SSH.
-//
-// Some of what it holds is only read at startup (where it listens, where its
-// state and web files are). Those are kept here too, because an operator looking
-// for a setting should find it in one place; the interface says which ones need
-// a restart, and this class simply writes what it is given.
+// Some of what it holds is only read at startup (where it listens, where its state
+// and web files are). It is kept here anyway, so an operator looking for a setting
+// finds it in one place; this class only writes what it is given.
 class PanelSettings {
 public:
     PanelSettings(std::filesystem::path configPath, Config initial);

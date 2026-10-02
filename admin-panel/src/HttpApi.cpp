@@ -35,6 +35,17 @@ const char* const kCookieName = "adminsession";
 // copies of a cookie line are three places for one of them to lose a flag.
 const char* const kCookieAttributes = "; HttpOnly; SameSite=Strict; Path=/";
 
+void setSessionCookie(http::Response& response, const std::string& token)
+{
+    response.headers["Set-Cookie"] = std::string(kCookieName) + "=" + token + kCookieAttributes;
+}
+
+void clearSessionCookie(http::Response& response)
+{
+    response.headers["Set-Cookie"]
+        = std::string(kCookieName) + "=" + kCookieAttributes + "; Max-Age=0";
+}
+
 void sendHtml(http::Response& response, const std::string& html, const int status = 200)
 {
     response.status = status;
@@ -60,8 +71,8 @@ void sendError(http::Response& response, const int status, const std::string& me
 
 // The one refusal a sign-in page shows. The text is whatever the verifier threw,
 // and a verifier that could not parse what arrived quotes it back - so it is
-// escaped here. It was not, and a challenge field holding markup put that markup
-// in the page, in the panel's own origin, for whoever had been made to post it.
+// escaped: unescaped, a challenge field holding markup would put that markup in
+// the page, in the panel's own origin.
 std::string notice(const std::string& text)
 {
     if (text.empty()) {
@@ -96,6 +107,36 @@ std::string urlEncoded(const std::string& text)
         }
     }
     return out;
+}
+
+// Where each kind of service keeps the two things the panel drives. A kind the
+// panel does not know answers with nothing, which the caller reports.
+std::string settingsPathOf(const std::string& kind)
+{
+    if (kind == bazarish::admin::kServerCoreKind) {
+        return "/v1/messaging/settings";
+    }
+    if (kind == bazarish::admin::kServiceNodeKind) {
+        return "/v1/account/settings";
+    }
+    if (kind == bazarish::admin::kFacadeKind) {
+        return "/settings";
+    }
+    return {};
+}
+
+std::string restartPathOf(const std::string& kind)
+{
+    if (kind == bazarish::admin::kServerCoreKind) {
+        return "/v1/messaging/restart";
+    }
+    if (kind == bazarish::admin::kServiceNodeKind) {
+        return "/v1/account/restart";
+    }
+    if (kind == bazarish::admin::kFacadeKind) {
+        return "/restart";
+    }
+    return {};
 }
 
 std::string humanizeUptime(const std::int64_t seconds)
@@ -158,7 +199,7 @@ std::optional<ServiceEntry> HttpApi::serviceOfKind(
 void HttpApi::proxyToNode(const std::string& fleet, http::Response& response,
     const std::string& method, const std::string& path, const std::string& body)
 {
-    const std::optional<ServiceEntry> node = serviceOfKind(fleet, "service-node");
+    const std::optional<ServiceEntry> node = serviceOfKind(fleet, kServiceNodeKind);
     if (!node.has_value()) {
         sendError(response, 503, "this deployment has no service node the panel can reach");
         return;
@@ -231,9 +272,7 @@ void HttpApi::registerRoutes()
                 return;
             }
             bazarish::log::info("this panel is now administered by {}", fingerprint);
-            const std::string token = sessions_.create(nowSeconds());
-            response.headers["Set-Cookie"]
-                = std::string(kCookieName) + "=" + token + kCookieAttributes;
+            setSessionCookie(response, sessions_.create(nowSeconds()));
             redirectTo(response, "/");
         } catch (const std::exception& error) {
             bazarish::log::warn("panel setup refused: {}", error.what());
@@ -258,9 +297,7 @@ void HttpApi::registerRoutes()
                               const http::Request& request, http::Response& response) {
         try {
             auth_.login(request.param("challenge"), request.param("blob"), nowSeconds());
-            const std::string token = sessions_.create(nowSeconds());
-            response.headers["Set-Cookie"]
-                = std::string(kCookieName) + "=" + token + kCookieAttributes;
+            setSessionCookie(response, sessions_.create(nowSeconds()));
             redirectTo(response, "/");
         } catch (const std::exception& error) {
             bazarish::log::warn("panel sign-in refused: {}", error.what());
@@ -270,8 +307,7 @@ void HttpApi::registerRoutes()
 
     http_->post("/logout", filled([this](const http::Request& request, http::Response& response) {
         sessions_.destroy(request.cookie(kCookieName));
-        response.headers["Set-Cookie"]
-            = std::string(kCookieName) + "=" + kCookieAttributes + "; Max-Age=0";
+        clearSessionCookie(response);
         redirectTo(response, "/login");
     }));
 
@@ -305,12 +341,10 @@ void HttpApi::registerRoutes()
         });
     };
 
-    // Every service probed at once: one service being down must not hold the
-    // page on the ones that are up.
+    // Every service of every deployment probed at once: one being down must not
+    // hold the page on the ones that are up, and an operator watching two servers
+    // wants both on the same screen.
     http_->get("/api/services", api([this](const http::Request&, http::Response& response) {
-        // Every service of every deployment at once: one being down must not hold
-        // the page on the ones that are up, and an operator watching two servers
-        // wants both on the same screen.
         const Config panel = settings_->get();
         std::vector<std::pair<std::string, ServiceEntry>> all;
         for (const Fleet& fleet : panel.fleets) {
@@ -412,7 +446,7 @@ void HttpApi::registerRoutes()
     http_->get("/api/account", api([this](
                                    const http::Request& request, http::Response& response) {
         const std::optional<ServiceEntry> core
-            = serviceOfKind(request.query("fleet"), "server-core");
+            = serviceOfKind(request.query("fleet"), kServerCoreKind);
         if (!core.has_value()) {
             sendError(response, 503, "no server-core configured in this panel");
             return;
@@ -434,7 +468,7 @@ void HttpApi::registerRoutes()
     http_->get("/api/settings", api([this](
                                     const http::Request& request, http::Response& response) {
         const std::optional<ServiceEntry> node
-            = serviceOfKind(request.query("fleet"), "service-node");
+            = serviceOfKind(request.query("fleet"), kServiceNodeKind);
         if (!node.has_value()) {
             sendError(response, 503, "this deployment has no service node the panel can reach");
             return;
@@ -451,7 +485,7 @@ void HttpApi::registerRoutes()
         merged["diskUsedBytes"] = nullptr;
         merged["diskError"] = "no server-core configured in this panel";
         if (const std::optional<ServiceEntry> core
-            = serviceOfKind(request.query("fleet"), "server-core");
+            = serviceOfKind(request.query("fleet"), kServerCoreKind);
             core.has_value()) {
             const JsonResult disk = callJson(*core, identity_, "GET", "/v1/messaging/storage");
             if (disk.ok) {
@@ -469,40 +503,13 @@ void HttpApi::registerRoutes()
         proxyToNode(request.query("fleet"), response, "PUT", "/v1/account/settings", request.body);
     }));
 
-    // The configuration of one service, straight from the service that owns it.
-    // The panel knows only which path each kind answers on: the settings
-    // themselves are the service's, and so is every rule about them.
-    const auto serviceSettingsPath = [](const std::string& kind) -> std::string {
-        if (kind == "server-core") {
-            return "/v1/messaging/settings";
-        }
-        if (kind == "service-node") {
-            return "/v1/account/settings";
-        }
-        if (kind == "facade") {
-            return "/settings";
-        }
-        return {};
-    };
-    const auto restartPath = [](const std::string& kind) -> std::string {
-        if (kind == "server-core") {
-            return "/v1/messaging/restart";
-        }
-        if (kind == "service-node") {
-            return "/v1/account/restart";
-        }
-        if (kind == "facade") {
-            return "/restart";
-        }
-        return {};
-    };
-
-    const auto toService = [this, serviceSettingsPath, restartPath](const http::Request& request,
-                               http::Response& response, const std::string& method,
-                               const bool restarting) {
+    // The configuration of one service, straight from the service that owns it. The
+    // panel knows only which path each kind answers on: the settings themselves are
+    // the service's, and so is every rule about them.
+    const auto toService = [this](const http::Request& request, http::Response& response,
+                               const std::string& method, const bool restarting) {
         const std::string kind = request.query("kind");
-        const std::string path
-            = restarting ? restartPath(kind) : serviceSettingsPath(kind);
+        const std::string path = restarting ? restartPathOf(kind) : settingsPathOf(kind);
         if (path.empty()) {
             sendError(response, 400, "the panel does not know a service of kind \"" + kind + "\"");
             return;
@@ -546,15 +553,6 @@ void HttpApi::registerRoutes()
     // is this panel" without an SSH session.
     http_->get("/api/panel", api([this](const http::Request&, http::Response& response) {
         const Config panel = settings_->get();
-        nlohmann::json fleets = nlohmann::json::array();
-        for (const Fleet& fleet : panel.fleets) {
-            nlohmann::json services = nlohmann::json::array();
-            for (const ServiceEntry& service : fleet.services) {
-                services.push_back({{"name", service.name}, {"kind", service.kind},
-                    {"url", service.url}, {"token", service.token}});
-            }
-            fleets.push_back({{"name", fleet.name}, {"services", services}});
-        }
         sendJson(response,
             nlohmann::json{
                 {"admins", panel.admins},
@@ -562,7 +560,7 @@ void HttpApi::registerRoutes()
                     {{"name", panel.consumer.name}, {"place", panel.consumer.place},
                         {"role", panel.consumer.role}}},
                 {"listen", {{"host", panel.listenHost}, {"port", panel.listenPort}}},
-                {"fleets", fleets},
+                {"fleets", fleetsJson(panel.fleets)},
                 {"fingerprint", identity_.fingerprint()},
                 {"canRestart", static_cast<bool>(options_.requestRestart)},
                 {"configPath", settings_->configPath().string()},
@@ -624,21 +622,7 @@ void HttpApi::registerRoutes()
                 }
                 panel.consumer = wanted;
             }
-            if (body.contains("listen")) {
-                const nlohmann::json& listen = body.at("listen");
-                const std::string host = listen.value("host", panel.listenHost);
-                const int port = listen.value("port", panel.listenPort);
-                if (host.empty()) {
-                    throw std::invalid_argument("a listener needs a host to bind");
-                }
-                if (port < bazarish::kMinPort || port > bazarish::kMaxPort) {
-                    throw std::invalid_argument("a port is between "
-                        + std::to_string(bazarish::kMinPort) + " and "
-                        + std::to_string(bazarish::kMaxPort));
-                }
-                panel.listenHost = host;
-                panel.listenPort = port;
-            }
+            readEndpointInto(body, "listen", panel.listenHost, panel.listenPort);
             if (body.contains("fleets")) {
                 std::vector<Fleet> fleets;
                 for (const nlohmann::json& entry : body.at("fleets")) {
@@ -688,20 +672,7 @@ void HttpApi::registerRoutes()
     }));
 }
 
-bool HttpApi::listen(const std::string& host, const int port)
-{
-    if (bindToAnyPort(host, port) <= 0) {
-        return false;
-    }
-    return listenAfterBind();
-}
-
-int HttpApi::bindToAnyPort(const std::string& host)
-{
-    return bindToAnyPort(host, 0);  // 0: the kernel picks the port
-}
-
-int HttpApi::bindToAnyPort(const std::string& host, const int port)
+int HttpApi::bind(const std::string& host, const int port)
 {
     http::Server::Options options;
     options.host = host;
@@ -709,40 +680,24 @@ int HttpApi::bindToAnyPort(const std::string& host, const int port)
     http_ = std::make_unique<http::Server>(options);
     registerRoutes();
     try {
-        const int bound = http_->start();
-        running_ = bound > 0;
-        return bound;
+        return http_->start();
     } catch (const std::exception& error) {
         bazarish::log::error("cannot listen on {}:{}: {}", host, port, error.what());
         return 0;
     }
 }
 
-bool HttpApi::listenAfterBind()
+void HttpApi::wait()
 {
-    // The engine serves on its own threads; this call is what keeps the caller's
-    // thread (a main()) parked until stop().
-    std::unique_lock<std::mutex> lock(stopMutex_);
-    stopCv_.wait(lock, [this]() { return stopping_; });
-    return true;
-}
-
-bool HttpApi::isRunning() const
-{
-    return running_;
+    stopGate_.wait();
 }
 
 void HttpApi::stop()
 {
+    stopGate_.stop();
     if (http_) {
         http_->stop();
     }
-    running_ = false;
-    {
-        const std::lock_guard<std::mutex> lock(stopMutex_);
-        stopping_ = true;
-    }
-    stopCv_.notify_all();
 }
 
 }  // namespace bazarish::admin

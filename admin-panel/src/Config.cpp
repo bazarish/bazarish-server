@@ -1,19 +1,20 @@
 // Bazarish project (c) 2026
 #include "Config.hpp"
 
+#include <bazarish/PrivateFile.hpp>
+
 #include <nlohmann/json.hpp>
 
-#include <fstream>
 #include <stdexcept>
 
 namespace bazarish::admin {
 
+using bazarish::readFileText;
+
 namespace {
 
-// What a deployment is made of. The alias service is not here: it is one central
-// service for the whole project, not part of anyone's server, and an operator of
-// a server has nothing to do with it.
-const char* const kKnownKinds[] = {"server-core", "service-node", "facade", "gateway"};
+const char* const kKnownKinds[]
+    = {kServerCoreKind, kServiceNodeKind, kFacadeKind, kGatewayKind};
 
 }  // namespace
 
@@ -37,8 +38,23 @@ bool isKnownServiceKind(const std::string& kind)
     return false;
 }
 
+nlohmann::json fleetsJson(const std::vector<Fleet>& fleets)
+{
+    nlohmann::json list = nlohmann::json::array();
+    for (const Fleet& fleet : fleets) {
+        nlohmann::json services = nlohmann::json::array();
+        for (const ServiceEntry& service : fleet.services) {
+            services.push_back({{"name", service.name}, {"kind", service.kind},
+                {"url", service.url}, {"token", service.token}});
+        }
+        list.push_back({{"name", fleet.name}, {"services", services}});
+    }
+    return list;
+}
+
 Config Config::fromJson(const std::string& text)
 {
+    // Comments allowed, like every other config in the fleet.
     const nlohmann::json json = nlohmann::json::parse(text, nullptr, true, true);
 
     Config config;
@@ -133,13 +149,7 @@ Config Config::fromJson(const std::string& text)
 
 Config Config::fromFile(const std::string& path)
 {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        throw std::runtime_error("config: cannot open " + path);
-    }
-    const std::string text(
-        (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    return fromJson(text);
+    return fromJson(readFileText(std::filesystem::path(path)));
 }
 
 }  // namespace bazarish::admin

@@ -73,9 +73,9 @@ int main()
     options.version = "test";
     options.assetsDirectory = std::filesystem::path(BAZARISH_PANEL_WEB_DIR);
     HttpApi api(settings, identity, options);
-    const int port = api.bindToAnyPort("127.0.0.1");
+    const int port = api.bind("127.0.0.1", 0);
     CHECK(port > 0);
-    std::thread serverThread([&api]() { (void)api.listenAfterBind(); });
+    std::thread serverThread([&api]() { api.wait(); });
 
     // The challenge field takes whatever was posted into it, and what cannot be
     // read is quoted back in the refusal. The page prints that refusal, so the

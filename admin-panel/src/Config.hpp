@@ -3,18 +3,28 @@
 
 #include <bazarish/Portal.hpp>
 
+#include <nlohmann/json.hpp>
+
 #include <string>
 #include <vector>
 
 namespace bazarish::admin {
 
+// The kinds of service a panel knows how to talk to. The alias service is not
+// among them: it is one central service for the whole project, not part of an
+// operator's server.
+inline constexpr const char* kServerCoreKind = "server-core";
+inline constexpr const char* kServiceNodeKind = "service-node";
+inline constexpr const char* kFacadeKind = "facade";
+inline constexpr const char* kGatewayKind = "gateway";
+
 // One managed service the panel monitors and acts on. The panel authenticates to
-// each service by signing its requests with the panel identity; the service must
-// be started with that identity's fingerprint as an --operator-fingerprint. No
+// each service by signing its requests with the panel identity, so that
+// identity's fingerprint has to be in the service's own "operators" list. No
 // shared secret travels in the config.
 struct ServiceEntry {
     std::string name;
-    std::string kind;  // server-core | service-node | facade | gateway
+    std::string kind;  // one of the kinds above
     std::string url;   // e.g. http://127.0.0.1:8420
     // A gateway answers at a secret path and only to requests carrying its
     // token. The path is part of the URL; the token is here, or comes in the
@@ -28,13 +38,9 @@ struct ServiceEntry {
 // pasted address and a separately named host and token end up the same shape.
 void takeTokenFromUrl(ServiceEntry& entry);
 
-// The panel configuration, loaded from a JSON file at startup. An admin pastes
-// their own Bazarish fingerprint (from `bazarish-client whoami`) into `admin`,
-// which is one fingerprint or a list of them; only those identities may sign in.
-// One deployment the panel manages: a messaging server, the service node bound
-// to it, and the facades that front the pair. That is the unit that scales - a
-// subscription certificate names one messaging server, and the node that issues
-// it is bound to that server's card - so the panel groups by it.
+// One deployment the panel manages: a messaging server, the service node bound to
+// it, and the facades that front the pair. That is the unit that scales - a node
+// is bound to one messaging server's card - so the panel groups by it.
 struct Fleet {
     std::string name;
     std::vector<ServiceEntry> services;
@@ -46,10 +52,15 @@ struct Fleet {
 // both when the config file is read and when the panel is edited from the panel.
 bool isKnownServiceKind(const std::string& kind);
 
+// The deployments as both the config file and the panel's own API spell them.
+nlohmann::json fleetsJson(const std::vector<Fleet>& fleets);
+
+// The panel configuration, as the file holds it.
 struct Config {
-    // Who may sign in. Empty means nobody has claimed this panel yet, which is
-    // the one state where the setup wizard answers: a fresh install has no
-    // administrator until the first key signs in and becomes one.
+    // Who may sign in, by fingerprint - the one a client shows in its signature
+    // window. Empty means nobody has claimed this panel yet, which is the one
+    // state where the setup wizard answers: a fresh install has no administrator
+    // until the first key signs in and becomes one.
     std::vector<std::string> admins;
     // Where the panel keeps its own signing identity, and where its web files
     // live. In the config like everything else: a flag that could override them

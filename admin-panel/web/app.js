@@ -17,6 +17,9 @@
     var kMinQuotaMiB = 1;
     var kMaxQuotaMiB = 1024 * 1024;
     var kSecondsPerMs = 1000;
+    // TCP's range without port 0, which is what the services themselves accept.
+    var kMinPort = 1;
+    var kMaxPort = 65535;
     // What a login challenge may carry, matching the node's own caps: display
     // limits, so the badge a user reads shows the whole of every field.
     var kConsumerNameMax = 96;
@@ -141,13 +144,16 @@
 
     // --- monitoring -------------------------------------------------------
 
+    var kThousand = 1000;
+    var kMillion = 1000 * kThousand;
+
     function humanCount(n) {
-        const value = Number(n) || 0;
-        if (value < 1000) {
+        var value = Number(n) || 0;
+        if (value < kThousand) {
             return String(value);
         }
-        return value < 1000000 ? (value / 1000).toFixed(1) + "k"
-            : (value / 1000000).toFixed(1) + "M";
+        return value < kMillion ? (value / kThousand).toFixed(1) + "k"
+            : (value / kMillion).toFixed(1) + "M";
     }
 
     function serviceCard(service) {
@@ -532,12 +538,50 @@
         function reload() {
             offset = 0;
             exhausted = false;
+            openRow = null;
+            openDetail = null;
             rows.innerHTML = "";
             loadPage();
         }
 
+        // The row whose card is open, so opening another closes this one without
+        // rebuilding the list: a reload would throw away every page scrolled so far.
+        var openRow = null;
+        var openDetail = null;
+
+        function closeDetail() {
+            if (openDetail) {
+                openDetail.remove();
+                openDetail = null;
+            }
+            if (openRow) {
+                openRow.className = "row";
+                openRow = null;
+            }
+        }
+
+        function detailFor(user, row) {
+            openRow = row;
+            row.className = "row is-open";
+            openDetail = userDetail(user, function (message) {
+                // The row's own figures changed, so this one does reload.
+                say(message);
+                reload();
+            }, function (error) {
+                say(error.message, "is-error");
+            }, function (message) {
+                // The account this card was about is gone: leaving a card open
+                // would put another account's one in its place.
+                openUser = null;
+                setHash("#/users");
+                say(message);
+                reload();
+            });
+            rows.insertBefore(openDetail, row.nextSibling);
+        }
+
         function addRow(user) {
-            var row = element("button", "row" + (openUser === user.user ? " is-open" : ""));
+            var row = element("button", "row");
             row.type = "button";
             var keys = element("span", "row-keys");
             keys.appendChild(element("span", "row-key", user.user));
@@ -547,25 +591,17 @@
             row.appendChild(element("span", "row-quota",
                 Math.round(user.quotaBytes / kBytesPerMiB) + " MB"));
             row.addEventListener("click", function () {
-                openUser = openUser === user.user ? null : user.user;
+                var opening = openUser !== user.user;
+                closeDetail();
+                openUser = opening ? user.user : null;
                 setHash(openUser ? "#/users/" + openUser : "#/users");
-                reload();
+                if (opening) {
+                    detailFor(user, row);
+                }
             });
             rows.appendChild(row);
             if (openUser === user.user) {
-                rows.appendChild(userDetail(user, function (message) {
-                    say(message);
-                    reload();
-                }, function (error) {
-                    say(error.message, "is-error");
-                }, function (message) {
-                    // The account this card was about is gone: leaving a card
-                    // open would put another account's one in its place.
-                    openUser = null;
-                    setHash("#/users");
-                    say(message);
-                    reload();
-                }));
+                detailFor(user, row);
             }
         }
 
@@ -639,6 +675,7 @@
         { id: "panel", label: "Panel" }
     ];
     var kLogLevels = ["error", "warn", "info", "debug"];
+    var kServiceKinds = ["server-core", "service-node", "facade", "gateway"];
     var kPrivacyLevels = ["minimal", "middle", "max"];
     // How long a restarted service is given before the page asks it again. The
     // unit's own RestartSec is the operator's to set; this is only how long the
@@ -696,8 +733,8 @@
         row.appendChild(host);
         var port = element("input", "field quota-input");
         port.type = "number";
-        port.min = "1";
-        port.max = "65535";
+        port.min = String(kMinPort);
+        port.max = String(kMaxPort);
         port.value = value.port ? String(value.port) : "";
         row.appendChild(port);
         if (restart) {
@@ -801,8 +838,8 @@
 
     function portRead(input, what) {
         var port = Number(input.value);
-        if (!Number.isInteger(port) || port < 1 || port > 65535) {
-            throw new Error(what + " needs a port between 1 and 65535.");
+        if (!Number.isInteger(port) || port < kMinPort || port > kMaxPort) {
+            throw new Error(what + " needs a port between " + kMinPort + " and " + kMaxPort + ".");
         }
         return port;
     }
@@ -1164,9 +1201,9 @@
 
         var backends = section(form, "What it forwards to");
         var messaging = endpointRow(backends, "Messaging server", data.messaging,
-            "/v1/messaging/* goes here.", true);
-        var account = endpointRow(backends, "Service node", data.account,
-            "/v1/account/* goes here.", true);
+            "Its only backend: the sealed client tunnel and the server card go here, and"
+            + " nothing else is forwarded at all. Account calls travel inside the same"
+            + " tunnel, so the facade never sees them as such.", true);
 
         var i2p = section(form, "Its I2P side");
         var enabled = chipRow(i2p,
@@ -1215,10 +1252,6 @@
                             host: messaging.host.value.trim(),
                             port: portRead(messaging.port, "The messaging server")
                         },
-                        account: {
-                            host: account.host.value.trim(),
-                            port: portRead(account.port, "The service node")
-                        },
                         i2pEnabled: enabled(),
                         i2pDestinations: Math.round(Number(destinations.value) || 0),
                         i2pPrivacy: privacy(),
@@ -1233,8 +1266,8 @@
         var who = section(form, "Who may sign in");
         var admins = textareaBlock(who, (data.admins || []).join("\n"),
             "52-character fingerprint",
-            "One fingerprint per line - `bazarish-client whoami`, or the Signature window in the"
-            + " app. Removing the last one is refused: a panel with no administrator would be"
+            "One fingerprint per line, as the Signature window in the client shows it."
+            + " Removing the last one is refused: a panel with no administrator would be"
             + " handed to whoever opened its setup page next.");
 
         var consumer = data.consumer || {};
@@ -1252,17 +1285,17 @@
             hint: "What signing in here opens."
         });
 
-        var services = section(form, "Services this panel manages");
+        var serviceBlock = section(form, "Services this panel manages");
         var rows = [];
         function serviceRow(fleetName, service) {
-            var row = controls(services);
+            var row = controls(serviceBlock);
             var name = element("input", "field service-name");
             name.type = "text";
             name.placeholder = "core";
             name.value = service ? service.name : "";
             row.appendChild(name);
             var kind = element("select", "field service-kind");
-            ["server-core", "service-node", "facade", "gateway"].forEach(function (known) {
+            kServiceKinds.forEach(function (known) {
                 var option = document.createElement("option");
                 option.value = known;
                 option.textContent = known;
@@ -1308,14 +1341,14 @@
                 serviceRow(entry.name || fleetName, service);
             });
         });
-        var addRow = controls(services,
+        var addRow = controls(serviceBlock,
             "One deployment: a messaging server, the node bound to it, and the facades in front."
             + " The panel signs every call to them with its own key, so each service must carry"
             + " this panel's fingerprint in its operators list.");
         var add = element("button", "chip", "add service");
         add.addEventListener("click", function () {
             serviceRow(fleetName, null);
-            services.insertBefore(rows[rows.length - 1].row, addRow);
+            serviceBlock.insertBefore(rows[rows.length - 1].row, addRow);
         });
         addRow.appendChild(add);
 

@@ -9,9 +9,9 @@
 
 namespace bazarish::server {
 
-// Persistent server-side state for one node: per-user client registry,
-// delivery-token hash sets and pending encrypted content. Content is opaque
-// ciphertext; the interface never interprets blob contents.
+// Persistent server-side state for one node: per-user client registry, the
+// delivery passes an account has issued and pending encrypted content. Content is
+// opaque ciphertext; the interface never interprets blob contents.
 //
 // Identifier conventions enforced by implementations:
 //   user    - a key fingerprint (52 chars base32);
@@ -37,9 +37,8 @@ public:
     // issued it lets them write. A pass does not expire and is not spent, so
     // there is one of these per correspondent rather than one per delivery.
     //
-    // Only the hash of a pass is held. The sender presents the pass itself, so
-    // what is on this disk recognises a delivery and cannot produce one - which
-    // is what the token directory beside it could not say.
+    // Only the hash of a pass is held: the sender presents the pass itself, so
+    // what is on this disk recognises a delivery and cannot produce one.
 
     virtual void registerPasses(const std::string& user, const std::vector<Bytes>& handles) = 0;
     virtual bool hasPass(const std::string& user, const Bytes& handle) = 0;
@@ -53,8 +52,8 @@ public:
 
     enum class PutResult {
         eStored,
-        // Same blobId already present: success without storing again
-        // (idempotent retries must not consume a second token).
+        // Same blobId already present: success without storing again, so a retry
+        // of a delivered message is not admitted twice.
         eDuplicate,
         // Storing would exceed quotaBytes; nothing was stored.
         eQuotaExceeded,
@@ -82,11 +81,10 @@ public:
     //
     // Records every deliveryId admitted into a mailbox, independent of the
     // blob's lifecycle, so a replay of an already-delivered envelope - even one
-    // since fetched, acked and swept from the mailbox - is recognised and
-    // refused re-admission. One-time tokens already guard content-class
-    // replays; tokenless contact requests have no token to spend, so this cache
-    // is what closes them. Markers are retained until the TTL sweep
-    // (purgeExpired), like pending blobs.
+    // since fetched, acked and swept from the mailbox - is recognised and refused
+    // re-admission. A pass is not spent and a contact request presents nothing, so
+    // on both paths this cache is the whole of replay protection. Markers are
+    // retained until the TTL sweep (purgeExpired), like pending blobs.
     virtual bool hasSeen(const std::string& user, const std::string& deliveryId) = 0;
     virtual void markSeen(const std::string& user, const std::string& deliveryId,
         std::int64_t receivedAt)
@@ -97,8 +95,8 @@ public:
         = 0;
 
     // How many blobs of one delivery class the mailbox is holding, whoever has or
-    // has not acked them. What the tokenless path is bounded by: the rate limit
-    // above says how fast requests may come, this says how many may pile up.
+    // has not acked them. What the passless contact path is bounded by: the rate
+    // limit above says how fast requests may come, this says how many may pile up.
     virtual std::size_t countHeld(const std::string& user, const std::string& deliveryClass) = 0;
 
     // Blobs not yet acked by this client, oldest arrival first. The order is
@@ -114,7 +112,7 @@ public:
         const std::string& clientId)
         = 0;
     // Drops everything this server holds for the user: pending content, replay
-    // markers, token hashes, the device registry and any quota override. What an
+    // markers, pass hashes, the device registry and any quota override. What an
     // account being deleted means here - after it, the fingerprint is a stranger
     // again.
     virtual void forgetUser(const std::string& user) = 0;
@@ -126,9 +124,8 @@ public:
     // --- Per-user storage quota override ---
     //
     // The server enforces a quota when storing content. By default every user
-    // gets the node's configured default; the operator's service node raises or
-    // lowers a specific user's quota (a paid storage plan, or a lapse) by
-    // setting an override here over the private channel.
+    // gets the node's configured default; the operator's service node overrides it
+    // for one user over the private channel.
     virtual void setUserQuota(const std::string& user, std::uint64_t quotaBytes) = 0;
     // The user's quota override, or fallback (the server default) when none.
     virtual std::uint64_t userQuota(const std::string& user, std::uint64_t fallback) = 0;

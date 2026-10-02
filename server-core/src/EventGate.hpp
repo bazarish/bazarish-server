@@ -46,7 +46,9 @@ public:
     // Something landed for this user: wake everyone waiting on it.
     void notify(const std::string& user);
 
-    // Waiters currently held, for the operator's status view.
+    // How many waiters are held right now. Nothing in the service reads it; it is
+    // what the tests check the bookkeeping with - a woken waiter must be forgotten,
+    // or every poll leaves a timer behind.
     std::size_t waiting() const;
 
 private:

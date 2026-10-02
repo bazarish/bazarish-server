@@ -36,9 +36,6 @@ namespace fs = std::filesystem;
 
 constexpr const char* kVersion = "0.0.2";
 constexpr const char* kDefaultHost = "127.0.0.1";
-// Tunnels per warm one-time destination. Each carries one delivery at a time and
-// the pool holds dozens, so they are narrow where the serving destinations are not.
-constexpr int kWarmPoolTunnelQuantity = 2;
 constexpr int kDefaultPort = 8420;
 // The service node is one hop away on the operator's own machine, so a lookup
 // that takes longer than this is a node that is down, not a slow one.
@@ -61,10 +58,9 @@ void printUsage()
         "server keys and the content storage; keys are generated on first start,\n"
         "and the server card is always written to <state>/server-card.der.\n"
         "\n"
-        "Delivery is routed by I2P destination: the server builds its home\n"
-        "destination on the embedded router and adds the i2p endpoint to its card.\n"
-        "A send is delivered locally when its toDest is one of this server's\n"
-        "destinations, otherwise it is dialled directly over I2P.\n",
+        "The server keeps no destination of its own: inbound federation arrives on\n"
+        "each user's own I2P destination, which it operates from the transient that\n"
+        "user delegated to it. Clients reach this server through a facade.\n",
         kVersion);
 }
 
@@ -188,14 +184,17 @@ int main(const int argc, const char** argv)
     }
 
     fs::create_directories(stateDir);
-    const bazarish::Identity identity = loadOrCreateIdentity(stateDir);
-    bazarish::Key sealing = loadOrCreateSealingKey(stateDir);
+    // One object each, shared with everything that needs them: a key parsed again
+    // from its own PEM is a second copy of a secret, in a buffer nobody wipes.
+    const auto identity = std::make_shared<const bazarish::Identity>(
+        loadOrCreateIdentity(stateDir));
+    const auto sealing = std::make_shared<bazarish::Key>(loadOrCreateSealingKey(stateDir));
     // A client opens its tunnel by sealing to this key, and sealing needs the
     // post-quantum half. A key from before sealing keys were hybrid has none, and
     // a server holding one cannot be talked to at all: every client would sit at
     // "connecting" while nothing said why. Refused here, in one place, with what
     // to do about it - not discovered one hung client at a time.
-    if (!sealing.hasKem()) {
+    if (!sealing->hasKem()) {
         std::fprintf(stderr,
             "%s holds a sealing key with no ML-KEM half - it was made before sealing keys\n"
             "were hybrid, and no client can open a tunnel to it. Move it aside and start\n"
@@ -210,11 +209,11 @@ int main(const int argc, const char** argv)
     // gate, the gate resumes the coroutine serving that client.
     bazarish::server::EventGate eventGate;
     engineOptions.onDelivered = [&eventGate](const std::string& user) { eventGate.notify(user); };
-    bazarish::server::DeliveryEngine engine(storage, identity.fingerprint(),
-        bazarish::Key::fromPrivatePem(sealing.privatePem()), engineOptions);
+    bazarish::server::DeliveryEngine engine(
+        storage, identity->fingerprint(), sealing, engineOptions);
 
     std::printf("bazarish-server %s\n", kVersion);
-    std::printf("server fingerprint: %s\n", identity.fingerprint().c_str());
+    std::printf("server fingerprint: %s\n", identity->fingerprint().c_str());
     std::fflush(stdout);
 
     // I2P: an embedded router, a published server card, and the destinations the
@@ -235,19 +234,16 @@ int main(const int argc, const char** argv)
         router = std::make_unique<bazarish::i2p::Router>(routerConfig);
 
         // Inbound federation accountability is per-connecting-destination: one
-        // limiter, shared across every accept loop (home destination, address
-        // pool, per-user destinations), so a single peer cannot flood us.
-        // A federationRateLimit of 0 disables it.
+        // limiter shared by every per-user accept loop, so a single peer cannot
+        // flood us. A federationRateLimit of 0 disables it.
         if (federationRateLimit > 0) {
             federationLimiter = std::make_unique<bazarish::RateLimiter>(
                 federationRateLimit, kFederationRateWindowSeconds);
         }
 
-        // First-contact card fetch (op "card"): answer a peer's sealed query for
-        // a local user's contact card by looking it up at the service node by
-        // fingerprint. Served on the home and per-user accept loops so a
-        // descriptor pointing at either resolves. Only when serviceNode is
-        // configured (else CARD_UNKNOWN).
+        // First-contact card fetch (op "card"): answer a peer's query for a local
+        // user's contact card by looking it up at the service node. Only when
+        // serviceNode is configured (else CARD_UNKNOWN).
         bazarish::server::GetCardFn getCard;
         if (!serviceNodeUrl.empty()) {
             // A card answer is the same for everyone who asks and changes only
@@ -272,8 +268,7 @@ int main(const int argc, const char** argv)
                         return found->second.second;
                     }
                 }
-                const bazarish::server::ServiceNodeAddress node
-                    = bazarish::server::parseServiceNodeUrl(serviceNodeUrl);
+                const bazarish::http::Url node = bazarish::http::parseUrl(serviceNodeUrl);
                 bazarish::http::ClientRequest lookup;
                 lookup.method = "GET";
                 // The node answers only when the view capability matches the one
@@ -319,7 +314,7 @@ int main(const int argc, const char** argv)
     // users are reached at their own destinations, and the way in for clients is
     // the facade, whose addresses live in the server descriptor.
     const bazarish::Bytes card = bazarish::ServerCard::issue(
-        identity, bazarish::Key::fromPublicDer(sealing.publicDer()), nowSeconds());
+        *identity, bazarish::Key::fromPublicDer(sealing->publicDer()), nowSeconds());
     // Public, so it is not written as a private file - but it is written checked:
     // a card silently truncated by a full disk is one the service node reads back
     // and refuses, with nothing here saying why.
@@ -338,6 +333,9 @@ int main(const int argc, const char** argv)
     bazarish::server::HttpApiOptions httpOptions;
     httpOptions.operatorFingerprints = operatorFingerprints;
     httpOptions.version = kVersion;
+    // The long-poll face is a route on this same server, so there is one port, one
+    // parser and one set of limits.
+    httpOptions.eventGate = &eventGate;
     // Report the same default quota the delivery engine enforces, so the
     // storage-usage endpoint matches what a user without an override actually gets.
     httpOptions.defaultQuotaBytes = engineOptions.defaultQuotaBytes;
@@ -370,14 +368,11 @@ int main(const int argc, const char** argv)
     // every user behind it provably co-located.
     httpOptions.assignDestination
         = [&perUserDests](const std::string& user) -> bazarish::server::DestinationAssignment {
-        // The address may be empty until the session builds - then no local
+        // The address stays empty until the destination publishes - then no local
         // short-circuit matches and the delivery federates, which is safe.
-        const std::shared_ptr<bazarish::Key> key = perUserDests->servingKeyFor(user);
-        if (!key) {
-            return {std::string(), nullptr, "none"};
-        }
-        return {perUserDests->destinationFor(user), key,
-            perUserDests->stateFor(user, nowSeconds())};
+        const bazarish::server::PerUserDestinations::Assignment assigned
+            = perUserDests->assignmentFor(user, nowSeconds());
+        return {assigned.dest, assigned.sealingKey, assigned.state};
     };
     // What the operator's service node pushes here: a user's delegated address,
     // and the two phases of rotating the key their contacts seal to.
@@ -412,15 +407,13 @@ int main(const int argc, const char** argv)
     httpOptions.settings = std::make_shared<bazarish::server::ServerSettings>(
         fs::path(argv[2]), settingValues);
     httpOptions.stateDirectory = stateDir.string();
-    httpOptions.fingerprint = identity.fingerprint();
+    httpOptions.fingerprint = identity->fingerprint();
     // What the client tunnel needs: the key a hello is sealed to, the signed card
     // that hands its public half out, this server's own signature for the account
     // calls it forwards, and where to forward them.
-    httpOptions.sealingKey = std::make_shared<bazarish::Key>(
-        bazarish::Key::fromPrivatePem(sealing.privatePem()));
+    httpOptions.sealingKey = sealing;
     httpOptions.serverCardDer = card;
-    httpOptions.identity = std::make_shared<const bazarish::Identity>(
-        bazarish::Identity::fromPrivatePem(identity.privatePem()));
+    httpOptions.identity = identity;
     httpOptions.serviceNodeUrl = serviceNodeUrl;
     // Restarting from the panel is the other half of editing a startup setting
     // there. The hook is handed to the API before the API exists, so it is
@@ -439,18 +432,15 @@ int main(const int argc, const char** argv)
     bazarish::RestartSwitch restart([&api]() { api.stop(); });
     *restartHook = [&restart]() { restart.request(); };
 
-    // The long-poll face is a route on the same server now, so there is one port,
-    // one parser and one set of limits.
-    api.setEventGate(&eventGate);
-
     bazarish::log::info("listening on {}:{} (private channel for facades)", host, port);
 
-    if (!api.listen(host, port)) {
+    if (api.bind(host, port) <= 0) {
         if (restart.requested()) {
             return bazarish::kRestartExitCode;
         }
         bazarish::log::error("failed to listen on {}:{}", host, port);
         return 1;
     }
+    api.wait();
     return restart.requested() ? bazarish::kRestartExitCode : 0;
 }

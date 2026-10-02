@@ -4,17 +4,16 @@
 #include "ServerSettings.hpp"
 #include "Storage.hpp"
 
-#include <bazarish/Auth.hpp>
-#include <bazarish/Clock.hpp>
-#include <bazarish/Bytes.hpp>
-#include <bazarish/HttpServer.hpp>
-
 #include "SessionStore.hpp"
 
-#include <condition_variable>
+#include <bazarish/Auth.hpp>
+#include <bazarish/Bytes.hpp>
+#include <bazarish/Clock.hpp>
+#include <bazarish/HttpServer.hpp>
+#include <bazarish/Restart.hpp>
+
 #include <cstdint>
 #include <functional>
-#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -23,30 +22,17 @@
 
 namespace bazarish::server {
 
-// The port a service-node URL means when it names none.
-inline constexpr int kDefaultHttpPort = 80;
-
-// Where a service-node URL points. Shared with the server's own startup, which
-// resolves the same setting for its card lookups.
-struct ServiceNodeAddress {
-    std::string host;
-    int port = kDefaultHttpPort;
-};
-ServiceNodeAddress parseServiceNodeUrl(const std::string& url);
-
-// A user's assigned serving destination and its serving sealing key (private
-// half held by this server). Used both to surface the destination to the user
-// and to decide same-destination local delivery. An empty dest / null key means
-// the user has no assigned destination yet.
 class EventGate;
 
+// A user's own serving destination and its serving sealing key (private half held
+// by this server). Used both to surface the destination to the user and to decide
+// same-destination local delivery. An empty dest / null key means the user has no
+// destination yet.
 struct DestinationAssignment {
     std::string dest;
     std::shared_ptr<Key> servingKey;
-    // The serving state surfaced to the client: "none" when the user has no
-    // destination yet, else "building" / "active" / "expired" (see
-    // PerUserDestinations::stateFor). Lets the client tell an online destination
-    // (publish its address) from one still building or offline.
+    // "none" / "building" / "active" / "expired", so the client can tell an online
+    // destination (publish its address) from one still building or offline.
     std::string state;
 };
 
@@ -85,13 +71,13 @@ struct HttpApiOptions {
     std::vector<std::string> operatorFingerprints;
     // Version string reported by /healthz.
     std::string version;
-    // Brings up (or replaces) a paid user's personal I2P destination from a
-    // client-owned offline transient; the operator-internal i2p-dest endpoint
-    // calls it (same operator signature as quota). Empty disables the endpoint.
+    // Brings up (or replaces) a user's own I2P destination from the offline
+    // transient they delegated; the operator-internal i2p-dest endpoint calls it
+    // (same operator signature as quota). Empty disables the endpoint.
     std::function<void(const std::string& user, const std::string& transientB64,
         std::int64_t expiresUnix)>
         provisionI2pDest;
-    // Tears down a user's personal destination (grant lapsed/revoked).
+    // Tears down a user's destination (delegation lapsed or revoked).
     std::function<void(const std::string& user)> revokeI2pDest;
     // Rotating a user's serving sealing key, in two steps so the switch is the
     // user's to make: prepare mints a replacement and returns its public half
@@ -118,6 +104,9 @@ struct HttpApiOptions {
     // Longest a client may ask to be held on the event face. Anything longer is
     // clamped: an idle I2P stream that lives too long is torn down under us.
     int maxEventWaitSeconds = 30;
+    // What a waiting client is parked on. Null leaves the event route unregistered
+    // and clients fall back to polling.
+    EventGate* eventGate = nullptr;
     // This server's own signing identity: it signs the account calls it forwards
     // to the service node, which is how the node knows the call is one this
     // server authenticated and whose it is.
@@ -137,23 +126,23 @@ struct HttpApiOptions {
     std::string serviceNodeUrl;
 };
 
-// The /v1/messaging/* HTTP API: client registry, token hashes, pending fetch/ack
-// and the write a device makes into its own account's mailbox. Outgoing mail is
-// not here: a client delivers its own, dialling the recipient's destination
-// itself, so this server is never asked who its users write to.
+// The /v1/messaging/* HTTP API: client registry, delivery passes, pending
+// fetch/ack and the write a device makes into its own account's mailbox. Outgoing
+// mail is not here: a client delivers its own, dialling the recipient's
+// destination itself, so this server is never asked who its users write to.
 class HttpApi {
 public:
     HttpApi(Storage& storage, HttpApiOptions options);
-    // What a waiting client is parked on. Without it the event route is not
-    // registered at all and clients fall back to polling.
-    void setEventGate(EventGate* gate) { eventGate_ = gate; }
     ~HttpApi();
 
-    bool listen(const std::string& host, int port);
-    int bindToAnyPort(const std::string& host);
-    // Binds a specific port (0 = any) and returns the one bound, 0 on failure.
-    int bindToAnyPort(const std::string& host, int port);
-    bool listenAfterBind();
+    HttpApi(const HttpApi&) = delete;
+    HttpApi& operator=(const HttpApi&) = delete;
+
+    // Binds and starts serving (port 0 lets the kernel pick). Returns the bound
+    // port, 0 when the socket could not be taken.
+    int bind(const std::string& host, int port);
+    // Parks the caller until stop(). The engine serves on its own threads.
+    void wait();
     void stop();
 
 private:
@@ -179,35 +168,32 @@ private:
     // under this server's signature, which vouches for whose call it is.
     bazarish::http::Response forwardToNode(
         const bazarish::http::Request& request, const std::string& user);
-    void stopWorkers();
     // The reseed archive this server hands out, packed from a slice of its netDb
     // and rebuilt no more often than kReseedRefreshSeconds. One archive for
     // everyone who asks within that hour: it costs the disk one walk, and it
     // leaves nobody a way to pull the netDb by asking repeatedly.
     std::string reseedArchive();
 
+    // Periodic mailbox TTL sweep: the backstop for mail no device ever acked.
+    void mailboxJanitorLoop();
+
     std::mutex reseedMutex_;
     std::string reseedSu3_;
     std::int64_t reseedPackedAt_ = 0;
-    // Periodic mailbox TTL sweep (the backstop for never-fully-acked mail).
-    void mailboxJanitorLoop();
 
     Storage& storage_;
     const HttpApiOptions options_;
 
     std::unique_ptr<bazarish::http::Server> http_;
-    EventGate* eventGate_ = nullptr;
     // Sessions clients authenticate with once they have opened one; the hybrid
     // signature stays the way in, and the way back when a session lapses.
     SessionStore sessions_;
     std::int64_t startedAt_ = 0;
 
-    // Shutdown rendezvous for the background threads below.
-    std::mutex stopMutex_;
-    std::condition_variable stopCv_;
-    // Background mailbox TTL sweep (the backstop for never-fully-acked mail).
+    // What the janitor sleeps against and a main() parks on, so a stop reaches
+    // both at once.
+    bazarish::StopGate stopGate_;
     std::thread janitorThread_;
-    bool stopping_ = false;
 
     auth::ReplayCache replayCache_;
 };

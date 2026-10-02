@@ -48,7 +48,6 @@ public:
     // next.
     bool acceptSeq(const std::string& handle, std::uint64_t seq, std::int64_t now);
 
-    void drop(const std::string& id);
     std::size_t size() const;
 
 private:

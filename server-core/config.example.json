@@ -10,8 +10,6 @@
     "enabled": true,
     "privacy": "max",
     "tunnelQuantity": 16,
-    "warmPoolMin": 2,
-    "warmPoolMax": 10,
     "log": false
   },
   // Inbound deliveries per peer destination per 60s (0 disables).

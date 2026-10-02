@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 
 namespace bazarish::server {
@@ -21,13 +22,16 @@ struct DeliveryEngineOptions {
 };
 
 // The delivery pipeline for one server: unseal the envelope, deduplicate by
-// deliveryId, consume a one-time token (or admit a contact request), check
-// size/quota and store. Shared by local sends (sender == this server) and
-// incoming federation deliveries - both end at the same mailbox rules.
+// deliveryId, admit it on the delivery pass it presents (or as a contact request,
+// which presents none), check size and quota, store. Shared by every destination's
+// accept loop - they all end at the same mailbox rules.
 class DeliveryEngine {
 public:
-    DeliveryEngine(Storage& storage, std::string serverFingerprint, Key sealingKey,
-        DeliveryEngineOptions options);
+    // sealingKey is the default serving key, shared rather than copied: a key
+    // round-tripped through its own PEM is a second copy of a secret and a second
+    // place to forget to wipe it.
+    DeliveryEngine(Storage& storage, std::string serverFingerprint,
+        std::shared_ptr<const Key> sealingKey, DeliveryEngineOptions options);
 
     struct Outcome {
         bool delivered = false;
@@ -46,12 +50,12 @@ public:
     // that destination - every per-user destination has its own (see docs-main
     // api/InviteAnonymity.md). now is unix seconds.
     //
-    // owner is the user that destination belongs to. Mail addressed to anyone
-    // else does not belong here: a tokenless contact request is answered exactly
-    // as a delivered one and dropped without touching anything (refusing it
-    // would answer "whose destination is this?"), and a content delivery is
-    // refused like any other bad admission. Empty owner disables the check, for
-    // callers that do not operate a destination.
+    // owner is the user that destination belongs to. Mail addressed to anyone else
+    // does not belong here: a contact request is answered exactly as a delivered
+    // one and dropped without touching anything (refusing it would answer "whose
+    // destination is this?"), and a content delivery is refused like any other bad
+    // admission. Empty owner disables the check, for callers that operate no
+    // destination.
     Outcome deliver(const Bytes& sealed, const Bytes& payload, std::int64_t now,
         const Key& sealingKey, const std::string& owner = {});
 
@@ -63,7 +67,7 @@ public:
 private:
     Storage& storage_;
     const std::string serverFingerprint_;
-    const Key sealingKey_;
+    const std::shared_ptr<const Key> sealingKey_;
     const DeliveryEngineOptions options_;
 };
 

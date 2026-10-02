@@ -2,8 +2,10 @@
 #include "DiskStorage.hpp"
 
 #include <bazarish/Address.hpp>
+#include <bazarish/ConfigFile.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/Pass.hpp>
+#include <bazarish/PrivateFile.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -21,6 +23,9 @@ namespace fs = std::filesystem;
 
 constexpr std::size_t kIdMaxLength = 64;
 
+// How long one mailbox's contact-request window lasts.
+constexpr std::int64_t kContactWindowSeconds = 60;
+
 bool isSafeId(const std::string& id)
 {
     if (id.empty() || id.size() > kIdMaxLength) {
@@ -34,13 +39,6 @@ bool isSafeId(const std::string& id)
         }
     }
     return true;
-}
-
-void requireUser(const std::string& user)
-{
-    if (!bazarish::isFingerprint(user)) {
-        throw std::invalid_argument("user is not a fingerprint");
-    }
 }
 
 void requireSafeId(const std::string& id)
@@ -83,37 +81,15 @@ std::vector<std::string> listDirectoryNames(const fs::path& dir)
     return names;
 }
 
-void writeFileAtomic(const fs::path& target, const void* data, const std::size_t size)
+bool ackedBy(const nlohmann::json& meta, const std::string& clientId)
 {
-    const fs::path temporary = target.parent_path() / (target.filename().string() + ".tmp");
-    {
-        std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
-        if (!out) {
-            throw std::runtime_error("failed to open " + temporary.string());
-        }
-        out.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
-        if (!out) {
-            throw std::runtime_error("failed to write " + temporary.string());
+    for (const nlohmann::json& entry : meta.at("acked")) {
+        if (entry.get<std::string>() == clientId) {
+            return true;
         }
     }
-    fs::rename(temporary, target);
+    return false;
 }
-
-nlohmann::json readJsonFile(const fs::path& path)
-{
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        throw std::runtime_error("failed to open " + path.string());
-    }
-    return nlohmann::json::parse(in);
-}
-
-}  // namespace
-
-namespace {
-
-// How long one mailbox's contact-request window lasts.
-constexpr std::int64_t kContactWindowSeconds = 60;
 
 }  // namespace
 
@@ -132,17 +108,17 @@ fs::path DiskStorage::userDir(const std::string& user) const
 
 void DiskStorage::registerClient(const std::string& user, const std::string& clientId)
 {
-    requireUser(user);
+    requireFingerprint(user);
     requireSafeId(clientId);
     const std::lock_guard<std::mutex> lock(mutex_);
     const fs::path dir = userDir(user) / "clients";
     fs::create_directories(dir);
-    writeFileAtomic(dir / clientId, "", 0);
+    writeFileAtomic(dir / clientId, std::string_view());
 }
 
 void DiskStorage::unregisterClient(const std::string& user, const std::string& clientId)
 {
-    requireUser(user);
+    requireFingerprint(user);
     requireSafeId(clientId);
     const std::lock_guard<std::mutex> lock(mutex_);
     std::error_code ignored;
@@ -155,14 +131,14 @@ void DiskStorage::unregisterClient(const std::string& user, const std::string& c
 
 std::vector<std::string> DiskStorage::listClients(const std::string& user)
 {
-    requireUser(user);
+    requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     return listDirectoryNames(userDir(user) / "clients");
 }
 
 bool DiskStorage::isClientRegistered(const std::string& user, const std::string& clientId)
 {
-    requireUser(user);
+    requireFingerprint(user);
     requireSafeId(clientId);
     const std::lock_guard<std::mutex> lock(mutex_);
     return fs::exists(userDir(user) / "clients" / clientId);
@@ -170,7 +146,7 @@ bool DiskStorage::isClientRegistered(const std::string& user, const std::string&
 
 void DiskStorage::registerPasses(const std::string& user, const std::vector<Bytes>& handles)
 {
-    requireUser(user);
+    requireFingerprint(user);
     for (const Bytes& handle : handles) {
         if (handle.size() != bazarish::kDeliveryPassSize) {
             throw std::invalid_argument("delivery pass handle has wrong size");
@@ -182,13 +158,13 @@ void DiskStorage::registerPasses(const std::string& user, const std::vector<Byte
     for (const Bytes& handle : handles) {
         // Registering one that is already held is how an account gives a
         // correspondent their pass back after a block, so this must not care.
-        writeFileAtomic(dir / toHex(handle), "", 0);
+        writeFileAtomic(dir / toHex(handle), std::string_view());
     }
 }
 
 bool DiskStorage::hasPass(const std::string& user, const Bytes& handle)
 {
-    requireUser(user);
+    requireFingerprint(user);
     // A handle of the wrong size would name something other than a pass - an
     // empty one names the directory itself, which exists.
     if (handle.size() != bazarish::kDeliveryPassSize) {
@@ -201,14 +177,14 @@ bool DiskStorage::hasPass(const std::string& user, const Bytes& handle)
 
 std::size_t DiskStorage::passCount(const std::string& user)
 {
-    requireUser(user);
+    requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     return listDirectoryNames(userDir(user) / "passes").size();
 }
 
 std::size_t DiskStorage::revokePasses(const std::string& user, const std::vector<Bytes>& handles)
 {
-    requireUser(user);
+    requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     const fs::path dir = userDir(user) / "passes";
     std::size_t dropped = 0;
@@ -228,7 +204,7 @@ Storage::PutResult DiskStorage::putBlob(const std::string& user, const std::stri
     const Bytes& data, const std::string& deliveryClass, const std::int64_t receivedAt,
     const std::uint64_t quotaBytes, const std::string& alreadyAcked)
 {
-    requireUser(user);
+    requireFingerprint(user);
     requireSafeId(blobId);
     const std::lock_guard<std::mutex> lock(mutex_);
 
@@ -260,17 +236,16 @@ Storage::PutResult DiskStorage::putBlob(const std::string& user, const std::stri
         {"class", deliveryClass},
         {"acked", acked},
     };
-    const std::string metaText = metaBody.dump();
-    // Write the meta record first: a blob without meta would be invisible
-    // to the TTL sweep, the reverse is harmless.
-    writeFileAtomic(meta / (blobId + ".json"), metaText.data(), metaText.size());
-    writeFileAtomic(blobs / blobId, data.data(), data.size());
+    // Write the meta record first: a blob without meta would be invisible to the
+    // TTL sweep, the reverse is harmless.
+    writeFileAtomic(meta / (blobId + ".json"), metaBody.dump());
+    writeFileAtomic(blobs / blobId, data);
     return PutResult::eStored;
 }
 
 bool DiskStorage::hasBlob(const std::string& user, const std::string& blobId)
 {
-    requireUser(user);
+    requireFingerprint(user);
     requireSafeId(blobId);
     const std::lock_guard<std::mutex> lock(mutex_);
     return fs::exists(userDir(user) / "blobs" / blobId);
@@ -278,7 +253,7 @@ bool DiskStorage::hasBlob(const std::string& user, const std::string& blobId)
 
 bool DiskStorage::hasSeen(const std::string& user, const std::string& deliveryId)
 {
-    requireUser(user);
+    requireFingerprint(user);
     requireSafeId(deliveryId);
     const std::lock_guard<std::mutex> lock(mutex_);
     return fs::exists(userDir(user) / "seen" / deliveryId);
@@ -287,20 +262,19 @@ bool DiskStorage::hasSeen(const std::string& user, const std::string& deliveryId
 void DiskStorage::markSeen(const std::string& user, const std::string& deliveryId,
     const std::int64_t receivedAt)
 {
-    requireUser(user);
+    requireFingerprint(user);
     requireSafeId(deliveryId);
     const std::lock_guard<std::mutex> lock(mutex_);
     const fs::path dir = userDir(user) / "seen";
     fs::create_directories(dir);
     // The marker payload is the receive time, so the TTL sweep can age it out.
-    const std::string text = std::to_string(receivedAt);
-    writeFileAtomic(dir / deliveryId, text.data(), text.size());
+    writeFileAtomic(dir / deliveryId, std::to_string(receivedAt));
 }
 
 bool DiskStorage::allowContactRequest(
     const std::string& user, const std::int64_t now, const std::size_t maxPerMinute)
 {
-    requireUser(user);
+    requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     Window& window = contactWindows_[user];
     if (now - window.start >= kContactWindowSeconds) {
@@ -316,20 +290,17 @@ bool DiskStorage::allowContactRequest(
 
 std::size_t DiskStorage::countHeld(const std::string& user, const std::string& deliveryClass)
 {
-    requireUser(user);
+    requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     std::size_t held = 0;
     for (const std::string& blobId : listDirectoryNames(userDir(user) / "blobs")) {
-        // As in listPending: a blob with no record beside it is a write that was
-        // interrupted, and it costs itself rather than the whole count.
+        // A blob with no record beside it is an interrupted write, not a delivery.
+        const fs::path metaPath = userDir(user) / "meta" / (blobId + ".json");
         std::error_code ec;
-        if (!fs::exists(userDir(user) / "meta" / (blobId + ".json"), ec) || ec) {
+        if (!fs::exists(metaPath, ec) || ec) {
             continue;
         }
-        if (readJsonFile(userDir(user) / "meta" / (blobId + ".json"))
-                .at("class")
-                .get<std::string>()
-            == deliveryClass) {
+        if (readJsonFile(metaPath).at("class").get<std::string>() == deliveryClass) {
             ++held;
         }
     }
@@ -339,7 +310,7 @@ std::size_t DiskStorage::countHeld(const std::string& user, const std::string& d
 std::vector<Storage::PendingEntry> DiskStorage::listPending(const std::string& user,
     const std::string& clientId)
 {
-    requireUser(user);
+    requireFingerprint(user);
     requireSafeId(clientId);
     const std::lock_guard<std::mutex> lock(mutex_);
     // Arrival order, not directory order: a mailbox is a queue, and handing it
@@ -351,26 +322,18 @@ std::vector<Storage::PendingEntry> DiskStorage::listPending(const std::string& u
     };
     std::vector<Waiting> waiting;
     for (const std::string& blobId : listDirectoryNames(userDir(user) / "blobs")) {
-        // A blob with no record beside it is not a delivery: a write that was
-        // interrupted leaves its ".tmp" behind, and reading a record for that
-        // name throws. Thrown from here it took the whole mailbox with it - the
-        // user's pending list became permanently unavailable over one stray
-        // file. One stray file now costs one entry.
+        // A blob with no record beside it is not a delivery but an interrupted
+        // write, and reading a record for that name throws. One stray file costs
+        // one entry rather than the whole mailbox.
+        const fs::path metaPath = userDir(user) / "meta" / (blobId + ".json");
         std::error_code ec;
-        if (!fs::exists(userDir(user) / "meta" / (blobId + ".json"), ec) || ec) {
+        if (!fs::exists(metaPath, ec) || ec) {
             bazarish::log::warn("ignoring an item with no record in the mailbox of {}: {}",
                 bazarish::log::redact(user), blobId);
             continue;
         }
-        const nlohmann::json meta = readJsonFile(userDir(user) / "meta" / (blobId + ".json"));
-        bool acked = false;
-        for (const nlohmann::json& entry : meta.at("acked")) {
-            if (entry.get<std::string>() == clientId) {
-                acked = true;
-                break;
-            }
-        }
-        if (!acked) {
+        const nlohmann::json meta = readJsonFile(metaPath);
+        if (!ackedBy(meta, clientId)) {
             waiting.push_back(
                 {arrivalOf(meta), PendingEntry{blobId, meta.at("class").get<std::string>()}});
         }
@@ -393,7 +356,7 @@ std::vector<Storage::PendingEntry> DiskStorage::listPending(const std::string& u
 
 Bytes DiskStorage::getBlob(const std::string& user, const std::string& blobId)
 {
-    requireUser(user);
+    requireFingerprint(user);
     requireSafeId(blobId);
     const std::lock_guard<std::mutex> lock(mutex_);
     std::ifstream in(userDir(user) / "blobs" / blobId, std::ios::binary);
@@ -406,7 +369,7 @@ Bytes DiskStorage::getBlob(const std::string& user, const std::string& blobId)
 void DiskStorage::ackBlob(const std::string& user, const std::string& blobId,
     const std::string& clientId)
 {
-    requireUser(user);
+    requireFingerprint(user);
     requireSafeId(blobId);
     requireSafeId(clientId);
     const std::lock_guard<std::mutex> lock(mutex_);
@@ -418,18 +381,9 @@ void DiskStorage::ackBlob(const std::string& user, const std::string& blobId,
         return;
     }
     nlohmann::json meta = readJsonFile(metaPath);
-    nlohmann::json& acked = meta.at("acked");
-    bool present = false;
-    for (const nlohmann::json& entry : acked) {
-        if (entry.get<std::string>() == clientId) {
-            present = true;
-            break;
-        }
-    }
-    if (!present) {
-        acked.push_back(clientId);
-        const std::string metaText = meta.dump();
-        writeFileAtomic(metaPath, metaText.data(), metaText.size());
+    if (!ackedBy(meta, clientId)) {
+        meta.at("acked").push_back(clientId);
+        writeFileAtomic(metaPath, meta.dump());
     }
     deleteIfFullyAcked(user, blobId);
 }
@@ -437,10 +391,10 @@ void DiskStorage::ackBlob(const std::string& user, const std::string& blobId,
 
 void DiskStorage::forgetUser(const std::string& user)
 {
-    requireUser(user);
+    requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     std::error_code ignored;
-    // The whole directory: mail, replay markers, token hashes, devices and the
+    // The whole directory: mail, replay markers, pass hashes, devices and the
     // quota override. Half of it left behind would keep answering for a user
     // whose account is gone.
     fs::remove_all(userDir(user), ignored);
@@ -464,32 +418,30 @@ void DiskStorage::purgeExpired(const std::int64_t receivedBefore)
     }
     for (const fs::path& userPath : users) {
         const std::lock_guard<std::mutex> lock(mutex_);
-        const fs::directory_entry userEntry(userPath);
-        const std::string user = userEntry.path().filename().string();
-        for (const std::string& blobId : listDirectoryNames(userEntry.path() / "blobs")) {
+        for (const std::string& blobId : listDirectoryNames(userPath / "blobs")) {
+            const fs::path metaPath = userPath / "meta" / (blobId + ".json");
             std::error_code missing;
-            if (!fs::exists(userEntry.path() / "meta" / (blobId + ".json"), missing)) {
+            if (!fs::exists(metaPath, missing)) {
                 continue;  // no record beside it: not a delivery, not ours to age
             }
-            const nlohmann::json meta
-                = readJsonFile(userEntry.path() / "meta" / (blobId + ".json"));
-            if (meta.at("receivedAt").get<std::int64_t>() < receivedBefore) {
+            if (readJsonFile(metaPath).at("receivedAt").get<std::int64_t>() < receivedBefore) {
                 std::error_code ignored;
-                fs::remove(userEntry.path() / "blobs" / blobId, ignored);
-                fs::remove(userEntry.path() / "meta" / (blobId + ".json"), ignored);
+                fs::remove(userPath / "blobs" / blobId, ignored);
+                fs::remove(metaPath, ignored);
             }
         }
-        // Age out replay markers on the same horizon as the blobs they guard.
-        for (const std::string& deliveryId : listDirectoryNames(userEntry.path() / "seen")) {
-            const fs::path marker = userEntry.path() / "seen" / deliveryId;
+        // Age out replay markers on the same horizon as the blobs they guard. A
+        // marker that will not read is removed too: left behind it would outlive
+        // every horizon.
+        for (const std::string& deliveryId : listDirectoryNames(userPath / "seen")) {
+            const fs::path marker = userPath / "seen" / deliveryId;
             std::ifstream in(marker, std::ios::binary);
             std::int64_t receivedAt = 0;
-            if (in >> receivedAt && receivedAt < receivedBefore) {
+            if (!(in >> receivedAt) || receivedAt < receivedBefore) {
                 std::error_code ignored;
                 fs::remove(marker, ignored);
             }
         }
-        (void)user;
     }
     // The contact-request windows are in memory and nothing else drops them, so
     // a node accumulates one per user that ever asked. They are swept on the
@@ -506,23 +458,22 @@ void DiskStorage::purgeExpired(const std::int64_t receivedBefore)
 
 std::uint64_t DiskStorage::usage(const std::string& user)
 {
-    requireUser(user);
+    requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     return usageLocked(user);
 }
 
 void DiskStorage::setUserQuota(const std::string& user, const std::uint64_t quotaBytes)
 {
-    requireUser(user);
+    requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     fs::create_directories(userDir(user));
-    const std::string text = std::to_string(quotaBytes);
-    writeFileAtomic(userDir(user) / "quota", text.data(), text.size());
+    writeFileAtomic(userDir(user) / "quota", std::to_string(quotaBytes));
 }
 
 std::uint64_t DiskStorage::userQuota(const std::string& user, const std::uint64_t fallback)
 {
-    requireUser(user);
+    requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     const fs::path path = userDir(user) / "quota";
     if (!fs::exists(path)) {
@@ -554,24 +505,15 @@ void DiskStorage::deleteIfFullyAcked(const std::string& user, const std::string&
     }
     const nlohmann::json meta = readJsonFile(metaPath);
     const std::vector<std::string> clients = listDirectoryNames(userDir(user) / "clients");
-    for (const std::string& clientId : clients) {
-        bool acked = false;
-        for (const nlohmann::json& entry : meta.at("acked")) {
-            if (entry.get<std::string>() == clientId) {
-                acked = true;
-                break;
-            }
-        }
-        if (!acked) {
-            return;
-        }
-    }
-    // Every registered client has acked (or none are registered while the
-    // blob still exists - in that degenerate case the content is kept
-    // until the TTL sweep, so a user temporarily without clients does not
-    // lose mail).
+    // A user with no registered client at all keeps their mail until the TTL
+    // sweep: an empty roster must not read as "everyone has acked".
     if (clients.empty()) {
         return;
+    }
+    for (const std::string& clientId : clients) {
+        if (!ackedBy(meta, clientId)) {
+            return;
+        }
     }
     std::error_code ignored;
     fs::remove(userDir(user) / "blobs" / blobId, ignored);

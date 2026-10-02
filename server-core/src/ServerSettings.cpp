@@ -53,33 +53,17 @@ void ServerSettings::persist(const Values& values) const
         throw std::runtime_error("this server was started without a config file to write to");
     }
     ConfigFile file(configPath_);
-    if (values.logLevel != values_.logLevel) {
-        file.set({kLogLevelKey}, values.logLevel);
-    }
-    if (values.i2pLog != values_.i2pLog) {
-        file.set({kI2pKey, kI2pLogKey}, values.i2pLog);
-    }
-    if (values.i2pPrivacy != values_.i2pPrivacy) {
-        file.set({kI2pKey, kI2pPrivacyKey}, values.i2pPrivacy);
-    }
-    if (values.i2pTunnelQuantity != values_.i2pTunnelQuantity) {
-        file.set({kI2pKey, kI2pTunnelsKey}, values.i2pTunnelQuantity);
-    }
-    if (values.federationRateLimit != values_.federationRateLimit) {
-        file.set({kFederationRateKey}, values.federationRateLimit);
-    }
-    if (values.mailboxRetentionDays != values_.mailboxRetentionDays) {
-        file.set({kRetentionKey}, values.mailboxRetentionDays);
-    }
-    if (values.listenHost != values_.listenHost) {
-        file.set({kListenKey, kHostKey}, values.listenHost);
-    }
-    if (values.listenPort != values_.listenPort) {
-        file.set({kListenKey, kPortKey}, values.listenPort);
-    }
-    if (values.serviceNodeUrl != values_.serviceNodeUrl) {
-        file.set({kServiceNodeKey}, values.serviceNodeUrl);
-    }
+    setIfChanged(file, {kLogLevelKey}, values.logLevel, values_.logLevel);
+    setIfChanged(file, {kI2pKey, kI2pLogKey}, values.i2pLog, values_.i2pLog);
+    setIfChanged(file, {kI2pKey, kI2pPrivacyKey}, values.i2pPrivacy, values_.i2pPrivacy);
+    setIfChanged(
+        file, {kI2pKey, kI2pTunnelsKey}, values.i2pTunnelQuantity, values_.i2pTunnelQuantity);
+    setIfChanged(
+        file, {kFederationRateKey}, values.federationRateLimit, values_.federationRateLimit);
+    setIfChanged(file, {kRetentionKey}, values.mailboxRetentionDays, values_.mailboxRetentionDays);
+    setIfChanged(file, {kListenKey, kHostKey}, values.listenHost, values_.listenHost);
+    setIfChanged(file, {kListenKey, kPortKey}, values.listenPort, values_.listenPort);
+    setIfChanged(file, {kServiceNodeKey}, values.serviceNodeUrl, values_.serviceNodeUrl);
 }
 
 }  // namespace bazarish::server

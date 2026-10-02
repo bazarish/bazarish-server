@@ -122,12 +122,6 @@ int main()
         // The other session is untouched by that: its own counter still stands.
         CHECK(sessions.acceptSeq(auth::sessionHandle(other, 1), 1, kNow));
         CHECK(sessions.findByHandle(auth::sessionHandle(other, 2), kNow)->id == second);
-
-        // Dropping one leaves the other, and takes its handles with it.
-        sessions.drop(first);
-        CHECK(sessions.size() == 1);
-        CHECK(!sessions.findByHandle(auth::sessionHandle(secret, 10), kNow).has_value());
-        CHECK(sessions.findByHandle(auth::sessionHandle(other, 2), kNow).has_value());
     }
 
     std::printf("TestSessionStore passed\n");

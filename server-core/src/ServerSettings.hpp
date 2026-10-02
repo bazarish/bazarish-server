@@ -8,15 +8,12 @@
 
 namespace bazarish::server {
 
-// The messaging server's configuration while it runs, and the writer that puts
-// it back in the file it was read from - the same discipline the service node
-// and the panel use, so an operator changes any of the three the same way and
-// from the same place.
+// The messaging server's configuration while it runs, and the writer that puts it
+// back in the file it was read from.
 //
-// Only the log level and libi2pd's own logging take effect at once. The rest -
-// where the server listens, how it federates, how its I2P side is tuned - is
-// read when the server starts, so a change to those is written for the next
-// start and the operator is told so.
+// Only the log level and libi2pd's own logging take effect at once; everything
+// else is read at start, so a change to it is written for the next one and the
+// operator is told so.
 class ServerSettings {
 public:
     struct Values {

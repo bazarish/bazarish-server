@@ -170,7 +170,8 @@ int main()
     const Key sealing = Key::generateSealing();
     const Key sealingPublic = Key::fromPublicDer(sealing.publicDer());
     DeliveryEngine engine(storage, toBase32(Bytes(32, 0xee)),
-        Key::fromPrivatePem(sealing.privatePem()), DeliveryEngineOptions{});
+        std::make_shared<Key>(Key::fromPrivatePem(sealing.privatePem())),
+        DeliveryEngineOptions{});
 
     const Bytes secret = randomBytes(kDeliverySecretSize);
     const Bytes pass = deliveryPass(secret, std::string(52, 'b'));
@@ -275,7 +276,7 @@ int main()
         CHECK(storage.getBlob(alice, "freq-1").size() == 100);
     }
 
-    // Replay protection: a tokenless contact request that was delivered, then
+    // Replay protection: a contact request that was delivered, then
     // fetched and acked away, must not be re-injected when its envelope is
     // replayed. Without the seen-cache nothing would stop the second store.
     {
@@ -321,7 +322,8 @@ int main()
         CHECK(!roundTrip(engine, sealedHome, Bytes(50, 0x55)).delivered);
     }
 
-    // The tokenless path is bounded on the destination it arrives at. Past the
+    // A request that presents no pass is bounded on the destination it arrives at.
+    // Past the
     // minute's cap the sender is told to come back - a real contact request is
     // never lost quietly - and because the window is keyed by the destination
     // rather than by the mailbox the envelope names, that answer is the same for
@@ -477,10 +479,8 @@ int main()
         CHECK(result.signature.empty());
     }
 
-    // A request whose very first line does not arrive is still answered. It used
-    // to be read before the guard that promises a reply, so a stream that
-    // stumbled on its own request line left the sender with nothing to read -
-    // which it can only report as the stream having closed.
+    // A request whose very first line does not arrive is still answered: a sender
+    // left with nothing to read can only report that the stream closed.
     {
         int fds[2];
         CHECK(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0);

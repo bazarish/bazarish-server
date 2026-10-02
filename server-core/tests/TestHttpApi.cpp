@@ -111,8 +111,8 @@ int main()
 
     DeliveryEngineOptions engineOptions;
     engineOptions.defaultQuotaBytes = 1024;
-    DeliveryEngine engine(storage, serverFp, Key::fromPrivatePem(serverSealing.privatePem()),
-        engineOptions);
+    DeliveryEngine engine(storage, serverFp,
+        std::make_shared<Key>(Key::fromPrivatePem(serverSealing.privatePem())), engineOptions);
     HttpApiOptions httpOptions;
     // Routing is by destination, and a destination belongs to one user - so a
     // delivery to serverDest is only ever local when the sender is the user it
@@ -163,9 +163,9 @@ int main()
 
     HttpApi api(storage, httpOptions);
 
-    const int port = api.bindToAnyPort("127.0.0.1");
+    const int port = api.bind("127.0.0.1", 0);
     CHECK(port > 0);
-    std::thread serverThread([&api]() { (void)api.listenAfterBind(); });
+    std::thread serverThread([&api]() { api.wait(); });
 
     const Identity alice = Identity::generate();
     const Identity bob = Identity::generate();
@@ -267,10 +267,10 @@ int main()
         storage.setUserQuota(alice.fingerprint(), heavy.size() * 2);
         const std::size_t before = storage.passCount(alice.fingerprint());
 
-        const Bytes paid = sealEnvelope(sealingPublic,
+        const Bytes admitted = sealEnvelope(sealingPublic,
             {{"class", "content"}, {"mailbox", alice.fingerprint()},
                 {"pass", toBase64(passForBob)}, {"deliveryId", "msg-heavy"}});
-        CHECK(engine.deliver(paid, heavy, kNow, engineSealing, alice.fingerprint()).delivered);
+        CHECK(engine.deliver(admitted, heavy, kNow, engineSealing, alice.fingerprint()).delivered);
         CHECK(storage.passCount(alice.fingerprint()) == before);
         // And it leaves the mailbox as it found it for the rest of this test: the
         // heavy message taken back out and the quota put back.
@@ -438,7 +438,7 @@ int main()
     {
         const http::ClientResponse unauth = call(port, "GET", "/healthz");
         CHECK(unauth.status == 403);
-        const http::ClientResponse ok = call(port, "GET", 
+        const http::ClientResponse ok = call(port, "GET",
             "/healthz", makeHeaders(operatorIdentity, "GET", "/healthz", "", ""));
         CHECK(ok.status == 200);
         const nlohmann::json health = nlohmann::json::parse(ok.body);

@@ -59,7 +59,8 @@ int main()
 
     const Key sealing = Key::generateSealing();
     DeliveryEngine engine(storage, toBase32(Bytes(32, 0xee)),
-        Key::fromPrivatePem(sealing.privatePem()), DeliveryEngineOptions{});
+        std::make_shared<Key>(Key::fromPrivatePem(sealing.privatePem())),
+        DeliveryEngineOptions{});
 
     const std::string alice = toBase32(Bytes(32, 0x01));
     const std::filesystem::path aliceFile = root / "i2p-user-dests" / alice;
@@ -115,11 +116,12 @@ int main()
         // The destination has a serving sealing key, persisted and surfaced for
         // the user's contact card. Its address stays empty here (no live router,
         // so the destination never publishes).
-        const std::shared_ptr<Key> servingKeyA = dests.servingKeyFor(alice);
+        const std::shared_ptr<Key> servingKeyA
+            = dests.assignmentFor(alice, shortExpiry - 1).sealingKey;
         CHECK(servingKeyA != nullptr);
         const Bytes servingA = servingKeyA->publicDer();
         CHECK(readFile(aliceFile).find("sealingKey") != std::string::npos);
-        CHECK(dests.destinationFor(alice).empty());
+        CHECK(dests.assignmentFor(alice, shortExpiry - 1).dest.empty());
 
         // The destination also carries its own per-destination federation signing
         // key (it signs this dest's delivered-acks), persisted bound to the dest
@@ -131,10 +133,10 @@ int main()
 
         // State: provisioned but the session never published (no router) and the
         // transient is still in date -> "building"; past its expiry -> "expired";
-        // an unknown user -> "".
-        CHECK(dests.stateFor(alice, shortExpiry - 1) == "building");
-        CHECK(dests.stateFor(alice, shortExpiry + 1) == "expired");
-        CHECK(dests.stateFor("nobody", shortExpiry - 1).empty());
+        // an unknown user -> "none".
+        CHECK(dests.assignmentFor(alice, shortExpiry - 1).state == "building");
+        CHECK(dests.assignmentFor(alice, shortExpiry + 1).state == "expired");
+        CHECK(dests.assignmentFor("nobody", shortExpiry - 1).state == "none");
 
         // Same transient: a no-op (still one destination).
         dests.provision(alice, transientA, shortExpiry);
@@ -146,7 +148,7 @@ int main()
         dests.provision(alice, transientB, longExpiry);
         CHECK(dests.size() == 1);
         CHECK(readFile(aliceFile).find(transientB) != std::string::npos);
-        CHECK(dests.servingKeyFor(alice)->publicDer() == servingA);
+        CHECK(dests.assignmentFor(alice, shortExpiry - 1).sealingKey->publicDer() == servingA);
         CHECK(fieldOf(aliceFile, "signingKey") == signingA);
 
         // Moving to another master is not a renewal: the address changes, the
@@ -157,7 +159,7 @@ int main()
         // new address is the same person.
         dests.provision(alice, movedAway, movedAwayExpiry);
         CHECK(dests.size() == 1);
-        CHECK(dests.servingKeyFor(alice)->publicDer() != servingA);
+        CHECK(dests.assignmentFor(alice, shortExpiry - 1).sealingKey->publicDer() != servingA);
         CHECK(fieldOf(aliceFile, "signingKey") != signingA);
 
         // And back to the address it started on, which is a fresh start of its
@@ -169,7 +171,7 @@ int main()
         dests.revoke(alice);
         CHECK(!std::filesystem::exists(aliceFile));
         CHECK(dests.size() == 0);
-        CHECK(dests.servingKeyFor(alice) == nullptr);
+        CHECK(dests.assignmentFor(alice, shortExpiry - 1).sealingKey == nullptr);
     }
 
     // reloadPersisted re-provisions non-expired transients and skips expired ones.
@@ -183,7 +185,7 @@ int main()
         // no shared server-wide signer to cluster them as co-located.
         CHECK(fieldOf(root / "i2p-user-dests" / bob, "signingKey")
             != fieldOf(aliceFile, "signingKey"));
-        const std::shared_ptr<Key> key = writer.servingKeyFor(alice);
+        const std::shared_ptr<Key> key = writer.assignmentFor(alice, shortExpiry - 1).sealingKey;
         CHECK(key != nullptr);
         aliceServing = key->publicDer();
     }
@@ -192,7 +194,8 @@ int main()
         reloaded.reloadPersisted(shortExpiry + 1);
         CHECK(reloaded.size() == 1);  // alice restored; bob's expired transient skipped
         // The serving key survives the restart (the user's card stays valid).
-        CHECK(reloaded.servingKeyFor(alice)->publicDer() == aliceServing);
+        CHECK(reloaded.assignmentFor(alice, shortExpiry - 1).sealingKey->publicDer()
+            == aliceServing);
         // A skipped record is not a removed one, and the rest of this test is
         // about alice alone.
         reloaded.revoke(bob);

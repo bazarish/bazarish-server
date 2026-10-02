@@ -3,32 +3,29 @@
 
 #include "EventGate.hpp"
 
-#include <bazarish/Cms.hpp>
-
-#include <bazarish/Clock.hpp>
-#include <bazarish/ConfigFile.hpp>
-#include <bazarish/Log.hpp>
 #include <bazarish/Auth.hpp>
-#include <bazarish/HttpClient.hpp>
-#include <bazarish/Tunnel.hpp>
+#include <bazarish/Clock.hpp>
+#include <bazarish/Cms.hpp>
+#include <bazarish/ConfigFile.hpp>
 #include <bazarish/Crypto.hpp>
 #include <bazarish/Errors.hpp>
-#include <bazarish/Limits.hpp>
-#include <bazarish/Padding.hpp>
-#include <bazarish/Pass.hpp>
 #include <bazarish/Health.hpp>
+#include <bazarish/HttpClient.hpp>
+#include <bazarish/HttpServer.hpp>
 #include <bazarish/I2p.hpp>
 #include <bazarish/I2pAddress.hpp>
+#include <bazarish/Limits.hpp>
+#include <bazarish/Log.hpp>
+#include <bazarish/Padding.hpp>
+#include <bazarish/Pass.hpp>
+#include <bazarish/Tunnel.hpp>
 
-#include <bazarish/HttpServer.hpp>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <chrono>
-#include <condition_variable>
 #include <cstdint>
 #include <map>
-#include <memory>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -58,7 +55,6 @@ using bazarish::ErrorCode;
 constexpr std::size_t kReseedRouters = 60;
 constexpr std::int64_t kReseedRefreshSeconds = 3600;
 
-// A header name as the request map holds it.
 std::string lowered(std::string name)
 {
     std::transform(name.begin(), name.end(), name.begin(),
@@ -88,6 +84,37 @@ bazarish::http::Response jsonResponse(const nlohmann::json& body)
     return {200, "application/json", {}, body.dump()};
 }
 
+nlohmann::json pendingJson(bazarish::server::Storage& storage, const std::string& user,
+    const std::string& clientId)
+{
+    nlohmann::json items = nlohmann::json::array();
+    for (const bazarish::server::Storage::PendingEntry& entry :
+        storage.listPending(user, clientId)) {
+        items.push_back({{"id", entry.blobId}, {"class", entry.deliveryClass}});
+    }
+    return items;
+}
+
+// The delivery-pass handles a register or revoke request names. Both are bounded
+// the same way and a handle of the wrong size names something other than a pass.
+std::vector<Bytes> passHandles(const nlohmann::json& body)
+{
+    const nlohmann::json& asked = body.at("passes");
+    if (asked.size() > bazarish::kMaxPassesPerRequest) {
+        throw std::invalid_argument("too many delivery passes in one request");
+    }
+    std::vector<Bytes> handles;
+    handles.reserve(asked.size());
+    for (const nlohmann::json& entry : asked) {
+        Bytes handle = bazarish::fromBase64(entry.get<std::string>());
+        if (handle.size() != bazarish::kDeliveryPassSize) {
+            throw std::invalid_argument("delivery pass handle has wrong size");
+        }
+        handles.push_back(std::move(handle));
+    }
+    return handles;
+}
+
 using bazarish::http::collectAuthHeaders;
 
 }  // namespace
@@ -99,31 +126,20 @@ HttpApi::HttpApi(Storage& storage, const HttpApiOptions options)
     , options_(options)
     , startedAt_(nowSeconds())
 {
-    // One thread for the node: the mailbox TTL backstop sweep, and the token
-    // revocations users ask for. It runs even with retention disabled, because a
-    // revocation is not housekeeping - somebody is waiting for it.
     janitorThread_ = std::thread([this]() { mailboxJanitorLoop(); });
 }
 
 HttpApi::~HttpApi()
 {
-    stopWorkers();
-}
-
-bool HttpApi::listen(const std::string& host, const int port)
-{
-    if (bindToAnyPort(host, port) <= 0) {
-        return false;
+    stop();
+    // Joined here and nowhere else: stop() is called from a request handler's own
+    // thread as well, and two threads joining one thread is undefined.
+    if (janitorThread_.joinable()) {
+        janitorThread_.join();
     }
-    return listenAfterBind();
 }
 
-int HttpApi::bindToAnyPort(const std::string& host)
-{
-    return bindToAnyPort(host, 0);
-}
-
-int HttpApi::bindToAnyPort(const std::string& host, const int port)
+int HttpApi::bind(const std::string& host, const int port)
 {
     bazarish::http::Server::Options options;
     options.host = host;
@@ -138,21 +154,17 @@ int HttpApi::bindToAnyPort(const std::string& host, const int port)
     }
 }
 
-bool HttpApi::listenAfterBind()
+void HttpApi::wait()
 {
-    // The engine serves on its own threads; this call is what keeps the caller's
-    // thread (a main()) parked until stop().
-    std::unique_lock<std::mutex> lock(stopMutex_);
-    stopCv_.wait(lock, [this]() { return stopping_; });
-    return true;
+    stopGate_.wait();
 }
 
 void HttpApi::stop()
 {
+    stopGate_.stop();
     if (http_) {
         http_->stop();
     }
-    stopWorkers();
 }
 
 std::string HttpApi::reseedArchive()
@@ -169,8 +181,8 @@ std::string HttpApi::reseedArchive()
     if (routers.empty()) {
         return reseedSu3_;  // an empty netDb: whatever was packed before, or nothing
     }
-    // The name in the header is what an operator sees when they open the file;
-    // it names the service, not the server.
+    // The name in the header is the service's, never this server's: an operator
+    // opening the file must not learn whose netDb it came from.
     const Bytes su3 = bazarish::i2p::packReseedSu3(routers, "bazarish");
     reseedSu3_.assign(su3.begin(), su3.end());
     reseedPackedAt_ = now;
@@ -179,35 +191,12 @@ std::string HttpApi::reseedArchive()
     return reseedSu3_;
 }
 
-void HttpApi::stopWorkers()
-{
-    {
-        const std::lock_guard<std::mutex> lock(stopMutex_);
-        if (stopping_) {
-            return;
-        }
-        stopping_ = true;
-    }
-    stopCv_.notify_all();
-    if (janitorThread_.joinable()) {
-        janitorThread_.join();
-    }
-}
-
 void HttpApi::mailboxJanitorLoop()
 {
     // Hourly is ample for a day-scale TTL: a reclaimed blob is freed within an
     // hour of crossing the retention window.
     constexpr std::chrono::seconds kSweepInterval{3600};
-    for (;;) {
-        {
-            std::unique_lock<std::mutex> lock(stopMutex_);
-            // Sleep one interval, but return at once on shutdown.
-            stopCv_.wait_for(lock, kSweepInterval, [this]() { return stopping_; });
-            if (stopping_) {
-                return;
-            }
-        }  // release stopMutex_ before touching storage (it takes its own lock)
+    while (!stopGate_.waitFor(kSweepInterval)) {
         if (options_.mailboxRetentionSeconds <= 0) {
             continue;
         }
@@ -223,8 +212,8 @@ void HttpApi::mailboxJanitorLoop()
 
 void HttpApi::wakeUser(const std::string& user)
 {
-    if (eventGate_ != nullptr && !user.empty()) {
-        eventGate_->notify(user);
+    if (options_.eventGate != nullptr && !user.empty()) {
+        options_.eventGate->notify(user);
     }
 }
 
@@ -232,27 +221,20 @@ void HttpApi::serveTunnel(
     const bazarish::http::Request& request, bazarish::http::Responder respond)
 {
     const Bytes frame(request.body.begin(), request.body.end());
-    // Nothing here says why it failed, and nothing distinguishes one failure from
-    // another: the only caller who could act on the difference is the one in the
-    // middle, and it is the one this exists to keep out. A client that gets this
-    // opens a new tunnel.
+    // Every refusal here is the same answer in the same shape, whatever went wrong:
+    // a status or a length that differed would tell the facade in the middle - the
+    // one party this exists to keep out - when a session lapsed or a hello failed.
+    // A client tells it from an answer by not being able to open it, and opens a
+    // new tunnel.
     const auto refuse = [respond]() {
-        // The same answer a carried request gets, and the same shape: a status
-        // that differed would tell whoever forwards this - the facade, which is
-        // the one party this exists to keep out - exactly when a client's session
-        // lapsed or a hello failed. What comes back cannot be opened under any
-        // key the caller holds, which is how a client tells a refusal from an
-        // answer, and it is padded like everything else so its length says
-        // nothing either.
         bazarish::http::Response response;
         response.contentType = "application/octet-stream";
         const Bytes noise = bazarish::padToLadder(randomBytes(kRefusalNoiseBytes));
         response.body = std::string(noise.begin(), noise.end());
         respond(std::move(response));
     };
-    // By value: a route behind this answers later when it is a long poll, and a
-    // responder captured by reference would be gone by the time it did - the
-    // client would wait out its read timeout for an answer nobody could send.
+    // The responder is held by value: a long poll behind this answers later, and a
+    // reference would be gone by then.
     const auto sealed = [respond](const Bytes& body) {
         bazarish::http::Response response;
         response.contentType = "application/octet-stream";
@@ -319,26 +301,15 @@ void HttpApi::serveTunnel(
             carried.headers["content-type"] = inner.contentType;
         }
     } catch (const std::exception& error) {
-        // A frame that will not open, or will not decode into a request: same
-        // uniform refusal, same reason written down.
         bazarish::log::debug("tunnel frame did not open: {}", error.what());
         refuse();
         return;
     }
-    // A tunnel carries the client API and nothing else. Two paths are refused
-    // here rather than dispatched:
-    //
-    //   the tunnel path itself - a carried frame that named it went back into
-    //   this function, and each layer copies the body it was handed, so one
-    //   request of a few megabytes cost gigabytes and the process was killed
-    //   for it. Nothing legitimate nests, and the header of Tunnel.hpp always
-    //   said a tunnel cannot open another one;
-    //
-    //   the internal prefix - it is the operator's side of the machine, reached
-    //   on the private listener, and a client is not on it.
-    //
-    // Refused like any frame that will not decode: whoever forwards this learns
-    // nothing from the answer, and the reason is written down here.
+    // A tunnel carries the client API and nothing else. The tunnel path itself is
+    // refused because a frame naming it comes back into this function and each
+    // layer copies the body it was handed - a few megabytes nested became gigabytes
+    // and the process was killed for it. The internal prefix is refused because it
+    // is the operator's side of the machine, reached on the private listener.
     if (carried.path == bazarish::tunnel::kTunnelPath) {
         bazarish::log::debug("a tunnel frame carried another tunnel frame");
         refuse();
@@ -349,7 +320,7 @@ void HttpApi::serveTunnel(
         refuse();
         return;
     }
-    // The answer goes back under the same key. Its status rides inside: outside
+    // The answer goes back under the same key, its status inside the seal: outside
     // it is always the same, or the code itself would be the channel.
     const Bytes tunnelKey = session->tunnelKey;
     http_->dispatch(carried,
@@ -390,7 +361,7 @@ bazarish::http::Response HttpApi::forwardToNode(
     if (!request.body.empty()) {
         forwarded.contentType = "application/json";
     }
-    const ServiceNodeAddress node = parseServiceNodeUrl(options_.serviceNodeUrl);
+    const bazarish::http::Url node = bazarish::http::parseUrl(options_.serviceNodeUrl);
     bazarish::http::ClientOptions clientOptions;
     clientOptions.connectTimeout = std::chrono::seconds(kNodeTimeoutSeconds);
     clientOptions.readTimeout = std::chrono::seconds(kNodeTimeoutSeconds);
@@ -407,25 +378,6 @@ bazarish::http::Response HttpApi::forwardToNode(
         bazarish::log::warn("the service node did not answer: {}", error.what());
         return errorResponse(502, ErrorCode::eDeliveryRejected, "the service node did not answer");
     }
-}
-
-ServiceNodeAddress parseServiceNodeUrl(const std::string& url)
-{
-    std::string rest = url;
-    if (const std::string scheme = "http://"; rest.rfind(scheme, 0) == 0) {
-        rest = rest.substr(scheme.size());
-    }
-    if (const auto slash = rest.find('/'); slash != std::string::npos) {
-        rest = rest.substr(0, slash);
-    }
-    ServiceNodeAddress address;
-    if (const auto colon = rest.find(':'); colon == std::string::npos) {
-        address.host = rest;
-    } else {
-        address.host = rest.substr(0, colon);
-        address.port = std::stoi(rest.substr(colon + 1));
-    }
-    return address;
 }
 
 std::optional<bazarish::http::Response> HttpApi::authenticateRequest(
@@ -477,22 +429,27 @@ std::optional<bazarish::http::Response> HttpApi::authenticateRequest(
 
 void HttpApi::setupRoutes()
 {
-    // Authorizes an operator-internal request by hybrid signature: the caller
-    // must sign the request with an identity whose fingerprint is configured as an
-    // operator (the service node for quota/transient pushes, the admin panel for
-    // management and health). No shared secret. Responds 403 and returns false on
-    // any failure.
-    // Nothing when the caller is an authorised operator; otherwise the refusal to
-    // send back, so a handler can return it unchanged.
-    const auto operatorRejection
-        = [this](const bazarish::http::Request& request) -> std::optional<bazarish::http::Response> {
-        try {
-            auth::authorizeRequest(collectAuthHeaders(request), nowSeconds(), request.method,
-                request.path, bodyBytes(request), options_.operatorFingerprints);
-            return std::nullopt;
-        } catch (const std::exception& error) {
-            return errorResponse(403, ErrorCode::eDeliveryRejected, error.what());
-        }
+    // Wraps an operator-internal handler: the caller must sign the request with an
+    // identity whose fingerprint is configured as an operator - the service node
+    // for its quota and transient pushes, the admin panel for management and
+    // health. No shared secret.
+    const auto operatorOnly = [this](auto handler) {
+        return [this, handler](
+                   const bazarish::http::Request& request) -> bazarish::http::Response {
+            if (const std::optional<bazarish::http::Response> refused
+                = bazarish::http::operatorRefusal(
+                    request, nowSeconds(), options_.operatorFingerprints);
+                refused.has_value()) {
+                return *refused;
+            }
+            try {
+                return handler(request);
+            } catch (const nlohmann::json::exception& error) {
+                return errorResponse(400, ErrorCode::eDeliveryRejected, error.what());
+            } catch (const std::invalid_argument& error) {
+                return errorResponse(400, ErrorCode::eDeliveryRejected, error.what());
+            }
+        };
     };
 
     // The server card: public, the same answer for everybody, and what a client
@@ -520,22 +477,16 @@ void HttpApi::setupRoutes()
             return std::nullopt;
         });
 
-    // Authenticated liveness for the admin panel: service name, version, uptime
-    // and resident memory. Operator-only (signed), so it leaks nothing to an
-    // unauthenticated caller.
-    http_->get("/healthz",
-        [this, operatorRejection](const bazarish::http::Request& request) -> bazarish::http::Response {
-            if (const std::optional<bazarish::http::Response> refused = operatorRejection(request);
-                refused.has_value()) {
-                return *refused;
-            }
-            return {200, "application/json", {},
-                health::reportJson("server-core", options_.version, startedAt_, nowSeconds(),
-                    std::string())};
-        });
+    // Liveness for the admin panel, operator-signed so it leaks nothing to anyone
+    // else.
+    http_->get("/healthz", operatorOnly([this](const bazarish::http::Request&) {
+        return bazarish::http::Response{200, "application/json", {},
+            health::reportJson(
+                "server-core", options_.version, startedAt_, nowSeconds(), std::string())};
+    }));
 
-    // Wraps a handler with request authentication and uniform error
-    // mapping. The handler receives the verified caller fingerprint.
+    // Wraps a client handler: it is handed the verified caller's fingerprint, and a
+    // malformed request becomes one 400 rather than one per route.
     const auto authenticate = [this](auto handler, const bool allowSession) {
         return [this, handler, allowSession](
                    const bazarish::http::Request& request) -> bazarish::http::Response {
@@ -579,10 +530,9 @@ void HttpApi::setupRoutes()
 
     // The long-poll face, on the same engine: a request with nothing to report is
     // parked on the gate instead of answered empty, so a client learns about a
-    // message when it arrives rather than on its next tick. Registered only when
-    // there is a gate to park on.
-    if (eventGate_ != nullptr) {
-        EventGate* const gate = eventGate_;
+    // message when it arrives rather than on its next tick.
+    if (options_.eventGate != nullptr) {
+        EventGate* const gate = options_.eventGate;
         const int maxWait = options_.maxEventWaitSeconds;
         http_->getAsync("/v1/messaging/events",
             [this, &store, requireClient, clientUnregistered, gate, maxWait](
@@ -596,22 +546,13 @@ void HttpApi::setupRoutes()
                 if (refused.has_value()) {
                     return *refused;
                 }
-                // Same client identity as every other route: the header, not a
-                // query parameter the caller has to remember to add.
                 const std::string clientId = requireClient(request, user);
                 if (clientId.empty()) {
                     return clientUnregistered();
                 }
-                const auto pending = [&store, user, clientId]() {
-                    nlohmann::json items = nlohmann::json::array();
-                    for (const Storage::PendingEntry& entry : store.listPending(user, clientId)) {
-                        items.push_back({{"id", entry.blobId}, {"class", entry.deliveryClass}});
-                    }
-                    return items;
-                };
-                nlohmann::json items = pending();
-                if (!items.empty()) {
-                    return jsonResponse({{"pending", items}});
+                const nlohmann::json waiting = pendingJson(store, user, clientId);
+                if (!waiting.empty()) {
+                    return jsonResponse({{"pending", waiting}});
                 }
                 int wait = maxWait;
                 const std::string asked = request.query("wait");
@@ -625,27 +566,22 @@ void HttpApi::setupRoutes()
                         bazarish::log::debug("bad wait '{}': {}", asked, error.what());
                     }
                 }
-                // Armed first, looked at second. A delivery that landed between
-                // the look above and this arming woke nobody: this request then
-                // waited out the whole poll for mail that was already in the
-                // mailbox. The re-check below closes that window - waking the
-                // waiter is what a delivery would have done.
+                // Armed first, looked at second: a delivery landing between the
+                // look above and this arming would wake nobody, and the request
+                // would wait out its whole poll for mail already in the mailbox.
+                // The re-check below closes that window.
                 gate->wait(http_->executor(), user, std::chrono::seconds(wait),
                     [&store, user, clientId, respond]() {
                         nlohmann::json items = nlohmann::json::array();
                         try {
-                            for (const Storage::PendingEntry& entry :
-                                store.listPending(user, clientId)) {
-                                items.push_back(
-                                    {{"id", entry.blobId}, {"class", entry.deliveryClass}});
-                            }
+                            items = pendingJson(store, user, clientId);
                         } catch (const std::exception& error) {
                             bazarish::log::warn("event face: {}", error.what());
                         }
                         respond(jsonResponse({{"pending", items}}));
                     });
                 try {
-                    if (!pending().empty()) {
+                    if (!pendingJson(store, user, clientId).empty()) {
                         gate->notify(user);
                     }
                 } catch (const std::exception& error) {
@@ -660,11 +596,8 @@ void HttpApi::setupRoutes()
     // A client opens a session with one hybrid signature and authenticates every
     // later request with a MAC: ~150 bytes instead of ~8.3 KB, an HMAC instead of
     // an ML-DSA verification, and nothing the server could show a third party as
-    // proof this user made this request.
-    //
-    // The secret is sealed to the serving sealing key of the caller's own
-    // destination - this server holds its private half, so no key has to be
-    // distributed for this, and the facade in between sees a sealed blob.
+    // proof this user made this request. The secret is sealed to the serving key of
+    // the caller's own destination, whose private half this server already holds.
     http_->post("/v1/auth/session",
         signedOnly([this](const bazarish::http::Request& request,
                           const std::string& user) -> bazarish::http::Response {
@@ -734,13 +667,12 @@ void HttpApi::setupRoutes()
             return jsonResponse({{"ok", true}});
         }));
 
-    // The reseed archive, for the portal to publish. A client reaches this server
-    // through a facade, and a facade is an I2P address - while a reseed is the one
-    // thing a client needs BEFORE it has I2P. So it is served on the private
-    // listener and nowhere else (a tunnel naming this prefix is refused above),
-    // and what faces the clearnet is the portal, which is on it anyway. Nothing
-    // is authenticated here and nothing needs to be: every RouterInfo inside is
-    // signed by the router it describes.
+    // The reseed archive, for the portal to publish. A facade is an I2P address and
+    // a reseed is the one thing a client needs BEFORE it has I2P, so this is served
+    // on the private listener alone (a tunnel naming the prefix is refused above)
+    // and the portal is what faces the clearnet. Nothing is authenticated and
+    // nothing needs to be: every RouterInfo inside is signed by the router it
+    // describes.
     http_->get(std::string(kReseedPath),
         [this](const bazarish::http::Request&) -> bazarish::http::Response {
             const std::string archive = reseedArchive();
@@ -770,9 +702,8 @@ void HttpApi::setupRoutes()
                 });
         }));
 
-    // The authenticated caller's own mailbox storage: bytes currently held and the
-    // effective quota (their override, else the server default). Lets a client show
-    // "used / free / total" for its server-core mailbox in per-account settings.
+    // The caller's own mailbox: what it holds and the quota it is held against
+    // (their override, else the server default).
     http_->get("/v1/messaging/storage-usage",
         authenticated([this](const bazarish::http::Request&, const std::string& user)
                           -> bazarish::http::Response {
@@ -789,12 +720,7 @@ void HttpApi::setupRoutes()
     // account - a message is kept until every registered device has acked it, so
     // a device nobody uses any more is mail nobody collects.
     http_->get("/v1/messaging/account",
-        [this, &store, operatorRejection](
-            const bazarish::http::Request& request) -> bazarish::http::Response {
-            if (const std::optional<bazarish::http::Response> refused = operatorRejection(request);
-                refused.has_value()) {
-                return *refused;
-            }
+        operatorOnly([this, &store](const bazarish::http::Request& request) {
             const std::string user = request.query("user");
             if (user.empty()) {
                 return errorResponse(400, ErrorCode::eDeliveryRejected, "no user named");
@@ -804,22 +730,17 @@ void HttpApi::setupRoutes()
                 {"usedBytes", store.usage(user)},
                 {"quotaBytes", store.userQuota(user, options_.defaultQuotaBytes)},
             });
-        });
+        }));
 
     // --- Operator-internal: an account is gone ---
     //
     // The node owns the account and this server owns the mail, so a deletion has
     // to be told to both. Everything held for the user goes at once - mail,
-    // replay markers, token hashes, devices, quota - because an account that no
+    // replay markers, pass hashes, devices, quota - because an account that no
     // longer exists must not keep a mailbox that answers for it. Idempotent: a
     // user with nothing here is already in the state this asks for.
     http_->del("/v1/messaging/account",
-        [this, &store, operatorRejection](
-            const bazarish::http::Request& request) -> bazarish::http::Response {
-            if (const std::optional<bazarish::http::Response> refused = operatorRejection(request);
-                refused.has_value()) {
-                return *refused;
-            }
+        operatorOnly([&store](const bazarish::http::Request& request) {
             const std::string user = request.query("user");
             if (user.empty()) {
                 return errorResponse(400, ErrorCode::eDeliveryRejected, "no user named");
@@ -828,7 +749,7 @@ void HttpApi::setupRoutes()
             bazarish::log::info("mailbox of {} dropped: the account was deleted",
                 bazarish::log::redact(user));
             return jsonResponse({{"ok", true}});
-        });
+        }));
 
     // --- Operator-internal: this server's own configuration ---
     //
@@ -836,12 +757,7 @@ void HttpApi::setupRoutes()
     // libi2pd's logging take effect at once; the rest is written for the next
     // start, and the panel says so beside each field.
     http_->get("/v1/messaging/settings",
-        [this, operatorRejection](
-            const bazarish::http::Request& request) -> bazarish::http::Response {
-            if (const std::optional<bazarish::http::Response> refused = operatorRejection(request);
-                refused.has_value()) {
-                return *refused;
-            }
+        operatorOnly([this](const bazarish::http::Request&) {
             if (!options_.settings) {
                 return errorResponse(503, ErrorCode::eDeliveryRejected,
                     "this server was started without a config file to write to");
@@ -861,21 +777,16 @@ void HttpApi::setupRoutes()
                 {"version", options_.version},
                 {"canRestart", static_cast<bool>(options_.requestRestart)},
             });
-        });
+        }));
 
     http_->put("/v1/messaging/settings",
-        [this, operatorRejection](
-            const bazarish::http::Request& request) -> bazarish::http::Response {
-            if (const std::optional<bazarish::http::Response> refused = operatorRejection(request);
-                refused.has_value()) {
-                return *refused;
-            }
+        operatorOnly([this](const bazarish::http::Request& request) {
             if (!options_.settings) {
                 return errorResponse(503, ErrorCode::eDeliveryRejected,
                     "this server was started without a config file to write to");
             }
             ServerSettings::Values values = options_.settings->get();
-            try {
+            {
                 const nlohmann::json body = nlohmann::json::parse(request.body);
                 if (body.contains("logLevel")) {
                     const std::string level = body.at("logLevel").get<std::string>();
@@ -919,28 +830,10 @@ void HttpApi::setupRoutes()
                     }
                     values.mailboxRetentionDays = days;
                 }
-                if (body.contains("listen")) {
-                    const nlohmann::json& listen = body.at("listen");
-                    const std::string host = listen.value("host", values.listenHost);
-                    const int port = listen.value("port", values.listenPort);
-                    if (host.empty()) {
-                        throw std::invalid_argument("a listener needs a host to bind");
-                    }
-                    if (port < bazarish::kMinPort || port > bazarish::kMaxPort) {
-                        throw std::invalid_argument("a port is between "
-                            + std::to_string(bazarish::kMinPort) + " and "
-                            + std::to_string(bazarish::kMaxPort));
-                    }
-                    values.listenHost = host;
-                    values.listenPort = port;
-                }
+                readEndpointInto(body, "listen", values.listenHost, values.listenPort);
                 if (body.contains("serviceNode")) {
                     values.serviceNodeUrl = body.at("serviceNode").get<std::string>();
                 }
-            } catch (const nlohmann::json::exception& error) {
-                return errorResponse(400, ErrorCode::eDeliveryRejected, error.what());
-            } catch (const std::invalid_argument& error) {
-                return errorResponse(400, ErrorCode::eDeliveryRejected, error.what());
             }
 
             const ServerSettings::Values before = options_.settings->get();
@@ -961,19 +854,14 @@ void HttpApi::setupRoutes()
                 bazarish::i2p::setI2pLogging(values.i2pLog);
             }
             return jsonResponse({{"logLevel", values.logLevel}, {"i2pLog", values.i2pLog}});
-        });
+        }));
 
     // Restarting is the other half of editing a startup setting from a browser:
     // without it the operator still has to open a terminal to make the change
     // they just saved take effect. The process stops cleanly and its service
     // manager starts it again.
     http_->post("/v1/messaging/restart",
-        [this, operatorRejection](
-            const bazarish::http::Request& request) -> bazarish::http::Response {
-            if (const std::optional<bazarish::http::Response> refused = operatorRejection(request);
-                refused.has_value()) {
-                return *refused;
-            }
+        operatorOnly([this](const bazarish::http::Request&) {
             if (!options_.requestRestart) {
                 return errorResponse(503, ErrorCode::eDeliveryRejected,
                     "this server cannot restart itself: it was started without a supervisor");
@@ -981,21 +869,15 @@ void HttpApi::setupRoutes()
             bazarish::log::info("restarting at the operator's request");
             options_.requestRestart();
             return jsonResponse({{"restarting", true}});
-        });
+        }));
 
-    http_->get("/v1/messaging/storage",
-        [this, operatorRejection](
-            const bazarish::http::Request& request) -> bazarish::http::Response {
-            if (const std::optional<bazarish::http::Response> refused = operatorRejection(request);
-                refused.has_value()) {
-                return *refused;
-            }
-            if (!options_.diskUsage) {
-                return errorResponse(
-                    503, ErrorCode::eDeliveryRejected, "this server cannot measure its storage");
-            }
-            return jsonResponse({{"usedBytes", options_.diskUsage()}});
-        });
+    http_->get("/v1/messaging/storage", operatorOnly([this](const bazarish::http::Request&) {
+        if (!options_.diskUsage) {
+            return errorResponse(
+                503, ErrorCode::eDeliveryRejected, "this server cannot measure its storage");
+        }
+        return jsonResponse({{"usedBytes", options_.diskUsage()}});
+    }));
 
     // --- Operator-internal: per-user storage quota ---
     //
@@ -1003,98 +885,71 @@ void HttpApi::setupRoutes()
     // storage plan changes. Authorised by an operator signature, not by user auth
     // (the user must not set their own quota).
     http_->put("/v1/messaging/quota",
-        [&store, operatorRejection](
-            const bazarish::http::Request& request) -> bazarish::http::Response {
-            if (const std::optional<bazarish::http::Response> refused = operatorRejection(request);
-                refused.has_value()) {
-                return *refused;
-            }
-            try {
-                const nlohmann::json body = nlohmann::json::parse(request.body);
-                store.setUserQuota(body.at("user").get<std::string>(),
-                    body.at("quotaBytes").get<std::uint64_t>());
-                return jsonResponse({{"ok", true}});
-            } catch (const std::exception& error) {
-                return errorResponse(400, ErrorCode::eDeliveryRejected, error.what());
-            }
-        });
+        operatorOnly([&store](const bazarish::http::Request& request) {
+            const nlohmann::json body = nlohmann::json::parse(request.body);
+            store.setUserQuota(body.at("user").get<std::string>(),
+                body.at("quotaBytes").get<std::uint64_t>());
+            return jsonResponse({{"ok", true}});
+        }));
 
-    // Per-user I2P destination (operator-internal). Set by the operator's
-    // service node when a paid user's i2pDest plan changes: it hands over the
-    // client-owned offline transient so this server can operate the user's
-    // personal destination. Same operator signature as quota. A request without a
-    // transient revokes the destination.
+    // The user's own I2P destination (operator-internal). The service node hands
+    // over the offline transient its owner delegated, so this server can operate
+    // the address. Same operator signature as quota; a request without a transient
+    // revokes it.
     http_->put("/v1/messaging/i2p-dest",
-        [this, operatorRejection](const bazarish::http::Request& request) -> bazarish::http::Response {
-            if (const std::optional<bazarish::http::Response> refused = operatorRejection(request);
-                refused.has_value()) {
-                return *refused;
-            }
+        operatorOnly([this](const bazarish::http::Request& request) {
             if (!options_.provisionI2pDest || !options_.revokeI2pDest) {
-                return errorResponse(503, ErrorCode::eDeliveryRejected,
-                    "per-user destinations not available");
+                return errorResponse(
+                    503, ErrorCode::eDeliveryRejected, "per-user destinations not available");
             }
-            try {
-                const nlohmann::json body = nlohmann::json::parse(request.body);
-                const std::string user = body.at("user").get<std::string>();
-                const std::string transient = body.value("transient", std::string());
-                if (transient.empty()) {
-                    options_.revokeI2pDest(user);
-                } else {
-                    options_.provisionI2pDest(user, transient,
-                        body.at("expiresUnix").get<std::int64_t>());
-                }
-                return jsonResponse({{"ok", true}});
-            } catch (const std::exception& error) {
-                return errorResponse(400, ErrorCode::eDeliveryRejected, error.what());
+            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const std::string user = body.at("user").get<std::string>();
+            const std::string transient = body.value("transient", std::string());
+            if (transient.empty()) {
+                options_.revokeI2pDest(user);
+            } else {
+                options_.provisionI2pDest(
+                    user, transient, body.at("expiresUnix").get<std::int64_t>());
             }
-        });
+            return jsonResponse({{"ok", true}});
+        }));
 
     // Rotating a user's serving sealing key. Operator-signed, like the other
     // node-to-server pushes; two phases, because the key only comes into force
     // when the user has signed it into a contact card their contacts can read.
     http_->put("/v1/messaging/serving-key",
-        [this, operatorRejection](const bazarish::http::Request& request) -> bazarish::http::Response {
-            if (const std::optional<bazarish::http::Response> refused = operatorRejection(request);
-                refused.has_value()) {
-                return *refused;
-            }
+        operatorOnly([this](const bazarish::http::Request& request) {
             if (!options_.prepareServingKey || !options_.commitServingKey) {
-                return errorResponse(503, ErrorCode::eDeliveryRejected,
-                    "per-user destinations not available");
+                return errorResponse(
+                    503, ErrorCode::eDeliveryRejected, "per-user destinations not available");
             }
-            try {
-                const nlohmann::json body = nlohmann::json::parse(request.body);
-                const std::string user = body.at("user").get<std::string>();
-                const std::string phase = body.at("phase").get<std::string>();
-                if (phase == "prepare") {
-                    return jsonResponse({{"servingKey", options_.prepareServingKey(user)}});
-                }
-                if (phase == "commit") {
-                    if (!options_.commitServingKey(user)) {
-                        return errorResponse(409, ErrorCode::eDeliveryRejected,
-                            "no prepared serving key for this user");
-                    }
-                    return jsonResponse({{"ok", true}});
-                }
-                return errorResponse(400, ErrorCode::eDeliveryRejected, "unknown phase");
-            } catch (const std::exception& error) {
-                return errorResponse(400, ErrorCode::eDeliveryRejected, error.what());
+            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const std::string user = body.at("user").get<std::string>();
+            const std::string phase = body.at("phase").get<std::string>();
+            if (phase == "prepare") {
+                return jsonResponse({{"servingKey", options_.prepareServingKey(user)}});
             }
-        });
+            if (phase == "commit") {
+                if (!options_.commitServingKey(user)) {
+                    return errorResponse(
+                        409, ErrorCode::eDeliveryRejected, "no prepared serving key for this user");
+                }
+                return jsonResponse({{"ok", true}});
+            }
+            return errorResponse(400, ErrorCode::eDeliveryRejected, "unknown phase");
+        }));
 
     // --- Account management, on its way to the service node ---
     //
-    // A client's account calls arrive in the same tunnel as everything else, so
-    // the facade cannot tell one kind from the other - it sees one path and one
-    // length. This server authenticates them like any other request and passes
-    // them on under its own signature, naming whose call it is.
+    // A client's account calls arrive in the same tunnel as everything else, so the
+    // facade sees one path and one length whichever kind it was. This server
+    // authenticates them like any other request and passes them on under its own
+    // signature, naming whose call it is.
     //
     // An allow-list, not a deny-list: only what a client's own account needs is
     // forwarded. `GET /v1/account/card` is deliberately absent - it answers to
-    // anyone holding a view capability, so forwarding it for a client would let
-    // one ask "is this user served here?" about anybody. The rule used to live
-    // in the facade; it lives here now, where the reasoning is.
+    // anyone holding a view capability, so forwarding it for a client would let one
+    // ask "is this user served here?" about anybody.
     for (const auto& [method, path] :
         std::vector<std::pair<const char*, const char*>>{
             {"POST", "/v1/account/card"},
@@ -1126,19 +981,8 @@ void HttpApi::setupRoutes()
             if (requireClient(request, user).empty()) {
                 return clientUnregistered();
             }
-            const nlohmann::json body = nlohmann::json::parse(request.body);
-            const nlohmann::json& asked = body.at("passes");
-            if (asked.size() > kMaxPassesPerRequest) {
-                throw std::invalid_argument("too many delivery passes in one request");
-            }
-            std::vector<Bytes> handles;
-            for (const nlohmann::json& entry : asked) {
-                Bytes handle = fromBase64(entry.get<std::string>());
-                if (handle.size() != kDeliveryPassSize) {
-                    throw std::invalid_argument("delivery pass handle has wrong size");
-                }
-                handles.push_back(std::move(handle));
-            }
+            const std::vector<Bytes> handles
+                = passHandles(nlohmann::json::parse(request.body));
             // Counted before the write rather than after it: a mailbox holds one
             // of these per correspondent, so anything near the cap is a client
             // that has stopped keeping track, and letting it write first would
@@ -1161,20 +1005,8 @@ void HttpApi::setupRoutes()
             if (requireClient(request, user).empty()) {
                 return clientUnregistered();
             }
-            const nlohmann::json body = nlohmann::json::parse(request.body);
-            const nlohmann::json& asked = body.at("passes");
-            if (asked.size() > kMaxPassesPerRequest) {
-                throw std::invalid_argument("too many delivery passes in one request");
-            }
-            std::vector<Bytes> handles;
-            for (const nlohmann::json& entry : asked) {
-                Bytes handle = fromBase64(entry.get<std::string>());
-                if (handle.size() != kDeliveryPassSize) {
-                    throw std::invalid_argument("delivery pass handle has wrong size");
-                }
-                handles.push_back(std::move(handle));
-            }
-            const std::size_t dropped = store.revokePasses(user, handles);
+            const std::size_t dropped
+                = store.revokePasses(user, passHandles(nlohmann::json::parse(request.body)));
             bazarish::log::info(
                 "revoked {} delivery pass(es) for {}", dropped, bazarish::log::redact(user));
             return jsonResponse({{"revoked", dropped}});
@@ -1189,11 +1021,7 @@ void HttpApi::setupRoutes()
             if (clientId.empty()) {
                 return clientUnregistered();
             }
-            nlohmann::json pending = nlohmann::json::array();
-            for (const Storage::PendingEntry& entry : store.listPending(user, clientId)) {
-                pending.push_back({{"id", entry.blobId}, {"class", entry.deliveryClass}});
-            }
-            return jsonResponse({{"pending", pending}});
+            return jsonResponse({{"pending", pendingJson(store, user, clientId)}});
         }));
 
     http_->get(R"(/v1/messaging/pending/([a-z0-9_-]+))",
@@ -1223,10 +1051,10 @@ void HttpApi::setupRoutes()
         }));
 
     // One device of an account writing to the account's own other devices. It is
-    // the only write into a mailbox that needs no token and no destination: the
+    // the only write into a mailbox that needs no pass and no destination: the
     // caller is the mailbox owner, proved by the signature on this very request,
     // so there is no stranger to gate and nothing to federate. That also keeps it
-    // out of the tokenless contact budget, which exists to bound strangers.
+    // out of the contact-request budget, which exists to bound strangers.
     //
     // The payload stays sealed to the account's own sealing key; this server
     // stores ciphertext, exactly as it does for mail from anyone else.
@@ -1251,6 +1079,7 @@ void HttpApi::setupRoutes()
             if (storage_.listClients(user).size() <= 1) {
                 return jsonResponse({{"ok", true}, {"stored", false}});
             }
+
             // The writer is counted as having read it, so the blob is deleted as
             // soon as the account's other devices have.
             const Storage::PutResult result = storage_.putBlob(user, deliveryId, payload,
@@ -1259,11 +1088,10 @@ void HttpApi::setupRoutes()
             if (result == Storage::PutResult::eQuotaExceeded) {
                 return errorResponse(507, ErrorCode::eStorageFull, "your storage is full");
             }
-            // Wake whichever of the account's devices is holding a poll open.
             if (result == Storage::PutResult::eStored) {
                 wakeUser(user);
             }
-            return jsonResponse({{"ok", true}});
+            return jsonResponse({{"ok", true}, {"stored", true}});
         }));
 
 }

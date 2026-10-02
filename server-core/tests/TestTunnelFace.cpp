@@ -71,9 +71,9 @@ int main()
     };
 
     HttpApi api(storage, options);
-    const int port = api.bindToAnyPort("127.0.0.1");
+    const int port = api.bind("127.0.0.1", 0);
     CHECK(port > 0);
-    std::thread serverThread([&api]() { (void)api.listenAfterBind(); });
+    std::thread serverThread([&api]() { api.wait(); });
 
     const auto post = [port](const Bytes& frame) {
         http::ClientRequest request;

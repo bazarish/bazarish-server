@@ -47,7 +47,80 @@ constexpr int kServeDeadlineSeconds = 45;
 constexpr int kWatchdogTickSeconds = 2;
 // How long a worker waits between checks for its destination to finish building.
 constexpr int kEndpointPollMillis = 200;
+// How often the delegations are checked for having run out. They are measured in
+// days, so this only has to be far finer than that.
+constexpr std::chrono::minutes kExpirySweepInterval{10};
 
+// A destination record, or an empty object when there is none to read.
+nlohmann::json readRecord(const std::filesystem::path& path)
+{
+    std::ifstream in(path, std::ios::binary);
+    const std::string text(
+        (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (text.empty()) {
+        return nlohmann::json::object();
+    }
+    return nlohmann::json::parse(text);
+}
+
+// Reads a destination record, hands it to `edit`, and writes it back. The record
+// is the destination: a rotation that is not written down is one the next start
+// knows nothing about.
+void rewriteRecord(
+    const std::filesystem::path& file, const std::function<void(nlohmann::json&)>& edit)
+{
+    nlohmann::json record = readRecord(file);
+    edit(record);
+    writePrivateFile(file, record.dump());
+}
+
+// The address a transient serves, which is the master's and therefore the same
+// for every transient reissued from it. Empty when the blob will not parse -
+// then nothing is reused, which is the safe way to be wrong.
+std::string addressOfTransient(const std::string& transientB64)
+{
+    try {
+        return bazarish::i2p::routingHost(
+            bazarish::i2p::Keys::fromBlob(fromBase64(transientB64)).publicBase64());
+    } catch (const std::exception&) {
+        // error-hiding: allowed - an unparseable blob is answered by minting
+        // fresh keys, which the caller does when this is empty.
+        return {};
+    }
+}
+
+// The address the persisted record names, or empty when it names none.
+std::string recordedAddress(const std::filesystem::path& path)
+{
+    try {
+        return readRecord(path).value("address", std::string());
+    } catch (const std::exception&) {
+        // error-hiding: allowed - a record that will not parse is treated as no
+        // record, and the keys are minted afresh.
+        return {};
+    }
+}
+
+// A delegation this server can actually publish from. Without the b33 offline
+// keys the destination would build its tunnels and then never publish: there is
+// no key to sign the outer layer of its encrypted LeaseSet with, and the address
+// would be unreachable while looking provisioned. Throws, so the refusal reaches
+// the user instead of becoming a silent outage.
+void requireUsableDelegation(const std::string& transientB64, const std::int64_t expiresUnix)
+{
+    const bazarish::i2p::Keys keys = bazarish::i2p::Keys::fromBlob(fromBase64(transientB64));
+    if (!keys.isOffline()) {
+        throw std::runtime_error("delegation carries the destination's own signing key");
+    }
+    if (keys.b33OfflineKeyDays() < 1) {
+        throw std::runtime_error("delegation carries no b33 offline keys");
+    }
+    const std::int64_t expires = keys.transientExpires();
+    if (expires != expiresUnix) {
+        throw std::runtime_error("delegation runs out at " + std::to_string(expires)
+            + ", not at the declared " + std::to_string(expiresUnix));
+    }
+}
 
 }  // namespace
 
@@ -65,11 +138,7 @@ PerUserDestinations::PerUserDestinations(bazarish::i2p::Router* const router,
 
 PerUserDestinations::~PerUserDestinations()
 {
-    {
-        const std::lock_guard<std::mutex> lock(stopMutex_);
-        stopping_ = true;
-    }
-    stopCv_.notify_all();
+    stopGate_.stop();
     if (sweeper_.joinable()) {
         sweeper_.join();
     }
@@ -133,14 +202,7 @@ void PerUserDestinations::startWatchdog()
         return;
     }
     watchdog_ = std::thread([this]() {
-        while (true) {
-            {
-                std::unique_lock<std::mutex> lock(stopMutex_);
-                if (stopCv_.wait_for(lock, std::chrono::seconds(kWatchdogTickSeconds),
-                        [this]() { return stopping_; })) {
-                    return;
-                }
-            }
+        while (!stopGate_.waitFor(std::chrono::seconds(kWatchdogTickSeconds))) {
             const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
             const std::lock_guard<std::mutex> lock(watchMutex_);
             for (const auto& entry : watched_) {
@@ -328,64 +390,6 @@ void PerUserDestinations::teardownLocked(const std::string& userFp)
     dests_.erase(it);
 }
 
-namespace {
-
-// The address a transient serves, which is the master's and therefore the same
-// for every transient reissued from it. Empty when the blob will not parse -
-// then nothing is reused, which is the safe way to be wrong.
-std::string addressOfTransient(const std::string& transientB64)
-{
-    try {
-        return bazarish::i2p::routingHost(
-            bazarish::i2p::Keys::fromBlob(fromBase64(transientB64)).publicBase64());
-    } catch (const std::exception&) {
-        // error-hiding: allowed - an unparseable blob is answered by minting
-        // fresh keys, which the caller does when this is empty.
-        return {};
-    }
-}
-
-// What the persisted record says this user's address was, or empty.
-std::string recordedAddress(const std::filesystem::path& path)
-{
-    std::ifstream in(path, std::ios::binary);
-    const std::string text(
-        (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    if (text.empty()) {
-        return {};
-    }
-    try {
-        return nlohmann::json::parse(text).value("address", std::string());
-    } catch (const std::exception&) {
-        // error-hiding: allowed - a record that will not parse is treated as no
-        // record, and the keys are minted afresh a few lines below.
-        return {};
-    }
-}
-
-// A delegation this server can actually publish from. Without the b33 offline
-// keys the destination would build its tunnels and then never publish: there is
-// no key to sign the outer layer of its encrypted LeaseSet with, and the address
-// would be unreachable while looking provisioned. Throws, so the refusal reaches
-// the user instead of becoming a silent outage.
-void requireUsableDelegation(const std::string& transientB64, const std::int64_t expiresUnix)
-{
-    const bazarish::i2p::Keys keys = bazarish::i2p::Keys::fromBlob(fromBase64(transientB64));
-    if (!keys.isOffline()) {
-        throw std::runtime_error("delegation carries the destination's own signing key");
-    }
-    if (keys.b33OfflineKeyDays() < 1) {
-        throw std::runtime_error("delegation carries no b33 offline keys");
-    }
-    const std::int64_t expires = keys.transientExpires();
-    if (expires != expiresUnix) {
-        throw std::runtime_error("delegation runs out at " + std::to_string(expires)
-            + ", not at the declared " + std::to_string(expiresUnix));
-    }
-}
-
-}  // namespace
-
 void PerUserDestinations::provision(const std::string& userFp, const std::string& transientB64,
     const std::int64_t expiresUnix)
 {
@@ -422,24 +426,19 @@ void PerUserDestinations::provision(const std::string& userFp, const std::string
         signingKeyPem = existing->second->signingKey->privatePem();
     }
     if (sameAddress && (sealingKeyPem.empty() || signingKeyPem.empty())) {
-        std::ifstream in(pathFor(userFp), std::ios::binary);
-        const std::string text(
-            (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-        if (!text.empty()) {
-            try {
-                const nlohmann::json record = nlohmann::json::parse(text);
-                if (sealingKeyPem.empty() && record.contains("sealingKey")) {
-                    sealingKeyPem = record.at("sealingKey").get<std::string>();
-                }
-                if (signingKeyPem.empty() && record.contains("signingKey")) {
-                    signingKeyPem = record.at("signingKey").get<std::string>();
-                }
-            } catch (const std::exception& error) {
-                // Malformed record: fall through to minting fresh keys. That changes
-                // the user's serving key, so it must not happen quietly.
-                bazarish::log::warn("destination record for {} unreadable, minting fresh keys: {}",
-                    bazarish::log::redact(userFp), error.what());
+        try {
+            const nlohmann::json record = readRecord(pathFor(userFp));
+            if (sealingKeyPem.empty()) {
+                sealingKeyPem = record.value("sealingKey", std::string());
             }
+            if (signingKeyPem.empty()) {
+                signingKeyPem = record.value("signingKey", std::string());
+            }
+        } catch (const std::exception& error) {
+            // Minting fresh keys below changes the user's serving key, so a record
+            // this server cannot read must not pass quietly.
+            bazarish::log::warn("destination record for {} unreadable, minting fresh keys: {}",
+                bazarish::log::redact(userFp), error.what());
         }
     }
     if (sealingKeyPem.empty()) {
@@ -467,29 +466,6 @@ void PerUserDestinations::provision(const std::string& userFp, const std::string
     teardownLocked(userFp);
     bringUp(userFp, transientB64, expiresUnix, sealingKeyPem, signingKeyPem);
 }
-
-namespace {
-
-// Reads a destination record, hands it to `edit`, and writes it back. The record
-// is the destination: a rotation that is not written down is one the next start
-// knows nothing about.
-void rewriteRecord(const std::filesystem::path& file,
-    const std::function<void(nlohmann::json&)>& edit)
-{
-    nlohmann::json record = nlohmann::json::object();
-    {
-        std::ifstream in(file, std::ios::binary);
-        const std::string text(
-            (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-        if (!text.empty()) {
-            record = nlohmann::json::parse(text);
-        }
-    }
-    edit(record);
-    writePrivateFile(file, record.dump());
-}
-
-}  // namespace
 
 std::size_t PerUserDestinations::sweepExpired(const std::int64_t now)
 {
@@ -525,11 +501,10 @@ std::string PerUserDestinations::prepareServingKey(const std::string& userFp)
     if (found == dests_.end()) {
         throw std::runtime_error("no destination to rotate a serving key for");
     }
-    const Key fresh = Key::generateSealing();
-    rewriteRecord(pathFor(userFp), [&fresh](nlohmann::json& record) {
-        record["pendingSealingKey"] = fresh.privatePem();
-    });
-    found->second->pendingSealingKey = std::make_shared<Key>(Key::fromPrivatePem(fresh.privatePem()));
+    const std::string pem = Key::generateSealing().privatePem();
+    rewriteRecord(
+        pathFor(userFp), [&pem](nlohmann::json& record) { record["pendingSealingKey"] = pem; });
+    found->second->pendingSealingKey = std::make_shared<Key>(Key::fromPrivatePem(pem));
     return toBase64(found->second->pendingSealingKey->publicDer());
 }
 
@@ -551,10 +526,6 @@ bool PerUserDestinations::commitServingKey(const std::string& userFp)
     return true;
 }
 
-// How often the delegations are checked for having run out. They are measured in
-// days, so this only has to be far finer than that.
-constexpr std::chrono::minutes kExpirySweepInterval{10};
-
 void PerUserDestinations::startSweeper()
 {
     if (sweeper_.joinable()) {
@@ -562,12 +533,7 @@ void PerUserDestinations::startSweeper()
     }
     startWatchdog();
     sweeper_ = std::thread([this]() {
-        for (;;) {
-            std::unique_lock<std::mutex> lock(stopMutex_);
-            if (stopCv_.wait_for(lock, kExpirySweepInterval, [this]() { return stopping_; })) {
-                return;
-            }
-            lock.unlock();
+        while (!stopGate_.waitFor(kExpirySweepInterval)) {
             // Whatever the last sweep or a revoke took out of service is joined
             // here, on a thread that holds no lock of ours.
             reapRetired();
@@ -619,25 +585,22 @@ void PerUserDestinations::reloadPersisted(const std::int64_t now)
         if (!entry.is_regular_file()) {
             continue;
         }
-        std::ifstream in(entry.path(), std::ios::binary);
-        const std::string text(
-            (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         try {
-            const nlohmann::json record = nlohmann::json::parse(text);
+            const nlohmann::json record = readRecord(entry.path());
             const std::int64_t expiresUnix = record.at("expiresUnix").get<std::int64_t>();
             if (expiresUnix <= now) {
                 continue;  // the offline transient has already expired
             }
             const std::string transientB64 = record.at("transient").get<std::string>();
             requireUsableDelegation(transientB64, expiresUnix);
-            // Reuse the persisted serving and signing keys (older records may
-            // predate either; mint a missing one).
-            const std::string sealingKeyPem = record.contains("sealingKey")
-                ? record.at("sealingKey").get<std::string>()
-                : Key::generateSealing().privatePem();
-            const std::string signingKeyPem = record.contains("signingKey")
-                ? record.at("signingKey").get<std::string>()
-                : Key::generateSigning().privatePem();
+            std::string sealingKeyPem = record.value("sealingKey", std::string());
+            if (sealingKeyPem.empty()) {
+                sealingKeyPem = Key::generateSealing().privatePem();
+            }
+            std::string signingKeyPem = record.value("signingKey", std::string());
+            if (signingKeyPem.empty()) {
+                signingKeyPem = Key::generateSigning().privatePem();
+            }
             bringUp(entry.path().filename().string(), transientB64, expiresUnix, sealingKeyPem,
                 signingKeyPem);
         } catch (const std::exception& error) {
@@ -664,10 +627,9 @@ std::shared_ptr<bazarish::i2p::Endpoint> PerUserDestinations::endpointForDest(
         return nullptr;
     }
     const std::lock_guard<std::mutex> lock(mutex_);
-    for (const auto& [user, d] : dests_) {
-        (void)user;
-        if (d->dest == dest) {
-            return d->endpoint;
+    for (const auto& entry : dests_) {
+        if (entry.second->dest == dest) {
+            return entry.second->endpoint;
         }
     }
     return nullptr;
@@ -679,43 +641,29 @@ std::size_t PerUserDestinations::size() const
     return dests_.size();
 }
 
-std::shared_ptr<Key> PerUserDestinations::servingKeyFor(const std::string& userFp) const
+PerUserDestinations::Assignment PerUserDestinations::assignmentFor(
+    const std::string& userFp, const std::int64_t now) const
 {
     const std::lock_guard<std::mutex> lock(mutex_);
-    const auto it = dests_.find(userFp);
-    if (it == dests_.end()) {
-        return nullptr;
+    const auto found = dests_.find(userFp);
+    if (found == dests_.end()) {
+        return {};
     }
-    return it->second->sealingKey;
-}
-
-std::string PerUserDestinations::destinationFor(const std::string& userFp) const
-{
-    const std::lock_guard<std::mutex> lock(mutex_);
-    const auto it = dests_.find(userFp);
-    if (it == dests_.end()) {
-        return std::string();
+    const Destination& destination = *found->second;
+    Assignment assignment;
+    assignment.dest = destination.dest;
+    assignment.sealingKey = destination.sealingKey;
+    if (destination.expiresUnix != 0 && now >= destination.expiresUnix) {
+        assignment.state = "expired";
+    } else if (destination.dest.empty() || !destination.endpoint
+        || !destination.endpoint->ready()) {
+        // "active" means reachable, so it follows the LeaseSet, not the object: an
+        // endpoint whose publish has not landed yet is still building.
+        assignment.state = "building";
+    } else {
+        assignment.state = "active";
     }
-    return it->second->dest;
-}
-
-std::string PerUserDestinations::stateFor(const std::string& userFp, const std::int64_t now) const
-{
-    const std::lock_guard<std::mutex> lock(mutex_);
-    const auto it = dests_.find(userFp);
-    if (it == dests_.end()) {
-        return std::string();
-    }
-    if (it->second->expiresUnix != 0 && now >= it->second->expiresUnix) {
-        return "expired";
-    }
-    if (it->second->dest.empty()) {
-        return "building";
-    }
-    // "active" means reachable, so it follows the LeaseSet, not the object: an
-    // endpoint whose publish has not landed yet is still building.
-    const std::shared_ptr<bazarish::i2p::Endpoint> endpoint = it->second->endpoint;
-    return (endpoint && endpoint->ready()) ? "active" : "building";
+    return assignment;
 }
 
 }  // namespace bazarish::server

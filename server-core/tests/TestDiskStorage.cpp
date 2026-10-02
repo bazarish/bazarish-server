@@ -130,10 +130,8 @@ int main()
     // --- Pending list and the delete-when-all-acked rule ---
     CHECK((storage.listPending(alice, "client1")
         == std::vector<Storage::PendingEntry>{{"msg1", "content"}}));
-    // A write interrupted halfway leaves a ".tmp" beside the real blobs. It has
-    // no record of its own, and reading one for it used to throw out of here -
-    // taking the whole mailbox with it, for good. It costs itself and nothing
-    // more.
+    // A write interrupted halfway leaves a ".tmp" beside the real blobs, with no
+    // record of its own. It must cost itself and not the whole mailbox.
     {
         std::ofstream stray(root / "users" / alice / "blobs" / "msg9.tmp");
         stray << "half a delivery";

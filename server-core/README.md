@@ -20,10 +20,12 @@ sealed to the server's sealing key.
 - **Storage** - per-user client registry, the passes an account has issued, and
   pending blobs. Content is deleted as soon as every registered client has acked
   it, with a retention backstop for mail no device ever collected.
-- **HTTP API** - `/v1/messaging/*`: client registry, passes and their revocation,
-  pending fetch/ack, and the write a device makes into its own account's mailbox.
-  There is no send endpoint: a client delivers its own outgoing mail, so this
-  server is never told whom its users write to.
+- **HTTP API** - one route a facade can see: the sealed tunnel every client
+  request travels inside, carrying `/v1/messaging/*` (client registry, passes and
+  their revocation, pending fetch/ack, the write a device makes into its own
+  account's mailbox) and the account calls this server forwards to the service
+  node under its own signature. There is no send endpoint: a client delivers its
+  own outgoing mail, so this server is never told whom its users write to.
 - **Federation** - serves **each user's own destination** over I2P; there is no
   destination for the server as a whole. It admits what arrives and signs its
   confirmation with that destination's own key.

@@ -40,12 +40,9 @@ void federationServeFrame(const std::string& headerLine,
             reply["errorMessage"] = outcome.errorMessage;
         }
         // The confirmation goes home on this stream, signed with the key of the
-        // destination that took the delivery. It used to be dialled back to the
-        // sender on a connection of its own, because a reply lost on a flaky return
-        // leg left the sender unsure about a message that had in fact been stored.
-        // The sender now dials from a one-time destination nobody can dial back, and
-        // a lost reply is answered by its own spool: the retry arrives here, is
-        // recognised by its deliveryId and confirmed again.
+        // destination that took the delivery. A reply the sender never sees is
+        // answered by its own spool: the retry arrives here, is recognised by its
+        // deliveryId and confirmed again.
         if (outcome.delivered && signAck && !outcome.deliveryId.empty()) {
             Bytes signerPublicDer;
             Bytes signature;
@@ -66,18 +63,12 @@ void federationServeFrame(const std::string& headerLine,
         // clear, because this only ever arrives over a direct I2P stream, which
         // is already encrypted and authenticated to this destination.
         //
-        // A destination answers for the one user it belongs to, and for nobody
-        // else. Without that check any destination of a node answers for any
-        // fingerprint the node serves, which turns every published address into
-        // an oracle: hold two invites, ask one destination for the other's card,
-        // and a "yes" says the two are served by the same server. That is the
+        // A destination answers for the one user it belongs to and for nobody else.
+        // Without that check, holding two invites and asking one destination for
+        // the other's card would say the two accounts share a server - the
         // co-location signal this protocol treats as a critical fault. The
-        // capability the query carries does not help - it is the account-wide
-        // view, and it rides in the routing block of every message a contact
-        // ever receives.
-        //
-        // Nothing legitimate is refused by this: a card is fetched by dialling
-        // the destination of the very account whose card is wanted.
+        // capability in the query does not help: it is the account-wide view, and
+        // it rides in every message a contact receives.
         if (getCard) {
             const Bytes queryBytes = fromBase64(header.at("sealed").get<std::string>());
             const CardFetchQuery query = cardFetchQueryFromJson(nlohmann::json::parse(queryBytes));

@@ -6,32 +6,35 @@
 
 #include <bazarish/Bytes.hpp>
 #include <bazarish/I2p.hpp>
+#include <bazarish/Restart.hpp>
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
-#include <condition_variable>
 #include <filesystem>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <string>
-#include <chrono>
-#include <vector>
 #include <thread>
+#include <vector>
 
 namespace bazarish::server {
 
 
-// Operates per-user federation destinations for users that own their I2P key.
+// Operates the federation destinations of users who own their I2P key. Every
+// account has one - it is the base protocol, not a purchase.
+//
 // The user delegates a time-boxed OFFLINE transient to the server, which brings
 // the destination up over I2P as an encrypted LeaseSet2, with its own inbound
 // accept loop feeding the shared DeliveryEngine. The delegation carries one
 // blinded-key-authorized transient per day, so the server publishes the
 // destination blinded without ever holding the master signing key: a floodfill
-// sees neither the address nor its tunnels. The address is derived from the
-// user's master, so it is stable as the user moves between serving servers.
-// Building a session triggers I2P tunnel construction, so each destination runs
-// on its own worker thread and provisioning never blocks the caller.
+// sees neither the address nor its tunnels. The address is derived from the user's
+// master, so it is stable as the user moves between serving servers.
+//
+// Building a session triggers I2P tunnel construction, so each destination runs on
+// its own worker thread and provisioning never blocks the caller.
 class PerUserDestinations {
 public:
     // router may be null (provision/reload then only persist + register state;
@@ -79,10 +82,26 @@ public:
     // Number of currently provisioned destinations (for tests / diagnostics).
     std::size_t size() const;
 
-    // userFp's serving sealing key - the key a contact seals the delivery
-    // envelope to for this paid personal destination, whose private half this
-    // server holds. Stable across renewals. Null when the user has none.
-    std::shared_ptr<Key> servingKeyFor(const std::string& userFp) const;
+    // What a user's own destination amounts to right now. The three are read under
+    // one lock: fetched separately, two of them could come from either side of a
+    // revoke and the client would be told an address with no key, or the reverse.
+    struct Assignment {
+        // The destination's b33, learned once it publishes. Empty until then.
+        std::string dest;
+        // The key a contact seals the delivery envelope to, whose private half
+        // this server holds. Stable across renewals; null when the user has no
+        // destination here.
+        std::shared_ptr<Key> sealingKey;
+        // What the client polls for:
+        //   "none"      - no destination here,
+        //   "building"  - provisioned, not published yet (so the client must not
+        //                 hand the address out),
+        //   "active"    - published and within the delegation,
+        //   "expired"   - the delegation lapsed and the address is offline until
+        //                 the client issues the next transient.
+        std::string state = "none";
+    };
+    Assignment assignmentFor(const std::string& userFp, std::int64_t now) const;
 
     // Mints a replacement serving sealing key and holds it aside without putting
     // it into service: the key in use keeps serving until commitServingKey, so a
@@ -93,20 +112,6 @@ public:
     // moment an envelope sealed to the old key is refused. False when there is
     // nothing prepared (a commit for a rotation that was never started).
     bool commitServingKey(const std::string& userFp);
-
-    // userFp's personal destination address (the master's b33), learned once the
-    // destination publishes. Empty when the user has none or it is not up yet.
-    std::string destinationFor(const std::string& userFp) const;
-
-    // userFp's personal-destination state, for the status the client polls:
-    //   ""          - no personal destination,
-    //   "building"  - provisioned, the destination has not published yet (so the
-    //                 client must not yet hand out the personal address),
-    //   "active"    - published and within the transient's validity,
-    //   "expired"   - the offline transient lapsed: the personal destination is
-    //                 offline (the user does not fall back to the pool while the
-    //                 option is on; they re-issue a transient or top up).
-    std::string stateFor(const std::string& userFp, std::int64_t now) const;
 
 private:
     struct Destination {
@@ -168,7 +173,7 @@ private:
     GetCardFn getCard_;
     mutable std::mutex mutex_;
     std::map<std::string, std::unique_ptr<Destination>> dests_;
-    // Watches for delegations running out. Sleeps on stopCv_, so shutdown is
+    // Watches for delegations running out. Sleeps on the gate, so shutdown is
     // immediate rather than one sweep interval away.
     std::thread sweeper_;
     std::thread watchdog_;
@@ -181,9 +186,7 @@ private:
     std::vector<std::pair<std::weak_ptr<bazarish::i2p::Stream>,
         std::chrono::steady_clock::time_point>>
         watched_;
-    std::condition_variable stopCv_;
-    std::mutex stopMutex_;
-    bool stopping_ = false;
+    bazarish::StopGate stopGate_;
 };
 
 }  // namespace bazarish::server

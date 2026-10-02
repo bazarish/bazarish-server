@@ -2,18 +2,17 @@
 #pragma once
 
 #include "DeliveryEngine.hpp"
-#include <bazarish/Limits.hpp>
-#include <algorithm>
-#include <array>
-
-#include <bazarish/Resolve.hpp>
-#include <bazarish/RateLimiter.hpp>
 
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Errors.hpp>
-#include <bazarish/Log.hpp>
 #include <bazarish/FederationFrame.hpp>
+#include <bazarish/Limits.hpp>
+#include <bazarish/Log.hpp>
+#include <bazarish/RateLimiter.hpp>
+#include <bazarish/Resolve.hpp>
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -26,12 +25,10 @@ namespace bazarish::server {
 // half are shared with the client and live in common: a client delivers its own
 // messages over the very same frame this serves.
 
-// Looks up a local user's contact card (subscription certificate DER) by
-// fingerprint for the federation card fetch; nullopt when the user is unknown.
-// Looks up a local user's contact card. The view is the capability from the
-// descriptor the asker holds; a wrong one must read exactly like an unknown
-// user, so this returns nothing in both cases and the caller cannot tell them
-// apart.
+// Looks up a local user's contact card (DER) for the federation card fetch. The
+// view is the capability from the descriptor the asker holds; a wrong one must
+// read exactly like an unknown user, so this returns nothing in both cases and
+// the caller cannot tell them apart.
 using GetCardFn = std::function<std::optional<Bytes>(
     const std::string& fingerprint, const std::string& view)>;
 
@@ -41,16 +38,10 @@ using GetCardFn = std::function<std::optional<Bytes>(
 using SignAckFn = std::function<void(
     const std::string& deliveryId, Bytes& outSignerPublicDer, Bytes& outSignature)>;
 
-// The card fetch rides the same fetch frame, but its request and answer travel
-// in the clear: the query names the fingerprint and hands back the descriptor's
-// view capability, and the answer is the card itself. Nothing is sealed because
-// the stream already is - and no relayed path is allowed, so there is no third
-// party to hide it from.
 // Serves one already-read request header: reads the deliver payload via
 // readPayload(len) when needed, runs the engine / card lookup, and writes the
-// reply line via writeReply. sealingKey null => the engine's default key.
-// owner is the user whose destination this arrived on; mail for anyone else is
-// not stored (see DeliveryEngine::deliver).
+// reply line via writeReply. sealingKey null => the engine's default key. owner is
+// the user whose destination this arrived on; mail for anyone else is not stored.
 void federationServeFrame(const std::string& headerLine,
     const std::function<Bytes(std::size_t)>& readPayload,
     const std::function<void(const std::string&)>& writeReply, DeliveryEngine& engine,
@@ -79,23 +70,18 @@ void federationServeOnce(Stream& stream, DeliveryEngine& engine, const std::int6
     // One reader for the whole frame: the header and the payload behind it come
     // out of the same buffer, so nothing read ahead is lost.
     detail::FrameReader<Stream> reader(stream);
-    // Whatever goes wrong from here, the caller is owed an answer. Closing the
-    // stream instead left it waiting out its own read deadline - a minute and a
-    // half on a card fetch - for a refusal that could have been immediate. The
-    // request line is read inside this too: it used to be read before, so a
-    // stream that stumbled on its own first line was answered with nothing, and
-    // the sender could only report that the stream had closed.
+    // Whatever goes wrong from here, including the request line itself, the caller
+    // is owed an answer: a closed stream leaves the sender waiting out its own read
+    // deadline for a refusal that could have been immediate.
     try {
         const std::string headerLine = reader.line();
         federationServeFrame(
         headerLine,
         [&reader](std::size_t len) {
             // Never allocate what a peer claims: one byte past the protocol's
-            // ceiling is enough for the engine to refuse it, and the rest is
-            // read and thrown away in fixed pieces so the sender - which is
-            // already writing - gets a typed answer instead of a closed stream.
-            // Past a few times the ceiling it is not a message at all and the
-            // stream is not worth the bandwidth.
+            // ceiling is enough for the engine to refuse it, and the rest is read
+            // and thrown away in fixed pieces so the sender - which is already
+            // writing - gets a typed answer instead of a closed stream.
             const std::size_t keep = std::min<std::size_t>(len, kMaxMessagePayloadBytes + 1);
             Bytes payload(keep);
             if (keep > 0) {

@@ -41,5 +41,4 @@ The i2pd patch overlay is applied to the submodule working tree at configure
 time, so a fresh clone needs no manual patching.
 
 A single component can also be configured on its own (`cmake -S server-core -B
-build-core`); it then expects a checkout of the common repository as a sibling
-directory.
+build-core`); it then picks up the same `common` submodule from one directory up.

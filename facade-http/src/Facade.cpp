@@ -9,6 +9,7 @@
 #include <bazarish/HttpClient.hpp>
 #include <bazarish/Clock.hpp>
 #include <bazarish/ConfigFile.hpp>
+#include <bazarish/ConfigFile.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <bazarish/I2p.hpp>
@@ -51,12 +52,6 @@ constexpr int kUpstreamTimeoutSeconds = 60;
 constexpr int kFrontReadSlackSeconds = 30;
 
 
-// Backends a request can be routed to.
-enum class Backend {
-    eNone,
-    eMessaging,
-};
-
 bool startsWith(const std::string& text, const std::string& prefix)
 {
     return text.size() >= prefix.size() && text.compare(0, prefix.size(), prefix) == 0;
@@ -64,51 +59,25 @@ bool startsWith(const std::string& text, const std::string& prefix)
 
 using bazarish::nowSeconds;
 
-// Collects the four request-auth headers from a request into the map the auth
-// primitives expect.
-using bazarish::http::collectAuthHeaders;
-
-// The path portion of a request target, without the query string.
 std::string pathOf(const std::string& target)
 {
     return target.substr(0, target.find('?'));
 }
 
-// Three paths, and nothing else exists as far as this program is concerned.
-//
-// A client speaks to its server through one of them - a sealed tunnel - and this
-// process cannot read a byte of what it carries: not who is calling, not what
-// they are asking, not what comes back. It cannot even tell an account call from
-// a message being fetched. That is the point: this is the least trusted piece of
-// the system, and it now holds nothing worth taking.
-//
-// The other is public by nature and identical for every caller, so serving it
-// tells nobody anything: the signed server card, which is what lets a client seal
-// the tunnel in the first place. The reseed archive used to be forwarded here
-// too; it moved to the server's ops socket and the portal, and the path was left
-// standing in this list answering nothing.
-Backend routeOf(const std::string& method, const std::string& path)
+// Two paths, and nothing else exists as far as this program is concerned: the
+// sealed client tunnel, of which this process cannot read a byte - not who is
+// calling, not what they ask, not even an account call from a mailbox poll - and
+// the signed server card, which is public and identical for every caller and is
+// what lets a client seal that tunnel in the first place.
+bool isForwarded(const std::string& method, const std::string& path)
 {
-    if (method == "POST" && path == bazarish::tunnel::kTunnelPath) {
-        return Backend::eMessaging;
-    }
-    if (method == "GET" && path == bazarish::tunnel::kServerCardPath) {
-        return Backend::eMessaging;
-    }
-    return Backend::eNone;
+    return (method == "POST" && path == bazarish::tunnel::kTunnelPath)
+        || (method == "GET" && path == bazarish::tunnel::kServerCardPath);
 }
 
-struct Route {
-    Backend backend = Backend::eNone;
-    std::string host;
-    int port = 0;
-    std::string target;  // request target with the secret base path stripped
-};
-
-// Resolves the backend and stripped target for a request. Returns nullopt and
-// sets a 404 on the response when the base path is wrong or the path is not one
-// the facade forwards.
-std::optional<Route> resolveRoute(
+// The request target with the secret base path stripped, or nothing when the base
+// path is wrong or the path is not one of the two the facade forwards.
+std::optional<std::string> forwardedTarget(
     const bazarish::facade::FacadeOptions& options, const bazarish::http::Request& request)
 {
     std::string target = request.target;
@@ -118,19 +87,10 @@ std::optional<Route> resolveRoute(
         }
         target = target.substr(options.basePath.size());
     }
-
-    Route route;
-    route.backend = routeOf(request.method, pathOf(target));
-    route.target = target;
-    switch (route.backend) {
-    case Backend::eMessaging:
-        route.host = options.messagingHost;
-        route.port = options.messagingPort;
-        break;
-    case Backend::eNone:
+    if (!isForwarded(request.method, pathOf(target))) {
         return std::nullopt;
     }
-    return route;
+    return target;
 }
 
 // The 404 every refusal looks like: bare, with no body and no content type. An
@@ -139,6 +99,12 @@ std::optional<Route> resolveRoute(
 bazarish::http::Response notFound()
 {
     return {404, "", {}, ""};
+}
+
+bazarish::http::Response refusal(const int status, const std::string& message)
+{
+    return {status, "application/json", {},
+        nlohmann::json{{"error", {{"message", message}}}}.dump()};
 }
 
 bazarish::http::Response gatewayFailure()
@@ -162,22 +128,7 @@ Facade::~Facade()
     stop();
 }
 
-bool Facade::listen(const std::string& host, const int port)
-{
-    return bind(host, port) && listenAfterBind();
-}
-
-bool Facade::bind(const std::string& host, const int port)
-{
-    return bindToAnyPort(host, port) > 0;
-}
-
-int Facade::bindToAnyPort(const std::string& host)
-{
-    return bindToAnyPort(host, 0);
-}
-
-int Facade::bindToAnyPort(const std::string& host, const int port)
+int Facade::bind(const std::string& host, const int port)
 {
     bazarish::http::Server::Options options;
     options.host = host;
@@ -195,24 +146,7 @@ int Facade::bindToAnyPort(const std::string& host, const int port)
     }
 }
 
-bool Facade::listenAfterBind()
-{
-    std::unique_lock<std::mutex> lock(stopMutex_);
-    stopCv_.wait(lock, [this]() { return stopping_; });
-    return true;
-}
-
-bool Facade::bindOps(const std::string& host, const int port)
-{
-    return bindOpsToAnyPort(host, port) > 0;
-}
-
-int Facade::bindOpsToAnyPort(const std::string& host)
-{
-    return bindOpsToAnyPort(host, 0);
-}
-
-int Facade::bindOpsToAnyPort(const std::string& host, const int port)
+int Facade::bindOps(const std::string& host, const int port)
 {
     bazarish::http::Server::Options options;
     options.host = host;
@@ -228,20 +162,14 @@ int Facade::bindOpsToAnyPort(const std::string& host, const int port)
     }
 }
 
-bool Facade::listenOpsAfterBind()
+void Facade::wait()
 {
-    std::unique_lock<std::mutex> lock(stopMutex_);
-    stopCv_.wait(lock, [this]() { return stopping_; });
-    return true;
+    stopGate_.wait();
 }
 
 void Facade::stop()
 {
-    {
-        const std::lock_guard<std::mutex> lock(stopMutex_);
-        stopping_ = true;
-    }
-    stopCv_.notify_all();
+    stopGate_.stop();
     if (http_) {
         http_->stop();
     }
@@ -252,14 +180,14 @@ void Facade::stop()
 
 void Facade::setupRoutes()
 {
-    // Buffered catch-all for the methods whose bodies are small (or empty):
-    // strip the secret base path, route by prefix and relay verbatim.
+    // One handler for every method: strip the secret base path, and relay verbatim
+    // the two requests this facade forwards.
     const auto handler = [this](const bazarish::http::Request& request,
                              bazarish::http::Responder respond)
         -> std::optional<bazarish::http::Response> {
         load_.record(nowSeconds());
-        const std::optional<Route> route = resolveRoute(options_, request);
-        if (!route.has_value()) {
+        const std::optional<std::string> target = forwardedTarget(options_, request);
+        if (!target.has_value()) {
             return notFound();
         }
         // The request is in flight until the backend answers and the reply goes
@@ -267,7 +195,7 @@ void Facade::setupRoutes()
         const auto inFlight = std::make_shared<Load::InFlight>(load_);
         bazarish::http::ClientRequest forwarded;
         forwarded.method = request.method;
-        forwarded.target = route->target;
+        forwarded.target = *target;
         forwarded.headers = request.headers;
         forwarded.body = request.body;
         // Hop-by-hop headers belong to the connection we received on, not to the
@@ -282,8 +210,9 @@ void Facade::setupRoutes()
         // thread, so one waiting client costs what one timer costs.
         boost::asio::co_spawn(
             http_->executor(),
-            [executor = http_->executor(), host = route->host, port = route->port,
-                forwarded = std::move(forwarded), respond, inFlight]() -> boost::asio::awaitable<void> {
+            [executor = http_->executor(), host = options_.messagingHost,
+                port = options_.messagingPort, forwarded = std::move(forwarded), respond,
+                inFlight]() -> boost::asio::awaitable<void> {
                 const bazarish::http::Response upstream = co_await bazarish::http::fetch(
                     executor, host, port, forwarded, std::chrono::seconds(kUpstreamTimeoutSeconds));
                 respond(upstream.status == 0 ? gatewayFailure() : upstream);
@@ -302,205 +231,147 @@ void Facade::setupRoutes()
 
 void Facade::setupOpsRoutes()
 {
-    // Operator-signed liveness for the admin panel, answered locally and served
-    // on the ops socket only: on the public one it would identify the host as a
-    // facade to anyone who does not know the secret base path.
-    ops_->get("/healthz",
-        [this](const bazarish::http::Request& request) -> bazarish::http::Response {
-            try {
-                bazarish::auth::authorizeRequest(collectAuthHeaders(request), nowSeconds(),
-                    request.method, request.path, bazarish::Bytes(), options_.operatorFingerprints);
-            } catch (const std::exception& error) {
-                bazarish::log::debug("ops healthz refused: {}", error.what());
-                return {403, "application/json", {},
-                    R"({"error":{"message":"operator authentication required"}})"};
-            }
-            // The health report plus what this facade is carrying: three counts
-            // and a gauge, sampled now, kept nowhere.
-            const Load::Sample sample = load_.sample(nowSeconds());
-            nlohmann::json report = nlohmann::json::parse(
-                health::reportJson("facade", options_.version, startedAt_, nowSeconds()));
-            report["requestsLastMinute"] = sample.lastMinute;
-            report["requestsLastHour"] = sample.lastHour;
-            report["requestsLastDay"] = sample.lastDay;
-            report["requestsTotal"] = sample.total;
-            report["inFlight"] = sample.inFlight;
-            return {200, "application/json", {}, report.dump()};
-        });
-
-    // The facade's own configuration, on the ops socket for the same reason
-    // /healthz is: the public socket must not admit that a facade is here.
-    const auto operatorRejection
-        = [this](const bazarish::http::Request& request)
-        -> std::optional<bazarish::http::Response> {
-        try {
-            bazarish::auth::authorizeRequest(collectAuthHeaders(request), nowSeconds(),
-                request.method, request.path,
-                bazarish::Bytes(request.body.begin(), request.body.end()),
-                options_.operatorFingerprints);
-            return std::nullopt;
-        } catch (const std::exception& error) {
-            bazarish::log::debug("ops call refused: {}", error.what());
-            return bazarish::http::Response{403, "application/json", {},
-                R"({"error":{"message":"operator authentication required"}})"};
-        }
-    };
-
-    const auto refuse = [](const int status, const std::string& message) {
-        return bazarish::http::Response{status, "application/json", {},
-            nlohmann::json{{"error", {{"message", message}}}}.dump()};
-    };
-
-    ops_->get("/settings",
-        [this, operatorRejection, refuse](
-            const bazarish::http::Request& request) -> bazarish::http::Response {
-            if (const std::optional<bazarish::http::Response> refused = operatorRejection(request);
+    // Everything on this socket is the operator's, so every route stands behind
+    // the same signature check. On the public socket none of it exists at all: it
+    // would admit a facade is here to anyone who does not know the base path.
+    const auto operatorOnly = [this](auto handler) {
+        return [this, handler](
+                   const bazarish::http::Request& request) -> bazarish::http::Response {
+            if (const std::optional<bazarish::http::Response> refused
+                = bazarish::http::operatorRefusal(
+                    request, nowSeconds(), options_.operatorFingerprints);
                 refused.has_value()) {
                 return *refused;
             }
-            if (!options_.settings) {
-                return refuse(503, "this facade was started without a config file to write to");
-            }
-            const FacadeSettings::Values values = options_.settings->get();
-            return {200, "application/json", {},
-                nlohmann::json{
-                    {"logLevel", values.logLevel},
-                    {"basePath", values.basePath},
-                    {"messaging", {{"host", values.messagingHost},
-                                      {"port", values.messagingPort}}},
-                    {"account", {{"host", values.accountHost}, {"port", values.accountPort}}},
-                    {"listen", {{"host", values.listenHost}, {"port", values.listenPort}}},
-                    {"opsListen", {{"host", values.opsHost}, {"port", values.opsPort}}},
-                    {"i2pEnabled", values.i2pEnabled},
-                    {"i2pDestinations", values.i2pDestinations},
-                    {"i2pPrivacy", values.i2pPrivacy},
-                    {"i2pTunnelQuantity", values.i2pTunnelQuantity},
-                    {"stateDirectory", options_.stateDirectory},
-                    {"version", options_.version},
-                    {"canRestart", static_cast<bool>(options_.requestRestart)},
-                }
-                    .dump()};
-        });
-
-    ops_->put("/settings",
-        [this, operatorRejection, refuse](
-            const bazarish::http::Request& request) -> bazarish::http::Response {
-            if (const std::optional<bazarish::http::Response> refused = operatorRejection(request);
-                refused.has_value()) {
-                return *refused;
-            }
-            if (!options_.settings) {
-                return refuse(503, "this facade was started without a config file to write to");
-            }
-            FacadeSettings::Values values = options_.settings->get();
             try {
-                const nlohmann::json body = nlohmann::json::parse(request.body);
-                if (body.contains("logLevel")) {
-                    const std::string level = body.at("logLevel").get<std::string>();
-                    if (!bazarish::log::levelFromString(level).has_value()) {
-                        throw std::invalid_argument("not a log level: " + level);
-                    }
-                    values.logLevel = level;
-                }
-                if (body.contains("basePath")) {
-                    const std::string path = body.at("basePath").get<std::string>();
-                    // The one field here that is a secret. An empty one is only
-                    // legitimate when a fronting proxy owns it, and that is a
-                    // decision made in the config file, not in a browser.
-                    if (path.empty() || !isValidBasePath(path)) {
-                        throw std::invalid_argument(
-                            "a base path looks like /8f1818f3/0966179fb196: one or more"
-                            " slash-separated segments of letters, digits, '-' or '_'");
-                    }
-                    values.basePath = path;
-                }
-                const auto readEndpoint = [&body](const std::string& key, std::string& host,
-                                              int& port) {
-                    if (!body.contains(key)) {
-                        return;
-                    }
-                    const nlohmann::json& endpoint = body.at(key);
-                    const std::string wantedHost = endpoint.value("host", host);
-                    const int wantedPort = endpoint.value("port", port);
-                    if (wantedHost.empty()) {
-                        throw std::invalid_argument("a " + key + " address needs a host");
-                    }
-                    if (wantedPort < bazarish::kMinPort || wantedPort > bazarish::kMaxPort) {
-                        throw std::invalid_argument("a port is between "
-                            + std::to_string(bazarish::kMinPort) + " and "
-                            + std::to_string(bazarish::kMaxPort));
-                    }
-                    host = wantedHost;
-                    port = wantedPort;
-                };
-                readEndpoint("messaging", values.messagingHost, values.messagingPort);
-                readEndpoint("account", values.accountHost, values.accountPort);
-                readEndpoint("listen", values.listenHost, values.listenPort);
-                readEndpoint("opsListen", values.opsHost, values.opsPort);
-                if (body.contains("i2pEnabled")) {
-                    values.i2pEnabled = body.at("i2pEnabled").get<bool>();
-                }
-                if (body.contains("i2pDestinations")) {
-                    const int count = body.at("i2pDestinations").get<int>();
-                    if (count < 1 || count > kMaxI2pDestinations) {
-                        throw std::invalid_argument("a facade carries between 1 and "
-                            + std::to_string(kMaxI2pDestinations) + " destinations");
-                    }
-                    values.i2pDestinations = count;
-                }
-                if (body.contains("i2pPrivacy")) {
-                    const std::string named = body.at("i2pPrivacy").get<std::string>();
-                    if (!bazarish::i2p::privacyFromString(named).has_value()) {
-                        throw std::invalid_argument("not a privacy level: " + named);
-                    }
-                    values.i2pPrivacy = named;
-                }
-                if (body.contains("i2pTunnelQuantity")) {
-                    const int quantity = body.at("i2pTunnelQuantity").get<int>();
-                    if (quantity < 1 || quantity > bazarish::i2p::kMaxTunnelQuantity) {
-                        throw std::invalid_argument("a destination carries between 1 and "
-                            + std::to_string(bazarish::i2p::kMaxTunnelQuantity) + " tunnels");
-                    }
-                    values.i2pTunnelQuantity = quantity;
-                }
+                return handler(request);
             } catch (const nlohmann::json::exception& error) {
-                return refuse(400, error.what());
+                return refusal(400, error.what());
             } catch (const std::invalid_argument& error) {
-                return refuse(400, error.what());
+                return refusal(400, error.what());
             }
+        };
+    };
 
-            const std::string levelBefore = options_.settings->get().logLevel;
-            try {
-                options_.settings->set(values);
-            } catch (const std::exception& error) {
-                return refuse(500, error.what());
-            }
-            if (values.logLevel != levelBefore) {
-                if (const std::optional<bazarish::log::Level> level
-                    = bazarish::log::levelFromString(values.logLevel);
-                    level.has_value()) {
-                    bazarish::log::setLevel(*level);
-                }
-            }
-            return {200, "application/json", {},
-                nlohmann::json{{"logLevel", values.logLevel}}.dump()};
-        });
+    // Liveness plus what this facade is carrying: three counts and a gauge,
+    // sampled now, kept nowhere.
+    ops_->get("/healthz", operatorOnly([this](const bazarish::http::Request&) {
+        const Load::Sample sample = load_.sample(nowSeconds());
+        nlohmann::json report = nlohmann::json::parse(
+            health::reportJson("facade", options_.version, startedAt_, nowSeconds()));
+        report["requestsLastMinute"] = sample.lastMinute;
+        report["requestsLastHour"] = sample.lastHour;
+        report["requestsLastDay"] = sample.lastDay;
+        report["requestsTotal"] = sample.total;
+        report["inFlight"] = sample.inFlight;
+        return bazarish::http::Response{200, "application/json", {}, report.dump()};
+    }));
 
-    ops_->post("/restart",
-        [this, operatorRejection, refuse](
-            const bazarish::http::Request& request) -> bazarish::http::Response {
-            if (const std::optional<bazarish::http::Response> refused = operatorRejection(request);
-                refused.has_value()) {
-                return *refused;
+    ops_->get("/settings", operatorOnly([this](const bazarish::http::Request&) {
+        if (!options_.settings) {
+            return refusal(503, "this facade was started without a config file to write to");
+        }
+        const FacadeSettings::Values values = options_.settings->get();
+        return bazarish::http::Response{200, "application/json", {},
+            nlohmann::json{
+                {"logLevel", values.logLevel},
+                {"basePath", values.basePath},
+                {"messaging", {{"host", values.messagingHost}, {"port", values.messagingPort}}},
+                {"listen", {{"host", values.listenHost}, {"port", values.listenPort}}},
+                {"opsListen", {{"host", values.opsHost}, {"port", values.opsPort}}},
+                {"i2pEnabled", values.i2pEnabled},
+                {"i2pDestinations", values.i2pDestinations},
+                {"i2pPrivacy", values.i2pPrivacy},
+                {"i2pTunnelQuantity", values.i2pTunnelQuantity},
+                {"stateDirectory", options_.stateDirectory},
+                {"version", options_.version},
+                {"canRestart", static_cast<bool>(options_.requestRestart)},
             }
-            if (!options_.requestRestart) {
-                return refuse(503,
-                    "this facade cannot restart itself: it was started without a supervisor");
+                .dump()};
+    }));
+
+    ops_->put("/settings", operatorOnly([this](const bazarish::http::Request& request) {
+        if (!options_.settings) {
+            return refusal(503, "this facade was started without a config file to write to");
+        }
+        FacadeSettings::Values values = options_.settings->get();
+        const nlohmann::json body = nlohmann::json::parse(request.body);
+        if (body.contains("logLevel")) {
+            const std::string level = body.at("logLevel").get<std::string>();
+            if (!bazarish::log::levelFromString(level).has_value()) {
+                throw std::invalid_argument("not a log level: " + level);
             }
-            bazarish::log::info("restarting at the operator's request");
-            options_.requestRestart();
-            return {200, "application/json", {}, R"({"restarting":true})"};
-        });
+            values.logLevel = level;
+        }
+        if (body.contains("basePath")) {
+            const std::string path = body.at("basePath").get<std::string>();
+            // The one field here that is a secret. An empty one is only
+            // legitimate when a fronting proxy owns it, and that is a decision
+            // made in the config file, not in a browser.
+            if (path.empty() || !isValidBasePath(path)) {
+                throw std::invalid_argument(
+                    "a base path looks like /8f1818f3/0966179fb196: one or more"
+                    " slash-separated segments of letters, digits, '-' or '_'");
+            }
+            values.basePath = path;
+        }
+        readEndpointInto(body, "messaging", values.messagingHost, values.messagingPort);
+        readEndpointInto(body, "listen", values.listenHost, values.listenPort);
+        readEndpointInto(body, "opsListen", values.opsHost, values.opsPort);
+        if (body.contains("i2pEnabled")) {
+            values.i2pEnabled = body.at("i2pEnabled").get<bool>();
+        }
+        if (body.contains("i2pDestinations")) {
+            const int count = body.at("i2pDestinations").get<int>();
+            if (count < 1 || count > kMaxI2pDestinations) {
+                throw std::invalid_argument("a facade carries between 1 and "
+                    + std::to_string(kMaxI2pDestinations) + " destinations");
+            }
+            values.i2pDestinations = count;
+        }
+        if (body.contains("i2pPrivacy")) {
+            const std::string named = body.at("i2pPrivacy").get<std::string>();
+            if (!bazarish::i2p::privacyFromString(named).has_value()) {
+                throw std::invalid_argument("not a privacy level: " + named);
+            }
+            values.i2pPrivacy = named;
+        }
+        if (body.contains("i2pTunnelQuantity")) {
+            const int quantity = body.at("i2pTunnelQuantity").get<int>();
+            if (quantity < 1 || quantity > bazarish::i2p::kMaxTunnelQuantity) {
+                throw std::invalid_argument("a destination carries between 1 and "
+                    + std::to_string(bazarish::i2p::kMaxTunnelQuantity) + " tunnels");
+            }
+            values.i2pTunnelQuantity = quantity;
+        }
+
+        const std::string levelBefore = options_.settings->get().logLevel;
+        try {
+            options_.settings->set(values);
+        } catch (const std::exception& error) {
+            // The operator asked for a change that cannot outlive a restart.
+            return refusal(500, error.what());
+        }
+        if (values.logLevel != levelBefore) {
+            if (const std::optional<bazarish::log::Level> level
+                = bazarish::log::levelFromString(values.logLevel);
+                level.has_value()) {
+                bazarish::log::setLevel(*level);
+            }
+        }
+        return bazarish::http::Response{200, "application/json", {},
+            nlohmann::json{{"logLevel", values.logLevel}}.dump()};
+    }));
+
+    ops_->post("/restart", operatorOnly([this](const bazarish::http::Request&) {
+        if (!options_.requestRestart) {
+            return refusal(
+                503, "this facade cannot restart itself: it was started without a supervisor");
+        }
+        bazarish::log::info("restarting at the operator's request");
+        options_.requestRestart();
+        return bazarish::http::Response{200, "application/json", {}, R"({"restarting":true})"};
+    }));
 }
 
 }  // namespace bazarish::facade

@@ -29,12 +29,19 @@ namespace {
 constexpr int kAcceptTimeoutSeconds = 30;
 // Pump buffer. Requests are small; a response may be a large streamed body.
 constexpr std::size_t kPumpBufferBytes = 32 * 1024;
-// How long to wait for a destination's leaseset to publish before saying so.
+// How long to wait for a destination's leaseset to publish before saying so, and
+// the step the wait is taken in - short, so a stop that arrives meanwhile is seen
+// at once instead of five minutes later.
 constexpr int kReadyWaitSeconds = 300;
+constexpr int kReadyPollSeconds = 1;
 // How long a finished reply may wait for the client to read it before the stream
 // is torn down anyway, and how often that is checked.
 constexpr int kDrainMillis = 60000;
 constexpr int kDrainPollMillis = 50;
+// How many relays this facade carries at once. Each is one thread and one socket
+// to the local listener; the ceiling is what keeps a burst of clients from
+// becoming a burst of threads.
+constexpr std::size_t kMaxRelaysInFlight = 256;
 
 using bazarish::readFileText;
 using bazarish::writePrivateFile;
@@ -60,11 +67,6 @@ int connectLocal(const std::string& host, const int port)
 // Pumps one accepted stream against the local listener until either side ends.
 // The response direction runs here and the request direction on a helper thread,
 // so a streamed response is relayed as it arrives rather than after the request.
-// How many relays this facade carries at once. Each is one thread and one
-// socket to the local listener; the ceiling is what keeps a burst of clients
-// from becoming a burst of threads.
-constexpr std::size_t kMaxRelaysInFlight = 256;
-
 void relay(std::unique_ptr<bazarish::i2p::Stream> stream, const int fd)
 {
     std::size_t fromClient = 0;
@@ -100,16 +102,6 @@ void relay(std::unique_ptr<bazarish::i2p::Stream> stream, const int fd)
             break;
         }
         try {
-            if (toClient == 0) {
-                // The first bytes back are the status line: log them so a framing
-                // complaint from the client can be checked against what was sent.
-                const std::size_t head = std::min<std::size_t>(static_cast<std::size_t>(n), 48);
-                std::string preview(buffer.data(), head);
-                for (char& c : preview) {
-                    if (c == '\r' || c == '\n') { c = '|'; }
-                }
-                bazarish::log::debug("i2p relay: first reply bytes: {}", preview);
-            }
             stream->writeAll(buffer.data(), static_cast<std::size_t>(n));
             toClient += static_cast<std::size_t>(n);
         } catch (const std::exception& error) {
@@ -146,6 +138,9 @@ I2pFront::~I2pFront()
 
 std::vector<std::string> I2pFront::start()
 {
+    // Set before the first thread is made: the readiness waits below check it to
+    // know whether a destination that is not ready yet still matters.
+    running_ = true;
     std::error_code ec;
     std::filesystem::create_directories(options_.stateDir, ec);
     bazarish::i2p::RouterConfig routerConfig;
@@ -168,22 +163,27 @@ std::vector<std::string> I2pFront::start()
             const bazarish::Bytes blob = endpoint->privateBlob();
             writePrivateFile(keyPath, std::string(blob.begin(), blob.end()));
         }
-        hosts.push_back(endpoint->routingHost());
-        // Publishing the leaseset takes a while after the address is known, and
-        // until it does a client's dial simply fails. Say when each one is
-        // actually reachable rather than leaving the log claiming it is up.
         const std::string host = endpoint->routingHost();
-        std::thread([endpoint, host]() {
-            if (endpoint->waitReady(std::chrono::seconds(kReadyWaitSeconds))) {
-                bazarish::log::info("i2p facade ready: {}", host);
-            } else {
-                bazarish::log::warn("i2p facade not ready after {}s: {}", kReadyWaitSeconds, host);
+        hosts.push_back(host);
+        // Publishing the leaseset takes a while after the address is known, and
+        // until it does a client's dial simply fails. Say when each one is actually
+        // reachable rather than leaving the log claiming it is up. Joined by stop(),
+        // so the wait never outlives the router it is waiting on.
+        readyThreads_.emplace_back([this, endpoint, host]() {
+            for (int waited = 0; waited < kReadyWaitSeconds; waited += kReadyPollSeconds) {
+                if (endpoint->waitReady(std::chrono::seconds(kReadyPollSeconds))) {
+                    bazarish::log::info("i2p facade ready: {}", host);
+                    return;
+                }
+                if (!running_) {
+                    return;  // stopping: nothing left to be ready for
+                }
             }
-        }).detach();
+            bazarish::log::warn("i2p facade not ready after {}s: {}", kReadyWaitSeconds, host);
+        });
         endpoints_.push_back(std::move(endpoint));
     }
 
-    running_ = true;
     for (const std::shared_ptr<bazarish::i2p::Endpoint>& endpoint : endpoints_) {
         acceptThreads_.emplace_back([this, endpoint]() { acceptLoop(endpoint); });
     }
@@ -199,6 +199,14 @@ void I2pFront::stop()
         }
     }
     acceptThreads_.clear();
+    // The readiness waits hold an endpoint each, so they are joined before the
+    // router under them goes.
+    for (std::thread& thread : readyThreads_) {
+        if (thread.joinable()) {
+            thread.join();
+        }
+    }
+    readyThreads_.clear();
     endpoints_.clear();
     router_.reset();
 }

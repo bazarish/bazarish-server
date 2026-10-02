@@ -2,19 +2,17 @@
 #include "Facade.hpp"
 #include "I2pFront.hpp"
 
-#include <bazarish/I2p.hpp>
 #include <bazarish/ConfigFile.hpp>
+#include <bazarish/I2p.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/Restart.hpp>
 
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
-#include <thread>
 
 namespace {
 
@@ -29,9 +27,9 @@ void printUsage()
         "Usage: bazarish-facade-http --config <path>\n"
         "       bazarish-facade-http --version\n"
         "\n"
-        "Transparent reverse proxy: <secret>/v1/messaging/* -> messaging server,\n"
-        "<secret>/v1/account/* -> service node; anything else is a 404. Everything\n"
-        "it runs on is in the config file.\n"
+        "Forwards two requests to the messaging server - the sealed client tunnel\n"
+        "and the public server card - and answers everything else with a bare 404.\n"
+        "Everything it runs on is in the config file.\n"
         "\n"
         "\"basePath\" is mandatory: it is the only thing standing between a scan of\n"
         "the host and the clearnet API, and it reaches a client only inside the\n"
@@ -41,8 +39,8 @@ void printUsage()
         "preferred way in: clients reach it without touching the clearnet at all.\n"
         "The keys live in \"state\" and the addresses are stable across restarts,\n"
         "because they travel in the server descriptor.\n"
-        "\"opsListen\" adds a private socket serving the operator-signed /healthz\n"
-        "for the admin panel; it is never published to clients.\n",
+        "\"opsListen\" adds a private socket serving the operator-signed health,\n"
+        "settings and restart for the admin panel; it is never published to clients.\n",
         kVersion);
 }
 
@@ -69,11 +67,7 @@ int main(const int argc, const char** argv)
 
     const bazarish::ConfigView::Endpoint listen = config.endpoint("listen").value_or(
         bazarish::ConfigView::Endpoint{kDefaultHost, kDefaultPort});
-    const std::string host = listen.host;
-    const int port = listen.port;
     const std::optional<bazarish::ConfigView::Endpoint> ops = config.endpoint("opsListen");
-    const std::string opsHost = ops.has_value() ? ops->host : std::string();
-    const int opsPort = ops.has_value() ? ops->port : 0;
     const bool servePublicRoot = config.flag("public", false);
     const bool enableI2p = config.flag("i2p.enabled", false);
     const std::filesystem::path stateDir(config.text("state"));
@@ -90,6 +84,15 @@ int main(const int argc, const char** argv)
     }
     const int tunnelQuantity = static_cast<int>(
         config.number("i2p.tunnelQuantity", bazarish::i2p::kDefaultTunnelQuantity));
+    bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
+    if (const std::string level = config.text("logLevel"); !level.empty()) {
+        const std::optional<bazarish::log::Level> parsed = bazarish::log::levelFromString(level);
+        if (!parsed.has_value()) {
+            std::fprintf(stderr, "config: logLevel is not a level\n");
+            return 2;
+        }
+        logLevel = *parsed;
+    }
 
     bazarish::facade::FacadeOptions options;
     options.version = kVersion;
@@ -100,21 +103,6 @@ int main(const int argc, const char** argv)
         messaging.has_value()) {
         options.messagingHost = messaging->host;
         options.messagingPort = messaging->port;
-    }
-    if (const std::optional<bazarish::ConfigView::Endpoint> account = config.endpoint("account");
-        account.has_value()) {
-        options.accountHost = account->host;
-        options.accountPort = account->port;
-    }
-
-    bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
-    if (const std::string level = config.text("logLevel"); !level.empty()) {
-        const std::optional<bazarish::log::Level> parsed = bazarish::log::levelFromString(level);
-        if (!parsed.has_value()) {
-            std::fprintf(stderr, "config: logLevel is not a level\n");
-            return 2;
-        }
-        logLevel = *parsed;
     }
 
     if (options.basePath.empty() && !servePublicRoot) {
@@ -129,8 +117,17 @@ int main(const int argc, const char** argv)
     }
     if (!options.basePath.empty() && !bazarish::facade::isValidBasePath(options.basePath)) {
         std::fprintf(stderr,
-            "invalid --base-path: expected an absolute prefix such as /h9fd/kshdcy,\n"
+            "config: \"basePath\" is an absolute prefix such as /h9fd/kshdcy,\n"
             "with no trailing slash and no query\n");
+        return 2;
+    }
+    if (enableI2p && stateDir.empty()) {
+        std::fprintf(stderr, "config: \"i2p\" needs \"state\": the destination keys must"
+                             " persist,\ntheir addresses travel in the server descriptor\n");
+        return 2;
+    }
+    if (i2pDests == 0) {
+        std::fprintf(stderr, "config: \"i2p.destinations\" is at least 1\n");
         return 2;
     }
 
@@ -144,12 +141,10 @@ int main(const int argc, const char** argv)
     settingValues.basePath = options.basePath;
     settingValues.messagingHost = options.messagingHost;
     settingValues.messagingPort = options.messagingPort;
-    settingValues.accountHost = options.accountHost;
-    settingValues.accountPort = options.accountPort;
-    settingValues.listenHost = host;
-    settingValues.listenPort = port;
-    settingValues.opsHost = opsHost;
-    settingValues.opsPort = opsPort;
+    settingValues.listenHost = listen.host;
+    settingValues.listenPort = listen.port;
+    settingValues.opsHost = ops.has_value() ? ops->host : std::string();
+    settingValues.opsPort = ops.has_value() ? ops->port : 0;
     settingValues.i2pEnabled = enableI2p;
     settingValues.i2pDestinations = static_cast<int>(i2pDests);
     settingValues.i2pPrivacy = std::string(bazarish::i2p::privacyName(privacy));
@@ -173,45 +168,23 @@ int main(const int argc, const char** argv)
     *restartHook = [&restart]() { restart.request(); };
     std::printf("bazarish-facade-http %s\n", kVersion);
     std::fflush(stdout);
-    bazarish::log::info("messaging -> {}:{}, account -> {}:{}", options.messagingHost,
-        options.messagingPort, options.accountHost, options.accountPort);
+    bazarish::log::info("messaging -> {}:{}", options.messagingHost, options.messagingPort);
 
-    if (enableI2p && stateDir.empty()) {
-        std::fprintf(stderr, "--i2p needs --state <dir>: the destination keys must persist,\n"
-                             "their addresses travel in the server descriptor\n");
-        return 2;
-    }
-    if (i2pDests == 0) {
-        std::fprintf(stderr, "--i2p-dests must be at least 1\n");
-        return 2;
-    }
-
-    std::thread opsThread;
-    if (opsPort != 0) {
-        if (!facade.bindOps(opsHost, opsPort)) {
-            bazarish::log::error("failed to listen on {}:{} (ops)", opsHost, opsPort);
+    if (ops.has_value()) {
+        if (facade.bindOps(ops->host, ops->port) <= 0) {
+            bazarish::log::error("failed to listen on {}:{} (ops)", ops->host, ops->port);
             return 1;
         }
-        opsThread = std::thread([&facade]() {
-            if (!facade.listenOpsAfterBind()) {
-                bazarish::log::error("ops listener failed");
-            }
-        });
-        bazarish::log::info("ops listening on {}:{}", opsHost, opsPort);
+        bazarish::log::info("ops listening on {}:{}", ops->host, ops->port);
     }
 
-    bazarish::log::info("listening on {}:{}{}", host, port,
+    bazarish::log::info("listening on {}:{}{}", listen.host, listen.port,
         options.basePath.empty() ? " (no secret prefix: fronting proxy owns it)"
                                  : options.basePath);
-    if (!facade.bind(host, port)) {
-        bazarish::log::error("failed to listen on {}:{}", host, port);
+    if (facade.bind(listen.host, listen.port) <= 0) {
+        bazarish::log::error("failed to listen on {}:{}", listen.host, listen.port);
         return 1;
     }
-    std::thread httpThread([&facade]() {
-        if (!facade.listenAfterBind()) {
-            bazarish::log::error("listener failed");
-        }
-    });
 
     // The I2P front relays into the listener above, so it starts once that is
     // up. Its addresses are the preferred way in; clearnet stays for bootstrap.
@@ -220,8 +193,9 @@ int main(const int argc, const char** argv)
         bazarish::facade::I2pFront::Options frontOptions;
         frontOptions.stateDir = stateDir;
         // A wildcard bind is reached over the loopback like any local client.
-        frontOptions.localHost = host == "0.0.0.0" ? std::string("127.0.0.1") : host;
-        frontOptions.localPort = port;
+        frontOptions.localHost
+            = listen.host == "0.0.0.0" ? std::string("127.0.0.1") : listen.host;
+        frontOptions.localPort = listen.port;
         frontOptions.destinations = i2pDests;
         frontOptions.privacy = privacy;
         frontOptions.tunnelQuantity = tunnelQuantity;
@@ -233,13 +207,8 @@ int main(const int argc, const char** argv)
         std::fflush(stdout);
     }
 
-    // The bind above already proved the port; from here the listener only ends
-    // when the process is asked to stop.
-    httpThread.join();
+    facade.wait();
     i2pFront.reset();
     facade.stop();
-    if (opsThread.joinable()) {
-        opsThread.join();
-    }
     return restart.requested() ? bazarish::kRestartExitCode : 0;
 }

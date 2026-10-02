@@ -15,7 +15,6 @@
 #include <cstdlib>
 #include <string>
 #include <map>
-#include <thread>
 
 #define CHECK(condition)                                                            \
     do {                                                                            \
@@ -124,18 +123,13 @@ int main()
 {
     testLoadSample();
     http::Server messaging(backendOptions());
-    http::Server account(backendOptions());
     installBackend(messaging, "messaging");
-    installBackend(account, "account");
     const int messagingPort = messaging.start();
-    const int accountPort = account.start();
-    CHECK(messagingPort > 0 && accountPort > 0);
+    CHECK(messagingPort > 0);
 
     bazarish::facade::FacadeOptions options;
     options.messagingHost = "127.0.0.1";
     options.messagingPort = messagingPort;
-    options.accountHost = "127.0.0.1";
-    options.accountPort = accountPort;
     options.basePath = "/s/secret123";
     // The configuration this facade answers for on its ops socket, backed by a
     // file it can write.
@@ -150,8 +144,6 @@ int main()
     facadeValues.basePath = options.basePath;
     facadeValues.messagingHost = "127.0.0.1";
     facadeValues.messagingPort = messagingPort;
-    facadeValues.accountHost = "127.0.0.1";
-    facadeValues.accountPort = accountPort;
     facadeValues.listenHost = "127.0.0.1";
     facadeValues.listenPort = 8419;
     facadeValues.opsHost = "127.0.0.1";
@@ -166,13 +158,10 @@ int main()
     const bazarish::Identity operatorIdentity = bazarish::Identity::generate();
     options.operatorFingerprints = {operatorIdentity.fingerprint()};
     bazarish::facade::Facade facade(options);
-    const int facadePort = facade.bindToAnyPort("127.0.0.1");
+    const int facadePort = facade.bind("127.0.0.1", 0);
     CHECK(facadePort > 0);
-    std::thread facadeThread([&facade]() { (void)facade.listenAfterBind(); });
-    const int opsPort = facade.bindOpsToAnyPort("127.0.0.1");
+    const int opsPort = facade.bindOps("127.0.0.1", 0);
     CHECK(opsPort > 0);
-    std::thread opsThread([&facade]() { (void)facade.listenOpsAfterBind(); });
-
 
     // The tunnel: one path, one body, relayed byte for byte. Everything a client
     // says now arrives this way, and this program can read none of it - it does
@@ -340,8 +329,5 @@ int main()
 
     facade.stop();
     messaging.stop();
-    account.stop();
-    facadeThread.join();
-    opsThread.join();
     return 0;
 }

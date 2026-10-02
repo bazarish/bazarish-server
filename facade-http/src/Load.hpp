@@ -7,15 +7,13 @@
 
 namespace bazarish::facade {
 
-// What the facade is carrying right now, for the operator panel: how many
-// requests came in over the last minute, hour and day, and how many are in
-// flight. Deliberately not a history - three numbers and a gauge, sampled when
-// someone looks, so nothing accumulates and nothing has to be pruned.
+// What the facade is carrying right now, for the operator panel. Deliberately not
+// a history: three counts and a gauge, sampled when someone looks, so nothing
+// accumulates and nothing has to be pruned.
 //
-// Counting is by bucket: one per second for the last minute, one per minute for
-// the last day (the hour is the last sixty of those). A bucket carries the
-// stamp of the period it belongs to, so a stale one reads as zero without
-// anyone having to sweep it.
+// One bucket per second for the last minute, one per minute for the last day (the
+// hour is the last sixty of those). A bucket carries the stamp of the period it
+// belongs to, so a stale one reads as zero with nobody sweeping it.
 class Load {
 public:
     struct Sample {

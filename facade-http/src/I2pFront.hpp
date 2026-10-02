@@ -56,6 +56,9 @@ private:
     std::unique_ptr<bazarish::i2p::Router> router_;
     std::vector<std::shared_ptr<bazarish::i2p::Endpoint>> endpoints_;
     std::vector<std::thread> acceptThreads_;
+    // One per destination, waiting for its leaseset to publish so the log can say
+    // when the address is actually reachable.
+    std::vector<std::thread> readyThreads_;
     std::atomic<bool> running_{false};
     // Relays in flight. Each is a thread of its own, held for as long as the
     // client keeps its connection: unbounded, a burst of clients is a burst of

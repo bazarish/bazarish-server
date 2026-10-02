@@ -3,8 +3,8 @@
 The HTTP facade for the [Bazarish](https://github.com/bazarish/docs-main)
 messenger: the "last mile" between a client and the server infrastructure.
 
-It forwards exactly two requests to the messaging server and answers everything
-else with the same bare 404:
+The messaging server is its only backend. It forwards exactly two requests there
+and answers everything else with the same bare 404:
 
 - `POST /t` - the sealed tunnel every client request travels inside. The real
   method, path and headers are encrypted, so the facade cannot tell a message
@@ -16,8 +16,8 @@ else with the same bare 404:
 
 The facade holds **no keys and no content at rest**; it parses nothing and
 stores nothing identifying. Compromising it must not damage the server
-infrastructure - it knows only the private-channel addresses of its backends
-and the (end-to-end encrypted) traffic passing through. It is meant to sit
+infrastructure - it knows only the private-channel address of its backend and
+the (end-to-end encrypted) traffic passing through. It is meant to sit
 behind a reverse proxy (Caddy, nginx, ...) published at a secret URI known only
 to clients.
 
@@ -51,5 +51,7 @@ path is the post-strip path, so signatures verify on the backend regardless.
 Set `"public": true` instead only when a fronting reverse proxy already publishes this
 facade under a secret URI of its own; the facade refuses to start with neither.
 
-`opsListen` opens a second, private socket that serves only the
-operator-signed `/healthz` for the admin panel. It is never published to clients.
+`opsListen` opens a second, private socket carrying everything that is the
+operator's: the signed `/healthz`, `GET`/`PUT /settings` and `POST /restart`. It is
+never published to clients - on the public socket any of it would admit a facade
+is here to a caller who does not know the secret base path.

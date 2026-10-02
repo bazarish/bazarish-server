@@ -17,7 +17,6 @@ namespace fs = std::filesystem;
 const char* const kLogLevelKey = "logLevel";
 const char* const kBasePathKey = "basePath";
 const char* const kMessagingKey = "messaging";
-const char* const kAccountKey = "account";
 const char* const kListenKey = "listen";
 const char* const kOpsListenKey = "opsListen";
 const char* const kHostKey = "host";
@@ -63,48 +62,20 @@ void FacadeSettings::persist(const Values& values) const
         throw std::runtime_error("this facade was started without a config file to write to");
     }
     ConfigFile file(configPath_);
-    if (values.logLevel != values_.logLevel) {
-        file.set({kLogLevelKey}, values.logLevel);
-    }
-    if (values.basePath != values_.basePath) {
-        file.set({kBasePathKey}, values.basePath);
-    }
-    if (values.messagingHost != values_.messagingHost) {
-        file.set({kMessagingKey, kHostKey}, values.messagingHost);
-    }
-    if (values.messagingPort != values_.messagingPort) {
-        file.set({kMessagingKey, kPortKey}, values.messagingPort);
-    }
-    if (values.accountHost != values_.accountHost) {
-        file.set({kAccountKey, kHostKey}, values.accountHost);
-    }
-    if (values.accountPort != values_.accountPort) {
-        file.set({kAccountKey, kPortKey}, values.accountPort);
-    }
-    if (values.listenHost != values_.listenHost) {
-        file.set({kListenKey, kHostKey}, values.listenHost);
-    }
-    if (values.listenPort != values_.listenPort) {
-        file.set({kListenKey, kPortKey}, values.listenPort);
-    }
-    if (values.opsHost != values_.opsHost) {
-        file.set({kOpsListenKey, kHostKey}, values.opsHost);
-    }
-    if (values.opsPort != values_.opsPort) {
-        file.set({kOpsListenKey, kPortKey}, values.opsPort);
-    }
-    if (values.i2pEnabled != values_.i2pEnabled) {
-        file.set({kI2pKey, kI2pEnabledKey}, values.i2pEnabled);
-    }
-    if (values.i2pDestinations != values_.i2pDestinations) {
-        file.set({kI2pKey, kI2pDestinationsKey}, values.i2pDestinations);
-    }
-    if (values.i2pPrivacy != values_.i2pPrivacy) {
-        file.set({kI2pKey, kI2pPrivacyKey}, values.i2pPrivacy);
-    }
-    if (values.i2pTunnelQuantity != values_.i2pTunnelQuantity) {
-        file.set({kI2pKey, kI2pTunnelsKey}, values.i2pTunnelQuantity);
-    }
+    setIfChanged(file, {kLogLevelKey}, values.logLevel, values_.logLevel);
+    setIfChanged(file, {kBasePathKey}, values.basePath, values_.basePath);
+    setIfChanged(file, {kMessagingKey, kHostKey}, values.messagingHost, values_.messagingHost);
+    setIfChanged(file, {kMessagingKey, kPortKey}, values.messagingPort, values_.messagingPort);
+    setIfChanged(file, {kListenKey, kHostKey}, values.listenHost, values_.listenHost);
+    setIfChanged(file, {kListenKey, kPortKey}, values.listenPort, values_.listenPort);
+    setIfChanged(file, {kOpsListenKey, kHostKey}, values.opsHost, values_.opsHost);
+    setIfChanged(file, {kOpsListenKey, kPortKey}, values.opsPort, values_.opsPort);
+    setIfChanged(file, {kI2pKey, kI2pEnabledKey}, values.i2pEnabled, values_.i2pEnabled);
+    setIfChanged(
+        file, {kI2pKey, kI2pDestinationsKey}, values.i2pDestinations, values_.i2pDestinations);
+    setIfChanged(file, {kI2pKey, kI2pPrivacyKey}, values.i2pPrivacy, values_.i2pPrivacy);
+    setIfChanged(
+        file, {kI2pKey, kI2pTunnelsKey}, values.i2pTunnelQuantity, values_.i2pTunnelQuantity);
 }
 
 }  // namespace bazarish::facade

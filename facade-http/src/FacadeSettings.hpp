@@ -15,9 +15,9 @@ bool isValidBasePath(const std::string& path);
 // the file it was read from.
 //
 // The facade holds no keys and stores nothing, so everything here is about where
-// it stands: the secret prefix the whole clearnet API lives under, the two
-// backends it forwards to, the sockets it binds, and its I2P side. Only the log
-// level applies at once - the rest is read when it starts.
+// it stands: the secret prefix the whole clearnet API lives under, the backend it
+// forwards to, the sockets it binds, and its I2P side. Only the log level applies
+// at once - the rest is read when it starts.
 class FacadeSettings {
 public:
     struct Values {
@@ -27,11 +27,9 @@ public:
         // prefix, so a new one has to reach the clients before they lose the old
         // one.
         std::string basePath;
-        // Where it forwards: the messaging server and the service node.
+        // Where it forwards: the messaging server, which is the only backend.
         std::string messagingHost;
         int messagingPort = 0;
-        std::string accountHost;
-        int accountPort = 0;
         // The public socket, and the operator-only one that answers /healthz.
         std::string listenHost;
         int listenPort = 0;

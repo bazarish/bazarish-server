@@ -9,12 +9,11 @@
 
 #include <bazarish/Auth.hpp>
 #include <bazarish/Bytes.hpp>
+#include <bazarish/Restart.hpp>
 
-#include <condition_variable>
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -31,20 +30,12 @@ struct AccountApiOptions {
     // The server card the node hands its own clients (DER). It names the server,
     // so it is never part of what a contact can fetch.
     Bytes serverCardDer;
-    // Quota granted to a new account. The initial value: an operator can change
-    // it while the node runs (see settings).
-    std::uint64_t defaultQuotaBytes = 50 * 1024 * 1024;
     // Version string reported by /healthz.
     std::string version;
     // Fingerprints authorised to call /healthz (the admin panel). The caller
     // proves possession by signing the request; no shared secret. Empty disables
     // /healthz.
     std::vector<std::string> operatorFingerprints;
-
-    // Service-portal onboarding, advertised by GET /v1/account/portal so a
-    // client can show the user where to register.
-    std::string portalMessage;
-    std::vector<std::string> portalLinks;
     // Asked for by the panel once a setting only a start reads has been written.
     // Empty answers that this node cannot restart itself rather than pretending.
     std::function<void()> requestRestart;
@@ -78,40 +69,34 @@ struct AccountApiOptions {
     std::function<std::optional<std::string>(const std::string& user)> prepareServingKey;
     std::function<bool(const std::string& user)> commitServingKey;
 
-    // How an account becomes servable. eOpen: live the moment it is created.
-    // eApproval: the account is created but stays frozen - its destination is
-    // never brought up, so it can neither send nor receive - until an operator
-    // approves it by hand. This is moderation, not a paywall: the operator sets
-    // registrationMessage to tell the user how to reach them.
-    // The initial values: an operator changes both while the node runs.
-    enum class Registration { eOpen, eApproval };
-    Registration registration = Registration::eOpen;
-    std::string registrationMessage;
-
-    // The live knobs, shared with the portal so the two cannot disagree and
-    // written back to the node config. When null (tests), the values above are
-    // taken as the settings and nothing is persisted.
+    // The live knobs, shared with the portal so the two cannot disagree and written
+    // back to the node config: the quota a new account gets, whether it waits for
+    // an operator, what it is told meanwhile, and how the portal presents itself.
+    // Required - there is no second place any of it is kept.
     std::shared_ptr<NodeSettings> settings;
 };
 
-// The /v1/account/* HTTP API: subscriptions, aliases and alias resolution.
-// Authenticated requests carry the caller's hybrid identity (see common
-// Auth); a caller may only act on certificates naming its own UID.
+// The /v1/account/* HTTP API: who has an account here, what they are allowed, and
+// the operator's view of both. Authenticated requests carry the caller's hybrid
+// identity; a caller may only act on its own account.
 class AccountApi {
 public:
     AccountApi(SubscriptionStore& store, GrantStore& grants, AccountApiOptions options);
     ~AccountApi();
 
-    bool listen(const std::string& host, int port);
-    int bindToAnyPort(const std::string& host);
-    bool listenAfterBind();
+    AccountApi(const AccountApi&) = delete;
+    AccountApi& operator=(const AccountApi&) = delete;
+
+    // Binds and starts serving (port 0 lets the kernel pick). Returns the bound
+    // port, 0 when the socket could not be taken.
+    int bind(const std::string& host, int port);
+    // Parks the caller until stop(). The engine serves on its own threads.
+    void wait();
     void stop();
 
 private:
-    // One account as the operator surface reports it: what it is entitled to,
-    // whether it is served yet, and how long its delegation still stands.
-    // Revokes the user's destination on the messaging server (an empty transient
-    // is the revoke) and forgets the delegation this node recorded.
+    // Revokes the user's destination on the messaging server (an empty transient is
+    // the revoke) and forgets the delegation this node recorded.
     void revokeDestination(const std::string& user);
     // Removes an account: its certificate, its grants and its destination. The
     // ban, if any, is not part of it - a ban outlives what it removed.
@@ -124,11 +109,11 @@ private:
     // What the operator has set, live.
     NodeSettings::Values settings() const { return settings_->get(); }
 
+    // One account as the operator surface reports it: what it is entitled to,
+    // whether it is served yet, and how long its delegation still stands.
     nlohmann::json userRecord(
         const std::string& user, const std::optional<GrantStore::Approval>& approval);
 
-    // Binds on a chosen port (0 lets the kernel pick) and starts serving.
-    int bindToAnyPort(const std::string& host, int port);
     void setupRoutes();
 
     std::shared_ptr<NodeSettings> settings_;
@@ -137,11 +122,7 @@ private:
     const AccountApiOptions options_;
     std::unique_ptr<bazarish::http::Server> http_;
     std::int64_t startedAt_ = 0;
-
-    // listenAfterBind() parks the caller's thread here until stop() releases it.
-    std::mutex stopMutex_;
-    std::condition_variable stopCv_;
-    bool stopping_ = false;
+    bazarish::StopGate stopGate_;
 
     auth::ReplayCache replayCache_;
 };

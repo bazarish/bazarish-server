@@ -4,7 +4,6 @@
 #include <bazarish/Portal.hpp>
 
 #include <cstdint>
-#include <vector>
 #include <filesystem>
 #include <mutex>
 #include <string>

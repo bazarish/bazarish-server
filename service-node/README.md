@@ -62,7 +62,9 @@ The service node sits behind the facade (`facade-http` in this repository), whic
 routes `/v1/account/*` to it.
 
 `portal.listen` opens the browser-facing portal: one JS-free page where a user
-proves their key, which is the whole registration.
+proves their key, which is the whole registration. It also publishes this
+server's reseed archive at `i2pseeds.su3`, because a client needs that before it
+has I2P and so cannot ask a facade for it.
 `portal.assets` points at the portal's web files (`portal/` in this
 repository: page shell, stylesheet, logo, fonts) - edit them to restyle the
 portal without rebuilding. They are read once and served from memory, so a

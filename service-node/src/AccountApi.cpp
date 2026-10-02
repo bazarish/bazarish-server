@@ -23,22 +23,9 @@
 
 namespace {
 
-// The knobs an API built without a shared settings object runs on. The portal
-// owns the words a login is signed under, so nothing here fills them in. Written
-// field by field so a new setting cannot arrive here as a silent zero.
-bazarish::service::NodeSettings::Values valuesFrom(
-    const bazarish::service::AccountApiOptions& options)
-{
-    bazarish::service::NodeSettings::Values values;
-    values.requireApproval
-        = options.registration == bazarish::service::AccountApiOptions::Registration::eApproval;
-    values.registrationMessage = options.registrationMessage;
-    values.portalMessage = options.portalMessage;
-    values.portalLinks = options.portalLinks;
-    values.defaultQuotaBytes = options.defaultQuotaBytes;
-    return values;
-}
-
+// What a vouched path names its user with: the fingerprint the messaging server
+// signed into the path, which is what tells this node whose call it is.
+const char* const kFingerprintPattern = "([a-z2-7]{52})";
 
 using bazarish::Bytes;
 using bazarish::ErrorCode;
@@ -115,6 +102,16 @@ std::int64_t sweepDeadline(
     return idleSince + settings.idleDeleteDays * bazarish::kSecondsPerDay;
 }
 
+// Where an account stands with the operator, as every answer spells it.
+const char* approvalState(
+    const std::optional<bazarish::service::GrantStore::Approval>& approval)
+{
+    if (!approval.has_value()) {
+        return "none";
+    }
+    return approval->pending() ? "pending" : "approved";
+}
+
 // What a waiting account's owner is told: the operator's own words for this
 // account when they wrote any, and the node-wide registration message otherwise.
 std::string holdMessageFor(const std::optional<bazarish::service::GrantStore::Approval>& approval,
@@ -132,12 +129,7 @@ namespace bazarish::service {
 
 AccountApi::AccountApi(
     SubscriptionStore& store, GrantStore& grants, const AccountApiOptions options)
-    // Without a shared settings object (tests) the options are the settings, and
-    // a change to them has nowhere to be written: an empty config path says so
-    // by refusing the write rather than dropping it.
-    : settings_(options.settings
-              ? options.settings
-              : std::make_shared<NodeSettings>(std::filesystem::path(), valuesFrom(options)))
+    : settings_(options.settings)
     , store_(store)
     , grants_(grants)
     , options_(options)
@@ -147,20 +139,7 @@ AccountApi::AccountApi(
 
 AccountApi::~AccountApi() = default;
 
-bool AccountApi::listen(const std::string& host, const int port)
-{
-    if (bindToAnyPort(host, port) <= 0) {
-        return false;
-    }
-    return listenAfterBind();
-}
-
-int AccountApi::bindToAnyPort(const std::string& host)
-{
-    return bindToAnyPort(host, 0);  // 0: the kernel picks the port
-}
-
-int AccountApi::bindToAnyPort(const std::string& host, const int port)
+int AccountApi::bind(const std::string& host, const int port)
 {
     http::Server::Options options;
     options.host = host;
@@ -175,25 +154,17 @@ int AccountApi::bindToAnyPort(const std::string& host, const int port)
     }
 }
 
-bool AccountApi::listenAfterBind()
+void AccountApi::wait()
 {
-    // The engine serves on its own threads; this call is what keeps the caller's
-    // thread (a main()) parked until stop().
-    std::unique_lock<std::mutex> lock(stopMutex_);
-    stopCv_.wait(lock, [this]() { return stopping_; });
-    return true;
+    stopGate_.wait();
 }
 
 void AccountApi::stop()
 {
+    stopGate_.stop();
     if (http_) {
         http_->stop();
     }
-    {
-        const std::lock_guard<std::mutex> lock(stopMutex_);
-        stopping_ = true;
-    }
-    stopCv_.notify_all();
 }
 
 void AccountApi::revokeDestination(const std::string& user)
@@ -285,8 +256,7 @@ nlohmann::json AccountApi::userRecord(
                                                  : values.defaultQuotaBytes)},
         {"registered", held.has_value()},
         {"grantPending", grant.has_value()},
-        {"approval",
-            !approval.has_value() ? "none" : (approval->pending() ? "pending" : "approved")},
+        {"approval", approvalState(approval)},
         {"requestedAt", approval.has_value() ? approval->requestedAt : 0},
         {"approvedAt", approval.has_value() ? approval->approvedAt : 0},
         {"transientExpires", transient.has_value() ? transient->expires : 0},
@@ -295,23 +265,6 @@ nlohmann::json AccountApi::userRecord(
 
 void AccountApi::setupRoutes()
 {
-    // Authenticated liveness for the admin panel: service name, version, uptime
-    // and resident memory. Operator-only (signed), so it leaks nothing to an
-    // unauthenticated caller.
-    http_->get("/healthz", filled([this](const http::Request& request, http::Response& response) {
-        try {
-            auth::authorizeRequest(collectAuthHeaders(request), nowSeconds(), request.method,
-                request.path, Bytes(request.body.begin(), request.body.end()),
-                options_.operatorFingerprints);
-        } catch (const std::exception& error) {
-            respondError(response, 403, ErrorCode::eDeliveryRejected, error.what());
-            return;
-        }
-        response.contentType = "application/json";
-        response.body
-            = health::reportJson("service-node", options_.version, startedAt_, nowSeconds());
-    }));
-
     const auto authenticated = [this](auto handler) {
         return [this, handler](const http::Request& request, http::Response& response) {
             std::string user;
@@ -366,19 +319,17 @@ void AccountApi::setupRoutes()
                                  const std::string& path, auto handler) {
         http_->route(method, path, filled(authenticated(handler)));
         http_->route(method,
-            std::string(bazarish::tunnel::kVouchedPrefix) + "([a-z2-7]{52})" + path,
+            std::string(bazarish::tunnel::kVouchedPrefix) + kFingerprintPattern + path,
             filled(vouched(handler)));
     };
 
-    // Operator-only moderation surface for the admin panel, signed with the
-    // panel identity exactly like /healthz.
+    // The operator's own surface, signed with the panel identity like /healthz.
     const auto operatorOnly = [this](auto handler) {
         return [this, handler](const http::Request& request, http::Response& response) {
-            try {
-                auth::authorizeRequest(collectAuthHeaders(request), nowSeconds(), request.method,
-                    request.path, bodyBytes(request), options_.operatorFingerprints);
-            } catch (const std::exception& error) {
-                respondError(response, 403, ErrorCode::eDeliveryRejected, error.what());
+            if (const std::optional<http::Response> refused
+                = http::operatorRefusal(request, nowSeconds(), options_.operatorFingerprints);
+                refused.has_value()) {
+                response = *refused;
                 return;
             }
             try {
@@ -390,6 +341,16 @@ void AccountApi::setupRoutes()
             }
         };
     };
+
+    // Authenticated liveness for the admin panel: service name, version, uptime
+    // and resident memory. Operator-only (signed), so it leaks nothing to an
+    // unauthenticated caller.
+    http_->get("/healthz",
+        filled(operatorOnly([this](const http::Request&, http::Response& response) {
+            response.contentType = "application/json";
+            response.body
+                = health::reportJson("service-node", options_.version, startedAt_, nowSeconds());
+        })));
 
     // The operator's view of the accounts on this node: everything the panel
     // lists, searches and edits. The search runs here rather than in the browser -
@@ -456,8 +417,7 @@ void AccountApi::setupRoutes()
             respondJson(response, userRecord(user, grants_.peekApproval(user)));
         })));
 
-    // Deletes the account outright: certificate, grants and destination. The key
-    // may register again.
+    // The account goes; the key may register again.
     http_->del("/v1/account/user",
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const std::string user = request.query("user");
@@ -628,28 +588,10 @@ void AccountApi::setupRoutes()
                 }
                 values.logLevel = level;
             }
-            const auto readEndpoint = [&body](const std::string& key, std::string& host,
-                                          int& port) {
-                if (!body.contains(key)) {
-                    return;
-                }
-                const nlohmann::json& endpoint = body.at(key);
-                const std::string wantedHost = endpoint.value("host", host);
-                const int wantedPort = endpoint.value("port", port);
-                if (wantedHost.empty()) {
-                    throw std::invalid_argument("a " + key + " address needs a host");
-                }
-                if (wantedPort < bazarish::kMinPort || wantedPort > bazarish::kMaxPort) {
-                    throw std::invalid_argument("a port is between "
-                        + std::to_string(bazarish::kMinPort) + " and "
-                        + std::to_string(bazarish::kMaxPort));
-                }
-                host = wantedHost;
-                port = wantedPort;
-            };
-            readEndpoint("listen", values.listenHost, values.listenPort);
-            readEndpoint("portalListen", values.portalListenHost, values.portalListenPort);
-            readEndpoint("messaging", values.messagingHost, values.messagingPort);
+            readEndpointInto(body, "listen", values.listenHost, values.listenPort);
+            readEndpointInto(
+                body, "portalListen", values.portalListenHost, values.portalListenPort);
+            readEndpointInto(body, "messaging", values.messagingHost, values.messagingPort);
             if (body.contains("idleDeleteDays")) {
                 values.idleDeleteDays = body.at("idleDeleteDays").get<std::int64_t>();
                 if (values.idleDeleteDays < 0) {
@@ -798,10 +740,9 @@ void AccountApi::setupRoutes()
             const std::optional<GrantStore::SubscriptionGrant> grant
                 = grants_.peekSubscription(user);
             const std::optional<SubscriptionStore::Account> held = store_.getAccount(user);
-            // A card is only published forwards. Without this, a device that kept
-            // an old copy could republish it and quietly put the account's
-            // routing back to what it used to be - the signature would be valid,
-            // the card simply old, and nobody would see it happen.
+            // A card is only published forwards: a device holding an old copy
+            // could otherwise republish it and put the account's routing back
+            // quietly, with a signature that still checks out.
             if (held.has_value() && !held->card.empty()) {
                 try {
                     if (const ContactCard previous = ContactCard::verify(held->card);
@@ -811,10 +752,9 @@ void AccountApi::setupRoutes()
                         return;
                     }
                 } catch (const std::exception& error) {
-                    // What is held cannot be read - a card from before this field
-                    // existed, or a damaged row. It cannot be ordered against, so
-                    // it is replaced rather than allowed to block every future
-                    // publication, and that is said out loud.
+                    // Unreadable, so there is nothing to order against: it is
+                    // replaced rather than left blocking every later publication,
+                    // and that is said out loud.
                     bazarish::log::warn("the card held for {} could not be read, replacing it: {}",
                         bazarish::log::redact(user), error.what());
                 }
@@ -845,10 +785,9 @@ void AccountApi::setupRoutes()
                 = held.has_value() && held->registeredAt != 0 ? held->registeredAt : now;
             record.quotaBytes = quota;
             // Registration publishes a card before there is anywhere to be
-            // reached: it carries no destination, and taking that as "the address
-            // is gone" wiped an address the account had been serving at - which is
-            // what the panel then reported. Only a card that names one replaces it;
-            // giving the address up is the revoke, which says so.
+            // reached, so a card with no destination means "not yet", never "the
+            // address is gone". Only a card that names one replaces it; giving the
+            // address up is the revoke, which says so.
             record.dest = card.dest.empty() && held.has_value() ? held->dest : card.dest;
             record.delegatedAt = held.has_value() ? held->delegatedAt : 0;
             // Issued once and kept: a descriptor already shared must keep
@@ -979,34 +918,22 @@ void AccountApi::setupRoutes()
             const std::optional<GrantStore::Transient> transient = grants_.peekTransient(user);
             respondJson(response,
                 {
-                    {"approval",
-                        !approval.has_value() ? "none"
-                                              : (approval->pending() ? "pending" : "approved")},
+                    {"approval", approvalState(approval)},
                     {"registrationMessage",
                         approval.has_value() && approval->pending()
                             ? holdMessageFor(approval, settings())
-                                                                    : std::string()},
+                            : std::string()},
                     {"transientExpires", transient.has_value() ? transient->expires : 0},
                     {"transientUpdatedAt", transient.has_value() ? transient->updatedAt : 0},
                 });
         });
 
-    // The contact card a peer fetches, answered only to someone who already
-    // holds the descriptor: the query carries its `key` - the per-user serving
-    // key this node handed out - and a wrong key is refused exactly like an
-    // unknown user. Without that, asking by fingerprint would tell anyone which
-    // server hosts whom.
-    //
-    // Reached from the messaging server, which unseals the peer's query on the
-    // user's own destination; nothing about this answer names the server.
     // Rotating the serving key and the view together. Two calls, because the
-    // switch has to be the user's: this node prepares, the user signs the
-    // prepared key into a card, and only the commit puts either in force. A
-    // rotation that stops halfway leaves the account exactly as it was.
+    // switch has to be the user's: this node prepares, the user signs the prepared
+    // key into a card, and only the commit puts either in force. A rotation that
+    // stops halfway leaves the account exactly as it was.
     clientRoute("POST", "/v1/account/serving-key",
-        [this](const http::Request& request, http::Response& response,
-                          const std::string& user) {
-            (void)request;
+        [this](const http::Request&, http::Response& response, const std::string& user) {
             const std::optional<SubscriptionStore::Account> held = store_.getAccount(user);
             if (!held.has_value()) {
                 respondError(response, 403, ErrorCode::eDeliveryRejected, "no account here");
@@ -1086,6 +1013,12 @@ void AccountApi::setupRoutes()
             respondJson(response, {{"ok", true}, {"view", record.view}});
         });
 
+    // The contact card a peer fetches, answered only to someone who already holds
+    // the descriptor: the query carries the view capability this node issued, and a
+    // wrong one is refused exactly like an unknown user. Without that, asking by
+    // fingerprint would tell anyone which server hosts whom. Reached from the
+    // messaging server, which unseals the peer's query on the user's own
+    // destination; nothing about this answer names the server.
     http_->get("/v1/account/card",
         filled([this](const http::Request& request, http::Response& response) {
             const std::string user = request.query("user");
@@ -1153,16 +1086,10 @@ void AccountApi::setupRoutes()
     // a change mid-call is answered half in the old terms and half in the new.
     const auto portalHandler = [this](const http::Request&, http::Response& response) {
         const NodeSettings::Values live = settings();
-        nlohmann::json links = nlohmann::json::array();
-        for (const std::string& link :
-            live.portalLinks.empty() ? options_.portalLinks : live.portalLinks) {
-            links.push_back(link);
-        }
         respondJson(response,
             {
-                {"message",
-                    live.portalMessage.empty() ? options_.portalMessage : live.portalMessage},
-                {"links", links},
+                {"message", live.portalMessage},
+                {"links", live.portalLinks},
                 {"registration",
                     {
                         {"requiresApproval", live.requireApproval},
@@ -1175,7 +1102,8 @@ void AccountApi::setupRoutes()
     // a client asks for it through its server's tunnel, where the facade cannot
     // tell this apart from any other call.
     http_->get("/v1/account/portal", filled(portalHandler));
-    http_->get(std::string(bazarish::tunnel::kVouchedPrefix) + "([a-z2-7]{52})/v1/account/portal",
+    http_->get(std::string(bazarish::tunnel::kVouchedPrefix) + kFingerprintPattern
+            + "/v1/account/portal",
         filled(portalHandler));
 }
 

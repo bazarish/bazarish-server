@@ -4,52 +4,17 @@
 #include <bazarish/Log.hpp>
 
 #include <bazarish/Address.hpp>
+#include <bazarish/ConfigFile.hpp>
+#include <bazarish/PrivateFile.hpp>
 
 #include <nlohmann/json.hpp>
 
-#include <fstream>
 #include <stdexcept>
 #include <system_error>
 
 namespace bazarish::service {
 
-namespace {
-
 namespace fs = std::filesystem;
-
-void requireUser(const std::string& user)
-{
-    if (!isFingerprint(user)) {
-        throw std::invalid_argument("user is not a fingerprint");
-    }
-}
-
-void writeFileAtomic(const fs::path& target, const std::string& text)
-{
-    const fs::path temporary = target.parent_path() / (target.filename().string() + ".tmp");
-    {
-        std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
-        if (!out) {
-            throw std::runtime_error("failed to open " + temporary.string());
-        }
-        out << text;
-        if (!out) {
-            throw std::runtime_error("failed to write " + temporary.string());
-        }
-    }
-    fs::rename(temporary, target);
-}
-
-nlohmann::json readJsonFile(const fs::path& path)
-{
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        throw std::runtime_error("failed to open " + path.string());
-    }
-    return nlohmann::json::parse(in);
-}
-
-}  // namespace
 
 SubscriptionStore::SubscriptionStore(const fs::path& root)
     : root_(root)
@@ -64,7 +29,7 @@ fs::path SubscriptionStore::accountPath(const std::string& user) const
 
 void SubscriptionStore::putAccount(const Account& account)
 {
-    requireUser(account.user);
+    requireFingerprint(account.user);
     const std::lock_guard<std::mutex> lock(mutex_);
     const nlohmann::json body = {
         {"user", account.user},
@@ -101,7 +66,7 @@ SubscriptionStore::Account accountFromJson(const nlohmann::json& body)
 
 std::optional<SubscriptionStore::Account> SubscriptionStore::getAccount(const std::string& user)
 {
-    requireUser(user);
+    requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     const fs::path path = accountPath(user);
     if (!fs::exists(path)) {
@@ -135,7 +100,7 @@ std::vector<SubscriptionStore::Account> SubscriptionStore::allAccounts() const
 
 void SubscriptionStore::deleteAccount(const std::string& user)
 {
-    requireUser(user);
+    requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     std::error_code ignored;
     fs::remove(accountPath(user), ignored);

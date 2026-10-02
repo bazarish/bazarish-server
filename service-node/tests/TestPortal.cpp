@@ -1,8 +1,11 @@
 // Bazarish project (c) 2026
 #include "AccountApi.hpp"
 #include "PortalApi.hpp"
-#include <bazarish/Portal.hpp>
 #include "SubscriptionStore.hpp"
+
+#include <bazarish/Portal.hpp>
+#include <bazarish/ServerDescriptor.hpp>
+#include <bazarish/WebAssets.hpp>
 
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Crypto.hpp>
@@ -48,6 +51,9 @@ using namespace bazarish;
 using namespace bazarish::service;
 
 namespace {
+
+// The portal's per-run HMAC secrets, as the node mints them.
+constexpr std::size_t kSecretBytes = 16;
 
 namespace http = bazarish::http;
 
@@ -99,17 +105,19 @@ void testPortalDiscovery()
     SubscriptionStore store(root);
     GrantStore grants(root);
 
+    NodeSettings::Values values;
+    values.portalMessage = "Register at the portal";
+    values.portalLinks = {"https://portal.example/a", "http://abc.onion/b"};
+    values.defaultQuotaBytes = 20 * 1024 * 1024;
+    values.requireApproval = true;
+    values.registrationMessage = "write to the operator";
     AccountApiOptions options;
     options.serverFingerprint = "server-fp";
-    options.portalMessage = "Register at the portal";
-    options.portalLinks = {"https://portal.example/a", "http://abc.onion/b"};
-    options.defaultQuotaBytes = 20 * 1024 * 1024;
-    options.registration = AccountApiOptions::Registration::eApproval;
-    options.registrationMessage = "write to the operator";
+    options.settings = std::make_shared<NodeSettings>(fs::path(), values);
 
     AccountApi api(store, grants, options);
-    const int port = api.bindToAnyPort("127.0.0.1");
-    std::thread serverThread([&api]() { (void)api.listenAfterBind(); });
+    const int port = api.bind("127.0.0.1", 0);
+    std::thread serverThread([&api]() { api.wait(); });
 
     http::ClientResponse response;
     for (int attempt = 0; attempt < 200; ++attempt) {
@@ -191,13 +199,22 @@ void testWebFlow()
     GrantStore grants(root);
 
     const Identity identity = Identity::generate();
+    constexpr std::uint64_t kQuota = 20 * 1024 * 1024;
+    NodeSettings::Values values;
+    values.loginConsumer
+        = LoginConsumer{"Bazarish service node", "http://node.example", "Account owner"};
+    values.defaultQuotaBytes = kQuota;
+    // The descriptor the cabinet hands over is built from these, so the page and
+    // the panel can never show different ways in.
+    values.facades = {"http://abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqr.b32.i2p/s"};
     PortalApiOptions options;
     options.serverFingerprint = "service-node-fingerprint";
-    options.consumer = LoginConsumer{"Bazarish service node", "http://node.example", "Account owner"};
-    options.serverDescriptor = "bazarish-descriptor-for-the-test";
-    options.challengeSecret = toHex(randomBytes(16));
-    options.sessionSecret = toHex(randomBytes(16));
+    options.challengeSecret = toHex(randomBytes(kSecretBytes));
+    options.sessionSecret = toHex(randomBytes(kSecretBytes));
     options.assetsDirectory = BAZARISH_PORTAL_ASSETS_DIR;
+    options.settings = std::make_shared<NodeSettings>(fs::path(), values);
+    const std::string descriptor
+        = encodeServerDescriptor({options.serverFingerprint, values.facades, values.reseeds});
 
     std::string deleted;
     options.deleteAccount = [&](const std::string& user) {
@@ -206,14 +223,14 @@ void testWebFlow()
     };
     // The mailbox figures come from the messaging server; the portal only shows
     // what it is handed.
-    options.accountUsage = [](const std::string&) {
-        return PortalApiOptions::Usage{1024, 20 * 1024 * 1024, 2};
+    options.accountUsage = [](const std::string&) -> std::optional<MailboxUsage> {
+        return MailboxUsage{1024, kQuota, 2};
     };
 
     PortalApi portal(options, grants);
-    const int port = portal.bindToAnyPort("127.0.0.1");
+    const int port = portal.bind("127.0.0.1", 0);
     CHECK(port > 0);
-    std::thread portalThread([&portal]() { (void)portal.listenAfterBind(); });
+    std::thread portalThread([&portal]() { portal.wait(); });
 
     http::ClientResponse page;
     for (int attempt = 0; attempt < 200; ++attempt) {
@@ -261,14 +278,14 @@ void testWebFlow()
     const std::optional<GrantStore::SubscriptionGrant> grant
         = grants.peekSubscription(identity.fingerprint());
     CHECK(grant.has_value());
-    CHECK(grant->quotaBytes == options.defaultQuotaBytes);
+    CHECK(grant->quotaBytes == kQuota);
 
     // Afterwards the page states the account and hands over the descriptor, with
     // what the messaging server holds for it.
     const http::ClientResponse done = call(port, "GET", "/", {{"Cookie", "session=" + cookie}});
     CHECK(done.status == 200);
     CHECK(done.body.find("registered") != std::string::npos);
-    CHECK(done.body.find(options.serverDescriptor) != std::string::npos);
+    CHECK(done.body.find(htmlEscape(descriptor)) != std::string::npos);
     CHECK(done.body.find("1.0 KiB of 20 MiB") != std::string::npos);
     CHECK(done.body.find("<span>Devices</span>2") != std::string::npos);
 

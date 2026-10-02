@@ -32,41 +32,18 @@ constexpr int kRetryDelaySeconds = 1;
 constexpr int kReadyPollSeconds = 1;
 constexpr int kFirstServerErrorStatus = 500;
 
-struct HostPort {
-    std::string host;
-    int port = 0;
-};
-
-// Splits "http://host:port" into host/port (default 80).
-HostPort parseUrl(const std::string& url)
-{
-    std::string rest = url;
-    const std::string scheme = "http://";
-    if (rest.rfind(scheme, 0) == 0) {
-        rest = rest.substr(scheme.size());
-    }
-    if (const auto slash = rest.find('/'); slash != std::string::npos) {
-        rest = rest.substr(0, slash);
-    }
-    HostPort hostPort;
-    if (const auto colon = rest.find(':'); colon == std::string::npos) {
-        hostPort.host = rest;
-        hostPort.port = 80;
-    } else {
-        hostPort.host = rest.substr(0, colon);
-        hostPort.port = std::stoi(rest.substr(colon + 1));
-    }
-    return hostPort;
-}
+// The messaging server's operator endpoints. Protocol, not configuration: the
+// server that answers them is the one this node is bound to by its card.
+constexpr const char* kDestPath = "/v1/messaging/i2p-dest";
+constexpr const char* kQuotaPath = "/v1/messaging/quota";
+constexpr const char* kServingKeyPath = "/v1/messaging/serving-key";
+constexpr const char* kAccountPath = "/v1/messaging/account";
 
 }  // namespace
 
-OperatorPush::OperatorPush(std::string baseUrl, const Identity& signer, const int attempts,
-    std::string destPath, std::string quotaPath)
+OperatorPush::OperatorPush(std::string baseUrl, const Identity& signer, const int attempts)
     : baseUrl_(std::move(baseUrl))
     , signer_(signer)
-    , destPath_(std::move(destPath))
-    , quotaPath_(std::move(quotaPath))
     , attempts_(attempts)
 {
 }
@@ -84,7 +61,7 @@ bool OperatorPush::waitReachable(const std::chrono::seconds budget) const
     std::string lastError;
     while (true) {
         try {
-            const HostPort hostPort = parseUrl(baseUrl_);
+            const bazarish::http::Url target = bazarish::http::parseUrl(baseUrl_);
             bazarish::http::ClientRequest ask;
             ask.method = "GET";
             // Unsigned on purpose: a 403 is as good an answer as a 200 here, and
@@ -94,7 +71,7 @@ bool OperatorPush::waitReachable(const std::chrono::seconds budget) const
             options.connectTimeout = std::chrono::seconds(kConnectTimeoutSeconds);
             options.readTimeout = std::chrono::seconds(kReadTimeoutSeconds);
             const bazarish::http::ClientResponse response
-                = bazarish::http::request(hostPort.host, hostPort.port, ask, options);
+                = bazarish::http::request(target.host, target.port, ask, options);
             if (response.status > 0) {
                 if (waited) {
                     bazarish::log::info("the messaging server is answering");
@@ -119,14 +96,14 @@ bool OperatorPush::waitReachable(const std::chrono::seconds budget) const
     }
 }
 
-std::optional<OperatorPush::AccountUsage> OperatorPush::accountUsage(
+std::optional<MailboxUsage> OperatorPush::accountUsage(
     const std::string& user) const
 {
     if (baseUrl_.empty()) {
         return std::nullopt;  // not configured
     }
     const std::string path = "/v1/messaging/account";
-    const HostPort hostPort = parseUrl(baseUrl_);
+    const bazarish::http::Url target = bazarish::http::parseUrl(baseUrl_);
     const auth::Headers signature = auth::signRequest(
         signer_, static_cast<std::int64_t>(std::time(nullptr)), "GET", path, Bytes());
     bazarish::http::ClientRequest ask;
@@ -137,7 +114,7 @@ std::optional<OperatorPush::AccountUsage> OperatorPush::accountUsage(
     options.connectTimeout = std::chrono::seconds(kConnectTimeoutSeconds);
     options.readTimeout = std::chrono::seconds(kReadTimeoutSeconds);
     const bazarish::http::ClientResponse response
-        = bazarish::http::request(hostPort.host, hostPort.port, ask, options);
+        = bazarish::http::request(target.host, target.port, ask, options);
     if (response.status != 200) {
         bazarish::log::warn("mailbox usage unavailable (HTTP {}): {}", response.status,
             response.error.empty() ? response.body : response.error);
@@ -145,7 +122,7 @@ std::optional<OperatorPush::AccountUsage> OperatorPush::accountUsage(
     }
     try {
         const nlohmann::json body = nlohmann::json::parse(response.body);
-        AccountUsage usage;
+        MailboxUsage usage;
         usage.usedBytes = body.at("usedBytes").get<std::uint64_t>();
         usage.quotaBytes = body.at("quotaBytes").get<std::uint64_t>();
         usage.devices = body.at("devices").get<std::size_t>();
@@ -169,7 +146,7 @@ std::optional<std::string> OperatorPush::putBody(
 
 bool OperatorPush::forgetMailbox(const std::string& user) const
 {
-    return send("DELETE", accountPath_, accountPath_ + "?user=" + user, std::string())
+    return send("DELETE", kAccountPath, std::string(kAccountPath) + "?user=" + user, std::string())
         .has_value();
 }
 
@@ -181,7 +158,7 @@ std::optional<std::string> OperatorPush::send(const std::string& method, const s
     }
     for (int attempt = 1; attempt <= attempts_; ++attempt) {
         try {
-            const HostPort hostPort = parseUrl(baseUrl_);
+            const bazarish::http::Url backend = bazarish::http::parseUrl(baseUrl_);
             // Signed per attempt: the signature covers a timestamp.
             const auth::Headers signature = auth::signRequest(signer_,
                 static_cast<std::int64_t>(std::time(nullptr)), method, path,
@@ -196,7 +173,7 @@ std::optional<std::string> OperatorPush::send(const std::string& method, const s
             options.connectTimeout = std::chrono::seconds(kConnectTimeoutSeconds);
             options.readTimeout = std::chrono::seconds(kReadTimeoutSeconds);
             const bazarish::http::ClientResponse response
-                = bazarish::http::request(hostPort.host, hostPort.port, push, options);
+                = bazarish::http::request(backend.host, backend.port, push, options);
             if (response.status == 200) {
                 return response.body;
             }
@@ -222,13 +199,13 @@ std::optional<std::string> OperatorPush::send(const std::string& method, const s
 bool OperatorPush::publishQuota(const std::string& user, const std::uint64_t quotaBytes) const
 {
     const nlohmann::json body = {{"user", user}, {"quotaBytes", quotaBytes}};
-    return put(quotaPath_, body.dump());
+    return put(kQuotaPath, body.dump());
 }
 
 std::optional<std::string> OperatorPush::prepareServingKey(const std::string& user) const
 {
     const nlohmann::json body = {{"user", user}, {"phase", "prepare"}};
-    const std::optional<std::string> answer = putBody(servingKeyPath_, body.dump());
+    const std::optional<std::string> answer = putBody(kServingKeyPath, body.dump());
     if (!answer.has_value()) {
         return std::nullopt;
     }
@@ -239,7 +216,7 @@ std::optional<std::string> OperatorPush::prepareServingKey(const std::string& us
 bool OperatorPush::commitServingKey(const std::string& user) const
 {
     const nlohmann::json body = {{"user", user}, {"phase", "commit"}};
-    return put(servingKeyPath_, body.dump());
+    return put(kServingKeyPath, body.dump());
 }
 
 bool OperatorPush::publish(const std::string& user, const std::string& transientB64,
@@ -250,7 +227,7 @@ bool OperatorPush::publish(const std::string& user, const std::string& transient
         body["transient"] = transientB64;
         body["expiresUnix"] = expiresUnix;
     }
-    return put(destPath_, body.dump());
+    return put(kDestPath, body.dump());
 }
 
 }  // namespace bazarish::service

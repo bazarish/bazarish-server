@@ -42,7 +42,6 @@ void respondJson(http::Response& response, const nlohmann::json& body)
     response.body = body.dump();
 }
 
-// Escapes a string for safe interpolation into HTML text or a quoted attribute.
 void sendHtml(http::Response& response, const std::string& html, const int status = 200)
 {
     response.status = status;
@@ -59,9 +58,25 @@ void redirectTo(http::Response& response, const std::string& location)
     response.headers["Location"] = location;
 }
 
+// The attributes every one of the portal's cookies carries. Written once: three
+// copies of a cookie line are three places for one of them to lose a flag.
+const char* const kSessionCookie = "session";
+const char* const kCookieAttributes = "; HttpOnly; SameSite=Strict; Path=/";
+
+void setSessionCookie(http::Response& response, const std::string& token)
+{
+    response.headers["Set-Cookie"]
+        = std::string(kSessionCookie) + "=" + token + kCookieAttributes;
+}
+
+void clearSessionCookie(http::Response& response)
+{
+    response.headers["Set-Cookie"]
+        = std::string(kSessionCookie) + "=" + kCookieAttributes + "; Max-Age=0";
+}
+
 constexpr std::size_t kSizeTextBytes = 32;
 
-// A human-readable byte size for the free quota (powers of 1024).
 std::string bytesHuman(const std::uint64_t bytes)
 {
     const char* const units[] = {"B", "KiB", "MiB", "GiB", "TiB"};
@@ -87,34 +102,16 @@ std::string notice(const std::string& text, const std::string& kind)
     return "<p class=\"notice " + kind + "\">" + htmlEscape(text) + "</p>";
 }
 
-// The knobs a portal built without a shared settings object runs on: what its
-// caller passed, and this node's defaults for everything else. Written field by
-// field rather than as one initialiser, so a new setting does not silently
-// arrive here as a zero.
-bazarish::service::NodeSettings::Values valuesFrom(
-    const bazarish::service::PortalApiOptions& options)
-{
-    bazarish::service::NodeSettings::Values values;
-    values.requireApproval = options.requiresApproval;
-    values.registrationMessage = options.registrationMessage;
-    values.loginConsumer = options.consumer;
-    values.defaultQuotaBytes = options.defaultQuotaBytes;
-    return values;
-}
-
 }  // namespace
 
 namespace bazarish::service {
 
 PortalApi::PortalApi(PortalApiOptions options, GrantStore& grants)
     : options_(std::move(options))
-    , settings_(options_.settings
-              ? options_.settings
-              : std::make_shared<NodeSettings>(
-                    std::filesystem::path(), valuesFrom(options_)))
+    , settings_(options_.settings)
     , assets_(options_.assetsDirectory)
     , grants_(grants)
-    , login_(options_.challengeSecret, options_.consumer)
+    , login_(options_.challengeSecret, settings_->get().loginConsumer)
     , session_(options_.sessionSecret, options_.sessionTtlSeconds)
 {
 }
@@ -123,32 +120,14 @@ PortalApi::~PortalApi() = default;
 
 LoginChallenge& PortalApi::login()
 {
-    const LoginConsumer wanted = settings().loginConsumer;
-    // Settings that name no consumer - a test's, or a node whose operator has
-    // never set one - leave the portal signing under the words it was built
-    // with, which beats signing under none.
-    const bool named
-        = !wanted.name.empty() && !wanted.place.empty() && !wanted.role.empty();
-    if (named && wanted != login_.consumer()) {
+    // The words an operator renamed the portal to, picked up without a restart.
+    if (const LoginConsumer wanted = settings().loginConsumer; wanted != login_.consumer()) {
         login_.setConsumer(wanted);
     }
     return login_;
 }
 
-bool PortalApi::listen(const std::string& host, const int port)
-{
-    if (bindToAnyPort(host, port) <= 0) {
-        return false;
-    }
-    return listenAfterBind();
-}
-
-int PortalApi::bindToAnyPort(const std::string& host)
-{
-    return bindToAnyPort(host, 0);  // 0: the kernel picks the port
-}
-
-int PortalApi::bindToAnyPort(const std::string& host, const int port)
+int PortalApi::bind(const std::string& host, const int port)
 {
     http::Server::Options options;
     options.host = host;
@@ -163,35 +142,25 @@ int PortalApi::bindToAnyPort(const std::string& host, const int port)
     }
 }
 
-bool PortalApi::listenAfterBind()
+void PortalApi::wait()
 {
-    // The engine serves on its own threads; this call is what keeps the caller's
-    // thread (a main()) parked until stop().
-    std::unique_lock<std::mutex> lock(stopMutex_);
-    stopCv_.wait(lock, [this]() { return stopping_; });
-    return true;
+    stopGate_.wait();
 }
 
 void PortalApi::stop()
 {
+    stopGate_.stop();
     if (http_) {
         http_->stop();
     }
-    {
-        const std::lock_guard<std::mutex> lock(stopMutex_);
-        stopping_ = true;
-    }
-    stopCv_.notify_all();
 }
 
 void PortalApi::setupRoutes()
 {
-    // Issue a fresh login challenge for the user to sign with their Client.
     http_->get("/portal/login", filled([this](const http::Request&, http::Response& response) {
         respondJson(response, {{"challenge", login().issue(nowSeconds())}});
     }));
 
-    // Verify the signed challenge and start a session.
     http_->post("/portal/login", filled([this](const http::Request& request,
                                       http::Response& response) {
         const nlohmann::json body = nlohmann::json::parse(request.body, nullptr, false);
@@ -203,9 +172,7 @@ void PortalApi::setupRoutes()
         try {
             const std::string userId = login().verify(body.at("challenge").get<std::string>(),
                 body.at("blob").get<std::string>(), nowSeconds());
-            const std::string token = session_.issue(userId, nowSeconds());
-            response.headers["Set-Cookie"]
-                = "session=" + token + "; HttpOnly; SameSite=Strict; Path=/";
+            setSessionCookie(response, session_.issue(userId, nowSeconds()));
             respondJson(response, {{"ok", true}, {"userId", userId}});
         } catch (const std::exception&) {
             response.status = 401;
@@ -213,10 +180,10 @@ void PortalApi::setupRoutes()
         }
     }));
 
-    // The logged-in user, from the session cookie.
     http_->get("/portal/me", filled([this](const http::Request& request, http::Response& response) {
         try {
-            const std::string userId = session_.verify(request.cookie("session"), nowSeconds());
+            const std::string userId
+                = session_.verify(request.cookie(kSessionCookie), nowSeconds());
             respondJson(response, {{"userId", userId}});
         } catch (const std::exception&) {
             response.status = 401;
@@ -231,7 +198,7 @@ void PortalApi::setupRoutes()
         "/portal/register", filled([this](const http::Request& request, http::Response& response) {
             std::string userId;
             try {
-                userId = session_.verify(request.cookie("session"), nowSeconds());
+                userId = session_.verify(request.cookie(kSessionCookie), nowSeconds());
             } catch (const std::exception&) {
                 response.status = 401;
                 respondJson(response, {{"error", "not authenticated"}});
@@ -243,13 +210,9 @@ void PortalApi::setupRoutes()
                 respondJson(response, {{"error", "banned"}, {"message", ban->reason}});
                 return;
             }
-            grants_.grantSubscription(userId, settings().defaultQuotaBytes,
-                nowSeconds());
-            respondJson(response,
-                {
-                    {"ok", true},
-                    {"quotaBytes", settings().defaultQuotaBytes},
-                });
+            const std::uint64_t quota = settings().defaultQuotaBytes;
+            grants_.grantSubscription(userId, quota, nowSeconds());
+            respondJson(response, {{"ok", true}, {"quotaBytes", quota}});
         }));
 
     setupWebRoutes();
@@ -263,17 +226,12 @@ std::string PortalApi::reseedArchive()
         return reseedSu3_;
     }
     try {
-        const std::size_t scheme = options_.reseedArchiveUrl.find("://");
-        const std::string rest = options_.reseedArchiveUrl.substr(scheme + 3);
-        const std::size_t slash = rest.find('/');
-        const std::string authority = rest.substr(0, slash);
-        const std::size_t colon = authority.rfind(':');
+        const bazarish::http::Url archive = bazarish::http::parseUrl(options_.reseedArchiveUrl);
         bazarish::http::ClientRequest ask;
         ask.method = "GET";
-        ask.target = slash == std::string::npos ? "/" : rest.substr(slash);
-        const bazarish::http::ClientResponse answer = bazarish::http::request(
-            colon == std::string::npos ? authority : authority.substr(0, colon),
-            colon == std::string::npos ? 80 : std::stoi(authority.substr(colon + 1)), ask, {});
+        ask.target = archive.path.empty() ? "/" : archive.path;
+        const bazarish::http::ClientResponse answer
+            = bazarish::http::request(archive.host, archive.port, ask, {});
         if (answer.status != 200 || answer.body.empty()) {
             bazarish::log::warn("portal: the messaging server has no reseed archive ({})",
                 answer.status);
@@ -322,10 +280,10 @@ void PortalApi::setupWebRoutes()
         });
     }
 
-    // The logged-in user from the session cookie, or an empty string.
+    // The signed-in user, or empty for a visitor.
     const auto sessionUser = [this](const http::Request& request) -> std::string {
         try {
-            return session_.verify(request.cookie("session"), nowSeconds());
+            return session_.verify(request.cookie(kSessionCookie), nowSeconds());
         } catch (const std::exception&) {
             return {};
         }
@@ -350,9 +308,7 @@ void PortalApi::setupWebRoutes()
         try {
             const std::string userId = login().verify(request.param("challenge"),
                 request.param("blob"), nowSeconds());
-            const std::string token = session_.issue(userId, nowSeconds());
-            response.headers["Set-Cookie"]
-                = "session=" + token + "; HttpOnly; SameSite=Strict; Path=/";
+            setSessionCookie(response, session_.issue(userId, nowSeconds()));
             redirectTo(response, "/");
         } catch (const std::exception& error) {
             bazarish::log::debug("portal sign-in refused: {}", error.what());
@@ -365,7 +321,7 @@ void PortalApi::setupWebRoutes()
     }));
 
     http_->post("/logout", filled([](const http::Request&, http::Response& response) {
-        response.headers["Set-Cookie"] = "session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0";
+        clearSessionCookie(response);
         redirectTo(response, "/");
     }));
 
@@ -381,15 +337,9 @@ void PortalApi::setupWebRoutes()
         }
         if (request.param("confirm") != "yes") {
             sendHtml(response,
-                assets_.render("page.html",
-                    {
-                        {"title", "Delete"},
-                        {"server", htmlEscape(options_.serverFingerprint)},
-                        {"session", assets_.render("session.html",
-                                        {{"fingerprint", htmlEscape(user)}})},
-                        {"content", assets_.render("confirm-delete.html",
-                                        accountValues(user, grants_.peekSubscription(user)))},
-                    }));
+                page("Delete", assets_.render("session.html", {{"fingerprint", htmlEscape(user)}}),
+                    assets_.render("confirm-delete.html",
+                        accountValues(user, grants_.peekSubscription(user)))));
             return;
         }
         if (!options_.deleteAccount) {
@@ -397,15 +347,29 @@ void PortalApi::setupWebRoutes()
             return;
         }
         options_.deleteAccount(user);
-        response.headers["Set-Cookie"] = "session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0";
+        clearSessionCookie(response);
         redirectTo(response, "/");
     }));
+}
+
+std::string PortalApi::page(
+    const std::string& title, const std::string& session, const std::string& content)
+{
+    return assets_.render("page.html",
+        {
+            {"title", htmlEscape(title)},
+            {"server", htmlEscape(options_.serverFingerprint)},
+            {"session", session},
+            {"content", content},
+        });
 }
 
 std::map<std::string, std::string> PortalApi::accountValues(
     const std::string& user, const std::optional<GrantStore::SubscriptionGrant>& subscription)
 {
     const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
+    // One snapshot for the whole answer: read field by field, an operator saving a
+    // change mid-call would be answered half in the old terms and half in the new.
     const NodeSettings::Values values = settings();
     const std::uint64_t granted
         = subscription.has_value() ? subscription->quotaBytes : values.defaultQuotaBytes;
@@ -418,7 +382,7 @@ std::map<std::string, std::string> PortalApi::accountValues(
     std::string mailbox = "not known";
     std::string devices = "not known";
     if (options_.accountUsage) {
-        if (const std::optional<PortalApiOptions::Usage> usage = options_.accountUsage(user);
+        if (const std::optional<MailboxUsage> usage = options_.accountUsage(user);
             usage.has_value()) {
             mailbox = bytesHuman(usage->usedBytes) + " of " + bytesHuman(usage->quotaBytes);
             devices = std::to_string(usage->devices);
@@ -427,13 +391,11 @@ std::map<std::string, std::string> PortalApi::accountValues(
 
     return {
         {"quota", htmlEscape(bytesHuman(granted))},
-        // Built from the facades the operator keeps, so the panel and the page
-        // can never show different ways in.
+        // Built from the facades the operator keeps, so the panel and the page can
+        // never show different ways in.
         {"descriptor",
-            htmlEscape(settings().facades.empty()
-                    ? options_.serverDescriptor
-                    : encodeServerDescriptor(
-                        {options_.serverFingerprint, settings().facades, settings().reseeds}))},
+            htmlEscape(encodeServerDescriptor(
+                {options_.serverFingerprint, values.facades, values.reseeds}))},
         {"message", notice(note, "is-waiting")},
         {"mailbox", htmlEscape(mailbox)},
         {"devices", htmlEscape(devices)},
@@ -442,62 +404,34 @@ std::map<std::string, std::string> PortalApi::accountValues(
 
 std::string PortalApi::homePage(const std::string& user, const std::string& error)
 {
-    const std::string server = htmlEscape(options_.serverFingerprint);
     if (user.empty()) {
-        const std::string challenge = login().issue(nowSeconds());
-        return assets_.render("page.html",
-            {
-                {"title", "Sign in"},
-                {"server", server},
-                {"session", std::string()},
-                {"content",
-                    assets_.render("signin.html",
-                        {
-                            {"challenge", htmlEscape(challenge)},
-                            {"error", notice(error, "is-error")},
-                        })},
-            });
+        return page("Sign in", std::string(),
+            assets_.render("signin.html",
+                {
+                    {"challenge", htmlEscape(login().issue(nowSeconds()))},
+                    {"error", notice(error, "is-error")},
+                }));
     }
 
     const std::string session
         = assets_.render("session.html", {{"fingerprint", htmlEscape(user)}});
     // A refused key is told so and nothing else: no terms, no way in.
     if (const std::optional<GrantStore::Ban> ban = grants_.peekBan(user); ban.has_value()) {
-        return assets_.render("page.html",
-            {
-                {"title", "Refused"},
-                {"server", server},
-                {"session", session},
-                {"content",
-                    assets_.render("banned.html", {{"message", htmlEscape(ban->reason)}})},
-            });
+        return page("Refused", session,
+            assets_.render("banned.html", {{"message", htmlEscape(ban->reason)}}));
     }
 
-    const std::optional<GrantStore::SubscriptionGrant> subscription = grants_.peekSubscription(user);
+    const std::map<std::string, std::string> account
+        = accountValues(user, grants_.peekSubscription(user));
+    // A signed-in key that is not banned was registered as it signed in, so there
+    // is no third state to draw here.
     const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
-
-    const std::map<std::string, std::string> account = accountValues(user, subscription);
-
-    // A signed-in key that is not banned was registered as it signed in, so
-    // there is no third state to draw here.
-    std::string title;
-    std::string content;
     if (approval.has_value() && approval->pending()) {
-        title = "Waiting";
-        content = assets_.render("waiting.html", account);
-    } else {
-        title = "Registered";
-        content = assets_.render(
-            settings().requireApproval ? "registered-approval.html" : "registered.html", account);
+        return page("Waiting", session, assets_.render("waiting.html", account));
     }
-
-    return assets_.render("page.html",
-        {
-            {"title", htmlEscape(title)},
-            {"server", server},
-            {"session", session},
-            {"content", content},
-        });
+    return page("Registered", session,
+        assets_.render(settings().requireApproval ? "registered-approval.html" : "registered.html",
+            account));
 }
 
 }  // namespace bazarish::service

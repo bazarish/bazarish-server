@@ -86,9 +86,9 @@ int main()
     const Identity stranger = Identity::generate();
     const std::int64_t now = nowSeconds();
 
+    constexpr std::uint64_t kQuota = 20 * 1024 * 1024;
     AccountApiOptions options;
     options.serverFingerprint = "server-fp";
-    options.defaultQuotaBytes = 20 * 1024 * 1024;
     options.operatorFingerprints = {panel.fingerprint()};
     std::string quotaUser;
     std::uint64_t quotaPushed = 0;
@@ -116,14 +116,14 @@ int main()
     initial.loginConsumer
         = LoginConsumer{"Bazarish stand", "http://127.0.0.1:8431", "Account owner"};
     initial.logLevel = "info";
-    initial.defaultQuotaBytes = options.defaultQuotaBytes;
+    initial.defaultQuotaBytes = kQuota;
     const auto settings = std::make_shared<NodeSettings>(configPath, initial);
     options.settings = settings;
 
     AccountApi api(store, grants, options);
-    const int port = api.bindToAnyPort("127.0.0.1");
+    const int port = api.bind("127.0.0.1", 0);
     CHECK(port > 0);
-    std::thread serverThread([&api]() { (void)api.listenAfterBind(); });
+    std::thread serverThread([&api]() { api.wait(); });
 
     // Three accounts: one served, two still waiting for the operator.
     const std::string served = Identity::generate().fingerprint();
@@ -134,7 +134,7 @@ int main()
     grants.recordRegistration(served, now, true);
     grants.recordRegistration(waitingOne, now, false);
     grants.recordRegistration(waitingTwo, now, false);
-    grants.grantSubscription(served, options.defaultQuotaBytes, now);
+    grants.grantSubscription(served, kQuota, now);
     // The listing is in fingerprint order, so paging is checked against that.
     std::vector<std::string> inOrder = {served, waitingOne, waitingTwo};
     std::sort(inOrder.begin(), inOrder.end());
@@ -197,7 +197,7 @@ int main()
         CHECK(one.status == 200);
         const nlohmann::json body = nlohmann::json::parse(one.body);
         CHECK(body.at("approval").get<std::string>() == "approved");
-        CHECK(body.at("quotaBytes").get<std::uint64_t>() == options.defaultQuotaBytes);
+        CHECK(body.at("quotaBytes").get<std::uint64_t>() == kQuota);
         CHECK(body.at("grantPending").get<bool>());
 
         CHECK(call(port, panel, "GET", "/v1/account/user?user=" + unknown).status == 404);

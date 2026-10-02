@@ -80,13 +80,17 @@ int main()
     const Identity panel = Identity::generate();
     const Identity alice = Identity::generate();
 
+    constexpr std::uint64_t kQuota = 20 * 1024 * 1024;
+    const std::string kHoldMessage = "write to admin@example.i2p to finish registration";
+    NodeSettings::Values values;
+    values.defaultQuotaBytes = kQuota;
+    values.requireApproval = true;
+    values.registrationMessage = kHoldMessage;
     AccountApiOptions options;
     options.serverFingerprint = serverFp;
     options.serverCardDer = cardDer;
-    options.defaultQuotaBytes = 20 * 1024 * 1024;
     options.operatorFingerprints = {panel.fingerprint()};
-    options.registration = AccountApiOptions::Registration::eApproval;
-    options.registrationMessage = "write to admin@example.i2p to finish registration";
+    options.settings = std::make_shared<NodeSettings>(std::filesystem::path(), values);
     int pubCalls = 0;
     options.publishI2pTransient = [&pubCalls](const std::string&, const std::string&,
                                       std::int64_t) {
@@ -95,9 +99,9 @@ int main()
     };
     AccountApi api(store, grants, options);
 
-    const int port = api.bindToAnyPort("127.0.0.1");
+    const int port = api.bind("127.0.0.1", 0);
     CHECK(port > 0);
-    std::thread serverThread([&api]() { (void)api.listenAfterBind(); });
+    std::thread serverThread([&api]() { api.wait(); });
 
     const std::string transientBody
         = nlohmann::json{{"transient", "t-b64"}, {"expiresUnix", now + 7 * 24 * 3600}}.dump();
@@ -105,7 +109,7 @@ int main()
     // The account is created exactly as on an open node - only frozen.
     {
         grants.grantSubscription(
-            alice.fingerprint(), options.defaultQuotaBytes, now);
+            alice.fingerprint(), kQuota, now);
         const Bytes card = ContactCard::issue(alice, now);
         const std::string body = nlohmann::json{{"card", toBase64(card)}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
@@ -113,7 +117,7 @@ int main()
         CHECK(result.status == 200);
         const nlohmann::json reply = nlohmann::json::parse(result.body);
         CHECK(reply.at("approval") == "pending");
-        CHECK(reply.at("registrationMessage") == options.registrationMessage);
+        CHECK(reply.at("registrationMessage") == kHoldMessage);
     }
 
     // Frozen means the destination is never brought up: the transient is refused
@@ -124,7 +128,7 @@ int main()
         CHECK(result.status == 403);
         const nlohmann::json error = nlohmann::json::parse(result.body).at("error");
         CHECK(error.at("code") == "ACCOUNT_PENDING_APPROVAL");
-        CHECK(error.at("message") == options.registrationMessage);
+        CHECK(error.at("message") == kHoldMessage);
         CHECK(pubCalls == 0);
     }
 

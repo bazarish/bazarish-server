@@ -79,10 +79,14 @@ int main()
     const Bytes cardDer
         = ServerCard::issue(serverIdentity, Key::fromPublicDer(serverSealing.publicDer()), now);
 
+    // The knobs live in one place, so the test sets them there too.
+    constexpr std::uint64_t kQuota = 10 * 1024 * 1024;
+    NodeSettings::Values values;
+    values.defaultQuotaBytes = kQuota;
     AccountApiOptions options;
     options.serverFingerprint = serverFp;
     options.serverCardDer = cardDer;
-    options.defaultQuotaBytes = 10 * 1024 * 1024;
+    options.settings = std::make_shared<NodeSettings>(std::filesystem::path(), values);
     // Capture per-user-dest publishes so the i2p-dest endpoint can be asserted.
     std::string pubUser;
     std::string pubTransient;
@@ -117,9 +121,9 @@ int main()
     };
     AccountApi api(store, grants, options);
 
-    const int port = api.bindToAnyPort("127.0.0.1");
+    const int port = api.bind("127.0.0.1", 0);
     CHECK(port > 0);
-    std::thread serverThread([&api]() { (void)api.listenAfterBind(); });
+    std::thread serverThread([&api]() { api.wait(); });
 
     const Identity alice = Identity::generate();
     const Identity mallory = Identity::generate();
@@ -128,19 +132,19 @@ int main()
     // exist before the client's first call, and that call is what turns the
     // registration into an account.
     {
-        grants.grantSubscription(alice.fingerprint(), options.defaultQuotaBytes, now);
+        grants.grantSubscription(alice.fingerprint(), kQuota, now);
         const Bytes card = ContactCard::issue(alice, now);
         const std::string body = nlohmann::json{{"card", toBase64(card)}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
             makeHeaders(alice, "POST", "/v1/account/card", body), body);
         CHECK(result.status == 200);
         const nlohmann::json reply = nlohmann::json::parse(result.body);
-        CHECK(reply.at("quotaBytes") == options.defaultQuotaBytes);
+        CHECK(reply.at("quotaBytes") == kQuota);
         CHECK(fromBase64(reply.at("serverCard").get<std::string>()) == cardDer);
         // The grant's quota was pushed to the messaging server for this user.
         CHECK(quotaCalls == 1);
         CHECK(quotaUser == alice.fingerprint());
-        CHECK(quotaPushed == options.defaultQuotaBytes);
+        CHECK(quotaPushed == kQuota);
     }
 
     // A card signed by someone else but naming alice fails the signer check
@@ -179,7 +183,7 @@ int main()
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
             makeHeaders(alice, "POST", "/v1/account/card", body), body);
         CHECK(result.status == 200);
-        CHECK(nlohmann::json::parse(result.body).at("quotaBytes") == options.defaultQuotaBytes);
+        CHECK(nlohmann::json::parse(result.body).at("quotaBytes") == kQuota);
 
         // The card is answered only to someone holding the descriptor: the view
         // capability from it comes back with the query. The node issued it when

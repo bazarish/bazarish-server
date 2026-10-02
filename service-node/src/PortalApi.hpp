@@ -3,19 +3,19 @@
 
 #include "GrantStore.hpp"
 #include "NodeSettings.hpp"
+#include "OperatorPush.hpp"
 
-#include <bazarish/WebAssets.hpp>
 #include <bazarish/LoginChallenge.hpp>
 #include <bazarish/PortalSession.hpp>
+#include <bazarish/Restart.hpp>
+#include <bazarish/WebAssets.hpp>
 
-#include <condition_variable>
-#include <functional>
-#include <optional>
 #include <cstdint>
 #include <filesystem>
-#include <memory>
-#include <mutex>
+#include <functional>
 #include <map>
+#include <memory>
+#include <optional>
 #include <string>
 
 namespace bazarish::http {
@@ -28,30 +28,10 @@ struct PortalApiOptions {
     // This service node's fingerprint: part of the server descriptor a client
     // pastes to connect, and shown in the cabinet.
     std::string serverFingerprint;
-    // Who this portal says it is when it asks a user to sign in. The client
-    // shows these words before signing, so they are what a user compares with
-    // the address bar; the challenge is bound to them, so a challenge issued
-    // here cannot be replayed against another portal.
-    LoginConsumer consumer;
-    // The server descriptor string (bazarish://server?...) shown in the cabinet
-    // so a signed-in user can copy it into their client. Empty hides the section.
-    std::string serverDescriptor;
     // Portal-local HMAC secrets (login challenge binding, session cookie).
     std::string challengeSecret;
     std::string sessionSecret;
     std::int64_t sessionTtlSeconds = 3600;
-    // The subscription granted on registration. Every account gets the same one:
-    // nothing on this node is for sale. The initial value; an operator can
-    // change it while the node runs (see settings).
-    std::uint64_t defaultQuotaBytes = 50 * 1024 * 1024;
-    // Whether an account this node registers still waits for an operator before
-    // it is served. The page has to say so at registration: the account is only
-    // marked pending once a client redeems the grant, and until then nothing
-    // else would tell the user their messages are not flowing yet.
-    bool requiresApproval = false;
-    // Shown to a user whose account is created frozen on a moderated node: how
-    // to reach the operator to finish registration. Empty on an open node.
-    std::string registrationMessage;
     // Where this node's messaging server keeps its reseed archive, on the private
     // channel (e.g. "http://127.0.0.1:8420/internal/i2pseeds.su3"). The portal
     // publishes it because the portal is what faces the clearnet: a client needs
@@ -61,19 +41,17 @@ struct PortalApiOptions {
     std::string reseedArchiveUrl;
     // Where the portal's web files live (page shell, stylesheet, logo, fonts).
     std::filesystem::path assetsDirectory;
-    // The live knobs, shared with the account API. When null (tests), the values
-    // above are taken as the settings.
+    // The live knobs, shared with the account API so the two cannot disagree: the
+    // quota a registration grants, whether it waits for an operator, what it is
+    // told meanwhile, the words a login is signed under and the addresses the
+    // descriptor is built from. Required - there is no second place any of it is
+    // kept.
     std::shared_ptr<NodeSettings> settings;
 
-    // What the messaging server holds for an account - the mailbox and the
-    // devices collecting it - which the node does not know. Empty (or an empty
-    // answer) leaves the page saying so rather than inventing a number.
-    struct Usage {
-        std::uint64_t usedBytes = 0;
-        std::uint64_t quotaBytes = 0;
-        std::size_t devices = 0;
-    };
-    std::function<std::optional<Usage>(const std::string& user)> accountUsage;
+    // What the messaging server holds for this account, which the node does not
+    // know. Empty (or an empty answer) leaves the page saying so rather than
+    // inventing a number.
+    std::function<std::optional<MailboxUsage>(const std::string& user)> accountUsage;
 
     // Tears an account down at its owner's request: the same end as unsubscribing
     // from a client, reachable by someone who only has a browser.
@@ -94,9 +72,14 @@ public:
     PortalApi(PortalApiOptions options, GrantStore& grants);
     ~PortalApi();
 
-    bool listen(const std::string& host, int port);
-    int bindToAnyPort(const std::string& host);
-    bool listenAfterBind();
+    PortalApi(const PortalApi&) = delete;
+    PortalApi& operator=(const PortalApi&) = delete;
+
+    // Binds and starts serving (port 0 lets the kernel pick). Returns the bound
+    // port, 0 when the socket could not be taken.
+    int bind(const std::string& host, int port);
+    // Parks the caller until stop(). The engine serves on its own threads.
+    void wait();
     void stop();
 
 private:
@@ -108,14 +91,15 @@ private:
     std::string reseedSu3_;
     std::int64_t reseedFetchedAt_ = 0;
 
-    // Binds on a chosen port (0 lets the kernel pick) and starts serving.
-    int bindToAnyPort(const std::string& host, int port);
     void setupRoutes();
     // Registers the browser-facing routes (the page and its files).
     void setupWebRoutes();
     // The portal's one page, in whatever state the visitor is in. `error` is
     // shown on the step the visitor is standing on, empty when there is none.
     std::string homePage(const std::string& user, const std::string& error);
+    // The page shell around one of the content templates.
+    std::string page(const std::string& title, const std::string& session,
+        const std::string& content);
     // The values an account page fills in, whatever state the account is in.
     std::map<std::string, std::string> accountValues(const std::string& user,
         const std::optional<GrantStore::SubscriptionGrant>& subscription);
@@ -134,11 +118,7 @@ private:
     LoginChallenge login_;
     PortalSession session_;
     std::unique_ptr<bazarish::http::Server> http_;
-
-    // listenAfterBind() parks the caller's thread here until stop() releases it.
-    std::mutex stopMutex_;
-    std::condition_variable stopCv_;
-    bool stopping_ = false;
+    bazarish::StopGate stopGate_;
 };
 
 }  // namespace bazarish::service

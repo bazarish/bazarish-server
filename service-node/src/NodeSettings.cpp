@@ -61,64 +61,37 @@ void NodeSettings::persist(const Values& values) const
     if (configPath_.empty()) {
         throw std::runtime_error("this node was started without a config file to write to");
     }
-    // One value at a time, patched into the file's own text: the rest of it -
-    // the operator's key order, their spacing, their comments, and settings this
-    // node has never heard of - comes back untouched.
+    // One value at a time, patched into the file's own text: the rest of it - the
+    // operator's key order, their spacing, their comments, and settings this node
+    // has never heard of - comes back untouched.
     ConfigFile file(configPath_);
-    if (values.requireApproval != values_.requireApproval) {
-        file.set({kRegistrationKey, kRequireApprovalKey}, values.requireApproval);
-    }
-    if (values.registrationMessage != values_.registrationMessage) {
-        file.set({kRegistrationKey, kMessageKey}, values.registrationMessage);
-    }
-    if (values.idleDeleteDays != values_.idleDeleteDays) {
-        file.set({kRegistrationKey, kIdleDaysKey}, values.idleDeleteDays);
-    }
-    if (values.defaultQuotaBytes != values_.defaultQuotaBytes) {
-        file.set({kQuotaKey}, values.defaultQuotaBytes);
-    }
-    if (values.portalMessage != values_.portalMessage) {
-        file.set({kPortalKey, kPortalMessageKey}, values.portalMessage);
-    }
-    if (values.loginConsumer.name != values_.loginConsumer.name) {
-        file.set({kPortalKey, kPortalNameKey}, values.loginConsumer.name);
-    }
-    if (values.loginConsumer.place != values_.loginConsumer.place) {
-        file.set({kPortalKey, kPortalAddressKey}, values.loginConsumer.place);
-    }
-    if (values.loginConsumer.role != values_.loginConsumer.role) {
-        file.set({kPortalKey, kPortalRoleKey}, values.loginConsumer.role);
-    }
-    if (values.facades != values_.facades) {
-        file.set({kPortalKey, kFacadesKey}, values.facades);
-    }
-    if (values.reseeds != values_.reseeds) {
-        file.set({kPortalKey, kReseedsKey}, values.reseeds);
-    }
-    if (values.portalLinks != values_.portalLinks) {
-        file.set({kPortalKey, kLinksKey}, values.portalLinks);
-    }
-    if (values.logLevel != values_.logLevel) {
-        file.set({kLogLevelKey}, values.logLevel);
-    }
-    if (values.listenHost != values_.listenHost) {
-        file.set({kListenKey, kHostKey}, values.listenHost);
-    }
-    if (values.listenPort != values_.listenPort) {
-        file.set({kListenKey, kPortKey}, values.listenPort);
-    }
-    if (values.portalListenHost != values_.portalListenHost) {
-        file.set({kPortalKey, kListenKey, kHostKey}, values.portalListenHost);
-    }
-    if (values.portalListenPort != values_.portalListenPort) {
-        file.set({kPortalKey, kListenKey, kPortKey}, values.portalListenPort);
-    }
-    if (values.messagingHost != values_.messagingHost) {
-        file.set({kMessagingKey, kHostKey}, values.messagingHost);
-    }
-    if (values.messagingPort != values_.messagingPort) {
-        file.set({kMessagingKey, kPortKey}, values.messagingPort);
-    }
+    setIfChanged(file, {kRegistrationKey, kRequireApprovalKey}, values.requireApproval,
+        values_.requireApproval);
+    setIfChanged(file, {kRegistrationKey, kMessageKey}, values.registrationMessage,
+        values_.registrationMessage);
+    setIfChanged(
+        file, {kRegistrationKey, kIdleDaysKey}, values.idleDeleteDays, values_.idleDeleteDays);
+    setIfChanged(file, {kQuotaKey}, values.defaultQuotaBytes, values_.defaultQuotaBytes);
+    setIfChanged(file, {kPortalKey, kPortalMessageKey}, values.portalMessage,
+        values_.portalMessage);
+    setIfChanged(file, {kPortalKey, kPortalNameKey}, values.loginConsumer.name,
+        values_.loginConsumer.name);
+    setIfChanged(file, {kPortalKey, kPortalAddressKey}, values.loginConsumer.place,
+        values_.loginConsumer.place);
+    setIfChanged(file, {kPortalKey, kPortalRoleKey}, values.loginConsumer.role,
+        values_.loginConsumer.role);
+    setIfChanged(file, {kPortalKey, kFacadesKey}, values.facades, values_.facades);
+    setIfChanged(file, {kPortalKey, kReseedsKey}, values.reseeds, values_.reseeds);
+    setIfChanged(file, {kPortalKey, kLinksKey}, values.portalLinks, values_.portalLinks);
+    setIfChanged(file, {kLogLevelKey}, values.logLevel, values_.logLevel);
+    setIfChanged(file, {kListenKey, kHostKey}, values.listenHost, values_.listenHost);
+    setIfChanged(file, {kListenKey, kPortKey}, values.listenPort, values_.listenPort);
+    setIfChanged(file, {kPortalKey, kListenKey, kHostKey}, values.portalListenHost,
+        values_.portalListenHost);
+    setIfChanged(file, {kPortalKey, kListenKey, kPortKey}, values.portalListenPort,
+        values_.portalListenPort);
+    setIfChanged(file, {kMessagingKey, kHostKey}, values.messagingHost, values_.messagingHost);
+    setIfChanged(file, {kMessagingKey, kPortKey}, values.messagingPort, values_.messagingPort);
 }
 
 }  // namespace bazarish::service

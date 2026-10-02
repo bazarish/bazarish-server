@@ -2,51 +2,26 @@
 #include "GrantStore.hpp"
 
 #include <bazarish/Address.hpp>
+#include <bazarish/ConfigFile.hpp>
+#include <bazarish/PrivateFile.hpp>
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <fstream>
 #include <stdexcept>
 #include <system_error>
 #include <utility>
 
 namespace bazarish::service {
 
-namespace {
-
 namespace fs = std::filesystem;
 
-void requireUser(const std::string& user)
-{
-    if (!isFingerprint(user)) {
-        throw std::invalid_argument("user is not a fingerprint");
-    }
-}
+namespace {
 
-void writeFileAtomic(const fs::path& target, const std::string& text)
+// A grant record, or an empty object when the user has none yet.
+nlohmann::json grantRecord(const fs::path& path)
 {
-    const fs::path temporary = target.parent_path() / (target.filename().string() + ".tmp");
-    {
-        std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
-        if (!out) {
-            throw std::runtime_error("failed to open " + temporary.string());
-        }
-        out << text;
-        if (!out) {
-            throw std::runtime_error("failed to write " + temporary.string());
-        }
-    }
-    fs::rename(temporary, target);
-}
-
-nlohmann::json readJsonFile(const fs::path& path)
-{
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        throw std::runtime_error("failed to open " + path.string());
-    }
-    return nlohmann::json::parse(in);
+    return fs::exists(path) ? readJsonFile(path) : nlohmann::json::object();
 }
 
 }  // namespace
@@ -71,23 +46,17 @@ fs::path GrantStore::grantPath(const std::string& user) const
 void GrantStore::grantSubscription(
     const std::string& user, const std::uint64_t quotaBytes, const std::int64_t now)
 {
-    requireUser(user);
+    requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
-    nlohmann::json body = nlohmann::json::object();
     const fs::path path = grantPath(user);
-    if (fs::exists(path)) {
-        body = readJsonFile(path);
-    }
-    body["subscription"] = {
-        {"quotaBytes", quotaBytes},
-        {"grantedAt", now},
-    };
+    nlohmann::json body = grantRecord(path);
+    body["subscription"] = {{"quotaBytes", quotaBytes}, {"grantedAt", now}};
     writeFileAtomic(path, body.dump());
 }
 
 std::optional<GrantStore::SubscriptionGrant> GrantStore::peekSubscription(const std::string& user)
 {
-    requireUser(user);
+    requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     const fs::path path = grantPath(user);
     if (!fs::exists(path)) {
@@ -107,17 +76,17 @@ std::optional<GrantStore::SubscriptionGrant> GrantStore::peekSubscription(const 
 void GrantStore::setI2pTransient(const std::string& user, const std::int64_t transientExpires,
     const std::int64_t updatedAt)
 {
-    requireUser(user);
+    requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     const fs::path path = grantPath(user);
-    nlohmann::json body = fs::exists(path) ? readJsonFile(path) : nlohmann::json::object();
+    nlohmann::json body = grantRecord(path);
     body["transient"] = {{"expires", transientExpires}, {"updatedAt", updatedAt}};
     writeFileAtomic(path, body.dump());
 }
 
 std::optional<GrantStore::Transient> GrantStore::peekTransient(const std::string& user)
 {
-    requireUser(user);
+    requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     const fs::path path = grantPath(user);
     if (!fs::exists(path)) {
@@ -136,13 +105,19 @@ std::optional<GrantStore::Transient> GrantStore::peekTransient(const std::string
 
 std::optional<GrantStore::SubscriptionGrant> GrantStore::takeSubscription(const std::string& user)
 {
-    const std::optional<SubscriptionGrant> grant = peekSubscription(user);
-    if (!grant.has_value()) {
-        return std::nullopt;
-    }
+    requireFingerprint(user);
+    // Read and erase under one lock: peeking first and erasing after would let two
+    // requests redeem the same one-shot grant.
     const std::lock_guard<std::mutex> lock(mutex_);
     const fs::path path = grantPath(user);
-    nlohmann::json body = fs::exists(path) ? readJsonFile(path) : nlohmann::json::object();
+    nlohmann::json body = grantRecord(path);
+    if (!body.contains("subscription")) {
+        return std::nullopt;
+    }
+    const nlohmann::json& held = body.at("subscription");
+    SubscriptionGrant grant;
+    grant.quotaBytes = held.at("quotaBytes").get<std::uint64_t>();
+    grant.grantedAt = held.at("grantedAt").get<std::int64_t>();
     body.erase("subscription");
     if (body.empty()) {
         std::error_code ignored;
@@ -156,10 +131,10 @@ std::optional<GrantStore::SubscriptionGrant> GrantStore::takeSubscription(const 
 void GrantStore::recordRegistration(
     const std::string& user, const std::int64_t now, const bool approved)
 {
-    requireUser(user);
+    requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     const fs::path path = grantPath(user);
-    nlohmann::json body = fs::exists(path) ? readJsonFile(path) : nlohmann::json::object();
+    nlohmann::json body = grantRecord(path);
     nlohmann::json& entry = body["approval"];
     if (!entry.contains("requestedAt")) {
         entry["requestedAt"] = now;
@@ -175,7 +150,7 @@ void GrantStore::recordRegistration(
 
 std::optional<GrantStore::Approval> GrantStore::peekApproval(const std::string& user)
 {
-    requireUser(user);
+    requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     const fs::path path = grantPath(user);
     if (!fs::exists(path)) {
@@ -195,7 +170,7 @@ std::optional<GrantStore::Approval> GrantStore::peekApproval(const std::string& 
 
 void GrantStore::approve(const std::string& user, const std::int64_t now)
 {
-    requireUser(user);
+    requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     const fs::path path = grantPath(user);
     if (!fs::exists(path)) {
@@ -216,10 +191,10 @@ void GrantStore::approve(const std::string& user, const std::int64_t now)
 
 void GrantStore::hold(const std::string& user, const std::string& message, const std::int64_t now)
 {
-    requireUser(user);
+    requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     const fs::path path = grantPath(user);
-    nlohmann::json body = fs::exists(path) ? readJsonFile(path) : nlohmann::json::object();
+    nlohmann::json body = grantRecord(path);
     nlohmann::json& entry = body["approval"];
     // An account put on hold before it was ever recorded still has to have a
     // request date, or it would look like it had waited forever.
@@ -233,7 +208,7 @@ void GrantStore::hold(const std::string& user, const std::string& message, const
 
 void GrantStore::ban(const std::string& user, const std::string& reason, const std::int64_t now)
 {
-    requireUser(user);
+    requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     writeFileAtomic(banPath(user),
         nlohmann::json{{"reason", reason}, {"bannedAt", now}}.dump());
@@ -241,7 +216,7 @@ void GrantStore::ban(const std::string& user, const std::string& reason, const s
 
 std::optional<GrantStore::Ban> GrantStore::peekBan(const std::string& user) const
 {
-    requireUser(user);
+    requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     const fs::path path = banPath(user);
     if (!fs::exists(path)) {
@@ -256,7 +231,7 @@ std::optional<GrantStore::Ban> GrantStore::peekBan(const std::string& user) cons
 
 void GrantStore::unban(const std::string& user)
 {
-    requireUser(user);
+    requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     std::error_code ignored;
     fs::remove(banPath(user), ignored);
@@ -283,7 +258,7 @@ std::vector<std::string> GrantStore::allUsers() const
 
 void GrantStore::erase(const std::string& user)
 {
-    requireUser(user);
+    requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     std::error_code ignored;
     fs::remove(grantPath(user), ignored);

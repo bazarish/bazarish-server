@@ -2,6 +2,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -12,13 +13,21 @@ class Identity;
 
 namespace bazarish::service {
 
+// What the messaging server holds for one account: the mailbox as it stands and
+// how many devices are collecting it. The node has neither number - it owns the
+// account, the messaging server owns the mail.
+struct MailboxUsage {
+    std::uint64_t usedBytes = 0;
+    std::uint64_t quotaBytes = 0;
+    std::size_t devices = 0;
+};
+
 // The service node's operator channel to the messaging server: requests signed
-// with the node's own identity, which the backend authorises by fingerprint.
-// Carries the two things the node owns and the messaging server must obey - the
-// user's client-owned offline I2P transient (an empty one revokes) and the
-// storage quota their subscription grants. Best effort: a failed push is
-// swallowed (the next subscribe/delegation re-pushes). A no-op when not
-// configured (empty base URL).
+// with the node's own identity, which the backend authorises by fingerprint. It
+// carries what the node owns and the messaging server must obey - the user's
+// offline I2P transient (an empty one revokes), the storage quota their account
+// grants, the serving-key rotation - and reads back what only the messaging server
+// knows. Every call says whether it was accepted.
 class OperatorPush {
 public:
     // How many times a push is tried before it is given up on. A background push
@@ -29,20 +38,15 @@ public:
     static constexpr int kBackgroundAttempts = 3;
     static constexpr int kPromptAttempts = 1;
 
-    OperatorPush(std::string baseUrl, const Identity& signer,
-        int attempts = kBackgroundAttempts,
-        std::string destPath = "/v1/messaging/i2p-dest",
-        std::string quotaPath = "/v1/messaging/quota");
+    OperatorPush(
+        std::string baseUrl, const Identity& signer, int attempts = kBackgroundAttempts);
 
     // Waits for the messaging server to start answering, up to budget. Any answer
-    // counts, refusals included: what this asks is whether the socket is there,
-    // not whether it likes us. False when it never answered - or at once, when no
-    // messaging server is configured, since then there is nothing to wait for.
-    //
-    // A node and its messaging server are restarted together, and the node has
-    // work for it in the first second (the quota reconcile below). Without this
-    // the first push meets a socket that is not listening yet and spends its
-    // retries there, which reads in the log as a failure and is only a race.
+    // counts, refusals included: what this asks is whether the socket is there, not
+    // whether it likes us. False when it never answered - or at once, when no
+    // messaging server is configured. The two daemons are restarted together, so
+    // without this the node's first push meets a socket that is not listening yet
+    // and spends its retries on a race.
     bool waitReachable(std::chrono::seconds budget) const;
 
     // Provisions (non-empty transient) or revokes (empty transient) a user's
@@ -50,16 +54,8 @@ public:
     // failure).
     bool publish(const std::string& user, const std::string& transientB64,
         std::int64_t expiresUnix) const;
-    // What the messaging server holds for a user: the mailbox as it stands and
-    // how many devices are collecting it. The node has neither number - it owns
-    // the account, the messaging server owns the mail. Nullopt when the server
-    // is not configured or did not answer.
-    struct AccountUsage {
-        std::uint64_t usedBytes = 0;
-        std::uint64_t quotaBytes = 0;
-        std::size_t devices = 0;
-    };
-    std::optional<AccountUsage> accountUsage(const std::string& user) const;
+    // Nullopt when the server is not configured or did not answer.
+    std::optional<MailboxUsage> accountUsage(const std::string& user) const;
 
     // Tells the messaging server the account is gone, so it drops the mailbox
     // and everything else it held for that fingerprint. The node owns the
@@ -88,13 +84,9 @@ private:
     std::optional<std::string> putBody(const std::string& path, const std::string& bodyText) const;
     bool put(const std::string& path, const std::string& bodyText) const;
 
-    std::string baseUrl_;  // http://host:port, empty disables
+    std::string baseUrl_;  // http://host:port
     const Identity& signer_;
-    std::string destPath_;
-    std::string quotaPath_;
     const int attempts_;
-    std::string servingKeyPath_ = "/v1/messaging/serving-key";
-    std::string accountPath_ = "/v1/messaging/account";
 };
 
 }  // namespace bazarish::service

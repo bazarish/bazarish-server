@@ -25,7 +25,12 @@
     "name": "",
     "address": "",
     "links": [],
-    "facades": []
+    // Where clients reach this server (I2P, and nothing else), and where a client
+    // with no router yet fetches a slice of netdb (clearnet, and nothing else).
+    // The two together plus the server fingerprint are the descriptor a user
+    // pastes into their client.
+    "facades": [],
+    "reseeds": []
   },
 
   // Two modes and no third. requireApproval false: proving a key is the whole

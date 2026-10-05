@@ -186,7 +186,6 @@ int main()
     }
     CHECK(refusedProxy);
 
-    // Everything the status view reads, in the order it reads it.
     CHECK(borrowed.running());
     CHECK(borrowed.knownRouters() == 0);
     CHECK(borrowed.transportPeers().empty());

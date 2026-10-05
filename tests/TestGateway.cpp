@@ -199,7 +199,6 @@ int main()
 
     asio::io_context io;
 
-    // An upgrade without the token is refused.
     const Dialled refused = dial(io, port, "wrong-token", {});
     CHECK(refused.socket == nullptr);
 

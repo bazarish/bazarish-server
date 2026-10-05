@@ -34,10 +34,11 @@
 
     --bz-ink: #d7dbd8;
     --bz-ink-dim: #8b948c;
-    --bz-ink-faint: #5e676a;
+    --bz-ink-faint: #80888b;
 
     --bz-accent: #f2f4f2;
     --bz-on-accent: #11151a;
+    --bz-accent-lit: #ffffff;
 
     /* Status. Also the same everywhere: what a colour means is learnt once and
        read the same way on the next face. Green is well, amber is waiting, red
@@ -58,10 +59,11 @@
        a thing that has been chosen. The brand mark is not part of it - the
        wordmark keeps its neon green everywhere and is never recoloured. */
     --bz-key: #ffc24d;
-    --bz-key-dim: #8a6a14;
+    --bz-key-dim: #9f7c1b;
     --bz-key-bg: #2a2109;
     --bz-key-glow: rgba(255, 194, 77, 0.35);
 
+    --bz-touch: 2.75rem;
     --bz-radius: 10px;
     --bz-radius-sm: 6px;
     --bz-font: "Roboto Mono", ui-monospace, "DejaVu Sans Mono", SFMono-Regular, Menlo, monospace;
@@ -304,6 +306,12 @@ a.btn {
 }
 
 .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    /* A finger needs a target this big, and an anchor would ignore a height
+       without the box above (WCAG 2.5.5). */
+    min-height: var(--bz-touch);
     margin-top: 1.25rem;
     padding: 0.65rem 1.2rem;
     background: var(--bz-accent);
@@ -319,8 +327,8 @@ a.btn {
 }
 
 .btn:hover {
-    background: #ffffff;
-    border-color: #ffffff;
+    background: var(--bz-accent-lit);
+    border-color: var(--bz-accent-lit);
 }
 
 .btn[disabled] {
@@ -1088,4 +1096,16 @@ body.centred {
     border-radius: var(--bz-radius-sm);
     background: var(--bz-warn-bg);
     color: var(--bz-warn);
+}
+
+/* The ring above is a shadow, and forced-colors drops shadows. The same
+   focus is drawn again as an outline, which it keeps. */
+@media (forced-colors: active) {
+    .field:focus-visible,
+    .btn:focus-visible,
+    .chip:focus-visible,
+    .row:focus-visible {
+        outline: 2px solid;
+        outline-offset: 2px;
+    }
 }

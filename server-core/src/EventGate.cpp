@@ -17,7 +17,6 @@ void EventGate::notify(const std::string& user)
         woken.swap(found->second);
         waiters_.erase(found);
     }
-    // Cancelling makes each waiter's handler run at once on its own executor.
     for (const std::shared_ptr<boost::asio::steady_timer>& timer : woken) {
         timer->cancel();
     }

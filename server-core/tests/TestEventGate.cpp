@@ -24,7 +24,6 @@ int main()
     boost::asio::io_context io;
     EventGate gate;
 
-    // A waiter is woken by a delivery for its own user, long before its timeout.
     std::atomic<bool> wokenForAlice{false};
     std::atomic<bool> wokenForBob{false};
     gate.wait(io.get_executor(), "alice", std::chrono::seconds(30),
@@ -36,17 +35,15 @@ int main()
     gate.notify("alice");
     io.run_for(std::chrono::milliseconds(200));
     CHECK(wokenForAlice.load());
-    CHECK(!wokenForBob.load());   // a delivery for one user wakes only that user
+    CHECK(!wokenForBob.load());
     CHECK(gate.waiting() == 1);
 
-    // A waiter nobody wakes still finishes, so a forgotten client is answered.
     std::atomic<bool> expired{false};
     gate.wait(io.get_executor(), "carol", std::chrono::seconds(0),
         [&expired]() { expired = true; });
     io.run_for(std::chrono::milliseconds(200));
     CHECK(expired.load());
 
-    // Notifying a user nobody waits on is a no-op, not a crash.
     gate.notify("nobody");
     io.run_for(std::chrono::milliseconds(50));
     std::printf("ok\n");

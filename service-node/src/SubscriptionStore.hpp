@@ -12,38 +12,16 @@
 
 namespace bazarish::service {
 
-// Persistent user-management state for one service node: the accounts it serves.
-// An account has no term - registration opens an unbounded channel - so what is
-// kept is the quota this node granted, the user's published contact card, and
-// when the user last delegated a destination. That last one is the only clock:
-// an account that stops delegating is swept.
-//
-// Layout under the root directory:
-//   subscriptions/<fingerprint>.json   {user, registeredAt, quotaBytes, dest,
-//                                       delegatedAt, card}
 class SubscriptionStore {
 public:
     struct Account {
         std::string user;
         std::int64_t registeredAt = 0;
         std::uint64_t quotaBytes = 0;
-        // The I2P destination the user published in their card, kept out of it
-        // so a listing can show and search addresses without verifying a
-        // signature per row. Empty until the user publishes routing.
         std::string dest;
-        // When the server last held a delegation for that destination. Zero
-        // means the user has never delegated one.
         std::int64_t delegatedAt = 0;
-        // The card-read capability this node issued for the account: what a
-        // descriptor carries and what a card lookup must hand back. Rotating it
-        // retires every descriptor already out there.
         std::string view;
-        // A replacement capability minted for a rotation in progress: it becomes
-        // the view above only when the user commits the rotation with a card that
-        // carries the new serving key, so an abandoned rotation retires nothing.
         std::string pendingView;
-        // The serving key the messaging server prepared for that same rotation
-        // (base64 SPKI), so the commit can check the card carries exactly it.
         std::string pendingServingKey;
         // The hybrid-signed contact card (DER), as published by the user.
         Bytes card;
@@ -53,8 +31,6 @@ public:
 
     void putAccount(const Account& account);
     std::optional<Account> getAccount(const std::string& user);
-    // Every account on file, for the reconciliation this node owes the messaging
-    // server at start (quotas it may have missed) and for the idle sweep.
     std::vector<Account> allAccounts() const;
     void deleteAccount(const std::string& user);
 

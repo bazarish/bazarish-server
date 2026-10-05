@@ -40,8 +40,6 @@ void printUsage()
 using bazarish::readFileText;
 using bazarish::writePrivateFile;
 
-// Loads the panel's own signing identity from the state directory, generating it
-// on first start. The panel signs every service call with it.
 bazarish::Identity loadOrCreateIdentity(const fs::path& stateDir)
 {
     const fs::path path = stateDir / "identity.pem";
@@ -88,17 +86,12 @@ int main(const int argc, const char** argv)
 
     fs::create_directories(config.stateDir);
     const bazarish::Identity identity = loadOrCreateIdentity(config.stateDir);
-    // The address is the config's to state. A flag that could override it would
-    // mean two answers to the same question, and the operator finding out which
-    // one won by reading a unit file.
     const std::string host = config.listenHost;
     const int port = config.listenPort;
 
     HttpApiOptions options;
     options.version = kVersion;
     options.assetsDirectory = config.assetsDir;
-    // The panel administers itself: what it reads at start it can also write
-    // back, into the same file the operator wrote by hand.
     const bool unclaimed = config.admins.empty();
     const auto settings
         = std::make_shared<PanelSettings>(fs::path(configPath), std::move(config));
@@ -121,17 +114,12 @@ int main(const int argc, const char** argv)
     std::printf("put this fingerprint in each service's \"operators\" list\n");
     std::printf("listening on %s:%d\n", host.c_str(), port);
     if (unclaimed) {
-        // A fresh install: no administrator yet, and the first key to sign in
-        // becomes one. Said on the console because that is where whoever just
-        // installed it is looking.
         std::printf("no administrator configured yet: open http://%s:%d/setup and sign in -\n"
                     "the first key to sign there administers this panel\n",
             host.c_str(), port);
     }
     std::fflush(stdout);
 
-    // Stopping happens on the switch's own thread: a handler must not stop the
-    // server it is still answering on.
     bazarish::RestartSwitch restart([&api]() { api->stop(); });
     *restartHook = [&restart]() { restart.request(); };
 

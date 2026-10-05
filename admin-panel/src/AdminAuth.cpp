@@ -12,7 +12,6 @@ namespace bazarish::admin {
 
 namespace {
 
-// The per-run secret that binds this panel's challenges to itself.
 constexpr std::size_t kChallengeSecretBytes = 16;
 
 }  // namespace
@@ -40,10 +39,6 @@ std::string AdminAuth::issueChallenge(const std::int64_t now)
 std::string AdminAuth::verify(
     const std::string& challenge, const std::string& blob, const std::int64_t now)
 {
-    // Single use is what defeats replay: a login blob captured from any other
-    // verifier carries a challenge this panel never minted, so it is rejected
-    // here even though its signature is valid. The store consumes the nonce only
-    // after the signature checks out, so a bad blob cannot burn a good challenge.
     return challenges().verify(challenge, blob, now);
 }
 

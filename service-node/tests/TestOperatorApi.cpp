@@ -52,8 +52,6 @@ Headers signedHeaders(const Identity& identity, const std::string& method, const
     return Headers(headers.begin(), headers.end());
 }
 
-// One signed operator call. The path carries the query string, and the signature
-// covers the path without it, exactly as the panel signs it.
 http::ClientResponse call(const int port, const Identity& identity, const std::string& method,
     const std::string& target, const std::string& body = {})
 {
@@ -71,9 +69,6 @@ http::ClientResponse call(const int port, const Identity& identity, const std::s
 
 }  // namespace
 
-// The surface the admin panel drives: list, search, read and set a quota. The
-// search runs on this side, so a panel never has to hold the whole account list
-// to find one fingerprint in it.
 int main()
 {
     const std::filesystem::path root
@@ -104,8 +99,6 @@ int main()
         quotaUser = user;
         quotaPushed = quotaBytes;
     };
-    // The knobs the panel edits, backed by a config file: a change an operator
-    // makes has to be where the next start reads it.
     std::filesystem::create_directories(root);
     const std::filesystem::path configPath = root / "service-node.json";
     {
@@ -125,21 +118,17 @@ int main()
     CHECK(port > 0);
     std::thread serverThread([&api]() { api.wait(); });
 
-    // Three accounts: one served, two still waiting for the operator.
     const std::string served = Identity::generate().fingerprint();
     const std::string waitingOne = Identity::generate().fingerprint();
     const std::string waitingTwo = Identity::generate().fingerprint();
-    // A well-formed fingerprint this node has never heard of.
     const std::string unknown = Identity::generate().fingerprint();
     grants.recordRegistration(served, now, true);
     grants.recordRegistration(waitingOne, now, false);
     grants.recordRegistration(waitingTwo, now, false);
     grants.grantSubscription(served, kQuota, now);
-    // The listing is in fingerprint order, so paging is checked against that.
     std::vector<std::string> inOrder = {served, waitingOne, waitingTwo};
     std::sort(inOrder.begin(), inOrder.end());
 
-    // Only an authorised operator sees any of it.
     CHECK(call(port, stranger, "GET", "/v1/account/users").status == 403);
 
     {
@@ -159,8 +148,6 @@ int main()
         CHECK(body.at("users").at(0).at("approval").get<std::string>() == "pending");
     }
 
-    // The search is a substring of the fingerprint, matched here - and it is
-    // case-insensitive, because an operator pastes what they were given.
     {
         constexpr std::size_t kSearchStart = 8;
         constexpr std::size_t kSearchLength = 20;
@@ -180,7 +167,6 @@ int main()
         CHECK(nlohmann::json::parse(none.body).at("total").get<std::size_t>() == 0);
     }
 
-    // Paging: the page is what the caller asked for, the total is the truth.
     {
         const http::ClientResponse page
             = call(port, panel, "GET", "/v1/account/users?limit=1&offset=1");
@@ -201,12 +187,9 @@ int main()
         CHECK(body.at("grantPending").get<bool>());
 
         CHECK(call(port, panel, "GET", "/v1/account/user?user=" + unknown).status == 404);
-        // Not a fingerprint at all is a bad request, not a missing account.
         CHECK(call(port, panel, "GET", "/v1/account/user?user=not-a-fingerprint").status == 400);
     }
 
-    // Setting a quota moves the grant with it and pushes it to the messaging
-    // server, which would otherwise go on serving its own default.
     {
         const std::uint64_t raised = 50 * 1024 * 1024;
         const std::string body
@@ -225,13 +208,10 @@ int main()
         CHECK(call(port, stranger, "PUT", "/v1/account/quota", body).status == 403);
     }
 
-    // Taking an account out of service: the destination is revoked and the
-    // account waits again, with the operator's own words for its owner.
     {
         const std::string body = nlohmann::json{{"user", served},
             {"message", "Talk to the operator before this comes back."}}
                                      .dump();
-        // A hold with nothing to say is refused: saying something is the point.
         CHECK(call(port, panel, "POST", "/v1/account/undelegate",
                    nlohmann::json{{"user", served}}.dump())
                   .status
@@ -249,7 +229,6 @@ int main()
         CHECK(grants.peekApproval(served)->pending());
     }
 
-    // Deleting takes the account away and leaves the key free to come back.
     {
         const http::ClientResponse gone
             = call(port, panel, "DELETE", "/v1/account/user?user=" + waitingOne);
@@ -258,8 +237,6 @@ int main()
         CHECK(call(port, panel, "GET", "/v1/account/user?user=" + waitingOne).status == 404);
     }
 
-    // A ban takes the account away too, and stays behind so the key cannot
-    // register again; the operator's reason is what its owner is shown.
     {
         const std::string body
             = nlohmann::json{{"user", waitingTwo}, {"reason", "Spam"}}.dump();
@@ -267,14 +244,12 @@ int main()
         CHECK(!grants.peekApproval(waitingTwo).has_value());
         CHECK(grants.peekBan(waitingTwo)->reason == "Spam");
 
-        // A banned key is still listed - it is the only way back to lifting it.
         const http::ClientResponse listed
             = call(port, panel, "GET", "/v1/account/users?q=" + waitingTwo);
         const nlohmann::json record = nlohmann::json::parse(listed.body).at("users").at(0);
         CHECK(record.at("banned").get<bool>());
         CHECK(record.at("banReason").get<std::string>() == "Spam");
 
-        // An empty reason still says something.
         const std::string bare = nlohmann::json{{"user", served}}.dump();
         CHECK(call(port, panel, "POST", "/v1/account/ban", bare).status == 200);
         CHECK(grants.peekBan(served)->reason == "Banned");
@@ -283,8 +258,6 @@ int main()
         CHECK(!grants.peekBan(waitingTwo).has_value());
     }
 
-    // What a user is shown before signing a login is the operator's to set, and
-    // it is written where the next start will read it.
     {
         const nlohmann::json shown
             = nlohmann::json::parse(call(port, panel, "GET", "/v1/account/settings").body);
@@ -304,8 +277,6 @@ int main()
         CHECK(onDisk.at("portal").at("address").get<std::string>() == "https://alpha.example");
         CHECK(onDisk.at("portal").at("role").get<std::string>() == "Alpha tester");
 
-        // The log level is the one setting here that is not a restart away: an
-        // operator makes a node talkative while it is running the problem.
         CHECK(bazarish::log::level() != bazarish::log::Level::eDebug);
         const std::string louder = nlohmann::json{{"logLevel", "debug"}}.dump();
         CHECK(call(port, panel, "PUT", "/v1/account/settings", louder).status == 200);
@@ -317,7 +288,6 @@ int main()
         CHECK(call(port, panel, "PUT", "/v1/account/settings", quieter).status == 200);
         CHECK(bazarish::log::level() == bazarish::log::Level::eInfo);
 
-        // Startup values are written for the next start rather than applied now.
         const std::string wiring
             = nlohmann::json{{"portalListen", {{"host", "0.0.0.0"}, {"port", 8531}}}}.dump();
         CHECK(call(port, panel, "PUT", "/v1/account/settings", wiring).status == 200);
@@ -327,8 +297,6 @@ int main()
         const std::string badPort = nlohmann::json{{"listen", {{"port", 0}}}}.dump();
         CHECK(call(port, panel, "PUT", "/v1/account/settings", badPort).status == 400);
 
-        // A portal that will not say who it is has no business asking anyone to
-        // sign for it, and the words it had stand.
         const std::string nameless = nlohmann::json{{"loginConsumer", {{"name", ""}}}}.dump();
         CHECK(call(port, panel, "PUT", "/v1/account/settings", nameless).status == 400);
         CHECK(settings->get().loginConsumer.name == "Bazarish alpha");

@@ -14,8 +14,6 @@ namespace {
 
 namespace fs = std::filesystem;
 
-// How the config file spells each setting, so a hand-edited file and a
-// panel-edited one are the same file.
 const char* const kAdminKey = "admin";
 const char* const kConsumerKey = "consumer";
 const char* const kConsumerNameKey = "name";

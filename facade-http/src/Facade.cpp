@@ -39,18 +39,11 @@ namespace bazarish::facade {
 
 namespace {
 
-// How many destinations one facade may be asked to publish: a guard against a
-// typo that would have it build tunnels for hours.
 constexpr int kMaxI2pDestinations = 8;
 
-// How long the facade waits on a backend. Longer than the event face's own cap,
-// so a held request is answered by the backend rather than cut short here.
 constexpr int kUpstreamTimeoutSeconds = 60;
-// And how much longer the front holds the client than it holds the backend. The
-// client must not be cut off first, or a backend answering at its own deadline
-// would have nobody left to answer to.
+// And how much longer the front holds the client than it holds the backend.
 constexpr int kFrontReadSlackSeconds = 30;
-
 
 bool startsWith(const std::string& text, const std::string& prefix)
 {
@@ -64,19 +57,12 @@ std::string pathOf(const std::string& target)
     return target.substr(0, target.find('?'));
 }
 
-// Two paths, and nothing else exists as far as this program is concerned: the
-// sealed client tunnel, of which this process cannot read a byte - not who is
-// calling, not what they ask, not even an account call from a mailbox poll - and
-// the signed server card, which is public and identical for every caller and is
-// what lets a client seal that tunnel in the first place.
 bool isForwarded(const std::string& method, const std::string& path)
 {
     return (method == "POST" && path == bazarish::tunnel::kTunnelPath)
         || (method == "GET" && path == bazarish::tunnel::kServerCardPath);
 }
 
-// The request target with the secret base path stripped, or nothing when the base
-// path is wrong or the path is not one of the two the facade forwards.
 std::optional<std::string> forwardedTarget(
     const bazarish::facade::FacadeOptions& options, const bazarish::http::Request& request)
 {
@@ -93,9 +79,6 @@ std::optional<std::string> forwardedTarget(
     return target;
 }
 
-// The 404 every refusal looks like: bare, with no body and no content type. An
-// unknown base path and an unroutable path answer identically, and neither says
-// what is behind them - an error envelope with our own code would.
 bazarish::http::Response notFound()
 {
     return {404, "", {}, ""};
@@ -109,8 +92,6 @@ bazarish::http::Response refusal(const int status, const std::string& message)
 
 bazarish::http::Response gatewayFailure()
 {
-    // The facade is a dumb pipe: a backend that did not answer is a gateway
-    // failure, not a protocol error of the caller's.
     return {502, "application/json", {},
         R"({"error":{"code":"FACADE_UPSTREAM","message":"backend unreachable"}})"};
 }
@@ -133,8 +114,6 @@ int Facade::bind(const std::string& host, const int port)
     bazarish::http::Server::Options options;
     options.host = host;
     options.port = port;
-    // A forwarded long poll is held here as well, so the front has to be able to
-    // wait without spending a thread on each client.
     options.readTimeout = std::chrono::seconds(kUpstreamTimeoutSeconds + kFrontReadSlackSeconds);
     http_ = std::make_unique<bazarish::http::Server>(options);
     setupRoutes();
@@ -151,7 +130,7 @@ int Facade::bindOps(const std::string& host, const int port)
     bazarish::http::Server::Options options;
     options.host = host;
     options.port = port;
-    options.threads = 1;  // one operator poller, not a crowd
+    options.threads = 1;
     ops_ = std::make_unique<bazarish::http::Server>(options);
     setupOpsRoutes();
     try {
@@ -180,8 +159,6 @@ void Facade::stop()
 
 void Facade::setupRoutes()
 {
-    // One handler for every method: strip the secret base path, and relay verbatim
-    // the two requests this facade forwards.
     const auto handler = [this](const bazarish::http::Request& request,
                              bazarish::http::Responder respond)
         -> std::optional<bazarish::http::Response> {
@@ -190,24 +167,17 @@ void Facade::setupRoutes()
         if (!target.has_value()) {
             return notFound();
         }
-        // The request is in flight until the backend answers and the reply goes
-        // out; the guard rides along with the coroutine below.
         const auto inFlight = std::make_shared<Load::InFlight>(load_);
         bazarish::http::ClientRequest forwarded;
         forwarded.method = request.method;
         forwarded.target = *target;
         forwarded.headers = request.headers;
         forwarded.body = request.body;
-        // Hop-by-hop headers belong to the connection we received on, not to the
-        // one we are about to open, and the client below frames the body itself.
         for (const char* const hop : {"host", "connection", "keep-alive", "proxy-connection",
                  "transfer-encoding", "content-length", "upgrade", "te", "trailer"}) {
             forwarded.headers.erase(hop);
         }
 
-        // Forwarded on the front's own loop: a backend that holds the request
-        // open (the event face does, by design) holds a coroutine here, not a
-        // thread, so one waiting client costs what one timer costs.
         boost::asio::co_spawn(
             http_->executor(),
             [executor = http_->executor(), host = options_.messagingHost,
@@ -218,12 +188,9 @@ void Facade::setupRoutes()
                 respond(upstream.status == 0 ? gatewayFailure() : upstream);
             },
             boost::asio::detached);
-        return std::nullopt;  // answered when the backend does
+        return std::nullopt;
     };
 
-    // Register the catch-all for the methods the API uses. Nothing streams
-    // through the facade any more: the only large payload there ever was - a file
-    // upload - now goes directly between clients.
     for (const char* const method : {"GET", "POST", "PUT", "DELETE"}) {
         http_->routeAsync(method, "(.*)", handler);
     }
@@ -231,9 +198,6 @@ void Facade::setupRoutes()
 
 void Facade::setupOpsRoutes()
 {
-    // Everything on this socket is the operator's, so every route stands behind
-    // the same signature check. On the public socket none of it exists at all: it
-    // would admit a facade is here to anyone who does not know the base path.
     const auto operatorOnly = [this](auto handler) {
         return [this, handler](
                    const bazarish::http::Request& request) -> bazarish::http::Response {
@@ -253,8 +217,6 @@ void Facade::setupOpsRoutes()
         };
     };
 
-    // Liveness plus what this facade is carrying: three counts and a gauge,
-    // sampled now, kept nowhere.
     ops_->get("/healthz", operatorOnly([this](const bazarish::http::Request&) {
         const Load::Sample sample = load_.sample(nowSeconds());
         nlohmann::json report = nlohmann::json::parse(
@@ -305,9 +267,7 @@ void Facade::setupOpsRoutes()
         }
         if (body.contains("basePath")) {
             const std::string path = body.at("basePath").get<std::string>();
-            // The one field here that is a secret. An empty one is only
-            // legitimate when a fronting proxy owns it, and that is a decision
-            // made in the config file, not in a browser.
+            // The one field here that is a secret.
             if (path.empty() || !isValidBasePath(path)) {
                 throw std::invalid_argument(
                     "a base path looks like /8f1818f3/0966179fb196: one or more"
@@ -349,7 +309,6 @@ void Facade::setupOpsRoutes()
         try {
             options_.settings->set(values);
         } catch (const std::exception& error) {
-            // The operator asked for a change that cannot outlive a restart.
             return refusal(500, error.what());
         }
         if (values.logLevel != levelBefore) {

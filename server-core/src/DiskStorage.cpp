@@ -23,7 +23,6 @@ namespace fs = std::filesystem;
 
 constexpr std::size_t kIdMaxLength = 64;
 
-// How long one mailbox's contact-request window lasts.
 constexpr std::int64_t kContactWindowSeconds = 60;
 
 bool isSafeId(const std::string& id)
@@ -48,9 +47,6 @@ void requireSafeId(const std::string& id)
     }
 }
 
-// The arrival stamp a mailbox is ordered by. Milliseconds, because two
-// deliveries for the same user land within the same second often enough that a
-// second-resolution stamp would leave their order to the filesystem.
 std::int64_t arrivalMillis()
 {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -58,8 +54,6 @@ std::int64_t arrivalMillis()
         .count();
 }
 
-// What a record says about when it arrived, for ordering. A record written
-// before the mailbox had an order carries only its retention stamp, in seconds.
 std::int64_t arrivalOf(const nlohmann::json& meta)
 {
     constexpr std::int64_t kMillisPerSecond = 1000;
@@ -123,7 +117,6 @@ void DiskStorage::unregisterClient(const std::string& user, const std::string& c
     const std::lock_guard<std::mutex> lock(mutex_);
     std::error_code ignored;
     fs::remove(userDir(user) / "clients" / clientId, ignored);
-    // Blobs that were waiting only on the retired client are now complete.
     for (const std::string& blobId : listDirectoryNames(userDir(user) / "blobs")) {
         deleteIfFullyAcked(user, blobId);
     }
@@ -156,8 +149,6 @@ void DiskStorage::registerPasses(const std::string& user, const std::vector<Byte
     const fs::path dir = userDir(user) / "passes";
     fs::create_directories(dir);
     for (const Bytes& handle : handles) {
-        // Registering one that is already held is how an account gives a
-        // correspondent their pass back after a block, so this must not care.
         writeFileAtomic(dir / toHex(handle), std::string_view());
     }
 }
@@ -165,8 +156,6 @@ void DiskStorage::registerPasses(const std::string& user, const std::vector<Byte
 bool DiskStorage::hasPass(const std::string& user, const Bytes& handle)
 {
     requireFingerprint(user);
-    // A handle of the wrong size would name something other than a pass - an
-    // empty one names the directory itself, which exists.
     if (handle.size() != bazarish::kDeliveryPassSize) {
         return false;
     }
@@ -222,22 +211,14 @@ Storage::PutResult DiskStorage::putBlob(const std::string& user, const std::stri
 
     nlohmann::json acked = nlohmann::json::array();
     if (!alreadyAcked.empty()) {
-        // The device that wrote this does not need it back, and mail is deleted
-        // only once every device has acked: without this the writer's own copy
-        // would sit in the mailbox until it fetched and acked itself.
         acked.push_back(alreadyAcked);
     }
-    // Two stamps, two jobs: receivedAt is the caller's clock and what the TTL
-    // sweep ages a record against; receivedAtMs is when this mailbox took the
-    // delivery, and is the order it hands the mailbox out in.
     const nlohmann::json metaBody = {
         {"receivedAt", receivedAt},
         {"receivedAtMs", arrivalMillis()},
         {"class", deliveryClass},
         {"acked", acked},
     };
-    // Write the meta record first: a blob without meta would be invisible to the
-    // TTL sweep, the reverse is harmless.
     writeFileAtomic(meta / (blobId + ".json"), metaBody.dump());
     writeFileAtomic(blobs / blobId, data);
     return PutResult::eStored;
@@ -267,7 +248,6 @@ void DiskStorage::markSeen(const std::string& user, const std::string& deliveryI
     const std::lock_guard<std::mutex> lock(mutex_);
     const fs::path dir = userDir(user) / "seen";
     fs::create_directories(dir);
-    // The marker payload is the receive time, so the TTL sweep can age it out.
     writeFileAtomic(dir / deliveryId, std::to_string(receivedAt));
 }
 
@@ -294,7 +274,6 @@ std::size_t DiskStorage::countHeld(const std::string& user, const std::string& d
     const std::lock_guard<std::mutex> lock(mutex_);
     std::size_t held = 0;
     for (const std::string& blobId : listDirectoryNames(userDir(user) / "blobs")) {
-        // A blob with no record beside it is an interrupted write, not a delivery.
         const fs::path metaPath = userDir(user) / "meta" / (blobId + ".json");
         std::error_code ec;
         if (!fs::exists(metaPath, ec) || ec) {
@@ -313,18 +292,12 @@ std::vector<Storage::PendingEntry> DiskStorage::listPending(const std::string& u
     requireFingerprint(user);
     requireSafeId(clientId);
     const std::lock_guard<std::mutex> lock(mutex_);
-    // Arrival order, not directory order: a mailbox is a queue, and handing it
-    // out in whatever order the filesystem lists it in leaves a burst of
-    // messages to reach the reader shuffled.
     struct Waiting {
         std::int64_t arrivedAtMs = 0;
         PendingEntry entry;
     };
     std::vector<Waiting> waiting;
     for (const std::string& blobId : listDirectoryNames(userDir(user) / "blobs")) {
-        // A blob with no record beside it is not a delivery but an interrupted
-        // write, and reading a record for that name throws. One stray file costs
-        // one entry rather than the whole mailbox.
         const fs::path metaPath = userDir(user) / "meta" / (blobId + ".json");
         std::error_code ec;
         if (!fs::exists(metaPath, ec) || ec) {
@@ -338,8 +311,6 @@ std::vector<Storage::PendingEntry> DiskStorage::listPending(const std::string& u
                 {arrivalOf(meta), PendingEntry{blobId, meta.at("class").get<std::string>()}});
         }
     }
-    // The id breaks a tie, so two deliveries stamped in the same millisecond are
-    // still handed out in one stable order rather than the filesystem's.
     std::sort(waiting.begin(), waiting.end(), [](const Waiting& a, const Waiting& b) {
         if (a.arrivedAtMs != b.arrivedAtMs) {
             return a.arrivedAtMs < b.arrivedAtMs;
@@ -376,8 +347,6 @@ void DiskStorage::ackBlob(const std::string& user, const std::string& blobId,
 
     const fs::path metaPath = userDir(user) / "meta" / (blobId + ".json");
     if (!fs::exists(metaPath)) {
-        // Acking something already deleted is a no-op, not an error: the
-        // blob may have been completed by another client's ack already.
         return;
     }
     nlohmann::json meta = readJsonFile(metaPath);
@@ -388,24 +357,16 @@ void DiskStorage::ackBlob(const std::string& user, const std::string& blobId,
     deleteIfFullyAcked(user, blobId);
 }
 
-
 void DiskStorage::forgetUser(const std::string& user)
 {
     requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     std::error_code ignored;
-    // The whole directory: mail, replay markers, pass hashes, devices and the
-    // quota override. Half of it left behind would keep answering for a user
-    // whose account is gone.
     fs::remove_all(userDir(user), ignored);
 }
 
 void DiskStorage::purgeExpired(const std::int64_t receivedBefore)
 {
-    // The user list under the lock, the walk without it. This mutex is the one
-    // every delivery needs, and holding it across a walk of every mailbox in the
-    // node stalled all of them for as long as the walk took - seconds, on a node
-    // with a long retention. One user at a time is short enough not to be felt.
     std::vector<fs::path> users;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
@@ -422,7 +383,7 @@ void DiskStorage::purgeExpired(const std::int64_t receivedBefore)
             const fs::path metaPath = userPath / "meta" / (blobId + ".json");
             std::error_code missing;
             if (!fs::exists(metaPath, missing)) {
-                continue;  // no record beside it: not a delivery, not ours to age
+                continue;
             }
             if (readJsonFile(metaPath).at("receivedAt").get<std::int64_t>() < receivedBefore) {
                 std::error_code ignored;
@@ -430,9 +391,6 @@ void DiskStorage::purgeExpired(const std::int64_t receivedBefore)
                 fs::remove(metaPath, ignored);
             }
         }
-        // Age out replay markers on the same horizon as the blobs they guard. A
-        // marker that will not read is removed too: left behind it would outlive
-        // every horizon.
         for (const std::string& deliveryId : listDirectoryNames(userPath / "seen")) {
             const fs::path marker = userPath / "seen" / deliveryId;
             std::ifstream in(marker, std::ios::binary);
@@ -443,10 +401,6 @@ void DiskStorage::purgeExpired(const std::int64_t receivedBefore)
             }
         }
     }
-    // The contact-request windows are in memory and nothing else drops them, so
-    // a node accumulates one per user that ever asked. They are swept on the
-    // blob horizon rather than on their own minute: this runs hourly, and a
-    // window that old cannot be counting anything.
     {
         const std::lock_guard<std::mutex> lock(mutex_);
         for (auto entry = contactWindows_.begin(); entry != contactWindows_.end();) {
@@ -505,8 +459,6 @@ void DiskStorage::deleteIfFullyAcked(const std::string& user, const std::string&
     }
     const nlohmann::json meta = readJsonFile(metaPath);
     const std::vector<std::string> clients = listDirectoryNames(userDir(user) / "clients");
-    // A user with no registered client at all keeps their mail until the TTL
-    // sweep: an empty roster must not read as "everyone has acked".
     if (clients.empty()) {
         return;
     }

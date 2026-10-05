@@ -34,9 +34,6 @@ namespace {
 
 namespace http = bazarish::http;
 
-// A frame this server will not open reads as noise: the refusal is shaped like
-// an answer so a facade cannot tell one from the other, which means the only way
-// to tell them apart from here is to try the key.
 bool opensAsAnswer(const std::string& body, const Bytes& tunnelKey)
 {
     try {
@@ -84,7 +81,6 @@ int main()
         return http::request("127.0.0.1", port, request, {});
     };
 
-    // A hello opens a tunnel, and nothing but a hello does.
     const Identity alice = Identity::generate();
     const Bytes secret = randomBytes(32);
     const Key replyKey = Key::generateSealing();
@@ -117,8 +113,6 @@ int main()
             auth::sessionHandle(secret, ++seq), tunnelKey, tunnel::encodeRequest(inner)));
     };
 
-    // A carried request reaches this server's own routes and the answer comes
-    // back under the tunnel key.
     {
         const http::ClientResponse answered = carry("GET", tunnel::kServerCardPath);
         CHECK(answered.status == 200);
@@ -128,8 +122,6 @@ int main()
         CHECK(inner.body == card);
     }
 
-    // A path this server does not serve is answered 404 inside the tunnel - the
-    // status rides in, so from outside it is the same 200 as anything else.
     {
         const http::ClientResponse answered = carry("GET", "/no/such/route");
         CHECK(answered.status == 200);
@@ -138,9 +130,6 @@ int main()
         CHECK(inner.status == 404);
     }
 
-    // A tunnel cannot open another one. A carried frame naming the tunnel path
-    // went back into the same handler, and each layer copied the body it was
-    // handed: a request of a few megabytes cost gigabytes.
     {
         tunnel::Request innermost;
         innermost.method = "GET";
@@ -153,15 +142,12 @@ int main()
         CHECK(!opensAsAnswer(answered.body, tunnelKey));
     }
 
-    // The operator's own side of the machine is not reachable from a tunnel.
     {
         const http::ClientResponse answered = carry("GET", "/internal/i2pseeds.su3");
         CHECK(answered.status == 200);
         CHECK(!opensAsAnswer(answered.body, tunnelKey));
     }
 
-    // A frame addressed to no tunnel this server holds is refused the same way,
-    // so the two refusals above are not distinguishable from this one either.
     {
         const http::ClientResponse answered = post(tunnel::carry(
             auth::sessionHandle(randomBytes(32), 1), tunnelKey, Bytes{'x'}));

@@ -37,15 +37,8 @@ namespace fs = std::filesystem;
 constexpr const char* kVersion = "0.0.1";
 constexpr const char* kDefaultHost = "127.0.0.1";
 constexpr int kDefaultPort = 8421;
-// The portal's HMAC secrets are minted per run, so there is nothing to configure
-// and nothing to leak: a restart simply invalidates outstanding challenges.
 constexpr std::size_t kPortalSecretBytes = 16;
-// How often idle accounts are looked for. The window is measured in days, so this
-// only has to be far finer than that.
 constexpr std::chrono::hours kIdleSweepInterval{1};
-// How long the messaging server is given to start answering before the node gives
-// up waiting for it. The two are restarted together and the node has work for it
-// in the first second.
 constexpr std::chrono::seconds kBackendWaitBudget{60};
 
 void printUsage()
@@ -80,9 +73,6 @@ bazarish::Bytes readFileBytes(const fs::path& path)
 using bazarish::readFileText;
 using bazarish::writePrivateFile;
 
-// Loads the service node's own signing identity from the state directory,
-// generating it on first start. The node signs its operator pushes (quota,
-// transient) with it, and a backend authorises it by fingerprint.
 bazarish::Identity loadOrCreateIdentity(const fs::path& stateDir)
 {
     const fs::path path = stateDir / "identity.pem";
@@ -94,44 +84,22 @@ bazarish::Identity loadOrCreateIdentity(const fs::path& stateDir)
     return identity;
 }
 
-// Portal onboarding presentation, parsed from the config. The message and links
-// are advertised by the discovery endpoint so a client knows where to register.
 struct PortalConfig {
     std::string message;
-    // What the portal calls itself and where a user reaches it, in the words the
-    // client shows before a login is signed. The address is what the user has in
-    // the address bar, so it is the link they were given unless the operator
-    // fronts the portal under another one.
     std::string name;
     std::string address;
-    // What signing in here is called, in the client's badge: whose account the
-    // signature opens.
     std::string role;
     std::vector<std::string> links;
-    // This server's facade URLs - I2P addresses, where clients talk to it - shown
-    // in the cabinet as part of the server descriptor a client pastes to connect
-    // (client failover order).
     std::vector<std::string> facades;
-    // Clearnet addresses a client with no router yet asks for a slice of netdb.
-    // They carry nothing else.
     std::vector<std::string> reseeds;
 };
 
-// Who may be served on this node. Open registration serves an account the moment
-// it is created; approval registration creates it frozen and waits for the
-// operator. `message` is what a frozen user is shown - how to reach the operator
-// to finish registration - and `idleDeleteDays` is how long an account is kept
-// with no destination delegated here before it is deleted. That covers a client
-// that stopped running, a registration nobody redeemed and an account no operator
-// approved: the delegation is the only sign of life a server has.
 struct RegistrationConfig {
     bool requireApproval = false;
     std::string message;
     std::int64_t idleDeleteDays = 180;
 };
 
-// Where the node runs and what it runs on. Everything a command line used to
-// carry lives here, so there is one place to look and one place to change.
 struct NodeConfig {
     std::string stateDir;
     std::string serverCard;
@@ -141,15 +109,10 @@ struct NodeConfig {
     bazarish::ConfigView::Endpoint messaging;
     std::vector<std::string> operators;
     bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
-    // The level as the operator spelled it, so the panel can show and change the
-    // same word rather than a number nobody wrote.
     std::string logLevelText = "info";
     std::uint64_t freeStorageBytes = 50 * 1024 * 1024;
     PortalConfig portal;
     RegistrationConfig registration;
-    // Lets the two address lists hold each other's kind - a clearnet facade, an
-    // I2P reseed. Nonsense in a deployment, and exactly what a stand on a LAN
-    // needs. The client has a switch by the same name.
     bool allowFacadeWithoutI2pForDevPurposes = false;
 };
 
@@ -192,9 +155,6 @@ NodeConfig loadNodeConfig(const fs::path& path)
     return config;
 }
 
-// The words this portal signs under until an operator changes them. The address
-// has no default worth inventing: it is the one thing the user checks against
-// their address bar, so an unset one stops the portal instead.
 bazarish::service::LoginConsumer portalConsumer(const NodeConfig& config)
 {
     const char* const kDefaultPortalName = "Bazarish service node";
@@ -208,8 +168,6 @@ bazarish::service::LoginConsumer portalConsumer(const NodeConfig& config)
     return consumer;
 }
 
-// When this account was last heard from: the delegation it keeps here, or - for
-// one that never delegated - when it registered or asked to.
 std::int64_t idleSince(const std::optional<bazarish::service::SubscriptionStore::Account>& account,
     bazarish::service::GrantStore& grants, const std::string& user)
 {
@@ -232,18 +190,14 @@ std::int64_t idleSince(const std::optional<bazarish::service::SubscriptionStore:
     return 0;
 }
 
-// Drops every account that has gone `idleDays` without a destination delegated
-// here. A ban outlives the account it removed, so only the account goes.
 void sweepIdleAccounts(bazarish::service::SubscriptionStore& store,
     bazarish::service::GrantStore& grants, const bazarish::service::OperatorPush& push,
     const std::int64_t idleDays, const std::int64_t now)
 {
     if (idleDays <= 0) {
-        return;  // the operator keeps them forever
+        return;
     }
     const std::int64_t idleSeconds = idleDays * bazarish::kSecondsPerDay;
-    // A registration that never became an account is known to the grant store
-    // alone; a served one is known to both.
     std::set<std::string> users;
     for (const std::string& user : grants.allUsers()) {
         users.insert(user);
@@ -293,10 +247,6 @@ int main(const int argc, const char** argv)
     }
     const fs::path stateDir(nodeConfig.stateDir);
 
-    // The messaging server must authorise this node's operator fingerprint, but
-    // this node cannot start before that server has written its card. This mode
-    // breaks the cycle: it materialises the identity and prints the fingerprint,
-    // so the server can be started with it already configured.
     if (argc == 4 && std::strcmp(argv[3], "--fingerprint") == 0) {
         fs::create_directories(stateDir);
         std::printf("%s\n", loadOrCreateIdentity(stateDir).fingerprint().c_str());
@@ -320,25 +270,13 @@ int main(const int argc, const char** argv)
     const bazarish::ServerCard card = bazarish::ServerCard::verify(cardDer);
 
     fs::create_directories(stateDir);
-    // The service node's own signing identity: it signs its operator pushes (quota,
-    // transient) so the backends authorise it by fingerprint. Printed so the
-    // operator can put it in each backend's "operators" list.
     const bazarish::Identity nodeIdentity = loadOrCreateIdentity(stateDir);
     std::printf("service-node operator fingerprint: %s\n", nodeIdentity.fingerprint().c_str());
     bazarish::service::SubscriptionStore store(stateDir / "store");
     bazarish::service::GrantStore grants(stateDir / "store");
-    // The private channel carries what this node owns and the messaging server
-    // must obey: the user's delegated transient and the quota their subscription
-    // granted (else the messaging server would answer with its own default and
-    // the user would see a different number than the portal promised).
     const std::string messagingUrl
         = "http://" + nodeConfig.messaging.host + ":" + std::to_string(nodeConfig.messaging.port);
     const bazarish::service::OperatorPush operatorPush(messagingUrl, nodeIdentity);
-    // The same channel, for the pushes made while a device waits on the answer.
-    // Those run on one of the account API's handful of io threads, so they are
-    // given a single attempt: retrying inline would hold that thread for close to
-    // two minutes whenever the messaging server is busy, and starve every other
-    // request the node has - a device that was refused asks again by itself.
     const bazarish::service::OperatorPush promptPush(messagingUrl, nodeIdentity,
         bazarish::service::OperatorPush::kPromptAttempts);
 
@@ -347,9 +285,6 @@ int main(const int argc, const char** argv)
         bazarish::log::warn("facades and reseeds may hold each other's kind: development only");
     }
 
-    // One live set of knobs for the account API and the portal, written back to
-    // the config file the node was started with, so what an operator changes in
-    // the panel is what the node reads at the next start.
     const auto settings = std::make_shared<bazarish::service::NodeSettings>(configPath,
         bazarish::service::NodeSettings::Values{
             .requireApproval = nodeConfig.registration.requireApproval,
@@ -391,13 +326,10 @@ int main(const int argc, const char** argv)
     options.publishQuota = [&promptPush](const std::string& user,
                                const std::uint64_t quotaBytes) {
         if (!promptPush.publishQuota(user, quotaBytes)) {
-            // Not fatal to the subscription - but the user would then be served the
-            // messaging server's own default and see a figure nobody promised them.
             bazarish::log::warn("quota not pushed for {}: the messaging server refused it",
                 bazarish::log::redact(user));
         }
     };
-    // Filled in once the API exists; the handler reads the slot when called.
     const auto restartHook = std::make_shared<std::function<void()>>();
     options.requestRestart = [restartHook]() {
         if (*restartHook) {
@@ -405,18 +337,11 @@ int main(const int argc, const char** argv)
         }
     };
 
-    // The two daemons are restarted together, so the messaging server may still be
-    // binding its port. Waited for once, here, rather than discovered by the first
-    // push spending its retries on a socket that is not listening yet.
     if (!operatorPush.waitReachable(kBackendWaitBudget)) {
         bazarish::log::warn("the messaging server did not answer within {}s; what this node owes"
                             " it is refused until it does",
             kBackendWaitBudget.count());
     }
-    // Quotas the messaging server may have missed: an account registered before
-    // this node started pushing them would be served the messaging server's own
-    // default, and the user would see a figure nobody promised. Pushing them at
-    // start costs one request each.
     for (const bazarish::service::SubscriptionStore::Account& account : store.allAccounts()) {
         if (!operatorPush.publishQuota(account.user, account.quotaBytes)) {
             bazarish::log::warn("quota for {} not reconciled at start",
@@ -426,8 +351,6 @@ int main(const int argc, const char** argv)
 
     bazarish::service::AccountApi api(store, grants, options);
 
-    // The browser-facing portal (sign-in-with-key, which is the registration),
-    // sharing the grant store with the account API.
     std::unique_ptr<bazarish::service::PortalApi> portal;
     if (nodeConfig.portalListen.port > 0) {
         if (nodeConfig.portalAssets.empty()) {
@@ -443,20 +366,14 @@ int main(const int argc, const char** argv)
         }
         bazarish::service::PortalApiOptions portalOptions;
         portalOptions.serverFingerprint = card.server;
-        // Where the archive comes from. The portal publishes it because the portal
-        // is what the clearnet reaches; the messaging server packs it because that
-        // is where the netDb is.
         portalOptions.reseedArchiveUrl = messagingUrl + "/internal/i2pseeds.su3";
         portalOptions.challengeSecret = bazarish::toHex(bazarish::randomBytes(kPortalSecretBytes));
         portalOptions.sessionSecret = bazarish::toHex(bazarish::randomBytes(kPortalSecretBytes));
         portalOptions.assetsDirectory = fs::path(nodeConfig.portalAssets);
         portalOptions.settings = settings;
-        // The mailbox and the devices belong to the messaging server; the portal
-        // asks it, signed as this node.
         portalOptions.accountUsage = [&operatorPush](const std::string& user) {
             return operatorPush.accountUsage(user);
         };
-        // A user ending their own account: the same teardown unsubscribing does.
         portalOptions.deleteAccount = [&store, &grants, &operatorPush](const std::string& user) {
             store.deleteAccount(user);
             operatorPush.publish(user, std::string(), 0);
@@ -478,7 +395,6 @@ int main(const int argc, const char** argv)
             "portal on {}:{}", nodeConfig.portalListen.host, nodeConfig.portalListen.port);
     }
 
-    // An account lives while its owner keeps a destination delegated here.
     bazarish::StopGate stopping;
     std::thread sweeper([&]() {
         while (!stopping.waitFor(kIdleSweepInterval)) {
@@ -486,14 +402,10 @@ int main(const int argc, const char** argv)
                 sweepIdleAccounts(store, grants, operatorPush, settings->get().idleDeleteDays,
                     bazarish::nowSeconds());
             } catch (const std::exception& error) {
-                // Housekeeping must not take the node down, but a sweep that never
-                // runs keeps dead accounts forever, so it is reported.
                 bazarish::log::warn("idle sweep failed: {}", error.what());
             }
         }
     });
-    // Everything this process started is ended here, so nothing is left running
-    // over state the way out destroys.
     const auto stopEverything = [&]() {
         stopping.stop();
         if (portal) {
@@ -502,8 +414,6 @@ int main(const int argc, const char** argv)
         api.stop();
     };
 
-    // Stopping happens on the switch's own thread: a handler must not stop the
-    // server it is still answering on.
     bazarish::RestartSwitch restart(stopEverything);
     *restartHook = [&restart]() { restart.request(); };
 

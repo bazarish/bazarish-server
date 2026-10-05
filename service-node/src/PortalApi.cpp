@@ -3,7 +3,6 @@
 
 #include <bazarish/ServerDescriptor.hpp>
 
-
 #include <bazarish/HttpClient.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <bazarish/Clock.hpp>
@@ -25,9 +24,6 @@
 
 namespace {
 
-// How long the portal keeps the archive it fetched. The messaging server repacks
-// only hourly, so a short hold is enough to keep a burst of clients off the
-// private channel without ever serving something much older than it has.
 constexpr std::int64_t kReseedHoldSeconds = 300;
 
 namespace http = bazarish::http;
@@ -46,8 +42,6 @@ void sendHtml(http::Response& response, const std::string& html, const int statu
 {
     response.status = status;
     response.contentType = "text/html; charset=utf-8";
-    // Every page carries a single-use challenge, so a page served from a cache
-    // would be a page that no longer works.
     response.headers["Cache-Control"] = "no-store";
     response.body = html;
 }
@@ -58,8 +52,6 @@ void redirectTo(http::Response& response, const std::string& location)
     response.headers["Location"] = location;
 }
 
-// The attributes every one of the portal's cookies carries. Written once: three
-// copies of a cookie line are three places for one of them to lose a flag.
 const char* const kSessionCookie = "session";
 const char* const kCookieAttributes = "; HttpOnly; SameSite=Strict; Path=/";
 
@@ -91,9 +83,6 @@ std::string bytesHuman(const std::uint64_t bytes)
     return buffer;
 }
 
-// A notice the node fills into a template's {{error}} / {{message}}: it has to
-// disappear entirely when there is nothing to say, which a placeholder in a file
-// cannot do on its own.
 std::string notice(const std::string& text, const std::string& kind)
 {
     if (text.empty()) {
@@ -121,7 +110,6 @@ PortalApi::~PortalApi() = default;
 
 LoginChallenge& PortalApi::login()
 {
-    // The words an operator renamed the portal to, picked up without a restart.
     if (const LoginConsumer wanted = settings().loginConsumer; wanted != login_.consumer()) {
         login_.setConsumer(wanted);
     }
@@ -192,9 +180,6 @@ void PortalApi::setupRoutes()
         }
     }));
 
-    // Registration: proving the key is the whole of it, so a logged-in user who
-    // is not banned gets the pending subscription grant the Client then redeems
-    // with its signed cert.
     http_->post(
         "/portal/register", filled([this](const http::Request& request, http::Response& response) {
             std::string userId;
@@ -236,7 +221,7 @@ std::string PortalApi::reseedArchive()
         if (answer.status != 200 || answer.body.empty()) {
             bazarish::log::warn("portal: the messaging server has no reseed archive ({})",
                 answer.status);
-            return reseedSu3_;  // whatever was fetched before, or nothing
+            return reseedSu3_;
         }
         reseedSu3_ = answer.body;
         reseedFetchedAt_ = now;
@@ -249,13 +234,6 @@ std::string PortalApi::reseedArchive()
 void PortalApi::setupWebRoutes()
 {
     if (!options_.reseedArchiveUrl.empty()) {
-        // The reseed, published where the clearnet already reaches: a client with
-        // no I2P cannot ask a facade for anything, and this is the one file it
-        // needs before it has any. Under the name the format gives it, so a
-        // router appends it to whatever address the descriptor names and no
-        // special case is needed anywhere. Fetched from the messaging server on
-        // the private channel and held for kReseedHoldSeconds - that server packs
-        // a fresh one only hourly, so asking it more often buys nothing.
         http_->get("/i2pseeds.su3", [this](const http::Request&) {
             http::Response response;
             const std::string archive = reseedArchive();
@@ -271,9 +249,6 @@ void PortalApi::setupWebRoutes()
         });
     }
 
-    // The portal's own files, answered from memory. Registering them one by one
-    // keeps the directory a site rather than a file share: only what the
-    // operator put there, and nothing above it, can be asked for.
     for (const std::string& name : assets_.published()) {
         const WebAssets::File& file = assets_.file(name);
         http_->get("/" + name, [&file](const http::Request& request) {
@@ -281,9 +256,6 @@ void PortalApi::setupWebRoutes()
         });
     }
 
-    // The language switch. A visitor who clicks a language is sent back to the
-    // page they clicked it on, which is why the link carries where it came from:
-    // the cookie is the only state, and no script is involved in setting it.
     http_->get("/lang/([a-z-]+)", [this](const http::Request& request) {
         http::Response answer;
         const std::string asked = request.captures.at(0);
@@ -294,7 +266,6 @@ void PortalApi::setupWebRoutes()
         return answer;
     });
 
-    // The signed-in user, or empty for a visitor.
     const auto sessionUser = [this](const http::Request& request) -> std::string {
         try {
             return session_.verify(request.cookie(kSessionCookie), nowSeconds());
@@ -306,10 +277,6 @@ void PortalApi::setupWebRoutes()
     http_->get("/", filled([this, sessionUser](
                         const http::Request& request, http::Response& response) {
         const std::string user = sessionUser(request);
-        // Proving the key is the registration, so it happens as the key is
-        // proven instead of behind a button that would only repeat the question.
-        // A moderated node grants the same thing and holds the account until an
-        // operator approves it.
         if (!user.empty() && !grants_.peekBan(user).has_value()
             && !grants_.peekSubscription(user).has_value()) {
             grants_.grantSubscription(user, settings().defaultQuotaBytes,
@@ -337,9 +304,6 @@ void PortalApi::setupWebRoutes()
         redirectTo(response, "/");
     }));
 
-    // An account's owner can end it from a browser: the same teardown the client
-    // does on unsubscribe. Two steps, because the page has no script to ask
-    // "are you sure" with.
     http_->post("/delete", filled([this, sessionUser](
                                const http::Request& request, http::Response& response) {
         const std::string user = sessionUser(request);
@@ -380,7 +344,6 @@ std::string PortalApi::page(const http::Request& request, const std::string& tit
             {"dir", messages_.language(lang).rightToLeft ? "rtl" : "ltr"},
             {"switch", languageSwitch(lang, request.target)},
         });
-    // The words are chosen once, over the whole assembled page.
     return messages_.translate(drawn, lang);
 }
 
@@ -389,10 +352,6 @@ std::string PortalApi::language(const http::Request& request) const
     return messages_.codeFor(request.cookie("lang"));
 }
 
-// A disclosure holding one link per language: it opens, it is read by the
-// keyboard and it changes the language with a link, so nothing here needs a
-// script. Each link says where it came from, so a visitor lands back on the page
-// they were reading.
 std::string PortalApi::languageSwitch(const std::string& lang, const std::string& here) const
 {
     std::string list;
@@ -413,13 +372,9 @@ std::map<std::string, std::string> PortalApi::accountValues(
     const std::string& user, const std::optional<GrantStore::SubscriptionGrant>& subscription)
 {
     const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
-    // One snapshot for the whole answer: read field by field, an operator saving a
-    // change mid-call would be answered half in the old terms and half in the new.
     const NodeSettings::Values values = settings();
     const std::uint64_t granted
         = subscription.has_value() ? subscription->quotaBytes : values.defaultQuotaBytes;
-    // The operator's own words for this account when they wrote any, the
-    // node-wide message otherwise.
     const std::string note = approval.has_value() && !approval->message.empty()
         ? approval->message
         : values.registrationMessage;
@@ -436,8 +391,6 @@ std::map<std::string, std::string> PortalApi::accountValues(
 
     return {
         {"quota", htmlEscape(bytesHuman(granted))},
-        // Built from the facades the operator keeps, so the panel and the page can
-        // never show different ways in.
         {"descriptor",
             htmlEscape(encodeServerDescriptor(
                 {options_.serverFingerprint, values.facades, values.reseeds}))},
@@ -461,7 +414,6 @@ std::string PortalApi::homePage(
 
     const std::string session
         = assets_.render("session.html", {{"fingerprint", htmlEscape(user)}});
-    // A refused key is told so and nothing else: no terms, no way in.
     if (const std::optional<GrantStore::Ban> ban = grants_.peekBan(user); ban.has_value()) {
         return page(request, "Refused", session,
             assets_.render("banned.html", {{"message", htmlEscape(ban->reason)}}));
@@ -469,8 +421,6 @@ std::string PortalApi::homePage(
 
     const std::map<std::string, std::string> account
         = accountValues(user, grants_.peekSubscription(user));
-    // A signed-in key that is not banned was registered as it signed in, so there
-    // is no third state to draw here.
     const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
     if (approval.has_value() && approval->pending()) {
         return page(request, "Waiting", session, assets_.render("waiting.html", account));

@@ -15,17 +15,8 @@
 
 namespace bazarish::server {
 
-// Wakes long-poll waiters when something lands for a user.
-//
-// A waiter is an asio timer, not a thread: hundreds of clients holding a request
-// open cost hundreds of timers and no threads at all, which is the whole point of
-// serving this path asynchronously. A notification cancels the user's timers; the
-// handler then re-reads the mailbox and answers. A waiter that nobody wakes
-// expires on its own, so a client that has been forgotten still gets an answer.
 class EventGate {
 public:
-    // Suspends until something arrives for `user` or `timeout` passes, then runs
-    // `handler`. Safe to call from any thread; the handler runs on `executor`.
     template <class Handler>
     void wait(const boost::asio::any_io_executor& executor, const std::string& user,
         std::chrono::seconds timeout, Handler handler)
@@ -43,12 +34,8 @@ public:
         });
     }
 
-    // Something landed for this user: wake everyone waiting on it.
     void notify(const std::string& user);
 
-    // How many waiters are held right now. Nothing in the service reads it; it is
-    // what the tests check the bookkeeping with - a woken waiter must be forgotten,
-    // or every poll leaves a timer behind.
     std::size_t waiting() const;
 
 private:

@@ -53,8 +53,6 @@ nlohmann::json read(const fs::path& path)
 
 int main()
 {
-    // A fresh install: a config with no administrator in it. The panel starts,
-    // says it is unclaimed, and the first key to sign becomes the owner.
     {
         const fs::path path = writeConfig(R"({
   "state": "/var/lib/bazarish/admin-panel",
@@ -69,18 +67,14 @@ int main()
         const Identity owner = Identity::generate();
         CHECK(settings->claim(owner.fingerprint()));
         CHECK(!settings->unclaimed());
-        // Second claimant, one moment later: the panel already has an owner.
         CHECK(!settings->claim(Identity::generate().fingerprint()));
         CHECK(settings->get().admins.size() == 1);
 
-        // It is in the file, so the next start reads the same owner - and the
-        // operator's own keys are still there beside it.
         const nlohmann::json written = read(path);
         CHECK(written.at("admin").at(0).get<std::string>() == owner.fingerprint());
         CHECK(written.at("state").get<std::string>() == "/var/lib/bazarish/admin-panel");
         CHECK(written.at("listen").at("port").get<int>() == 8460);
 
-        // And the wizard's key is the one that opens the panel afterwards.
         AdminAuth panelAuth(settings);
         const std::string challenge = panelAuth.issueChallenge(kNow);
         const auth::Headers headers = auth::signRequest(owner, kNow, service::kLoginMethod,
@@ -95,8 +89,6 @@ int main()
         fs::remove(path);
     }
 
-    // Editing the panel from the panel: every setting lands in the file, and
-    // nothing the operator wrote by hand is disturbed.
     {
         const fs::path path = writeConfig(R"({
   "admin": ["kg3xjmqsuwzq5xakkyk6cqiwpxu63xqcprzhcy4wkeegj7ivhtxq"],
@@ -125,7 +117,6 @@ int main()
             == "server-core");
         CHECK(written.at("assets").get<std::string>() == "/opt/bazarish/web");
 
-        // What is written is what a restart reads.
         const Config again = Config::fromFile(path.string());
         CHECK(again.listenPort == 9460);
         CHECK(again.fleets.size() == 1);
@@ -133,8 +124,6 @@ int main()
         fs::remove(path);
     }
 
-    // A panel with nowhere to write refuses the change rather than losing it at
-    // the next restart.
     {
         Config config;
         config.admins = {"kg3xjmqsuwzq5xakkyk6cqiwpxu63xqcprzhcy4wkeegj7ivhtxq"};

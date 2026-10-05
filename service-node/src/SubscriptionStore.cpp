@@ -82,7 +82,7 @@ std::vector<SubscriptionStore::Account> SubscriptionStore::allAccounts() const
     std::error_code ec;
     std::filesystem::directory_iterator entries(root_ / "subscriptions", ec);
     if (ec) {
-        return out;  // none stored yet: not an error
+        return out;
     }
     for (const auto& entry : entries) {
         if (!entry.is_regular_file()) {

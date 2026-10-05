@@ -134,8 +134,6 @@ int main(const int argc, const char** argv)
     bazarish::log::setComponent("facade-http");
     bazarish::log::setLevel(logLevel);
 
-    // The configuration an operator turns from the panel, written back into the
-    // file this facade was started with.
     bazarish::facade::FacadeSettings::Values settingValues;
     settingValues.logLevel = config.text("logLevel").empty() ? "info" : config.text("logLevel");
     settingValues.basePath = options.basePath;
@@ -152,7 +150,6 @@ int main(const int argc, const char** argv)
     options.settings = std::make_shared<bazarish::facade::FacadeSettings>(
         std::filesystem::path(argv[2]), settingValues);
     options.stateDirectory = stateDir.string();
-    // Filled in once the facade exists; the handler reads the slot when called.
     const auto restartHook = std::make_shared<std::function<void()>>();
     options.requestRestart = [restartHook]() {
         if (*restartHook) {
@@ -162,8 +159,6 @@ int main(const int argc, const char** argv)
 
     bazarish::facade::Facade facade(options);
 
-    // Stopping happens on the switch's own thread: a handler must not stop the
-    // server it is still answering on.
     bazarish::RestartSwitch restart([&facade]() { facade.stop(); });
     *restartHook = [&restart]() { restart.request(); };
     std::printf("bazarish-facade-http %s\n", kVersion);
@@ -186,13 +181,10 @@ int main(const int argc, const char** argv)
         return 1;
     }
 
-    // The I2P front relays into the listener above, so it starts once that is
-    // up. Its addresses are the preferred way in; clearnet stays for bootstrap.
     std::unique_ptr<bazarish::facade::I2pFront> i2pFront;
     if (enableI2p) {
         bazarish::facade::I2pFront::Options frontOptions;
         frontOptions.stateDir = stateDir;
-        // A wildcard bind is reached over the loopback like any local client.
         frontOptions.localHost
             = listen.host == "0.0.0.0" ? std::string("127.0.0.1") : listen.host;
         frontOptions.localPort = listen.port;

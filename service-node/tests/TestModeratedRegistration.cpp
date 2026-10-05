@@ -35,8 +35,6 @@ namespace http = bazarish::http;
 
 using Headers = std::map<std::string, std::string>;
 
-// One request against the API under test. A transport failure comes back as
-// status 0, so a check on the status covers "nothing answered" too.
 http::ClientResponse call(const int port, const std::string& method, const std::string& path,
     const Headers& headers = {}, const std::string& body = {})
 {
@@ -106,7 +104,6 @@ int main()
     const std::string transientBody
         = nlohmann::json{{"transient", "t-b64"}, {"expiresUnix", now + 7 * 24 * 3600}}.dump();
 
-    // The account is created exactly as on an open node - only frozen.
     {
         grants.grantSubscription(
             alice.fingerprint(), kQuota, now);
@@ -120,8 +117,6 @@ int main()
         CHECK(reply.at("registrationMessage") == kHoldMessage);
     }
 
-    // Frozen means the destination is never brought up: the transient is refused
-    // with a typed error carrying the operator's instructions.
     {
         const http::ClientResponse result = call(port, "POST", "/v1/account/i2p-dest",
             makeHeaders(alice, "POST", "/v1/account/i2p-dest", transientBody), transientBody);
@@ -132,7 +127,6 @@ int main()
         CHECK(pubCalls == 0);
     }
 
-    // The operator sees the account waiting, in the listing the panel uses.
     {
         const http::ClientResponse result = call(port, "GET", "/v1/account/users?state=pending",
             makeHeaders(panel, "GET", "/v1/account/users", ""));
@@ -143,7 +137,6 @@ int main()
         CHECK(users.at(0).at("approval") == "pending");
     }
 
-    // Approval is operator-only.
     {
         const std::string body = nlohmann::json{{"user", alice.fingerprint()}}.dump();
         const http::ClientResponse forged = call(port, "POST", "/v1/account/approve",
@@ -156,7 +149,6 @@ int main()
         CHECK(result.status == 200);
     }
 
-    // Once approved the account is served like any other.
     {
         const http::ClientResponse result = call(port, "POST", "/v1/account/i2p-dest",
             makeHeaders(alice, "POST", "/v1/account/i2p-dest", transientBody), transientBody);

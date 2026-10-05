@@ -12,8 +12,6 @@ namespace {
 
 namespace fs = std::filesystem;
 
-// How the config file spells each setting, so a hand-edited file and a
-// panel-edited one are the same file.
 const char* const kLogLevelKey = "logLevel";
 const char* const kI2pKey = "i2p";
 const char* const kI2pLogKey = "log";

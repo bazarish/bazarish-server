@@ -9,17 +9,6 @@
 
 namespace bazarish::server {
 
-// Filesystem storage backend - the simple-deploy default.
-//
-// Layout under the root directory:
-//   users/<fingerprint>/clients/<clientId>  registered client marker
-//   users/<fingerprint>/passes/<hash-hex>   registered delivery-pass hash marker
-//   users/<fingerprint>/blobs/<blobId>      pending content
-//   users/<fingerprint>/meta/<blobId>.json  {"receivedAt", "receivedAtMs", "class", "acked"}
-//   users/<fingerprint>/seen/<deliveryId>   admitted-deliveryId marker (receivedAt text)
-//   users/<fingerprint>/quota              the operator's override, in bytes
-//
-// A single coarse mutex serializes mutations; revisit when profiling says so.
 class DiskStorage final : public Storage {
 public:
     explicit DiskStorage(const std::filesystem::path& root);
@@ -56,9 +45,7 @@ public:
     std::uint64_t userQuota(const std::string& user, std::uint64_t fallback) override;
 
 private:
-    // One minute window per mailbox for the passless contact path. In memory: a
-    // restart forgives whatever was counted, which is the right way round - a
-    // restart must not lock a mailbox out of receiving contact requests.
+    // One minute window per mailbox for the passless contact path.
     struct Window {
         std::int64_t start = 0;
         std::size_t count = 0;

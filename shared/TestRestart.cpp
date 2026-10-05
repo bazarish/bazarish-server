@@ -23,8 +23,6 @@ using namespace bazarish;
 
 int main()
 {
-    // Nobody asked: the switch releases its thread and the service is never
-    // stopped under it.
     {
         std::atomic<int> stops{0};
         {
@@ -34,8 +32,6 @@ int main()
         CHECK(stops.load() == 0);
     }
 
-    // Asked from a handler: the call returns at once - the response still has to
-    // be written - and the stop happens afterwards, on the switch's own thread.
     {
         std::atomic<int> stops{0};
         std::atomic<bool> stoppedByAnotherThread{false};
@@ -47,15 +43,12 @@ int main()
             });
             restart.request();
             CHECK(restart.requested());
-            // Still on the handler's thread, and the service is still up.
             CHECK(stops.load() == 0);
         }  // the destructor waits for the switch's thread
         CHECK(stops.load() == 1);
         CHECK(stoppedByAnotherThread.load());
     }
 
-    // Asking twice stops once: a panel that double-clicks does not stop the
-    // service, then stop it again as it comes back up.
     {
         std::atomic<int> stops{0};
         {

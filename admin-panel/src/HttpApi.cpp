@@ -31,8 +31,6 @@ using bazarish::nowSeconds;
 using bazarish::http::filled;
 
 const char* const kCookieName = "adminsession";
-// The attributes every one of this panel's cookies carries. Written once: three
-// copies of a cookie line are three places for one of them to lose a flag.
 const char* const kCookieAttributes = "; HttpOnly; SameSite=Strict; Path=/";
 
 void setSessionCookie(http::Response& response, const std::string& token)
@@ -50,8 +48,6 @@ void sendHtml(http::Response& response, const std::string& html, const int statu
 {
     response.status = status;
     response.contentType = "text/html; charset=utf-8";
-    // The sign-in page carries a single-use challenge, and the app pages carry
-    // whatever the fleet looked like a moment ago. Neither is worth caching.
     response.headers["Cache-Control"] = "no-store";
     response.body = html;
 }
@@ -69,10 +65,6 @@ void sendError(http::Response& response, const int status, const std::string& me
     sendJson(response, nlohmann::json{{"error", message}}.dump(), status);
 }
 
-// The one refusal a sign-in page shows. The text is whatever the verifier threw,
-// and a verifier that could not parse what arrived quotes it back - so it is
-// escaped: unescaped, a challenge field holding markup would put that markup in
-// the page, in the panel's own origin.
 std::string notice(const std::string& text)
 {
     if (text.empty()) {
@@ -87,8 +79,6 @@ void redirectTo(http::Response& response, const std::string& location)
     response.headers["Location"] = location;
 }
 
-// Percent-encodes a value for a query string: a fingerprint is safe either way,
-// but a search box takes whatever the operator types.
 std::string urlEncoded(const std::string& text)
 {
     static const char* const kHexDigits = "0123456789ABCDEF";
@@ -109,8 +99,6 @@ std::string urlEncoded(const std::string& text)
     return out;
 }
 
-// Where each kind of service keeps the two things the panel drives. A kind the
-// panel does not know answers with nothing, which the caller reports.
 std::string settingsPathOf(const std::string& kind)
 {
     if (kind == bazarish::admin::kServerCoreKind) {
@@ -175,8 +163,6 @@ HttpApi::~HttpApi() = default;
 std::optional<ServiceEntry> HttpApi::serviceOfKind(
     const std::string& fleet, const std::string& kind) const
 {
-    // By value: the deployment list is a live setting, so a pointer into it
-    // would outlive the snapshot it came from.
     for (const Fleet& candidate : settings_->get().fleets) {
         if (!fleet.empty() && candidate.name != fleet) {
             continue;
@@ -187,15 +173,12 @@ std::optional<ServiceEntry> HttpApi::serviceOfKind(
             }
         }
         if (!fleet.empty()) {
-            return std::nullopt;  // named, and it has none of this kind
+            return std::nullopt;
         }
     }
     return std::nullopt;
 }
 
-// Passes a call through to the service that owns the accounts, and hands its
-// answer back untouched. The panel holds no user state of its own: what it shows
-// is what the node says, one request ago.
 void HttpApi::proxyToNode(const std::string& fleet, http::Response& response,
     const std::string& method, const std::string& path, const std::string& body)
 {
@@ -215,7 +198,6 @@ void HttpApi::proxyToNode(const std::string& fleet, http::Response& response,
 
 void HttpApi::registerRoutes()
 {
-    // The panel's own files, answered from memory.
     for (const std::string& name : assets_.published()) {
         const WebAssets::File& file = assets_.file(name);
         http_->get("/" + name, [&file](const http::Request& request) {
@@ -227,8 +209,6 @@ void HttpApi::registerRoutes()
         return sessions_.valid(request.cookie(kCookieName), nowSeconds());
     };
 
-    // Signing in needs no scripts and no backend: the panel verifies the blob
-    // itself, so a fleet that is entirely down can still be logged into.
     const auto loginPage = [this](const std::string& error) {
         return assets_.render("login.html",
             {
@@ -237,8 +217,6 @@ void HttpApi::registerRoutes()
             });
     };
 
-    // A panel nobody owns yet. The wizard is the whole installation: sign once,
-    // and the key that signed administers this panel from here on.
     const auto setupPage = [this](const std::string& error) {
         return assets_.render("setup.html",
             {
@@ -263,8 +241,6 @@ void HttpApi::registerRoutes()
             return;
         }
         try {
-            // Whoever signs first: on an unclaimed panel there is no list for
-            // anyone to be on, so this checks the signature and nothing else.
             const std::string fingerprint = auth_.verify(
                 request.param("challenge"), request.param("blob"), nowSeconds());
             if (!settings_->claim(fingerprint)) {
@@ -324,8 +300,6 @@ void HttpApi::registerRoutes()
         sendHtml(response, assets_.render("index.html", {{"version", options_.version}}));
     }));
 
-    // Everything below is the app talking to the panel. A stale session gets a
-    // 401 the page turns into a bounce to the sign-in screen.
     const auto api = [this, signedIn](auto handler) {
         return filled([this, signedIn, handler](
                           const http::Request& request, http::Response& response) {
@@ -341,9 +315,6 @@ void HttpApi::registerRoutes()
         });
     };
 
-    // Every service of every deployment probed at once: one being down must not
-    // hold the page on the ones that are up, and an operator watching two servers
-    // wants both on the same screen.
     http_->get("/api/services", api([this](const http::Request&, http::Response& response) {
         const Config panel = settings_->get();
         std::vector<std::pair<std::string, ServiceEntry>> all;
@@ -374,8 +345,6 @@ void HttpApi::registerRoutes()
                 {"uptime", humanizeUptime(health.uptime)},
                 {"ramBytes", health.ramBytes},
                 {"ramPeakBytes", health.ramPeakBytes},
-                // A facade reports what it is carrying; the others report nothing
-                // here and the panel shows nothing for them.
                 {"requestsLastMinute", health.requestsLastMinute},
                 {"requestsLastHour", health.requestsLastHour},
                 {"requestsLastDay", health.requestsLastDay},
@@ -389,7 +358,6 @@ void HttpApi::registerRoutes()
         sendJson(response, nlohmann::json{{"services", services}, {"fleets", fleets}}.dump());
     }));
 
-    // The account list, searched and paged by the node itself.
     http_->get("/api/users", api([this](const http::Request& request, http::Response& response) {
         std::string query = "/v1/account/users?q=" + urlEncoded(request.query("q"))
             + "&state=" + urlEncoded(request.query("state"));
@@ -441,8 +409,6 @@ void HttpApi::registerRoutes()
             nlohmann::json{{"user", body.at("user")}}.dump());
     }));
 
-    // One account as the messaging server sees it: what its mailbox holds and how
-    // many devices are collecting it. Neither is known to the node.
     http_->get("/api/account", api([this](
                                    const http::Request& request, http::Response& response) {
         const std::optional<ServiceEntry> core
@@ -462,9 +428,6 @@ void HttpApi::registerRoutes()
         sendJson(response, account.body, account.status);
     }));
 
-    // The settings an operator turns, plus the two numbers that say whether they
-    // still fit: what the quotas promise, and what the messaging server's disk
-    // actually holds. The second is measured by the server that owns the disk.
     http_->get("/api/settings", api([this](
                                     const http::Request& request, http::Response& response) {
         const std::optional<ServiceEntry> node
@@ -480,8 +443,6 @@ void HttpApi::registerRoutes()
             return;
         }
         nlohmann::json merged = nlohmann::json::parse(settings.body);
-        // A storage figure nobody could measure is reported as unknown, not as
-        // zero: "no data" and "nothing stored" are not the same answer.
         merged["diskUsedBytes"] = nullptr;
         merged["diskError"] = "no server-core configured in this panel";
         if (const std::optional<ServiceEntry> core
@@ -503,9 +464,7 @@ void HttpApi::registerRoutes()
         proxyToNode(request.query("fleet"), response, "PUT", "/v1/account/settings", request.body);
     }));
 
-    // The configuration of one service, straight from the service that owns it. The
-    // panel knows only which path each kind answers on: the settings themselves are
-    // the service's, and so is every rule about them.
+    // The configuration of one service, straight from the service that owns it.
     const auto toService = [this](const http::Request& request, http::Response& response,
                                const std::string& method, const bool restarting) {
         const std::string kind = request.query("kind");
@@ -540,17 +499,11 @@ void HttpApi::registerRoutes()
         toService(request, response, "PUT", false);
     }));
 
-    // A service is restarted from here rather than over SSH: a setting only a
-    // start reads is otherwise saved and inert until somebody opens a terminal.
     http_->post("/api/restart", api([toService](
                                     const http::Request& request, http::Response& response) {
         toService(request, response, "POST", true);
     }));
 
-    // The panel's own settings - the ones no service knows about: who may sign
-    // in, the words it signs under, the deployments it manages, where it listens.
-    // Beside them the facts an operator can only read, so one page answers "what
-    // is this panel" without an SSH session.
     http_->get("/api/panel", api([this](const http::Request&, http::Response& response) {
         const Config panel = settings_->get();
         sendJson(response,
@@ -571,8 +524,6 @@ void HttpApi::registerRoutes()
                 .dump());
     }));
 
-    // The panel restarts itself for the same reason it restarts the others: a
-    // listener written into the file is inert until the process reads it again.
     http_->post("/api/panel/restart", api([this](
                                           const http::Request&, http::Response& response) {
         if (!options_.requestRestart) {
@@ -602,8 +553,6 @@ void HttpApi::registerRoutes()
                     }
                     admins.push_back(fingerprint);
                 }
-                // Emptying the list would hand the panel back to the setup
-                // wizard - to whoever reaches it first. That is not a setting.
                 if (admins.empty()) {
                     throw std::invalid_argument("a panel needs at least one administrator");
                 }
@@ -656,14 +605,10 @@ void HttpApi::registerRoutes()
         } catch (const nlohmann::json::exception& error) {
             sendError(response, 400, error.what());
         } catch (const std::exception& error) {
-            // A change that could not be written would be lost at the next
-            // start; saying so beats pretending it stuck.
             sendError(response, 500, error.what());
         }
     }));
 
-    // The quota belongs to the node that grants it; the panel only carries the
-    // operator's number over.
     http_->put("/api/quota", api([this](const http::Request& request, http::Response& response) {
         const nlohmann::json body = nlohmann::json::parse(request.body);
         proxyToNode(request.query("fleet"), response, "PUT", "/v1/account/quota",

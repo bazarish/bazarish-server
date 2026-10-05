@@ -52,15 +52,12 @@ using namespace bazarish::service;
 
 namespace {
 
-// The portal's per-run HMAC secrets, as the node mints them.
 constexpr std::size_t kSecretBytes = 16;
 
 namespace http = bazarish::http;
 
 using Headers = std::map<std::string, std::string>;
 
-// One request against the API under test. A transport failure comes back as
-// status 0, so a check on the status covers "nothing answered" too.
 http::ClientResponse call(const int port, const std::string& method, const std::string& path,
     const Headers& headers = {}, const std::string& body = {})
 {
@@ -75,7 +72,6 @@ http::ClientResponse call(const int port, const std::string& method, const std::
     return http::request("127.0.0.1", port, request, {});
 }
 
-
 std::int64_t now()
 {
     return std::chrono::duration_cast<std::chrono::seconds>(
@@ -83,8 +79,6 @@ std::int64_t now()
         .count();
 }
 
-// Sign-in-with-key verifies a client-shaped blob and recovers the fingerprint,
-// rejecting a wrong challenge, a stale timestamp and tampering.
 void testLoginVerification()
 {
     const Identity identity = Identity::generate();
@@ -97,7 +91,6 @@ void testLoginVerification()
     CHECK_THROWS(verifyLoginBlob(blob + "x", now(), challenge));
 }
 
-// GET /v1/account/portal reflects the configured onboarding offer.
 void testPortalDiscovery()
 {
     namespace fs = std::filesystem;
@@ -132,12 +125,8 @@ void testPortalDiscovery()
     const nlohmann::json body = nlohmann::json::parse(response.body);
     CHECK(body.at("message").get<std::string>() == "Register at the portal");
     CHECK(body.at("links").size() == 2);
-    // Nothing is for sale, so there is no service catalogue - only the terms of
-    // registration and the one quota everybody gets.
     CHECK(!body.contains("services"));
     const nlohmann::json& registration = body.at("registration");
-    // Two modes and no third: either an operator approves the account or the
-    // server takes it as it comes. There is nothing here for a client to solve.
     CHECK(!registration.contains("captcha"));
     CHECK(registration.at("requiresApproval").get<bool>());
     CHECK(registration.at("message").get<std::string>() == "write to the operator");
@@ -147,7 +136,6 @@ void testPortalDiscovery()
     serverThread.join();
     fs::remove_all(root);
 }
-
 
 std::string urlEncoded(const std::string& text)
 {
@@ -165,7 +153,6 @@ std::string urlEncoded(const std::string& text)
     return out;
 }
 
-// One form post, as a browser sends it.
 http::ClientResponse postForm(const int port, const std::string& path, const std::string& body,
     const std::string& cookie = {})
 {
@@ -190,8 +177,6 @@ std::string between(const std::string& text, const std::string& open, const std:
     return text.substr(from, end - from);
 }
 
-// The whole portal: prove a key, and that is the account. There is no second
-// step and no account area behind it.
 void testWebFlow()
 {
     namespace fs = std::filesystem;
@@ -204,8 +189,6 @@ void testWebFlow()
     values.loginConsumer
         = LoginConsumer{"Bazarish service node", "http://node.example", "Account owner"};
     values.defaultQuotaBytes = kQuota;
-    // The descriptor the cabinet hands over is built from these, so the page and
-    // the panel can never show different ways in.
     values.facades = {"http://abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqr.b32.i2p/s"};
     PortalApiOptions options;
     options.serverFingerprint = "service-node-fingerprint";
@@ -221,8 +204,6 @@ void testWebFlow()
         deleted = user;
         grants.erase(user);
     };
-    // The mailbox figures come from the messaging server; the portal only shows
-    // what it is handed.
     options.accountUsage = [](const std::string&) -> std::optional<MailboxUsage> {
         return MailboxUsage{1024, kQuota, 2};
     };
@@ -241,14 +222,8 @@ void testWebFlow()
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     CHECK(page.status == 200);
-    // Signed out: the key step is the only one, and nothing is granted yet.
     CHECK(page.body.find("sign in with your key") != std::string::npos);
 
-    // --- the same page, in every language this face offers ---
-    //
-    // Nothing is asserted about the words themselves; what is asserted is that
-    // the page is drawn whole in each language, which a key nobody wrote a text
-    // for would break.
     for (const char* const code : {"en", "ru", "es", "zh", "ar"}) {
         const http::ClientResponse drawn
             = call(port, "GET", "/", {{"Cookie", "lang=" + std::string(code)}});
@@ -256,19 +231,14 @@ void testWebFlow()
         CHECK(drawn.body.find("{{t.") == std::string::npos);
         CHECK(drawn.body.find("{{") == std::string::npos);
         CHECK(drawn.body.find("lang=\"" + std::string(code) + "\"") != std::string::npos);
-        // Arabic is the one that reads the other way.
         const std::string direction = std::string(code) == "ar" ? "rtl" : "ltr";
         CHECK(drawn.body.find("dir=\"" + direction + "\"") != std::string::npos);
         CHECK(drawn.body.find("class=\"lang-one is-on\"") != std::string::npos);
     }
-    // A cookie naming a language this face does not serve is answered in the
-    // first one rather than refused.
     const http::ClientResponse stranger = call(port, "GET", "/", {{"Cookie", "lang=de"}});
     CHECK(stranger.status == 200);
     CHECK(stranger.body.find("lang=\"en\"") != std::string::npos);
 
-    // Clicking a language leaves the cookie and comes back to the page it was
-    // clicked on, and is not a way to send somebody somewhere else.
     const http::ClientResponse switched = call(port, "GET", "/lang/ru?back=%2Fportal%2Fme");
     CHECK(switched.status == 303);
     CHECK(switched.headers.at("location") == "/portal/me");
@@ -281,21 +251,15 @@ void testWebFlow()
     CHECK(unknown.status == 303);
     CHECK(unknown.headers.count("set-cookie") == 0);
 
-    // The portal's own files are served beside the page.
     const http::ClientResponse style = call(port, "GET", "/style.css");
     CHECK(style.status == 200);
     CHECK(style.contentType.find("text/css") != std::string::npos);
     CHECK(call(port, "GET", "/../CMakeLists.txt").status == 404);
 
-    // The script is an extra, not a dependency: the page above already carries
-    // the whole flow, and the script only adds a copy button on top of it.
     const http::ClientResponse script = call(port, "GET", "/portal.js");
     CHECK(script.status == 200);
     CHECK(script.contentType.find("javascript") != std::string::npos);
 
-    // Every Bazarish face draws from one kit and is lit by a phosphor of its
-    // own, so that two of them open side by side are not read as one. This one
-    // is the cyan of a messaging server.
     CHECK(style.body.find("--bz-key: #14e2ff") != std::string::npos);
 
     const std::string challenge = between(page.body, "<pre class=\"copy\">", "</pre>");
@@ -306,8 +270,6 @@ void testWebFlow()
     const std::string cookie = between(signedIn.headers.at("set-cookie") + ";", "session=", ";");
     CHECK(!cookie.empty());
 
-    // Signing in was the registration: the page that follows it states the
-    // account, and there is no step in between to post.
     const http::ClientResponse asked = call(port, "GET", "/", {{"Cookie", "session=" + cookie}});
     CHECK(asked.status == 200);
     CHECK(asked.body.find(identity.fingerprint()) != std::string::npos);
@@ -317,8 +279,6 @@ void testWebFlow()
     CHECK(grant.has_value());
     CHECK(grant->quotaBytes == kQuota);
 
-    // Afterwards the page states the account and hands over the descriptor, with
-    // what the messaging server holds for it.
     const http::ClientResponse done = call(port, "GET", "/", {{"Cookie", "session=" + cookie}});
     CHECK(done.status == 200);
     CHECK(done.body.find("registered") != std::string::npos);
@@ -326,14 +286,11 @@ void testWebFlow()
     CHECK(done.body.find("1.0 KiB of 20 MiB") != std::string::npos);
     CHECK(done.body.find("<span>Devices</span>2") != std::string::npos);
 
-    // Nothing a visitor receives carries a note to whoever wrote it.
     CHECK(page.body.find("<!--") == std::string::npos);
     CHECK(asked.body.find("<!--") == std::string::npos);
     CHECK(done.body.find("<!--") == std::string::npos);
     CHECK(script.body.find("console.") == std::string::npos);
 
-    // An account's owner can end it from the browser: one page to confirm, one
-    // post to do it.
     {
         const http::ClientResponse asked
             = postForm(port, "/delete", "", "session=" + cookie);
@@ -348,7 +305,6 @@ void testWebFlow()
         CHECK(!grants.peekSubscription(identity.fingerprint()).has_value());
     }
 
-    // A banned key is told so and gets nothing else: no account, no terms.
     {
         const Identity refused = Identity::generate();
         grants.ban(refused.fingerprint(), "Spam", now());
@@ -365,7 +321,6 @@ void testWebFlow()
             = call(port, "GET", "/", {{"Cookie", "session=" + banned}});
         CHECK(shown.status == 200);
         CHECK(shown.body.find("Spam") != std::string::npos);
-        // Signing in registers everyone else; a ban is what stops it.
         CHECK(!grants.peekSubscription(refused.fingerprint()).has_value());
     }
 

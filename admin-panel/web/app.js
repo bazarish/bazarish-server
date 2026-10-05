@@ -1,45 +1,26 @@
 // Bazarish project (c) 2026
-// The operator panel. Everything past the sign-in page is drawn here from the
-// panel's JSON API; the panel itself holds no user state, it passes the calls
-// through to the services that own it.
 (function () {
     "use strict";
 
-    // How often the monitoring view re-probes the fleet.
     var kHealthPollMs = 5000;
-    // How long to wait after the last keystroke before searching, so a typed
-    // fingerprint is one request rather than fifty-two.
     var kSearchDebounceMs = 250;
-    // Accounts fetched per request; the next page loads as the list is scrolled.
     var kPageSize = 25;
     var kBytesPerMiB = 1024 * 1024;
-    // A quota an operator can enter, in whole megabytes.
     var kMinQuotaMiB = 1;
     var kMaxQuotaMiB = 1024 * 1024;
     var kSecondsPerMs = 1000;
-    // TCP's range without port 0, which is what the services themselves accept.
     var kMinPort = 1;
     var kMaxPort = 65535;
-    // What a login challenge may carry, matching the node's own caps: display
-    // limits, so the badge a user reads shows the whole of every field.
     var kConsumerNameMax = 96;
     var kConsumerPlaceMax = 256;
     var kConsumerRoleMax = 48;
-    // A hold is the soft measure - the operator is stopping the account in order
-    // to say something - so the field starts with the plainest version of it.
     var kDefaultHoldMessage = "Service for this account has been stopped.";
 
     var content = document.getElementById("content");
-    // The deployment the account views act on. Monitoring shows every one of
-    // them; Users and Settings always act on one, because a quota belongs to a
-    // server and not to a screen.
     var fleet = window.localStorage.getItem("bazarish.fleet") || "";
     var nav = document.getElementById("nav");
     var pollTimer = null;
 
-    // A service answers a failure as {"error": {"code", "message"}}; the panel
-    // answers with {"error": "text"}. Either way the operator gets a sentence,
-    // not an object rendered as one.
     function errorText(data, status) {
         var error = data && data.error;
         if (typeof error === "string" && error) {
@@ -51,7 +32,6 @@
         return "HTTP " + status;
     }
 
-    // Every account call names the deployment it is about.
     function withFleet(path) {
         if (!fleet) {
             return path;
@@ -92,7 +72,6 @@
         return node;
     }
 
-    // One labelled value, with whatever belongs beside it (a copy mark, say).
     function fact(label, value, beside) {
         var row = element("li");
         row.appendChild(element("span", "fact-label", label));
@@ -105,7 +84,6 @@
         return row;
     }
 
-    // What decides which list an address belongs in: the host, not the scheme.
     function isI2pUrl(url) {
         var withoutScheme = url.replace(/^[a-zA-Z]+:\/\//, "");
         var host = withoutScheme.split(/[:/]/)[0];
@@ -142,8 +120,6 @@
         return box;
     }
 
-    // --- monitoring -------------------------------------------------------
-
     var kThousand = 1000;
     var kMillion = 1000 * kThousand;
 
@@ -172,8 +148,6 @@
             facts.appendChild(fact("uptime", service.uptime));
             facts.appendChild(fact("memory",
                 humanBytes(service.ramBytes) + " / " + humanBytes(service.ramPeakBytes) + " peak"));
-            // A facade is the way in, so what it is carrying is the load of the
-            // whole deployment as clients see it.
             if (service.kind === "facade") {
                 facts.appendChild(fact("requests", humanCount(service.requestsLastMinute)
                     + "/min  " + humanCount(service.requestsLastHour)
@@ -201,8 +175,6 @@
                     groups.appendChild(element("p", "muted", "No services configured."));
                     return;
                 }
-                // One block per deployment: a server, the node bound to it and
-                // the facades in front of the pair.
                 data.fleets.forEach(function (name) {
                     var mine = data.services.filter(function (service) {
                         return service.fleet === name;
@@ -229,8 +201,6 @@
         pollTimer = window.setInterval(load, kHealthPollMs);
     }
 
-    // --- users ------------------------------------------------------------
-
     function isDelegated(user) {
         return Boolean(user.transientExpires)
             && user.transientExpires * kSecondsPerMs > Date.now();
@@ -252,8 +222,6 @@
         if (isDelegated(user)) {
             tags.appendChild(element("span", "tag is-live", "delegated"));
         } else if (user.dest) {
-            // An address that was published and is no longer operated: the
-            // account is reachable at nothing until the client renews.
             tags.appendChild(element("span", "tag is-pending", "lapsed"));
         } else {
             tags.appendChild(element("span", "tag", "no address"));
@@ -261,8 +229,6 @@
         return tags;
     }
 
-    // A block of one subject, separated from its neighbours so a card of many
-    // controls reads as a few decisions rather than a pile of inputs.
     function section(box, title) {
         var block = element("section", "block");
         if (title) {
@@ -272,7 +238,6 @@
         return block;
     }
 
-    // One row of controls, then the sentence that says what they do.
     function controls(block, hint) {
         var row = element("div", "controls");
         block.appendChild(row);
@@ -327,8 +292,6 @@
         facts.appendChild(fact("delegation",
             isDelegated(user) ? "until " + humanDate(user.transientExpires)
                 : (user.delegatedAt ? "lapsed, last " + humanDate(user.delegatedAt) : "none")));
-        // The mailbox and the devices live on the messaging server, so they come
-        // in after the row does.
         var mailbox = fact("mailbox", "...");
         var devices = fact("devices", "...");
         facts.appendChild(mailbox);
@@ -341,8 +304,6 @@
             mailbox.lastChild.textContent = "unknown (" + error.message + ")";
             devices.lastChild.textContent = "unknown";
         });
-        // An account lives while it keeps delegating; say when this one runs out
-        // if nothing changes, so "idle" has a date attached to it.
         if (user.sweepAt) {
             facts.appendChild(fact("deleted unless it delegates", humanDate(user.sweepAt)));
         }
@@ -390,9 +351,6 @@
             });
         }));
 
-        // What the operator can do to an account depends on where it stands. An
-        // account already out of service has nothing to take out of it; one that
-        // was never redeemed by a client has nothing to approve.
         var onHold = user.approval === "pending" && Boolean(user.holdMessage);
         if (user.approval === "pending") {
             controls(section(box, onHold ? "Back into service" : "Approval"),
@@ -491,8 +449,6 @@
         var box = view("users");
 
         var state = "all";
-        // The open account is in the address bar, so an operator can hand a
-        // colleague a link to the account they are talking about.
         var openUser = selected || null;
         var offset = 0;
         var total = 0;
@@ -544,8 +500,6 @@
             loadPage();
         }
 
-        // The row whose card is open, so opening another closes this one without
-        // rebuilding the list: a reload would throw away every page scrolled so far.
         var openRow = null;
         var openDetail = null;
 
@@ -564,14 +518,11 @@
             openRow = row;
             row.className = "row is-open";
             openDetail = userDetail(user, function (message) {
-                // The row's own figures changed, so this one does reload.
                 say(message);
                 reload();
             }, function (error) {
                 say(error.message, "is-error");
             }, function (message) {
-                // The account this card was about is gone: leaving a card open
-                // would put another account's one in its place.
                 openUser = null;
                 setHash("#/users");
                 say(message);
@@ -627,8 +578,6 @@
                 if (!rows.children.length) {
                     rows.appendChild(element("p", "muted", "Nothing here."));
                 }
-                // A short page that does not fill the window would never scroll,
-                // and the rest would stay unreachable.
                 if (!exhausted && more.getBoundingClientRect().top < window.innerHeight) {
                     loadPage();
                 }
@@ -660,11 +609,6 @@
         search.focus();
     }
 
-    // --- settings ---------------------------------------------------------
-
-    // Settings are grouped by what they are about, not by what type they are: an
-    // operator looking for "who may sign in" should not have to read past the
-    // addresses to find it. One tab is one subject, and each saves on its own.
     var kSettingsTabs = [
         { id: "registration", label: "Registration" },
         { id: "portal", label: "Portal" },
@@ -677,14 +621,9 @@
     var kLogLevels = ["error", "warn", "info", "debug"];
     var kServiceKinds = ["server-core", "service-node", "facade", "gateway"];
     var kPrivacyLevels = ["minimal", "middle", "max"];
-    // How long a restarted service is given before the page asks it again. The
-    // unit's own RestartSec is the operator's to set; this is only how long the
-    // page waits before it stops saying "restarting".
     var kRestartWaitMs = 10000;
     var settingsTab = kSettingsTabs[0].id;
 
-    // A value the operator types. `hint` explains it; `restart` marks the ones
-    // the service only reads when it starts.
     function fieldRow(block, label, value, spec) {
         var options = spec || {};
         var row = controls(block, options.hint);
@@ -711,8 +650,6 @@
         return input;
     }
 
-    // A value the panel knows but cannot change. Deliberately not an input: an
-    // operator must be able to tell at a glance what is theirs to edit.
     function readOnlyRow(block, label, value, hint) {
         var row = controls(block, hint);
         row.appendChild(element("span", "control-label", label));
@@ -721,7 +658,6 @@
         return row;
     }
 
-    // A host and a port on one line: they are one address and are edited as one.
     function endpointRow(block, label, endpoint, hint, restart) {
         var value = endpoint || {};
         var row = controls(block, hint);
@@ -781,8 +717,6 @@
         });
     }
 
-    // One button per tab, on a line of its own: nothing above it takes effect
-    // until it is pressed, and pressing it saves that tab and nothing else.
     function saveFooter(form, note, gather) {
         var footer = element("div", "form-footer");
         var save = element("button", "btn", "Save");
@@ -811,8 +745,6 @@
         return footer;
     }
 
-    // A service is restarted from here because a setting only a start reads is
-    // otherwise saved and inert until somebody opens a terminal on the server.
     function restartButton(footer, kind, canRestart) {
         if (!canRestart) {
             footer.appendChild(element("span", "hint",
@@ -845,8 +777,6 @@
     }
 
     function renderSettings(wanted) {
-        // The tab is in the address, like the open account is: a link points at
-        // one subject rather than at "settings, then click around".
         if (wanted && kSettingsTabs.some(function (tab) { return tab.id === wanted; })) {
             settingsTab = wanted;
         }
@@ -878,8 +808,6 @@
             return;
         }
 
-        // The other two services answer for their own configuration; the panel
-        // only carries the request to them.
         if (settingsTab === "server" || settingsTab === "facade") {
             var kind = settingsTab === "server" ? "server-core" : "facade";
             api("GET", withFleet("/api/service-settings?kind=" + kind))
@@ -1310,9 +1238,6 @@
             url.placeholder = "http://127.0.0.1:8420";
             url.value = service ? service.url : "";
             row.appendChild(url);
-            // A gateway answers at a secret path and only to requests carrying
-            // its token. One pasted address carries both; a host named on its
-            // own needs the token beside it.
             var token = element("input", "field");
             token.type = "text";
             token.placeholder = "token";
@@ -1406,8 +1331,6 @@
                     }
                 };
             });
-        // The panel is not one of the services it manages, so its own restart is
-        // its own route.
         if (data.canRestart) {
             var restart = element("button", "chip", "restart panel");
             restart.addEventListener("click", function () {
@@ -1425,11 +1348,8 @@
         }
     }
 
-    // --- routing ----------------------------------------------------------
-
     var views = { monitoring: renderMonitoring, users: renderUsers, settings: renderSettings };
 
-    // A hash the page writes itself must not redraw the page from the top.
     var ownHashWrite = false;
 
     function setHash(value) {
@@ -1440,8 +1360,6 @@
         window.location.hash = value;
     }
 
-    // The deployment picker in the sidebar. With one deployment there is nothing
-    // to pick, so nothing is shown.
     function renderFleetPicker(names) {
         var slot = document.getElementById("fleets");
         if (!slot) {
@@ -1479,11 +1397,9 @@
         views[name](parts[1]);
     }
 
-    // The deployments are learned from the same call monitoring makes.
     api("GET", "/api/services").then(function (data) {
         renderFleetPicker(data.fleets);
     }).catch(function () {
-        // Nothing to pick from: the views will report the failure themselves.
     });
 
     window.addEventListener("hashchange", function () {

@@ -7,8 +7,6 @@
 namespace bazarish::admin {
 
 namespace {
-// The signed-in cookie's own entropy. It is a bearer token for the whole panel
-// and it is never derived from anything, so its only strength is its length.
 constexpr std::size_t kSessionTokenBytes = 24;
 }  // namespace
 
@@ -30,7 +28,6 @@ void SessionStore::pruneLocked(const std::int64_t now)
 
 std::string SessionStore::create(const std::int64_t now)
 {
-    // base64url: no '+', '/' or '=' so the token drops into a cookie unencoded.
     const std::string token = toBase64Url(randomBytes(kSessionTokenBytes));
     const std::lock_guard<std::mutex> lock(mutex_);
     pruneLocked(now);

@@ -54,12 +54,9 @@ nlohmann::json fleetsJson(const std::vector<Fleet>& fleets)
 
 Config Config::fromJson(const std::string& text)
 {
-    // Comments allowed, like every other config in the fleet.
     const nlohmann::json json = nlohmann::json::parse(text, nullptr, true, true);
 
     Config config;
-    // No "admin" at all is how a fresh install arrives: the panel comes up
-    // unclaimed and the setup wizard hands it to the first key that signs in.
     if (json.contains("admin")) {
         const nlohmann::json& admin = json.at("admin");
         if (admin.is_array()) {
@@ -84,9 +81,6 @@ Config Config::fromJson(const std::string& text)
             config.listenPort = listen.at("port").get<int>();
         }
     }
-    // A fleet is a messaging server, the node bound to it and the facades in
-    // front. A config that just lists services is one fleet with no name, which
-    // is what a single deployment looks like.
     const auto readServices = [](const nlohmann::json& list) {
         std::vector<ServiceEntry> services;
         for (const nlohmann::json& item : list) {
@@ -125,9 +119,6 @@ Config Config::fromJson(const std::string& text)
         config.fleets.push_back(std::move(fleet));
     }
 
-    // What the panel calls itself, when the operator has not said. A named
-    // deployment lends its name: an operator running several panels needs to see
-    // which one is asking.
     if (config.consumer.name.empty()) {
         config.consumer.name = "Bazarish admin panel";
         if (json.contains("fleets") && config.fleets.size() == 1
@@ -135,8 +126,6 @@ Config Config::fromJson(const std::string& text)
             config.consumer.name += " - " + config.fleets.front().name;
         }
     }
-    // Where it lives. The address it listens on is the one the operator opens,
-    // unless the panel is fronted - and then the operator says so here.
     if (config.consumer.place.empty()) {
         config.consumer.place
             = "http://" + config.listenHost + ":" + std::to_string(config.listenPort);

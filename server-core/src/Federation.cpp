@@ -26,10 +26,6 @@ void federationServeFrame(const std::string& headerLine,
     if (op == "deliver") {
         const Bytes sealed = fromBase64(header.at("sealed").get<std::string>());
         const std::size_t length = header.at("len").get<std::size_t>();
-        // The length is the peer's word. What is done with it is bounded by the
-        // reader, which never allocates more than a message may be: the refusal
-        // that follows is the engine's, and it travels back as a typed answer
-        // rather than as a stream closed under a sender still writing.
         const Bytes payload = readPayload(length);
 
         const DeliveryEngine::Outcome outcome = engine.deliver(sealed, payload, now,
@@ -39,10 +35,6 @@ void federationServeFrame(const std::string& headerLine,
             reply["errorCode"] = outcome.errorCode;
             reply["errorMessage"] = outcome.errorMessage;
         }
-        // The confirmation goes home on this stream, signed with the key of the
-        // destination that took the delivery. A reply the sender never sees is
-        // answered by its own spool: the retry arrives here, is recognised by its
-        // deliveryId and confirmed again.
         if (outcome.delivered && signAck && !outcome.deliveryId.empty()) {
             Bytes signerPublicDer;
             Bytes signature;
@@ -58,17 +50,6 @@ void federationServeFrame(const std::string& headerLine,
     }
 
     if (op == "card") {
-        // First-contact card fetch. The query names the fingerprint and returns
-        // the descriptor's view capability; both it and the answer travel in the
-        // clear, because this only ever arrives over a direct I2P stream, which
-        // is already encrypted and authenticated to this destination.
-        //
-        // A destination answers for the one user it belongs to and for nobody else.
-        // Without that check, holding two invites and asking one destination for
-        // the other's card would say the two accounts share a server - the
-        // co-location signal this protocol treats as a critical fault. The
-        // capability in the query does not help: it is the account-wide view, and
-        // it rides in every message a contact receives.
         if (getCard) {
             const Bytes queryBytes = fromBase64(header.at("sealed").get<std::string>());
             const CardFetchQuery query = cardFetchQueryFromJson(nlohmann::json::parse(queryBytes));

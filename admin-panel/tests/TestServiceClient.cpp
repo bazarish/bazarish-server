@@ -39,7 +39,6 @@ using bazarish::http::collectAuthHeaders;
 
 int main()
 {
-    // The panel's identity; the fake service authorises exactly this fingerprint.
     const Identity panel = Identity::generate();
 
     std::string quotaUser;
@@ -47,7 +46,7 @@ int main()
     std::string searchedQuery;
 
     http::Server::Options options;
-    options.port = 0;  // the kernel picks one
+    options.port = 0;
     http::Server service(options);
     const auto authorize = [&panel](const http::Request& request) -> bool {
         try {
@@ -104,7 +103,6 @@ int main()
     entry.kind = "server-core";
     entry.url = "http://127.0.0.1:" + std::to_string(port);
 
-    // A probe signed by the authorised panel identity returns parsed health.
     const HealthResult ok = probeHealth(entry, panel);
     CHECK(ok.reachable);
     CHECK(ok.status == 200);
@@ -112,14 +110,11 @@ int main()
     CHECK(ok.uptime == 42);
     CHECK(ok.ramBytes > 0);
 
-    // A probe signed by a non-authorised identity is rejected (service is up).
     const Identity stranger = Identity::generate();
     const HealthResult denied = probeHealth(entry, stranger);
     CHECK(!denied.reachable);
     CHECK(denied.status == 403);
 
-    // An operator call is signed, delivers the body, and comes back verbatim for
-    // the panel to hand to the browser.
     const JsonResult quota = callJson(entry, panel, "PUT", "/v1/account/quota",
         "{\"user\":\"alicefp\",\"quotaBytes\":5000}");
     CHECK(quota.ok);
@@ -128,16 +123,12 @@ int main()
     CHECK(quotaUser == "alicefp");
     CHECK(quotaBytes == 5000);
 
-    // A call that carries a query string: the signature covers the path without
-    // it, which is what the service verifies. Signing the query instead broke
-    // every search the panel makes.
     const JsonResult searched
         = callJson(entry, panel, "GET", "/v1/account/users?q=abc&state=pending");
     CHECK(searched.ok);
     CHECK(searched.body == "{\"users\":[],\"total\":0}");
     CHECK(searchedQuery == "q=abc&state=pending");
 
-    // The same call from a non-authorised identity is rejected.
     const JsonResult quotaDenied = callJson(entry, stranger, "PUT", "/v1/account/quota",
         "{\"user\":\"alicefp\",\"quotaBytes\":5000}");
     CHECK(!quotaDenied.ok);

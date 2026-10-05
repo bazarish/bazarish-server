@@ -40,18 +40,15 @@ int main()
         CHECK(peeked->grantedAt == 1000);
     }
     {
-        // Persistence across reopen, then a one-shot take.
         GrantStore grants(root);
         const std::optional<GrantStore::SubscriptionGrant> taken = grants.takeSubscription(user);
         CHECK(taken.has_value());
         CHECK(taken->quotaBytes == 5ULL * 1024 * 1024 * 1024);
-        CHECK(!grants.peekSubscription(user).has_value());     // consumed
-        CHECK(!grants.takeSubscription(user).has_value());     // nothing left
+        CHECK(!grants.peekSubscription(user).has_value());
+        CHECK(!grants.takeSubscription(user).has_value());
     }
 
     {
-        // Moderated registration: pending until approved, and the approval
-        // outlives the one-shot subscription grant.
         GrantStore grants(root);
         const std::string moderated = Identity::generate().fingerprint();
         CHECK(!grants.peekApproval(moderated).has_value());
@@ -73,7 +70,6 @@ int main()
         CHECK(!approval->pending());
         CHECK(approval->approvedAt == 3000);
 
-        // Approving twice keeps the first timestamp.
         grants.approve(moderated, 4000);
         CHECK(grants.peekApproval(moderated)->approvedAt == 3000);
 
@@ -81,7 +77,6 @@ int main()
         CHECK(!grants.peekApproval(moderated).has_value());
     }
     {
-        // Open registration approves on creation.
         GrantStore grants(root);
         const std::string open = Identity::generate().fingerprint();
         grants.recordRegistration(open, 5000, true);

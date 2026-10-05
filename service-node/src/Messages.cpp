@@ -12,13 +12,10 @@ namespace bazarish::service {
 
 namespace {
 
-// The opening of a key a drawn page asks to have translated, and what closes it.
 constexpr const char* kKeyOpens = "{{t.";
 constexpr const char* kKeyCloses = "}}";
 
 constexpr int kSecondsPerDay = 24 * 60 * 60;
-// Long enough for any path this face serves, short enough that nothing odd
-// arrives in a header.
 constexpr std::size_t kLongestBackPath = 512;
 
 std::string valueSlot(const std::size_t index)
@@ -179,8 +176,6 @@ std::string sameSitePath(const std::string& asked)
     if (asked.empty() || asked.front() != '/' || asked.size() > kLongestBackPath) {
         return "/";
     }
-    // "//host" and "/\host" are both read as another site by one browser or
-    // another, so neither is a path of ours.
     if (asked.size() > 1 && (asked[1] == '/' || asked[1] == '\\')) {
         return "/";
     }

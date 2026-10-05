@@ -62,7 +62,6 @@ int main()
     { std::ofstream(configPath) << "{}\n"; }
 
     Config initial;
-    // Claimed, so /login is the live page rather than the setup wizard.
     initial.admins = {"jmqwewpdvbdns4x7ojmdxtznznkit6dhdt3ftaozjmkjb2cnmexq"};
     initial.consumer
         = service::LoginConsumer{"Bazarish admin panel", "http://127.0.0.1", "Administrator"};
@@ -77,10 +76,6 @@ int main()
     CHECK(port > 0);
     std::thread serverThread([&api]() { api.wait(); });
 
-    // The challenge field takes whatever was posted into it, and what cannot be
-    // read is quoted back in the refusal. The page prints that refusal, so the
-    // markup below must reach the browser as text: it did not, and a form posted
-    // from anywhere put a script into the panel's own origin.
     const std::string payload = R"("<script>alert(document.domain)</script>)";
     const std::string challenge = toBase64(Bytes(payload.begin(), payload.end()));
     http::ClientRequest request;
@@ -91,9 +86,7 @@ int main()
     const http::ClientResponse refused = http::request("127.0.0.1", port, request, {});
 
     CHECK(refused.status == 401);
-    // The refusal is shown - an operator needs to know which field was wrong.
     CHECK(refused.body.find("is-error") != std::string::npos);
-    // ...as text. Nothing the caller sent may appear as markup.
     CHECK(refused.body.find("<script>alert") == std::string::npos);
     CHECK(refused.body.find("&lt;script&gt;") != std::string::npos);
 

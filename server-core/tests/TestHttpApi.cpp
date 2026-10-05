@@ -44,8 +44,6 @@ namespace http = bazarish::http;
 
 using Headers = std::map<std::string, std::string>;
 
-// One request against the API under test. A transport failure comes back as
-// status 0, so a check on the status covers "nothing answered" too.
 http::ClientResponse call(const int port, const std::string& method, const std::string& path,
     const Headers& headers = {}, const std::string& body = {})
 {
@@ -60,9 +58,6 @@ http::ClientResponse call(const int port, const std::string& method, const std::
     return http::request("127.0.0.1", port, request, {});
 }
 
-// Signs a request with the caller identity and optionally attaches the
-// client ID header - which is signed with the rest when there is one, exactly as
-// a real client signs it.
 Headers makeHeaders(const Identity& identity, const std::string& method,
     const std::string& path, const std::string& body, const std::string& clientId)
 {
@@ -76,10 +71,6 @@ Headers makeHeaders(const Identity& identity, const std::string& method,
     return headers;
 }
 
-// A delivery envelope sealed to a destination's serving key. Outgoing mail is
-// the client's own business now, so what reaches this server's engine arrives on
-// a destination's accept loop, not through a route of its own - and this test
-// hands it straight to the engine, exactly as that loop does.
 Bytes sealEnvelope(const Key& serverSealingPublic, const nlohmann::json& inner)
 {
     const std::string innerText = inner.dump();
@@ -90,8 +81,6 @@ Bytes sealEnvelope(const Key& serverSealingPublic, const nlohmann::json& inner)
 
 // The engine takes unix seconds; nothing in this test depends on the wall clock.
 constexpr std::int64_t kNow = 1780000000;
-// A payload well past anything a line of text weighs, to show that weight has no
-// price of its own any more.
 constexpr std::size_t kHeavyPayloadBytes = 64 * 1024;
 
 int main()
@@ -104,8 +93,6 @@ int main()
     const Identity serverIdentity = Identity::generate();
     const Key serverSealing = Key::generateSealing();
     const std::string serverFp = serverIdentity.fingerprint();
-    // A valid .b32.i2p destination for routing - the send path now enforces the
-    // .b32.i2p invariant, so a bare fingerprint placeholder no longer routes.
     const std::string serverDest = "dlkbeyqjykssca6o7qlbwgq4fr2hry7kw2ursn2sh3lt3acox6gq.b32.i2p";
     const Key sealingPublic = Key::fromPublicDer(serverSealing.publicDer());
 
@@ -114,22 +101,13 @@ int main()
     DeliveryEngine engine(storage, serverFp,
         std::make_shared<Key>(Key::fromPrivatePem(serverSealing.privatePem())), engineOptions);
     HttpApiOptions httpOptions;
-    // Routing is by destination, and a destination belongs to one user - so a
-    // delivery to serverDest is only ever local when the sender is the user it
-    // was assigned to. Every user here is assigned serverDest, which makes a
-    // send to oneself the local path and a send to a peer federate (unreachable
-    // here), exactly as it does in a deployment where each user has their own.
     const auto serverServingKey
         = std::make_shared<Key>(Key::fromPrivatePem(serverSealing.privatePem()));
     httpOptions.assignDestination = [serverDest, serverServingKey](const std::string&) {
         return DestinationAssignment{serverDest, serverServingKey, "home"};
     };
-    // Operator-internal per-user destination: stub the manager so the test can
-    // assert the endpoint authenticates and dispatches provision/revoke. The
-    // operator is authorised by signature (its fingerprint), not a shared secret.
     const Identity operatorIdentity = Identity::generate();
     httpOptions.operatorFingerprints = {operatorIdentity.fingerprint()};
-    // The configuration this server answers for, backed by a file it can write.
     const std::filesystem::path configPath = root / "server-core.json";
     {
         std::ofstream config(configPath);
@@ -170,14 +148,12 @@ int main()
     const Identity alice = Identity::generate();
     const Identity bob = Identity::generate();
 
-    // Unauthenticated requests are rejected.
     {
         const http::ClientResponse result
             = call(port, "POST", "/v1/messaging/clients", {}, "{}");
         CHECK(result.status == 401);
     }
 
-    // Client registration for both users.
     for (const auto& [identity, clientId] :
         {std::pair<const Identity&, const char*>{alice, "alicedev"},
             std::pair<const Identity&, const char*>{bob, "bobdev"}}) {
@@ -187,7 +163,6 @@ int main()
         CHECK(result.status == 200);
     }
 
-    // --- Delivery passes ---
     const Bytes aliceSecret = randomBytes(kDeliverySecretSize);
     const Bytes passForBob = deliveryPass(aliceSecret, std::string(52, 'b'));
     const Bytes handleForBob = deliveryPassHandle(passForBob);
@@ -199,7 +174,6 @@ int main()
         CHECK(result.status == 200);
         CHECK(nlohmann::json::parse(result.body).at("held") == 1);
     }
-    // Registering it again is a block being lifted, not a second pass.
     {
         const std::string body
             = nlohmann::json{{"passes", {toBase64(handleForBob)}}}.dump();
@@ -211,14 +185,12 @@ int main()
     CHECK(storage.passCount(alice.fingerprint()) == 1);
     CHECK(storage.hasPass(alice.fingerprint(), handleForBob));
 
-    // An unregistered device may not touch them either.
     {
         const std::string body = nlohmann::json{{"passes", nlohmann::json::array()}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/messaging/passes",
             makeHeaders(alice, "POST", "/v1/messaging/passes", body, "unknowndev"), body);
         CHECK(result.status == 403);
     }
-    // More than one request may carry is refused rather than written.
     {
         nlohmann::json many = nlohmann::json::array();
         for (std::size_t i = 0; i <= kMaxPassesPerRequest; ++i) {
@@ -230,7 +202,6 @@ int main()
         CHECK(result.status == 400);
         CHECK(storage.passCount(alice.fingerprint()) == 1);
     }
-    // Revocation is exact, immediate, and says what it did - no sweep to wait for.
     {
         const Bytes handleForCarol
             = deliveryPassHandle(deliveryPass(aliceSecret, std::string(52, 'c')));
@@ -243,14 +214,9 @@ int main()
         CHECK(nlohmann::json::parse(result.body).at("revoked") == 1);
         CHECK(!storage.hasPass(alice.fingerprint(), handleForBob));
         CHECK(storage.hasPass(alice.fingerprint(), handleForCarol));
-        // Given back, so the deliveries below have their way in.
         storage.registerPasses(alice.fingerprint(), {handleForBob});
     }
 
-    // A delivery into Alice's mailbox, as her correspondent's client makes it:
-    // dialled to the destination she is served on, admitted by the engine on the
-    // envelope alone. What this test cares about from here is the mailbox side -
-    // what she can fetch, and what acking it does.
     const Bytes payload = {'e', '2', 'e', '-', 'b', 'l', 'o', 'b'};
     const Bytes envelope = sealEnvelope(sealingPublic,
         {{"class", "content"}, {"mailbox", alice.fingerprint()},
@@ -259,8 +225,6 @@ int main()
     CHECK(engine.deliver(envelope, payload, kNow, engineSealing, alice.fingerprint()).delivered);
     CHECK(storage.passCount(alice.fingerprint()) == 2);
 
-    // Weight no longer has a price: one pass admits a message of any legal size,
-    // and the only thing a big one still meets is the mailbox's own room.
     {
         const Bytes heavy(kHeavyPayloadBytes, 'h');
         const std::uint64_t quotaBytes = storage.userQuota(alice.fingerprint(), 1024);
@@ -272,13 +236,10 @@ int main()
                 {"pass", toBase64(passForBob)}, {"deliveryId", "msg-heavy"}});
         CHECK(engine.deliver(admitted, heavy, kNow, engineSealing, alice.fingerprint()).delivered);
         CHECK(storage.passCount(alice.fingerprint()) == before);
-        // And it leaves the mailbox as it found it for the rest of this test: the
-        // heavy message taken back out and the quota put back.
         storage.ackBlob(alice.fingerprint(), "msg-heavy", "alicedev");
         storage.setUserQuota(alice.fingerprint(), quotaBytes);
     }
 
-    // Alice sees the message, fetches it and acks it away.
     {
         const http::ClientResponse pending = call(port, "GET", "/v1/messaging/pending",
             makeHeaders(alice, "GET", "/v1/messaging/pending", "", "alicedev"));
@@ -293,8 +254,6 @@ int main()
         CHECK(blob.status == 200);
         CHECK(Bytes(blob.body.begin(), blob.body.end()) == payload);
 
-        // The device list reports what each device still holds: fetching does
-        // not clear it, acking does.
         const auto aliceQueue = [port, &alice]() {
             const http::ClientResponse clients = call(port, "GET", "/v1/messaging/clients",
                 makeHeaders(alice, "GET", "/v1/messaging/clients", "", "alicedev"));
@@ -308,10 +267,6 @@ int main()
 
         const std::string ackBody = nlohmann::json{{"blobId", "msg-1"}}.dump();
 
-        // The device an ack speaks for is signed with it. Rewriting that label -
-        // which anything between the two ends could do while it was only a
-        // header - would acknowledge this device's mail as another device and
-        // drop it before that device ever saw it, so it is refused.
         {
             Headers swapped
                 = makeHeaders(alice, "POST", "/v1/messaging/ack", ackBody, "alicedev");
@@ -319,32 +274,22 @@ int main()
             const http::ClientResponse forged
                 = call(port, "POST", "/v1/messaging/ack", swapped, ackBody);
             CHECK(forged.status == 401);
-            // Stripped rather than swapped: also refused, and not taken for a
-            // request that never named a device.
             Headers stripped
                 = makeHeaders(alice, "POST", "/v1/messaging/ack", ackBody, "alicedev");
             stripped.erase("X-Bazarish-Client");
             CHECK(call(port, "POST", "/v1/messaging/ack", stripped, ackBody).status == 401);
-            // Neither attempt got anywhere near the mailbox.
             CHECK(aliceQueue() == 1);
         }
 
         const http::ClientResponse acked = call(port, "POST", "/v1/messaging/ack",
             makeHeaders(alice, "POST", "/v1/messaging/ack", ackBody, "alicedev"), ackBody);
         CHECK(acked.status == 200);
-        // Alice's only client acked: deleted immediately.
         CHECK(storage.usage(alice.fingerprint()) == 0);
         CHECK(aliceQueue() == 0);
     }
 
-    // --- Sessions ---
-    //
-    // The signature is presented once; everything after it carries a MAC. What
-    // this checks is the one thing that must not follow from holding a session:
-    // being able to mint the next one with it.
+    // --- Sessions --- The signature is presented once; everything after it carries a MAC.
     {
-        // The secret is sealed to the serving key of the caller's own
-        // destination, which this server holds the private half of.
         const Bytes secret = randomBytes(32);
         const Key replyKey = Key::generateSealing();
         const std::string inner = nlohmann::json{{"secret", toBase64(secret)},
@@ -363,7 +308,6 @@ int main()
 
         const std::string sessionId = toHex(sha256(secret)).substr(0, 32);
         const Bytes sessionKey = auth::deriveSessionKey(secret, sessionId);
-        // One request under the session, to show it works at all.
         const auto maced = [&](const std::uint64_t seq, const std::string& method,
                                const std::string& path, const std::string& body,
                                const std::string& clientId) {
@@ -378,24 +322,18 @@ int main()
                   maced(1, "GET", "/v1/messaging/storage-usage", "", "alicedev"))
                   .status
             == 200);
-        // The device is inside the MAC too, so the same swap is refused here.
         {
             Headers swapped = maced(2, "GET", "/v1/messaging/storage-usage", "", "alicedev");
             swapped["X-Bazarish-Client"] = "bobdev";
             CHECK(call(port, "GET", "/v1/messaging/storage-usage", swapped).status == 401);
         }
 
-        // And the point: a session may not open the next one. Were it allowed, a
-        // leaked secret would renew itself for ever and the identity would never
-        // be presented again - which is what the short lifetime exists to bound.
         const http::ClientResponse chained = call(port, "POST", "/v1/auth/session",
             maced(3, "POST", "/v1/auth/session", openBody, "alicedev"), openBody);
         CHECK(chained.status == 401);
         CHECK(nlohmann::json::parse(chained.body).at("error").at("code") == "SESSION_INVALID");
     }
 
-    // The destination endpoint surfaces the caller's assigned destination + the
-    // public serving sealing key (the test assignment: serverDest + server key).
     {
         const http::ClientResponse result = call(port, "GET", "/v1/messaging/destination",
             makeHeaders(bob, "GET", "/v1/messaging/destination", "", "bobdev"));
@@ -406,26 +344,22 @@ int main()
         CHECK(body.at("state").get<std::string>() == "home");
     }
 
-    // Per-user I2P destination endpoint (operator signature): auth + dispatch.
     {
         const std::string body = nlohmann::json{
             {"user", "alicefp"}, {"transient", "tb64"}, {"expiresUnix", 1780001234}}
                                      .dump();
-        // No signature, then a signature from an unauthorised identity -> 403.
         const http::ClientResponse noAuth
             = call(port, "PUT", "/v1/messaging/i2p-dest", {}, body);
         CHECK(noAuth.status == 403);
         const http::ClientResponse badAuth = call(port, "PUT", "/v1/messaging/i2p-dest",
             makeHeaders(Identity::generate(), "PUT", "/v1/messaging/i2p-dest", body, ""), body);
         CHECK(badAuth.status == 403);
-        // The authorised operator's signature with a transient provisions.
         const http::ClientResponse ok = call(port, "PUT", "/v1/messaging/i2p-dest",
             makeHeaders(operatorIdentity, "PUT", "/v1/messaging/i2p-dest", body, ""), body);
         CHECK(ok.status == 200);
         CHECK(provisionedUser == "alicefp");
         CHECK(provisionedTransient == "tb64");
         CHECK(provisionedExpires == 1780001234);
-        // The authorised operator's signature without a transient revokes.
         const std::string revokeBody = nlohmann::json{{"user", "alicefp"}}.dump();
         const http::ClientResponse revoked = call(port, "PUT", "/v1/messaging/i2p-dest",
             makeHeaders(operatorIdentity, "PUT", "/v1/messaging/i2p-dest", revokeBody, ""),
@@ -434,7 +368,6 @@ int main()
         CHECK(revokedUser == "alicefp");
     }
 
-    // /healthz: operator-signed liveness with memory info; unsigned is rejected.
     {
         const http::ClientResponse unauth = call(port, "GET", "/healthz");
         CHECK(unauth.status == 403);
@@ -447,8 +380,6 @@ int main()
         CHECK(health.contains("ramPeakBytes"));
     }
 
-    // An account deleted on the node takes its mailbox with it: everything this
-    // server held for the fingerprint goes, and only an operator can ask.
     {
         const std::string path = "/v1/messaging/account?user=" + alice.fingerprint();
         const Bytes payload = {'l', 'a', 's', 't'};
@@ -460,7 +391,6 @@ int main()
                   .delivered);
         CHECK(storage.usage(alice.fingerprint()) > 0);
 
-        // Unsigned, and signed by somebody who is not an operator.
         CHECK(call(port, "DELETE", path).status == 403);
         CHECK(call(port, "DELETE", path,
                    makeHeaders(Identity::generate(), "DELETE", "/v1/messaging/account", "", ""))
@@ -473,16 +403,12 @@ int main()
         CHECK(storage.usage(alice.fingerprint()) == 0);
         CHECK(storage.listClients(alice.fingerprint()).empty());
         CHECK(storage.passCount(alice.fingerprint()) == 0);
-        // Idempotent: a fingerprint this server holds nothing for is already in
-        // the state the deletion asks for.
         CHECK(call(port, "DELETE", path,
                    makeHeaders(operatorIdentity, "DELETE", "/v1/messaging/account", "", ""))
                   .status
             == 200);
     }
 
-    // The whole configuration, answered to an operator and written back to the
-    // file: what the panel edits instead of an SSH session.
     {
         const std::string path = "/v1/messaging/settings";
         CHECK(call(port, "GET", path).status == 403);
@@ -493,7 +419,6 @@ int main()
         const nlohmann::json values = nlohmann::json::parse(shown.body);
         CHECK(values.at("federationRateLimit").get<int>() == 240);
         CHECK(values.at("i2pPrivacy").get<std::string>() == "max");
-        // Nothing here can restart this server: the test built it without a hook.
         CHECK(!values.at("canRestart").get<bool>());
 
         const std::string body = nlohmann::json{{"logLevel", "debug"},
@@ -503,7 +428,6 @@ int main()
         CHECK(call(port, "PUT", path, makeHeaders(operatorIdentity, "PUT", path, body, {}), body)
                   .status
             == 200);
-        // The level is the one that does not wait for a restart.
         CHECK(bazarish::log::level() == bazarish::log::Level::eDebug);
         CHECK(serverSettings->get().federationRateLimit == 60);
 
@@ -513,7 +437,6 @@ int main()
         CHECK(onDisk.at("i2p").at("privacy").get<std::string>() == "middle");
         CHECK(onDisk.at("federationRateLimit").get<int>() == 60);
         CHECK(onDisk.at("mailboxRetentionDays").get<int>() == 7);
-        // The operator's own text is untouched.
         CHECK(onDisk.at("state").get<std::string>() == "/var/lib/bazarish/server-core");
 
         const std::string nonsense = nlohmann::json{{"i2pPrivacy", "invisible"}}.dump();
@@ -531,7 +454,6 @@ int main()
                   .status
             == 200);
 
-        // A server nobody can restart says so rather than pretending it did.
         const std::string restart = "/v1/messaging/restart";
         CHECK(call(port, "POST", restart,
                   makeHeaders(operatorIdentity, "POST", restart, {}, {}))

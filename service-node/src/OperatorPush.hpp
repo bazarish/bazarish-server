@@ -13,78 +13,40 @@ class Identity;
 
 namespace bazarish::service {
 
-// What the messaging server holds for one account: the mailbox as it stands and
-// how many devices are collecting it. The node has neither number - it owns the
-// account, the messaging server owns the mail.
 struct MailboxUsage {
     std::uint64_t usedBytes = 0;
     std::uint64_t quotaBytes = 0;
     std::size_t devices = 0;
 };
 
-// The service node's operator channel to the messaging server: requests signed
-// with the node's own identity, which the backend authorises by fingerprint. It
-// carries what the node owns and the messaging server must obey - the user's
-// offline I2P transient (an empty one revokes), the storage quota their account
-// grants, the serving-key rotation - and reads back what only the messaging server
-// knows. Every call says whether it was accepted.
 class OperatorPush {
 public:
-    // How many times a push is tried before it is given up on. A background push
-    // can afford to wait out a messaging server that is momentarily busy; one
-    // made while a device waits on the answer cannot, because it holds one of the
-    // node's few io threads for every second it spends retrying - and the device
-    // asks again by itself.
     static constexpr int kBackgroundAttempts = 3;
     static constexpr int kPromptAttempts = 1;
 
     OperatorPush(
         std::string baseUrl, const Identity& signer, int attempts = kBackgroundAttempts);
 
-    // Waits for the messaging server to start answering, up to budget. Any answer
-    // counts, refusals included: what this asks is whether the socket is there, not
-    // whether it likes us. False when it never answered - or at once, when no
-    // messaging server is configured. The two daemons are restarted together, so
-    // without this the node's first push meets a socket that is not listening yet
-    // and spends its retries on a race.
     bool waitReachable(std::chrono::seconds budget) const;
 
-    // Provisions (non-empty transient) or revokes (empty transient) a user's
-    // destination. Returns whether the push was accepted (false on no-op or any
-    // failure).
     bool publish(const std::string& user, const std::string& transientB64,
         std::int64_t expiresUnix) const;
-    // Nullopt when the server is not configured or did not answer.
     std::optional<MailboxUsage> accountUsage(const std::string& user) const;
 
-    // Tells the messaging server the account is gone, so it drops the mailbox
-    // and everything else it held for that fingerprint. The node owns the
-    // account and the messaging server owns the mail: a deletion has to reach
-    // both, or the mail outlives the account that could have collected it.
     bool forgetMailbox(const std::string& user) const;
 
-    // Sets the user's mailbox quota to what their subscription granted, so the
-    // messaging server stops falling back to its own default and the two numbers
-    // cannot drift apart.
     bool publishQuota(const std::string& user, std::uint64_t quotaBytes) const;
 
-    // Rotating a user's serving sealing key on the messaging server, in the two
-    // phases the switch needs: the prepared key is returned (base64 SPKI) for the
-    // user to sign into a card, and only the commit puts it in force. Nullopt /
-    // false when the server did not answer or had nothing prepared.
     std::optional<std::string> prepareServingKey(const std::string& user) const;
     bool commitServingKey(const std::string& user) const;
 
 private:
-    // One signed request to the messaging server; the answer's body when it was
-    // accepted, nothing when it was not. target carries the query string, path
-    // is what the signature covers.
     std::optional<std::string> send(const std::string& method, const std::string& path,
         const std::string& target, const std::string& bodyText) const;
     std::optional<std::string> putBody(const std::string& path, const std::string& bodyText) const;
     bool put(const std::string& path, const std::string& bodyText) const;
 
-    std::string baseUrl_;  // http://host:port
+    std::string baseUrl_;
     const Identity& signer_;
     const int attempts_;
 };

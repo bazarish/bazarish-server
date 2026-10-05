@@ -1,11 +1,3 @@
-/* The Bazarish operator panel, where a fleet is watched and run. Colours and
-   type follow the Bazarish brand kit (CC0); edit this file to make the panel
-   yours, then restart it.
-
-   The sheets of the Bazarish faces are one kit: the same tokens, the same
-   components, the same shapes. Only the phosphor in :root and the shell
-   below differ. */
-
 @font-face {
     font-family: "Roboto Mono";
     src: url("RobotoMono-Regular.woff2") format("woff2");
@@ -24,8 +16,7 @@
 :root {
     color-scheme: dark;
 
-    /* The screen. The same in every face of the fleet. */
-    --bz-bg: #16191c;
+        --bz-bg: #16191c;
     --bz-deep: #0d0f11;
     --bz-surface: #1b2026;
     --bz-surface-2: #232a31;
@@ -40,10 +31,7 @@
     --bz-on-accent: #11151a;
     --bz-accent-lit: #ffffff;
 
-    /* Status. Also the same everywhere: what a colour means is learnt once and
-       read the same way on the next face. Green is well, amber is waiting, red
-       is wrong - whatever phosphor the face itself is lit by. */
-    --bz-ok: #1f7a14;
+        --bz-ok: #1f7a14;
     --bz-ok-lit: #39ff14;
     --bz-ok-bg: #0f2410;
     --bz-warn: #ffb454;
@@ -53,12 +41,7 @@
     --bz-err-bg: #2a1112;
     --bz-err-line: #7a2b2b;
 
-    /* The phosphor this face is lit by, and the only thing in this sheet that
-       differs from the sheet of the next Bazarish face: headings, links, the
-       mark in front of a heading, the current tab, focus, and the ground under
-       a thing that has been chosen. The brand mark is not part of it - the
-       wordmark keeps its neon green everywhere and is never recoloured. */
-    --bz-key: #ffc24d;
+        --bz-key: #ffc24d;
     --bz-key-dim: #9f7c1b;
     --bz-key-bg: #2a2109;
     --bz-key-glow: rgba(255, 194, 77, 0.35);
@@ -84,9 +67,6 @@ body {
     -webkit-font-smoothing: antialiased;
 }
 
-/* --- tabs: where the reader is --- */
-
-/* One subject per tab, carrying the same slash the headings use. */
 .tabs {
     display: flex;
     flex-wrap: wrap;
@@ -126,11 +106,6 @@ body {
     color: var(--bz-key);
 }
 
-/* --- the panel: one thing to do at a time --- */
-
-/* A panel is a card on the surface ladder rather than a stretch of bare canvas.
-   The ladder and the hairline do the work a shadow would do elsewhere; a dark
-   page with drop shadows on it reads as a light page turned down. */
 .panel {
     margin-top: 1.25rem;
     padding: 1.4rem 1.5rem;
@@ -151,7 +126,6 @@ body {
     color: var(--bz-key-dim);
 }
 
-/* The brand's slash marks the heading. */
 .panel-title::before {
     content: "/";
 }
@@ -164,7 +138,6 @@ body {
     overflow-wrap: anywhere;
 }
 
-/* The label over a block inside a card. */
 .block-title {
     margin: 1rem 0 0;
     font-size: 0.66rem;
@@ -179,8 +152,6 @@ body {
     color: var(--bz-ink-faint);
     font-size: 0.7rem;
 }
-
-/* --- fields --- */
 
 .field-label {
     display: block;
@@ -208,8 +179,6 @@ textarea.field {
     word-break: break-all;
 }
 
-/* A placeholder has to read as an example and not as a figure already typed -
-   an amount field is exactly where that mistake costs something. */
 .field::placeholder {
     color: var(--bz-ink-faint);
     opacity: 1;
@@ -224,14 +193,11 @@ textarea.field {
     box-shadow: 0 0 0 2px var(--bz-bg), 0 0 0 4px var(--bz-key);
 }
 
-/* A block meant to be taken away: one click selects all of it. */
 .copy {
     margin: 0;
     padding: 0.75rem 0.9rem;
     background: var(--bz-deep);
-    /* One rung below the card it sits in: a block meant to be taken away reads
-       as a hole in the surface, not another surface on top of it. */
-    border: 1px solid var(--bz-line);
+        border: 1px solid var(--bz-line);
     border-radius: var(--bz-radius-sm);
     color: var(--bz-ink);
     font-size: 0.75rem;
@@ -241,8 +207,6 @@ textarea.field {
     user-select: all;
 }
 
-/* One control and its label on a line: the label keeps its width so a column of
-   them lines up, and what is typed takes the rest. */
 .controls {
     display: flex;
     flex-wrap: wrap;
@@ -278,8 +242,6 @@ textarea.field {
     font-size: 0.72rem;
 }
 
-/* Written under the field it is about, by the script, and empty otherwise. A
-   browser with no script sees nothing here and is told by the server instead. */
 .field-error {
     margin: 0.4rem 0 0;
     color: var(--bz-err);
@@ -294,12 +256,6 @@ textarea.field {
     border-color: var(--bz-err-line);
 }
 
-/* --- buttons --- */
-
-/* A link wearing a button's clothes. It carries no colour of its own: the
-   button classes below already say what each variant looks like, and repeating
-   one of them here would beat the others on specificity - which is how a quiet
-   button lost its hover and a danger one would have gone dark on dark. */
 a.btn {
     display: inline-block;
     text-decoration: none;
@@ -309,9 +265,7 @@ a.btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    /* A finger needs a target this big, and an anchor would ignore a height
-       without the box above (WCAG 2.5.5). */
-    min-height: var(--bz-touch);
+        min-height: var(--bz-touch);
     margin-top: 1.25rem;
     padding: 0.65rem 1.2rem;
     background: var(--bz-accent);
@@ -348,7 +302,6 @@ a.btn {
     color: var(--bz-ink);
 }
 
-/* What cannot be undone does not look like what can. */
 .btn-danger {
     background: transparent;
     border-color: var(--bz-err-line);
@@ -361,15 +314,12 @@ a.btn {
     color: var(--bz-err);
 }
 
-/* Added by the copy script; a browser without scripts never sees it. */
 .btn-copy {
     margin-top: 0.6rem;
     padding: 0.4rem 0.8rem;
     font-size: 0.68rem;
 }
 
-/* A button that has to read as part of the text around it, because what it does
-   is small and the sentence explains it. */
 .as-link {
     padding: 0;
     background: transparent;
@@ -384,20 +334,16 @@ a.btn {
     color: var(--bz-key);
 }
 
-/* A form that sits inside a sentence. */
 .inline {
     display: inline;
     margin: 0;
 }
 
-/* An aside in the flow of a line, as one piece rather than three. */
 .aside {
     color: var(--bz-ink-faint);
     font-size: 0.75rem;
 }
 
-/* Two ways out of one form, side by side: the one that acts and the one that
-   leaves. */
 .form-actions {
     display: flex;
     flex-wrap: wrap;
@@ -410,8 +356,6 @@ a.btn {
     margin: 0;
 }
 
-/* The form's own action, on a line of its own at the end: nothing above it
-   takes effect until it is pressed. */
 .form-footer {
     display: flex;
     flex-wrap: wrap;
@@ -430,8 +374,6 @@ a.btn {
     flex: 1 1 14rem;
     margin: 0;
 }
-
-/* --- a choice made by pressing one of a few --- */
 
 .chip {
     padding: 0.4rem 0.8rem;
@@ -457,8 +399,6 @@ a.btn {
     color: var(--bz-ink);
 }
 
-/* --- notices --- */
-
 .notice {
     margin: 1.25rem 0 0;
     padding: 0.7rem 0.9rem;
@@ -481,8 +421,6 @@ a.btn {
     color: var(--bz-warn);
 }
 
-/* --- facts: a label and the value it names --- */
-
 .facts {
     margin: 1.25rem 0 0;
     padding: 0;
@@ -504,8 +442,6 @@ a.btn {
     border-bottom: 0;
 }
 
-/* The label is the small capitals; the value beside it is left alone - it is a
-   fingerprint or an address, and shouting it does not help anyone read it. */
 .facts span,
 .facts .fact-label {
     color: var(--bz-ink-faint);
@@ -519,12 +455,6 @@ a.btn {
     overflow-wrap: anywhere;
 }
 
-/* --- links in the body --- */
-
-/* Without this only the colophon was coloured and the rest fell back to the
-   browser's purple, which belongs to no palette here. A link wearing a button's
-   clothes is excluded: it takes the button's own colours, and this rule used to
-   beat them on specificity and put coloured text on a white button. */
 .panel a:not(.btn),
 .name a:not(.btn),
 .detail a:not(.btn),
@@ -540,8 +470,6 @@ a.btn {
 .more a:not(.btn):hover {
     color: var(--bz-key);
 }
-
-/* --- where the reader is in a long list --- */
 
 .pager {
     display: flex;
@@ -562,10 +490,6 @@ a.btn {
     text-transform: uppercase;
 }
 
-/* --- a value the face shows but does not own --- */
-
-/* Deliberately not a box: the reader should be able to tell what is theirs to
-   type without clicking it. */
 .readonly {
     flex: 1 1 12rem;
     min-width: 0;
@@ -581,8 +505,6 @@ a.btn {
     color: var(--bz-ink-faint);
     font-style: italic;
 }
-
-/* --- the door --- */
 
 body.centred {
     display: flex;
@@ -603,8 +525,6 @@ body.centred {
     letter-spacing: 0.16em;
     text-transform: uppercase;
 }
-
-/* --- shell --- */
 
 .shell {
     display: flex;
@@ -653,8 +573,6 @@ body.centred {
     text-transform: uppercase;
 }
 
-/* The mark in front of a heading, again: where the operator is reads the same
-   way in the sidebar, in the tab bar and above a section. */
 .nav a::before {
     content: "/";
     color: var(--bz-ink-faint);
@@ -683,8 +601,6 @@ body.centred {
     min-width: 0;
 }
 
-/* A column an eye can track: a fingerprint is 52 characters and a wide row
-   makes the operator scan across half a screen of empty space to read it. */
 .view {
     max-width: 46rem;
 }
@@ -719,8 +635,6 @@ body.centred {
         padding-top: 0.75rem;
     }
 }
-
-/* --- cards --- */
 
 .cards {
     display: grid;
@@ -763,8 +677,6 @@ body.centred {
     background: var(--bz-err);
 }
 
-/* A console lists more than a page does, so the same facts run tighter here and
-   the value sits under the right edge, where the eye comes back to it. */
 .card .facts,
 .detail .facts,
 .panel-box .facts {
@@ -784,8 +696,6 @@ body.centred {
     font-weight: 400;
     text-align: right;
 }
-
-/* --- a list of many --- */
 
 .toolbar {
     display: flex;
@@ -814,8 +724,6 @@ body.centred {
     overflow: hidden;
 }
 
-/* Fixed columns: the key on the left, what it is on the right, always in the
-   same place, so a list of fifty reads as a list and not as a paragraph. */
 .row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto auto;
@@ -904,8 +812,6 @@ body.centred {
     color: var(--bz-err);
 }
 
-/* --- one record, opened --- */
-
 .detail,
 .panel-box {
     padding: 1rem 1.1rem;
@@ -926,9 +832,6 @@ body.centred {
     margin-bottom: 0.75rem;
 }
 
-/* The fingerprint and the mark that copies it stand together. The key used to
-   stretch across the card, which pushed the mark to the far end and left it
-   beside nothing. */
 .detail-key {
     flex: 0 1 auto;
     margin: 0;
@@ -936,8 +839,6 @@ body.centred {
     overflow-wrap: anywhere;
 }
 
-/* A copy mark beside the value it copies. Added by the copy script; a browser
-   without scripts never sees it. */
 .fact-value {
     display: inline-flex;
     align-items: center;
@@ -998,8 +899,6 @@ body.centred {
     font-size: 0.62rem;
 }
 
-/* One subject per block, separated so a card of many controls reads as a few
-   decisions. */
 .block {
     margin-top: 1.1rem;
     padding-top: 0.9rem;
@@ -1014,7 +913,6 @@ body.centred {
     margin-top: 0.6rem;
 }
 
-/* A list the operator types line by line. */
 .field-tall {
     min-height: 5.5rem;
 }
@@ -1025,7 +923,6 @@ body.centred {
     text-align: right;
 }
 
-/* A section of one page, under a mark of its own. */
 .section {
     margin-top: 2rem;
 }
@@ -1044,8 +941,6 @@ body.centred {
     color: var(--bz-line-2);
 }
 
-/* --- the fleet this panel is looking at --- */
-
 .fleets {
     display: flex;
     flex-wrap: wrap;
@@ -1058,10 +953,6 @@ body.centred {
     margin: 0 0 0.25rem;
 }
 
-/* --- settings --- */
-
-/* Said next to the field, not in the hint below it: by the time an operator has
-   typed the value, the sentence under it has been read and forgotten. */
 .badge-restart {
     padding: 0.15rem 0.4rem;
     border: 1px solid var(--bz-warn-line);
@@ -1089,7 +980,6 @@ body.centred {
     font-size: 0.8rem;
 }
 
-/* The setup page's one warning: until someone claims the panel, anyone can. */
 .panel-note.is-warning {
     padding: 0.6rem 0.75rem;
     border: 1px solid var(--bz-warn-line);
@@ -1098,8 +988,6 @@ body.centred {
     color: var(--bz-warn);
 }
 
-/* The ring above is a shadow, and forced-colors drops shadows. The same
-   focus is drawn again as an outline, which it keeps. */
 @media (forced-colors: active) {
     .field:focus-visible,
     .btn:focus-visible,

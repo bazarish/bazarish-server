@@ -14,8 +14,6 @@ namespace {
 
 namespace fs = std::filesystem;
 
-// How the config file spells the knobs, so a hand-edited file and a
-// panel-edited one are the same file.
 const char* const kRegistrationKey = "registration";
 const char* const kRequireApprovalKey = "requireApproval";
 const char* const kMessageKey = "message";
@@ -61,9 +59,6 @@ void NodeSettings::persist(const Values& values) const
     if (configPath_.empty()) {
         throw std::runtime_error("this node was started without a config file to write to");
     }
-    // One value at a time, patched into the file's own text: the rest of it - the
-    // operator's key order, their spacing, their comments, and settings this node
-    // has never heard of - comes back untouched.
     ConfigFile file(configPath_);
     setIfChanged(file, {kRegistrationKey, kRequireApprovalKey}, values.requireApproval,
         values_.requireApproval);

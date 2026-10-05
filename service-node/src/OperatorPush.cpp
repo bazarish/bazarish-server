@@ -22,18 +22,10 @@ namespace {
 
 constexpr int kConnectTimeoutSeconds = 5;
 constexpr int kReadTimeoutSeconds = 30;
-// The messaging server is the operator's own, one hop away: a push that does not
-// land is almost always it being momentarily busy (bringing another destination
-// up, say), not a refusal. Retry before handing the user an error they can do
-// nothing about; a real refusal (4xx) is final and is not retried.
 constexpr int kRetryDelaySeconds = 1;
-// How often the readiness wait asks again. Short: the two daemons come up
-// together, so this is usually over in one or two tries.
 constexpr int kReadyPollSeconds = 1;
 constexpr int kFirstServerErrorStatus = 500;
 
-// The messaging server's operator endpoints. Protocol, not configuration: the
-// server that answers them is the one this node is bound to by its card.
 constexpr const char* kDestPath = "/v1/messaging/i2p-dest";
 constexpr const char* kQuotaPath = "/v1/messaging/quota";
 constexpr const char* kServingKeyPath = "/v1/messaging/serving-key";
@@ -51,21 +43,17 @@ OperatorPush::OperatorPush(std::string baseUrl, const Identity& signer, const in
 bool OperatorPush::waitReachable(const std::chrono::seconds budget) const
 {
     if (baseUrl_.empty()) {
-        return false;  // nothing configured to wait for
+        return false;
     }
     const std::chrono::steady_clock::time_point deadline
         = std::chrono::steady_clock::now() + budget;
     bool waited = false;
-    // Kept so the give-up below can say what was in the way, rather than only
-    // that something was.
     std::string lastError;
     while (true) {
         try {
             const bazarish::http::Url target = bazarish::http::parseUrl(baseUrl_);
             bazarish::http::ClientRequest ask;
             ask.method = "GET";
-            // Unsigned on purpose: a 403 is as good an answer as a 200 here, and
-            // it costs the messaging server nothing to give.
             ask.target = "/healthz";
             bazarish::http::ClientOptions options;
             options.connectTimeout = std::chrono::seconds(kConnectTimeoutSeconds);
@@ -100,7 +88,7 @@ std::optional<MailboxUsage> OperatorPush::accountUsage(
     const std::string& user) const
 {
     if (baseUrl_.empty()) {
-        return std::nullopt;  // not configured
+        return std::nullopt;
     }
     const std::string path = "/v1/messaging/account";
     const bazarish::http::Url target = bazarish::http::parseUrl(baseUrl_);
@@ -154,12 +142,11 @@ std::optional<std::string> OperatorPush::send(const std::string& method, const s
     const std::string& target, const std::string& bodyText) const
 {
     if (baseUrl_.empty()) {
-        return std::nullopt;  // not configured
+        return std::nullopt;
     }
     for (int attempt = 1; attempt <= attempts_; ++attempt) {
         try {
             const bazarish::http::Url backend = bazarish::http::parseUrl(baseUrl_);
-            // Signed per attempt: the signature covers a timestamp.
             const auth::Headers signature = auth::signRequest(signer_,
                 static_cast<std::int64_t>(std::time(nullptr)), method, path,
                 Bytes(bodyText.begin(), bodyText.end()));
@@ -180,7 +167,7 @@ std::optional<std::string> OperatorPush::send(const std::string& method, const s
             if (response.status > 0 && response.status < kFirstServerErrorStatus) {
                 bazarish::log::warn("operator push to {}{} refused with {}: {}", baseUrl_, path,
                     response.status, response.body);
-                return std::nullopt;  // a refusal, not a hiccup: retrying changes nothing
+                return std::nullopt;
             }
             bazarish::log::warn("operator push to {}{} did not land (attempt {}/{}): {}", baseUrl_,
                 path, attempt, attempts_,

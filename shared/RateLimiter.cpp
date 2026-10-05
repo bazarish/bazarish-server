@@ -3,9 +3,6 @@
 
 namespace bazarish {
 
-// Above this many tracked callers the expired windows are swept, so a churn of
-// callers cannot grow the map without bound. Swept opportunistically: the cost
-// belongs to whoever caused the churn.
 constexpr std::size_t kSweepAbove = 4096;
 
 RateLimiter::RateLimiter(const std::size_t maxPerWindow, const std::int64_t windowSeconds)

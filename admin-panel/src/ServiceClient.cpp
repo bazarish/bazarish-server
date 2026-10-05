@@ -20,8 +20,6 @@ namespace {
 
 using bazarish::nowSeconds;
 
-// The panel and the services it manages sit on the same machine, so a request
-// that takes this long is a service that is down, not a busy one.
 constexpr int kConnectTimeoutSeconds = 2;
 constexpr int kExchangeTimeoutSeconds = 3;
 bazarish::http::ClientOptions clientOptions()
@@ -33,15 +31,9 @@ bazarish::http::ClientOptions clientOptions()
     return options;
 }
 
-// One signed request to a service, whatever the method. The signature covers the
-// query-less path, which is what every service verifies: a signature over the
-// query string would be refused the moment the panel searched for anything.
 bazarish::http::ClientResponse call(const ServiceEntry& service, const Identity& identity,
     const std::string& method, const std::string& target, const std::string& body)
 {
-    // A gateway is the one service that need not be on this machine: it answers
-    // under a path nobody guesses, and may be reached over TLS. The signature has
-    // to cover the path the service will verify - which is the whole of it.
     const bazarish::http::Url address = bazarish::http::parseUrl(service.url);
     const std::string full = address.path + target;
     const std::string path = full.substr(0, full.find('?'));
@@ -63,8 +55,6 @@ bazarish::http::ClientResponse call(const ServiceEntry& service, const Identity&
     return bazarish::http::request(address.host, address.port, out, options);
 }
 
-// Pulls a human message out of an error envelope body, falling back to the
-// status line.
 std::string errorMessage(const bazarish::http::ClientResponse& result)
 {
     if (result.status == 0) {
@@ -76,8 +66,6 @@ std::string errorMessage(const bazarish::http::ClientResponse& result)
             return body.at("error").at("message").get<std::string>();
         }
     } catch (const std::exception&) {
-        // error-hiding: allowed - not an error envelope, so the HTTP status below is
-        // the whole answer and the parse failure IS the information.
     }
     return "HTTP " + std::to_string(result.status);
 }
@@ -110,7 +98,6 @@ HealthResult probeHealth(const ServiceEntry& service, const Identity& identity)
         out.uptime = body.value("uptime", static_cast<std::int64_t>(0));
         out.ramBytes = body.value("ramBytes", static_cast<std::uint64_t>(0));
         out.ramPeakBytes = body.value("ramPeakBytes", static_cast<std::uint64_t>(0));
-        // A facade adds what it is carrying; nobody else reports these.
         out.requestsLastMinute = body.value("requestsLastMinute", static_cast<std::uint64_t>(0));
         out.requestsLastHour = body.value("requestsLastHour", static_cast<std::uint64_t>(0));
         out.requestsLastDay = body.value("requestsLastDay", static_cast<std::uint64_t>(0));

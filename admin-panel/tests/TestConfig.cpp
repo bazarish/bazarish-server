@@ -47,8 +47,6 @@ int main()
     CHECK(config.admins.front() == "abcd1234");
     CHECK(config.listenHost == "0.0.0.0");
     CHECK(config.listenPort == 9000);
-    // A plain list of services is one deployment, which is what a single server
-    // looks like.
     CHECK(config.fleets.size() == 1);
     CHECK(config.fleets[0].services.size() == 2);
     CHECK(config.fleets[0].services[0].name == "core");
@@ -56,31 +54,22 @@ int main()
     CHECK(config.fleets[0].services[0].url == "http://127.0.0.1:8420");
     CHECK(config.fleets[0].services[1].kind == "facade");
 
-    // Defaults applied when optional fields are omitted.
     const Config minimal = Config::fromJson(R"({"admin": "fp"})");
     CHECK(minimal.consumer.name == "Bazarish admin panel");
     CHECK(minimal.listenHost == "127.0.0.1");
     CHECK(minimal.listenPort == 8460);
-    // Where it listens is where the operator opens it, so that is what the panel
-    // says it is until an operator fronts it and says otherwise.
     CHECK(minimal.consumer.place == "http://127.0.0.1:8460");
     CHECK(minimal.consumer.role == "Administrator");
     CHECK(minimal.fleets.empty());
 
-    // Several operators, each with their own key.
     const Config shared = Config::fromJson(R"({"admin": ["one", "two"]})");
     CHECK(shared.admins.size() == 2);
     CHECK(shared.admins.at(1) == "two");
-    // No administrator is not an error: it is a fresh install, and the setup
-    // wizard is what that state exists for. An empty fingerprint still is one -
-    // it names nobody while pretending to name somebody.
     CHECK(Config::fromJson(R"({"admin": []})").admins.empty());
     CHECK(Config::fromJson(R"({"services": []})").admins.empty());
     CHECK_THROWS(Config::fromJson(R"({"admin": ["one", ""]})"));
     CHECK_THROWS(Config::fromJson(R"({"admin": ""})"));
 
-    // Several deployments, each with its own services: that is the unit that
-    // scales, because a subscription names one messaging server.
     const Config many = Config::fromJson(R"({"admin": "fp", "fleets": [
         {"name": "berlin", "services": [
             {"name": "core", "kind": "server-core", "url": "http://10.0.0.1:8420"},
@@ -93,28 +82,21 @@ int main()
     CHECK(many.fleets[0].services.size() == 2);
     CHECK(many.fleets[1].name == "riga");
 
-    // The alias service is central, not part of anyone's deployment.
     CHECK_THROWS(Config::fromJson(R"({"admin": "fp", "services": [
         {"name": "alias", "kind": "alias-resolver", "url": "http://127.0.0.1:8432"}]})"));
 
-    // An unknown service kind is rejected (catches config typos).
     CHECK_THROWS(Config::fromJson(R"({"admin": "fp", "services": [
         {"name": "x", "kind": "nope", "url": "http://x"}]})"));
 
-    // A service entry missing a required field (url) is rejected.
     CHECK_THROWS(Config::fromJson(R"({"admin": "fp", "services": [
         {"name": "x", "kind": "server-core"}]})"));
 
-    // A gateway is reached at a secret path and only with its token. One
-    // pasted address carries both, and is stored as the two things it is.
     const Config pasted = Config::fromJson(R"({"admin": "fp", "services": [
         {"name": "gate", "kind": "gateway",
          "url": "https://gate.example/f3a9c2e1#a-long-token"}]})");
     CHECK(pasted.fleets.at(0).services.at(0).url == "https://gate.example/f3a9c2e1");
     CHECK(pasted.fleets.at(0).services.at(0).token == "a-long-token");
 
-    // A host named on its own takes the token beside it, which is what a
-    // gateway on a local network looks like.
     const Config named = Config::fromJson(R"({"admin": "fp", "services": [
         {"name": "gate", "kind": "gateway",
          "url": "http://192.168.0.70:8440/f3a9c2e1", "token": "a-long-token"}]})");

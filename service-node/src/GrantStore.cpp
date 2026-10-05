@@ -18,7 +18,6 @@ namespace fs = std::filesystem;
 
 namespace {
 
-// A grant record, or an empty object when the user has none yet.
 nlohmann::json grantRecord(const fs::path& path)
 {
     return fs::exists(path) ? readJsonFile(path) : nlohmann::json::object();
@@ -106,8 +105,6 @@ std::optional<GrantStore::Transient> GrantStore::peekTransient(const std::string
 std::optional<GrantStore::SubscriptionGrant> GrantStore::takeSubscription(const std::string& user)
 {
     requireFingerprint(user);
-    // Read and erase under one lock: peeking first and erasing after would let two
-    // requests redeem the same one-shot grant.
     const std::lock_guard<std::mutex> lock(mutex_);
     const fs::path path = grantPath(user);
     nlohmann::json body = grantRecord(path);
@@ -196,8 +193,6 @@ void GrantStore::hold(const std::string& user, const std::string& message, const
     const fs::path path = grantPath(user);
     nlohmann::json body = grantRecord(path);
     nlohmann::json& entry = body["approval"];
-    // An account put on hold before it was ever recorded still has to have a
-    // request date, or it would look like it had waited forever.
     if (!entry.contains("requestedAt")) {
         entry["requestedAt"] = now;
     }
@@ -237,13 +232,10 @@ void GrantStore::unban(const std::string& user)
     fs::remove(banPath(user), ignored);
 }
 
-
 std::vector<std::string> GrantStore::allUsers() const
 {
     const std::lock_guard<std::mutex> lock(mutex_);
     std::vector<std::string> users;
-    // Banned keys have no account left, and are exactly the ones an operator
-    // may need to find again to lift the ban.
     for (const char* const directory : {"grants", "bans"}) {
         for (const fs::directory_entry& entry : fs::directory_iterator(root_ / directory)) {
             if (entry.path().extension() == ".json") {

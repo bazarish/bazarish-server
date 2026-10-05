@@ -8,9 +8,6 @@ namespace bazarish {
 
 namespace {
 
-// How long the answer is given to reach the caller before the service stops
-// under it. The panel is on the other end of that response and turns it into
-// "restarting"; a stop that races it would look like a failure instead.
 constexpr std::chrono::milliseconds kResponseGrace{300};
 
 }  // namespace

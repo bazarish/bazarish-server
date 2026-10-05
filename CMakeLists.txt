@@ -26,6 +26,7 @@ find_package(Threads REQUIRED)
 find_package(OpenSSL 3.5 REQUIRED)
 
 add_library(bazarish_gateway_lib STATIC
+    src/Health.cpp
     src/Gateway.cpp
     src/Settings.cpp
     src/Sessions.cpp
@@ -57,6 +58,7 @@ function(bazarish_gateway_add_test name)
     add_test(NAME ${name} COMMAND ${name})
 endfunction()
 
+bazarish_gateway_add_test(TestHealth)
 bazarish_gateway_add_test(TestControlChurn)
 bazarish_gateway_add_test(TestGateway)
 bazarish_gateway_add_test(TestGatewayClient)

@@ -3,7 +3,7 @@
 
 #include <bazarish/Auth.hpp>
 #include <bazarish/Clock.hpp>
-#include <bazarish/Health.hpp>
+#include <Health.hpp>
 #include <bazarish/Hmac.hpp>
 #include <bazarish/Log.hpp>
 

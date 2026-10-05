@@ -66,6 +66,7 @@ std::string errorMessage(const bazarish::http::ClientResponse& result)
             return body.at("error").at("message").get<std::string>();
         }
     } catch (const std::exception&) {
+        // error-hiding: allowed - not an error envelope, so the HTTP status below is the answer.
     }
     return "HTTP " + std::to_string(result.status);
 }

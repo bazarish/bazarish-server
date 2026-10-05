@@ -45,7 +45,6 @@ public:
     std::uint64_t userQuota(const std::string& user, std::uint64_t fallback) override;
 
 private:
-    // One minute window per mailbox for the passless contact path.
     struct Window {
         std::int64_t start = 0;
         std::size_t count = 0;

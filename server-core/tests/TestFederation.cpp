@@ -303,7 +303,6 @@ int main()
         CHECK(refusedOther.errorCode == refused.errorCode);
     }
 
-    // A destination belongs to one user, and only their mail belongs in it.
     {
         const std::string stranger = toBase32(Bytes(32, 0x33));
         const Bytes payload(64, 0x41);

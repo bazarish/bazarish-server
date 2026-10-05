@@ -36,7 +36,6 @@ public:
 
     Values get() const;
 
-    // Applies the values and writes them to the config file.
     void set(const Values& values);
 
 private:

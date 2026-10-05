@@ -92,7 +92,6 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
         }
     }
 
-    // The destination this arrived on belongs to one user, and only their mail belongs in it.
     if (!owner.empty() && mailbox != owner) {
         if (deliveryClass == kContactDeliveryClass) {
             return delivered();

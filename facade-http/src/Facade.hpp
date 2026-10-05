@@ -18,7 +18,6 @@ namespace bazarish::facade {
 struct FacadeOptions {
     std::string messagingHost = "127.0.0.1";
     int messagingPort = 8420;
-    // Secret URI prefix the facade requires and strips before forwarding (e.g.
     std::string basePath;
     std::shared_ptr<FacadeSettings> settings;
     std::function<void()> requestRestart;

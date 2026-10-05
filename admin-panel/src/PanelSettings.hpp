@@ -17,12 +17,10 @@ public:
 
     const std::filesystem::path& configPath() const { return configPath_; }
 
-    // Applies the values and writes them to the config file.
     void set(const Config& values);
 
     bool unclaimed() const;
 
-    // Hands an unclaimed panel to one key, and answers false when someone got there first.
     bool claim(const std::string& fingerprint);
 
 private:

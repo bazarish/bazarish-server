@@ -73,7 +73,6 @@ private:
     void bringUp(const std::string& userFp, const std::string& transientB64,
         std::int64_t expiresUnix, const std::string& sealingKeyPem,
         const std::string& signingKeyPem);
-    // Takes the destination out of service and hands its threads to reapRetired.
     void teardownLocked(const std::string& userFp);
     void reapRetired();
     void serveLoop(Destination* destination, const std::string& userFp);

@@ -24,7 +24,6 @@ private:
     bool stopped_ = false;
 };
 
-// Stops a service on somebody else's thread.
 class RestartSwitch {
 public:
     explicit RestartSwitch(std::function<void()> stop);

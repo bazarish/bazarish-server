@@ -288,7 +288,6 @@ int main()
         CHECK(aliceQueue() == 0);
     }
 
-    // --- Sessions --- The signature is presented once; everything after it carries a MAC.
     {
         const Bytes secret = randomBytes(32);
         const Key replyKey = Key::generateSealing();

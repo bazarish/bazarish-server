@@ -42,7 +42,6 @@ namespace {
 constexpr int kMaxI2pDestinations = 8;
 
 constexpr int kUpstreamTimeoutSeconds = 60;
-// And how much longer the front holds the client than it holds the backend.
 constexpr int kFrontReadSlackSeconds = 30;
 
 bool startsWith(const std::string& text, const std::string& prefix)
@@ -267,7 +266,6 @@ void Facade::setupOpsRoutes()
         }
         if (body.contains("basePath")) {
             const std::string path = body.at("basePath").get<std::string>();
-            // The one field here that is a secret.
             if (path.empty() || !isValidBasePath(path)) {
                 throw std::invalid_argument(
                     "a base path looks like /8f1818f3/0966179fb196: one or more"

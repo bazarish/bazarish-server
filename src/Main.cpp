@@ -15,9 +15,6 @@
 
 namespace {
 
-// The router is given this long to have tunnels before the daemon says it is
-// serving. It serves either way: a client that arrives early waits on its own
-// destination, not on this.
 constexpr std::chrono::seconds kRouterWarmup{120};
 
 volatile std::sig_atomic_t g_stop = 0;

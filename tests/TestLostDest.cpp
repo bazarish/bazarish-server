@@ -63,8 +63,6 @@ int main()
     settings.stateDir = root / "state";
     settings.notFoundBody = "<html>nothing</html>";
 
-    // Kept off the network: a destination this gateway minted is one it can lose
-    // without any of it.
     i2p::Router engine(i2p::offlineRouter(root / "i2p"));
 
     std::unique_ptr<Gateway> first = std::make_unique<Gateway>(settings, engine);
@@ -80,36 +78,22 @@ int main()
     const std::shared_ptr<i2p::Endpoint> before = client.createEndpoint(wanted);
     CHECK(waitFor([&]() { return first->sockets() >= 1; }));
 
-    // The gateway goes and comes back with nothing of the old session in it -
-    // the same thing a restart of the host does. The client's cookie is one this
-    // one never issued, so it gets a session of its own and the destination
-    // above exists nowhere but here.
     first.reset();
     settings.listenPort = port;
     Gateway second(settings, engine);
     CHECK(second.start() == port);
     CHECK(waitFor([&]() { return second.sockets() >= 1; }));
 
-    // Told, not found out: the handshake names what the gateway holds, and this
-    // destination is not in it.
     CHECK(waitFor([&]() { return before->lost(); }));
     CHECK(!before->ready());
     CHECK(before->connect("anything.b32.i2p", std::chrono::seconds(1)) == nullptr);
 
-    // Waiting on it is waiting for nothing, and says so at once rather than
-    // holding the caller for a deadline meant for tunnels that are still being
-    // built. A file transfer waits three minutes on one of these.
     const auto asked = std::chrono::steady_clock::now();
     CHECK(!before->waitReady(std::chrono::seconds(kWaitSeconds)));
     CHECK(std::chrono::steady_clock::now() - asked < std::chrono::seconds(1));
 
-    // And not a frame was spent on it. Without the reconciliation above, every
-    // dial from it is asked for and refused - once per attempt, forever, because
-    // a control socket is up and so nothing else ever calls the session dead.
     CHECK(second.refusals() == 0);
 
-    // A destination raised now belongs to the session that is actually there,
-    // and carries a stream like any other.
     i2p::EndpointConfig serving;
     serving.privacy = i2p::Privacy::eMinimal;
     serving.published = true;

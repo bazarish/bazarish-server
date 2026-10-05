@@ -23,8 +23,6 @@ namespace {
 constexpr std::size_t kRelayBufferBytes = 16384;
 constexpr int kRelayBacklog = 16;
 
-// A plain TCP relay in front of the gateway, so one connection can be cut the
-// way a phone changing network cuts one, leaving the others alone.
 class Relay {
 public:
     explicit Relay(const int to)
@@ -71,25 +69,16 @@ public:
 
     int port() const { return port_; }
 
-    // How many connections have been made through it, which is how a socket
-    // taken again is told from one that never came back.
     std::size_t connections() const
     {
         const std::lock_guard<std::mutex> lock(mutex_);
         return pairs_.size();
     }
 
-    // Refuses what comes next, so a gap lasts as long as the test needs it
-    // rather than as long as a reconnect takes.
     void hold(const bool refusing) { refusing_.store(refusing); }
 
-    // Swallows what comes back towards the client without closing anything, so
-    // the far side's writes succeed and the client sees none of them. Cutting
-    // afterwards loses exactly those bytes, which is what a socket dying under a
-    // write does and what no test can arrange by timing.
     void stall(const bool holding) { stalling_.store(holding); }
 
-    // Cuts the nth connection this relay took, counting from zero.
     void cut(const std::size_t which)
     {
         const std::lock_guard<std::mutex> lock(mutex_);

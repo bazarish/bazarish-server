@@ -21,7 +21,6 @@ namespace {
 constexpr const char* kPath = "/9d1c4b7e2f60";
 constexpr const char* kToken = "another-static-token";
 
-// What the client heard, so the test waits for it rather than sleeping.
 struct Heard {
     std::mutex mutex;
     std::condition_variable changed;
@@ -86,20 +85,16 @@ int main()
     const int port = gateway.start();
     CHECK(port > 0);
 
-    // A probe is what a client does to find out whether an address is a gateway
-    // at all: a decoy request, and the answer that comes back.
     const http::Probe reached = http::probeHost(dialFor(port, {}), std::string("noise"));
     CHECK(reached.reached);
     CHECK(reached.status == 200);
 
-    // Without the token it is the same 404 as any other address on the host.
     http::SocketDial wrong = dialFor(port, {});
     wrong.headers[kTokenHeader] = "not-the-token";
     const http::Probe refused = http::probeHost(wrong, std::string("noise"));
     CHECK(refused.reached);
     CHECK(refused.status == 404);
 
-    // And the socket opens, says hello, and is answered.
     Heard heard;
     const http::SocketDialResult opened = http::openSocket(
         dialFor(port, {}),
@@ -124,9 +119,6 @@ int main()
     const std::string cookie = body["session"];
     CHECK(!cookie.empty());
 
-    // The same session, rejoined by its cookie after the socket went away on
-    // purpose - which is what the client does to keep a watcher from seeing one
-    // connection that lives for hours.
     opened.socket->close();
     Heard second;
     const http::SocketDialResult again = http::openSocket(
@@ -144,10 +136,6 @@ int main()
     CHECK(rejoined["session"] == cookie);
     again.socket->close();
 
-    // And the transport itself: a router whose engine is somebody else's. The
-    // engine behind the gateway is never started: minting a destination and
-    // naming it needs keys, not tunnels, and a test that waited for tunnels
-    // would be a test of the network.
     i2p::RouterConfig gatewayConfig;
     gatewayConfig.backend = i2p::Backend::eGateway;
     gatewayConfig.gatewayHost = "127.0.0.1";
@@ -158,8 +146,6 @@ int main()
     i2p::Router borrowed(gatewayConfig);
 
     const i2p::Capabilities what = borrowed.capabilities();
-    // What a gateway's router knows of the network describes that machine and
-    // everyone else using it, so it is neither shown nor sent.
     CHECK(!what.routerCounters);
     CHECK(what.destinationCounters);
     CHECK(!what.netDbSample);
@@ -169,8 +155,6 @@ int main()
     borrowed.start();
     CHECK(borrowed.running());
 
-    // The gateway mints the destination: the client sends no key and gets back
-    // an address.
     i2p::EndpointConfig wanted;
     wanted.privacy = i2p::Privacy::eMinimal;
     wanted.tunnelQuantity = 2;
@@ -183,16 +167,10 @@ int main()
     CHECK(host.size() > 50);
     CHECK(host.find(".b32.i2p") != std::string::npos);
 
-    // And a key of one's own is not something this transport takes: it operates
-    // what it mints, so a key handed to it would either travel - the one thing
-    // the trust model forbids - or be ignored, leaving the caller wrong about
-    // where its address came from.
     i2p::EndpointConfig ofMyOwn;
     ofMyOwn.keys = i2p::Keys::generate();
     CHECK_THROWS(borrowed.createEndpoint(ofMyOwn));
 
-    // What the gateway holds it does not hand over, and asking says so rather
-    // than answering with something empty.
     bool refusedKey = false;
     try {
         (void)mine->privateBlob();
@@ -208,9 +186,7 @@ int main()
     }
     CHECK(refusedProxy);
 
-    // Everything the status view reads, in the order it reads it. It used to
-    // ask whether the transport was SAM instead of asking what it can answer,
-    // and the answer for a gateway went out as an exception through a Qt slot.
+    // Everything the status view reads, in the order it reads it.
     CHECK(borrowed.running());
     CHECK(borrowed.knownRouters() == 0);
     CHECK(borrowed.transportPeers().empty());
@@ -223,17 +199,11 @@ int main()
     } catch (const std::exception&) {
         proxyRefused = true;
     }
-    // Unguarded it throws, which is the whole reason the guard has to be the
-    // capability and not a guess about which transport is underneath.
     CHECK(proxyRefused);
 
-    // The status view sees this session's destinations and nothing else.
     const std::vector<i2p::LocalDestination> seen = borrowed.localDestinations();
     CHECK(seen.size() == 1);
     CHECK(seen.front().host == host);
-    // What it is for is the client's own note, kept here because it never went
-    // to the gateway. Without it every row on the status page read
-    // "Destination" and said nothing.
     CHECK(seen.front().label == "Test");
     CHECK(seen.front().owner == "an account");
 

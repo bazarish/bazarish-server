@@ -1,8 +1,4 @@
 // Bazarish project (c) 2026
-// A live check against a real gateway, not part of ctest: it needs one running
-// and reachable. Takes the address an operator hands out.
-//
-//   gateway_smoke https://host[:port]/<path>#<token>
 #include "GatewayAddress.hpp"
 
 #include <bazarish/GatewayProtocol.hpp>
@@ -56,19 +52,12 @@ int main(const int argc, const char** argv)
     const std::shared_ptr<i2p::Endpoint> mine = router.createEndpoint(endpointConfig);
     std::printf("[smoke] the gateway minted %s\n", mine->routingHost().c_str());
 
-    // Tunnels are the gateway's router's work, so this is the one thing worth
-    // waiting for: it says the borrowed router is really on the network.
     const bool ready = mine->waitReady(std::chrono::seconds(180));
     std::printf("[smoke] %s after %s\n", ready ? "it has tunnels" : "still no tunnels",
         ready ? "the wait" : "three minutes");
     std::printf("[smoke] the gateway's router knows %d routers, %d floodfills\n",
         router.knownRouters(), router.floodfills());
 
-    // The media leg, which is what a call rides: destinations that carry raw
-    // datagrams, each with a socket of its own, and a datagram each way. Both
-    // are this gateway's own, so it hands the bytes across inside itself - what
-    // this proves is the kind, the lane and the frames over the real front,
-    // not I2P.
     const auto media = [&router]() {
         i2p::EndpointConfig config;
         config.privacy = i2p::Privacy::eMinimal;
@@ -81,10 +70,6 @@ int main(const int argc, const char** argv)
     const std::shared_ptr<i2p::Endpoint> caller = media();
     const std::shared_ptr<i2p::Endpoint> callee = media();
     const std::string audio = "twenty milliseconds of nothing";
-    // Asked the way a call asks: a short burst, and the first frame back is
-    // enough. One datagram sent the instant a destination is made races its own
-    // lane onto the wire, and a datagram that finds no lane is dropped by
-    // design - which is a fact about media and not a fault to report.
     constexpr int kBurst = 20;
     constexpr std::chrono::milliseconds kBurstGap{50};
     const auto carries = [&audio](i2p::Endpoint& from, i2p::Endpoint& to) {

@@ -25,8 +25,6 @@ namespace {
 constexpr const char* kPath = "/0e5b73c1a9f4";
 constexpr const char* kToken = "a-seventh-static-token";
 constexpr int kWaitSeconds = 30;
-// One window, so everything sent is retained for a replay and the arithmetic of
-// the loss is the whole of the test.
 constexpr std::size_t kTotalBytes = kStreamWindowBytes;
 constexpr std::size_t kReadChunk = 8 * 1024;
 constexpr std::chrono::milliseconds kLook{20};
@@ -40,7 +38,6 @@ i2p::RouterConfig borrowedFrom(const int port)
     config.gatewayPath = kPath;
     config.gatewayToken = kToken;
     config.gatewayTls = false;
-    // The only socket that goes is the one this test takes away.
     config.gatewayControlMinLife = std::chrono::seconds(600);
     config.gatewayControlMaxLife = std::chrono::seconds(600);
     config.gatewayDecoyMin = std::chrono::milliseconds(600000);
@@ -82,8 +79,6 @@ int main()
     const int port = gateway.start();
     CHECK(port > 0);
 
-    // The reader is behind the relay: it is the socket that has to swallow a
-    // write and then die with it.
     Relay relay(port);
     i2p::Router reader(borrowedFrom(relay.port()));
     i2p::Router writer(borrowedFrom(port));
@@ -121,13 +116,9 @@ int main()
                 received.fetch_add(got);
             }
         } catch (const std::exception&) {
-            // Gave up: something was lost and never came again.
         }
     });
 
-    // From here the relay takes what the gateway writes for the reader and holds
-    // it. The gateway's writes succeed, so it credits the writer and counts the
-    // bytes delivered - and the reader has not seen them.
     relay.stall(true);
     std::string payload;
     while (payload.size() < kTotalBytes) {
@@ -137,16 +128,10 @@ int main()
     CHECK(waitFor([&]() { return out->pendingBytes() == 0; }));
     CHECK(received.load() < kTotalBytes);
 
-    // And now the socket dies with them in it. Nothing else will ever ask for
-    // those bytes: the writer has been credited, the gateway has counted them
-    // out, and only the reader's own count says otherwise.
     relay.cut(0);
     relay.stall(false);
     CHECK(waitFor([&]() { return gateway.rejoins() >= 1; }));
 
-    // The resume names what the reader actually received, and what is above it
-    // goes out again - on the socket that has just been handed over, which is
-    // the one thing the replay must not be held back from.
     CHECK(waitFor([&]() { return received.load() == kTotalBytes; }));
     taking.join();
     CHECK(gateway.refusals() == 0);

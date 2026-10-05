@@ -20,9 +20,6 @@ namespace {
 constexpr const char* kPath = "/7c1e93b52fa8";
 constexpr const char* kToken = "a-fourth-static-token";
 constexpr int kWaitSeconds = 60;
-// Enough to span several replacements, read in pieces with a pause between so
-// the socket is quiet when the draw comes up. A socket carrying something is
-// never dropped, so a test that never pauses would never see a churn.
 constexpr std::size_t kPieceBytes = 32 * 1024;
 constexpr int kRounds = 8;
 
@@ -35,8 +32,6 @@ i2p::RouterConfig borrowedFrom(const int port)
     config.gatewayPath = kPath;
     config.gatewayToken = kToken;
     config.gatewayTls = false;
-    // Seconds instead of minutes, so what a day of running does shows up in
-    // ten seconds of testing.
     config.gatewayDecoyMin = std::chrono::milliseconds(300);
     config.gatewayDecoyMax = std::chrono::milliseconds(600);
     config.gatewayControlMinLife = std::chrono::seconds(1);
@@ -64,8 +59,6 @@ int main()
     settings.decoyMaxBytes = 2048;
     settings.notFoundBody = "<html>nothing</html>";
 
-    // Two clients of one gateway meet inside it, so this engine has no business
-    // on the network and is kept off it.
     i2p::Router engine(i2p::offlineRouter(root / "i2p"));
 
     Gateway gateway(settings, engine);
@@ -77,8 +70,6 @@ int main()
     alice.start();
     bob.start();
 
-    // Neither destination is raised for a transfer, so the stream rides the
-    // control socket - which is the one being replaced underneath it.
     i2p::EndpointConfig serving;
     serving.privacy = i2p::Privacy::eMinimal;
     serving.published = true;
@@ -103,14 +94,11 @@ int main()
         while (piece.size() < kPieceBytes) {
             piece += static_cast<char>('a' + (round % 26));
         }
-        // A write queues and returns, so this does not wait on the far side.
         out->writeAll(piece.data(), piece.size());
         sent += piece;
-        // Long enough for the socket to fall quiet and be replaced.
         std::this_thread::sleep_for(std::chrono::milliseconds(1400));
     }
 
-    // Every byte, in order, across however many sockets carried them.
     std::string got;
     std::vector<char> buffer(4096);
     in->setReadTimeout(std::chrono::seconds(kWaitSeconds));
@@ -123,10 +111,6 @@ int main()
             got.append(buffer.data(), read);
         }
     } catch (const std::exception& error) {
-        // A stall that says nothing cannot be chased. What splits the case in
-        // half is whether the sender still holds the bytes - then it is waiting
-        // for a window - or has handed them over, which puts them at the
-        // gateway. The check below turns this into an ordinary failure.
         std::printf("stalled: %s\n  got %zu of %zu, sender holds %zu, rejoins %zu,"
                     " refusals %zu, sockets %zu\n",
             error.what(), got.size(), sent.size(), out->pendingBytes(), gateway.rejoins(),
@@ -136,12 +120,8 @@ int main()
     CHECK(got.size() == sent.size());
     CHECK(got == sent);
 
-    // And the sockets really were replaced: without that this would be a plain
-    // transfer wearing a test's name.
     CHECK(gateway.rejoins() >= 2);
 
-    // Nothing was refused along the way. A test that passes while the gateway
-    // is turning frames away is a test that proves less than it looks.
     CHECK(gateway.refusals() == 0);
 
     out->close();

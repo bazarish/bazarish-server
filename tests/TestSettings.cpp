@@ -41,8 +41,6 @@ int main()
     CHECK(whole.serverName == "caddy");
     CHECK(whole.sessionTtlSeconds == 120);
 
-    // What is left out takes the figure the protocol names, and the 404 is the
-    // one nginx gives when it has nothing.
     const Settings bare = Settings::from(document(R"({
         "basePath": "/secret", "token": "t", "state": "/tmp/s"
     })"));
@@ -53,20 +51,15 @@ int main()
     CHECK(bare.serverName == "nginx");
     CHECK(bare.notFoundBody.find("404 Not Found") != std::string::npos);
 
-    // A gateway that came up without a secret path or a token would be one
-    // anybody could walk into, so it does not come up.
     CHECK_THROWS(Settings::from(document(R"({"token": "t", "state": "/tmp/s"})")));
     CHECK_THROWS(
         Settings::from(document(R"({"basePath": "", "token": "t", "state": "/tmp/s"})")));
-    // A path that is not a path.
     CHECK_THROWS(
         Settings::from(document(R"({"basePath": "secret", "token": "t", "state": "/tmp/s"})")));
     CHECK_THROWS(Settings::from(document(R"({"basePath": "/s", "state": "/tmp/s"})")));
     CHECK_THROWS(Settings::from(document(R"({"basePath": "/s", "token": "", "state": "/t"})")));
-    // Without a state directory the router has nowhere to keep anything.
     CHECK_THROWS(Settings::from(document(R"({"basePath": "/s", "token": "t"})")));
 
-    // A decoy range that is not a range, and a term that is not a term.
     CHECK_THROWS(Settings::from(document(R"({
         "basePath": "/s", "token": "t", "state": "/t",
         "decoy": { "minBytes": 4096, "maxBytes": 1024 }
@@ -78,8 +71,6 @@ int main()
         "basePath": "/s", "token": "t", "state": "/t", "sessionTtlSeconds": 0
     })")));
 
-    // A file named for the 404 that is not there is a configuration that does
-    // not come up, rather than a host quietly answering something else.
     CHECK_THROWS(Settings::from(document(R"({
         "basePath": "/s", "token": "t", "state": "/t", "notFound": "/no/such/page.html"
     })")));

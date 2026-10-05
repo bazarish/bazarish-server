@@ -7,10 +7,6 @@ namespace bazarish::gateway {
 
 namespace {
 
-// A client re-sends only what was in flight when a socket died, which is a
-// handful of requests. Keeping the last few answers is enough to make every
-// such repeat idempotent, and bounding them is what keeps a long session from
-// remembering a day of traffic.
 constexpr std::size_t kAnswersRemembered = 64;
 
 }  // namespace
@@ -85,8 +81,6 @@ std::shared_ptr<Session> SessionStore::find(
     if (found == sessions_.end()) {
         return nullptr;
     }
-    // A session past its term is gone even if nothing has swept it yet: the
-    // sweep is housekeeping, not the rule.
     if (found->second->expired(now, ttlSeconds_)) {
         return nullptr;
     }

@@ -33,11 +33,7 @@ namespace {
 
 constexpr const char* kPath = "/f3a9c2e1b7d4";
 constexpr const char* kToken = "a-static-token";
-// How long after its term a swept session may take to go, since the sweep runs
-// on the status thread's own clock.
 constexpr int kSweepGraceSeconds = 5;
-// Long enough for the dial to be re-asked while it is still running, short
-// enough that the test waits it out rather than the other way round.
 constexpr int kDialDeadlineSeconds = 4;
 constexpr std::size_t kDecoyLow = 1024;
 constexpr std::size_t kDecoyHigh = 4096;
@@ -77,7 +73,6 @@ Answer request(const int port, const std::string& method, const std::string& pat
     return answer;
 }
 
-// A client socket, and what the handshake made of it.
 struct Dialled {
     std::unique_ptr<websocket::stream<tcp::socket>> socket;
     unsigned refusedWith = 0;
@@ -149,8 +144,6 @@ int main()
     settings.decoyMinBytes = kDecoyLow;
     settings.decoyMaxBytes = kDecoyHigh;
     settings.notFoundBody = "<html>nothing</html>";
-    // Seconds instead of minutes, so a sweep can be watched rather than argued
-    // about.
     settings.sessionTtlSeconds = 2;
     const Identity operatorIdentity = Identity::generate();
     settings.operators.push_back(operatorIdentity.fingerprint());
@@ -161,14 +154,11 @@ int main()
     const int port = gateway.start();
     CHECK(port > 0);
 
-    // Everything that is not this gateway gets one answer.
     const Answer stranger = request(port, "GET", "/", {});
     CHECK(stranger.status == 404);
     CHECK(stranger.body == settings.notFoundBody);
     CHECK(stranger.server == settings.serverName);
 
-    // The right path with no token, and with the wrong one, is that same answer
-    // byte for byte. A 404 that differs when the path is right is an oracle.
     const Answer noToken = request(port, "GET", kPath, {});
     const Answer wrongToken = request(port, "GET", kPath, "not-the-token");
     const Answer deepPath = request(port, "GET", std::string(kPath) + "/more", kToken);
@@ -179,20 +169,15 @@ int main()
     CHECK(wrongToken.status == stranger.status);
     CHECK(deepPath.body == stranger.body);
 
-    // The health report lives behind the same secret path and token: a
-    // well-known /healthz would tell a scan that this host runs a gateway.
     const std::string healthPath = std::string(kPath) + "/healthz";
     CHECK(request(port, "GET", healthPath, {}).body == stranger.body);
     CHECK(request(port, "GET", healthPath, "not-the-token").body == stranger.body);
-    // With the token but no operator signature it is refused, not served.
     CHECK(request(port, "GET", healthPath, kToken).status == 403);
-    // Signed by somebody who is not an operator here, likewise.
     const Identity stranger2 = Identity::generate();
     CHECK(request(port, "GET", healthPath, kToken,
               auth::signRequest(stranger2, nowSeconds(), "GET", healthPath, Bytes()))
               .status
         == 403);
-    // And signed by the operator it names, the report comes back.
     const Answer reported = request(port, "GET", healthPath, kToken,
         auth::signRequest(operatorIdentity, nowSeconds(), "GET", healthPath, Bytes()));
     CHECK(reported.status == 200);
@@ -203,8 +188,6 @@ int main()
     CHECK(report.contains("sockets"));
     CHECK(report["refused"] == 0);
 
-    // A decoy: random in, random out, and the client does not say how much
-    // comes back.
     const Answer decoyOne = request(port, "POST", kPath, kToken);
     const Answer decoyTwo = request(port, "POST", kPath, kToken);
     CHECK(decoyOne.status == 200);
@@ -216,14 +199,10 @@ int main()
 
     asio::io_context io;
 
-    // An upgrade without the token is refused. That it is refused with the same
-    // page as everything else is what the plain requests above already prove -
-    // and not every Beast version fills the response object on a handshake that
-    // failed, which is a fact about the library and not about this gateway.
+    // An upgrade without the token is refused.
     const Dialled refused = dial(io, port, "wrong-token", {});
     CHECK(refused.socket == nullptr);
 
-    // An upgrade with it opens a session and is handed a cookie.
     Dialled first = dial(io, port, kToken, {});
     CHECK(first.socket != nullptr);
     const nlohmann::json ready = greet(*first.socket);
@@ -231,22 +210,17 @@ int main()
     CHECK(ready["ref"] == 2);
     CHECK(ready["body"]["version"] == kProtocolVersion);
     CHECK(ready["body"]["resumed"] == false);
-    // What this gateway's router knows of the network describes that machine
-    // and everyone else on it, so it is not answered and not sent.
     CHECK(ready["body"]["capabilities"]["routerCounters"] == false);
     CHECK(ready["body"]["capabilities"]["proxy"] == false);
     CHECK(ready["body"]["capabilities"]["offlineKeys"] == false);
     const std::string cookie = ready["body"]["session"];
     CHECK(!cookie.empty());
 
-    // Saying hello twice on one socket is a client that lost its place.
     send(*first.socket, encodeJson(FrameType::eHello, 4, {{"version", kProtocolVersion}}));
     const Frame twice = receive(*first.socket);
     CHECK(twice.type == FrameType::eError);
     CHECK(bodyJson(twice)["code"] == "bad-frame");
 
-    // The session outlives the socket that opened it: dropping on purpose is
-    // what the client does to keep a watcher from seeing one long connection.
     boost::system::error_code ignored;
     first.socket->close(websocket::close_code::normal, ignored);
     first.socket.reset();
@@ -259,8 +233,6 @@ int main()
     again.socket->close(websocket::close_code::normal, ignored);
     again.socket.reset();
 
-    // A cookie that names nothing is not an error: a fresh session, a fresh
-    // cookie, and one field saying so.
     Dialled stale = dial(io, port, kToken, "a-cookie-from-nowhere");
     CHECK(stale.socket != nullptr);
     const nlohmann::json fresh = greet(*stale.socket);
@@ -269,7 +241,6 @@ int main()
     stale.socket->close(websocket::close_code::normal, ignored);
     stale.socket.reset();
 
-    // One version, so there is nothing to negotiate.
     Dialled ancient = dial(io, port, kToken, {});
     CHECK(ancient.socket != nullptr);
     const nlohmann::json refusal = greet(*ancient.socket, kProtocolVersion + 1);
@@ -277,8 +248,6 @@ int main()
     CHECK(refusal["body"]["code"] == "version");
     ancient.socket.reset();
 
-    // A frame type that does not exist closes the socket rather than being
-    // half understood.
     Dialled nonsense = dial(io, port, kToken, {});
     CHECK(nonsense.socket != nullptr);
     const Bytes garbage = {0x7F, 0x00, 0x00, 0x00, 0x01};
@@ -288,9 +257,6 @@ int main()
     CHECK(bodyJson(complaint)["code"] == "bad-frame");
     nonsense.socket.reset();
 
-    // A request the client never saw answered is sent again with the same
-    // reference when its socket is replaced. The gateway answers the repeat
-    // from what it already did: the same address, not a second destination.
     Dialled twiceOver = dial(io, port, kToken, {});
     CHECK(twiceOver.socket != nullptr);
     (void)greet(*twiceOver.socket);
@@ -306,11 +272,6 @@ int main()
     twiceOver.socket->close(websocket::close_code::normal, ignored);
     twiceOver.socket.reset();
 
-    // A dial that outlives the socket that asked for it is asked for again with
-    // the same reference, because the client saw no answer. That is one dial,
-    // not two: two would be two streams wearing one identifier, which is two
-    // sets of bytes arriving as one.
-    // Counted from here: the refusals above are this test's own doing.
     const std::size_t refusedBefore = gateway.refusals();
     Dialled asking = dial(io, port, kToken, {});
     CHECK(asking.socket != nullptr);
@@ -324,8 +285,6 @@ int main()
         {"host", "anything.b32.i2p"}, {"deadline", kDialDeadlineSeconds}};
     send(*asking.socket, encodeJson(FrameType::eStreamOpen, 10, dialAsk));
     send(*asking.socket, encodeJson(FrameType::eStreamOpen, 10, dialAsk));
-    // On a router with no netDb the dial cannot land, so the answer is the
-    // refusal it ends in - once.
     const Frame dialled = receive(*asking.socket);
     CHECK(dialled.type == FrameType::eStreamReset);
     CHECK(dialled.ref == 10);
@@ -334,9 +293,6 @@ int main()
     asking.socket->close(websocket::close_code::normal, ignored);
     asking.socket.reset();
 
-    // A session that outlives nothing is swept, and what it held goes with it.
-    // The destination below is published, so the gateway is holding a thread
-    // for it: a sweep that could not join one would hang here rather than fail.
     Dialled held = dial(io, port, kToken, {});
     CHECK(held.socket != nullptr);
     const std::string doomed = greet(*held.socket)["body"]["session"];
@@ -350,10 +306,6 @@ int main()
     held.socket->close(websocket::close_code::normal, ignored);
     held.socket.reset();
 
-    // It is swept without waiting for anybody to connect: a gateway whose only
-    // client has gone would otherwise hold that client's tunnels up until the
-    // next one happened to arrive. What the sweep did is visible on the router
-    // itself - the destinations it was holding for those sessions are gone.
     const auto sweptBy = std::chrono::steady_clock::now()
         + std::chrono::seconds(settings.sessionTtlSeconds + kSweepGraceSeconds);
     while (!router.localDestinations().empty() && std::chrono::steady_clock::now() < sweptBy) {
@@ -361,8 +313,6 @@ int main()
     }
     CHECK(router.localDestinations().empty());
 
-    // And the cookie now names nothing: the client is told so in one field
-    // rather than left to find out.
     Dialled after = dial(io, port, kToken, doomed);
     CHECK(after.socket != nullptr);
     const nlohmann::json born = greet(*after.socket);

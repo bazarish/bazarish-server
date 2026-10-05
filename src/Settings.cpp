@@ -9,8 +9,6 @@ namespace bazarish::gateway {
 
 namespace {
 
-// What nginx answers when it has nothing, byte for byte. A gateway that
-// invented its own page would be a host that answers unlike any other.
 constexpr const char* kNginxNotFound = "<html>\r\n"
                                        "<head><title>404 Not Found</title></head>\r\n"
                                        "<body>\r\n"

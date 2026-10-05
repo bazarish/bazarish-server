@@ -5,7 +5,7 @@
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Clock.hpp>
 #include <bazarish/Crypto.hpp>
-#include <bazarish/Health.hpp>
+#include <Health.hpp>
 
 #include <bazarish/HttpServer.hpp>
 #include <nlohmann/json.hpp>

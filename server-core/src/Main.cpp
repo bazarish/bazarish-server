@@ -1,7 +1,7 @@
 // Bazarish project (c) 2026
 #include "DeliveryEngine.hpp"
 #include "DiskStorage.hpp"
-#include <bazarish/RateLimiter.hpp>
+#include <RateLimiter.hpp>
 #include "EventGate.hpp"
 #include "HttpApi.hpp"
 #include "PerUserDestinations.hpp"

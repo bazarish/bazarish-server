@@ -8,7 +8,7 @@
 #include <bazarish/FederationFrame.hpp>
 #include <bazarish/Limits.hpp>
 #include <bazarish/Log.hpp>
-#include <bazarish/RateLimiter.hpp>
+#include <RateLimiter.hpp>
 #include <bazarish/Resolve.hpp>
 
 #include <algorithm>

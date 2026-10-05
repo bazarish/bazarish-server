@@ -4,7 +4,7 @@
 #include <bazarish/Auth.hpp>
 #include <bazarish/Tunnel.hpp>
 #include <bazarish/Bytes.hpp>
-#include <bazarish/Health.hpp>
+#include <Health.hpp>
 
 #include <bazarish/HttpClient.hpp>
 #include <bazarish/Clock.hpp>

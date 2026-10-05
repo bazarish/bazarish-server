@@ -9,7 +9,7 @@
 #include <bazarish/ConfigFile.hpp>
 #include <bazarish/Crypto.hpp>
 #include <bazarish/Errors.hpp>
-#include <bazarish/Health.hpp>
+#include <Health.hpp>
 #include <bazarish/HttpClient.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <bazarish/I2p.hpp>

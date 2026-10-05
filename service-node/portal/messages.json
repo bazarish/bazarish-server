@@ -1,0 +1,223 @@
+{
+  "languages": [
+    {
+      "code": "en",
+      "name": "English"
+    },
+    {
+      "code": "ru",
+      "name": "Русский"
+    },
+    {
+      "code": "es",
+      "name": "Español"
+    },
+    {
+      "code": "zh",
+      "name": "中文"
+    },
+    {
+      "code": "ar",
+      "name": "العربية",
+      "rtl": true
+    }
+  ],
+  "messages": {
+    "switch.title": {
+      "en": "Language",
+      "ru": "Язык",
+      "es": "Idioma",
+      "zh": "语言",
+      "ar": "اللغة"
+    },
+    "page.strapline": {
+      "en": "messaging server {0}",
+      "ru": "сервер сообщений {0}",
+      "es": "servidor de mensajería {0}",
+      "zh": "消息服务器 {0}",
+      "ar": "خادم رسائل {0}"
+    },
+    "page.colophon": {
+      "en": "A server of the Bazarish messenger.",
+      "ru": "Сервер мессенджера Bazarish.",
+      "es": "Un servidor del mensajero Bazarish.",
+      "zh": "Bazarish 通讯工具的一台服务器。",
+      "ar": "خادم من خوادم مرسال Bazarish."
+    },
+    "signin.title": {
+      "en": "sign in with your key",
+      "ru": "вход по ключу",
+      "es": "entrar con tu clave",
+      "zh": "用密钥登录",
+      "ar": "الدخول بمفتاحك"
+    },
+    "signin.note": {
+      "en": "Your Bazarish key signs you in here and at every other Bazarish portal. The browser never receives it. Sign the challenge in Bazarish App under Signature and paste the result back.",
+      "ru": "Один и тот же ключ Bazarish открывает и этот кабинет, и любой другой портал Bazarish. В браузер он не попадает. Подпишите строку запроса в приложении Bazarish в разделе «Подпись» и вставьте результат сюда.",
+      "es": "Tu clave de Bazarish te identifica aquí y en cualquier otro portal de Bazarish, y el navegador nunca la recibe. Firma el desafío en la app de Bazarish, en «Firma», y pega el resultado aquí.",
+      "zh": "同一个 Bazarish 密钥可以登录这里和任何其他 Bazarish 门户，浏览器始终接触不到它。请在 Bazarish 应用的「签名」中签署下面的字符串，再把结果粘贴回来。",
+      "ar": "مفتاح Bazarish يعرّفك هنا وفي أي بوابة أخرى من بوابات Bazarish، ولا يصل إلى المتصفح أبدًا. وقّع النص أدناه في تطبيق Bazarish من قسم «التوقيع»، ثم ألصق الناتج هنا."
+    },
+    "signin.challenge": {
+      "en": "Challenge",
+      "ru": "Строка для подписи",
+      "es": "Desafío",
+      "zh": "待签名的字符串",
+      "ar": "النص المطلوب توقيعه"
+    },
+    "signin.blob": {
+      "en": "Signed blob",
+      "ru": "Подпись",
+      "es": "Firma",
+      "zh": "签名结果",
+      "ar": "التوقيع"
+    },
+    "signin.action": {
+      "en": "Sign in",
+      "ru": "Войти",
+      "es": "Entrar",
+      "zh": "登录",
+      "ar": "تسجيل الدخول"
+    },
+    "signin.failed": {
+      "en": "That signature did not check out. Sign the challenge below and paste the result again.",
+      "ru": "Подпись не прошла проверку. Подпишите строку ниже и вставьте результат снова.",
+      "es": "Esa firma no cuadró. Firma el desafío de abajo y pega el resultado otra vez.",
+      "zh": "签名未通过验证。请重新签署下面的字符串，再把结果粘贴回来。",
+      "ar": "لم يُقبل هذا التوقيع. وقّع النص أدناه وألصق الناتج من جديد."
+    },
+    "session.signout": {
+      "en": "Sign out",
+      "ru": "Выйти",
+      "es": "Salir",
+      "zh": "退出",
+      "ar": "خروج"
+    },
+    "banned.title": {
+      "en": "refused",
+      "ru": "отказано",
+      "es": "rechazado",
+      "zh": "已拒绝",
+      "ar": "مرفوض"
+    },
+    "banned.note": {
+      "en": "This key cannot register here.",
+      "ru": "С этим ключом здесь зарегистрироваться нельзя.",
+      "es": "Esta clave no puede registrarse aquí.",
+      "zh": "这个密钥无法在此注册。",
+      "ar": "لا يمكن لهذا المفتاح التسجيل هنا."
+    },
+    "registered.title": {
+      "en": "registered",
+      "ru": "аккаунт создан",
+      "es": "cuenta creada",
+      "zh": "注册完成",
+      "ar": "تم التسجيل"
+    },
+    "approval.note": {
+      "en": "The operator approves accounts by hand. Connect Bazarish App now; the server starts serving the account once they do.",
+      "ru": "Оператор подтверждает аккаунты вручную. Подключайте приложение Bazarish уже сейчас: сервер начнёт обслуживать аккаунт, как только оператор его подтвердит.",
+      "es": "El operador aprueba las cuentas a mano. Conecta ya la app de Bazarish: el servidor empezará a servir la cuenta en cuanto la apruebe.",
+      "zh": "账号由运营者手动审核。现在就可以连接 Bazarish 应用：一旦通过审核，服务器就会开始为这个账号服务。",
+      "ar": "يوافق المشغّل على الحسابات يدويًا. اربط تطبيق Bazarish الآن، وسيبدأ الخادم بخدمة الحساب بمجرد الموافقة عليه."
+    },
+    "waiting.title": {
+      "en": "waiting for the operator",
+      "ru": "ожидает оператора",
+      "es": "esperando al operador",
+      "zh": "等待运营者审核",
+      "ar": "في انتظار المشغّل"
+    },
+    "waiting.note": {
+      "en": "The account exists. It is served once the operator approves it.",
+      "ru": "Аккаунт создан. Обслуживаться он начнёт после подтверждения оператором.",
+      "es": "La cuenta existe. Se servirá cuando el operador la apruebe.",
+      "zh": "账号已经存在，通过运营者审核后即可使用。",
+      "ar": "الحساب موجود، وسيُخدَم بعد موافقة المشغّل."
+    },
+    "facts.mailbox": {
+      "en": "Mailbox",
+      "ru": "Почтовый ящик",
+      "es": "Buzón",
+      "zh": "信箱",
+      "ar": "صندوق البريد"
+    },
+    "facts.devices": {
+      "en": "Devices",
+      "ru": "Устройства",
+      "es": "Dispositivos",
+      "zh": "设备",
+      "ar": "الأجهزة"
+    },
+    "descriptor.label": {
+      "en": "Server descriptor",
+      "ru": "Дескриптор сервера",
+      "es": "Descriptor del servidor",
+      "zh": "服务器描述符",
+      "ar": "واصف الخادم"
+    },
+    "descriptor.paste": {
+      "en": "Paste it into Bazarish App to connect this account here.",
+      "ru": "Вставьте его в приложение Bazarish, чтобы подключить этот аккаунт к серверу.",
+      "es": "Pégalo en la app de Bazarish para conectar esta cuenta aquí.",
+      "zh": "把它粘贴到 Bazarish 应用里，就能把这个账号连接到本服务器。",
+      "ar": "ألصقه في تطبيق Bazarish لربط هذا الحساب بهذا الخادم."
+    },
+    "delete.title": {
+      "en": "delete this account",
+      "ru": "удаление аккаунта",
+      "es": "eliminar esta cuenta",
+      "zh": "删除这个账号",
+      "ar": "حذف هذا الحساب"
+    },
+    "delete.warning": {
+      "en": "This cannot be undone. The mailbox and everything in it is dropped, and the address stops being served.",
+      "ru": "Отменить это нельзя. Почтовый ящик и всё его содержимое удаляются, а адрес перестаёт обслуживаться.",
+      "es": "Esto no se puede deshacer. El buzón y todo lo que contiene se borran, y la dirección deja de servirse.",
+      "zh": "此操作无法撤销。信箱及其中的全部内容都会被删除，该地址也不再被服务。",
+      "ar": "لا يمكن التراجع عن هذا. يُحذف صندوق البريد وكل ما فيه، ويتوقف تقديم الخدمة للعنوان."
+    },
+    "delete.note": {
+      "en": "Deleting drops the certificate, the mailbox and everything in it, and the address stops being served. The same key can register here again.",
+      "ru": "При удалении пропадают сертификат, почтовый ящик и всё его содержимое, а адрес перестаёт обслуживаться. Тот же ключ может зарегистрироваться здесь снова.",
+      "es": "Al eliminarla se pierden el certificado, el buzón y todo lo que contiene, y la dirección deja de servirse. La misma clave puede volver a registrarse aquí.",
+      "zh": "删除会丢弃证书、信箱及其中的全部内容，该地址也不再被服务。同一个密钥之后可以再次在此注册。",
+      "ar": "يؤدي الحذف إلى إسقاط الشهادة وصندوق البريد وكل ما فيه، ويتوقف تقديم الخدمة للعنوان. ويمكن للمفتاح نفسه التسجيل هنا من جديد."
+    },
+    "delete.do": {
+      "en": "Delete it",
+      "ru": "Удалить",
+      "es": "Eliminarla",
+      "zh": "删除",
+      "ar": "احذفه"
+    },
+    "delete.mine": {
+      "en": "Delete my account",
+      "ru": "Удалить мой аккаунт",
+      "es": "Eliminar mi cuenta",
+      "zh": "删除我的账号",
+      "ar": "حذف حسابي"
+    },
+    "delete.keep": {
+      "en": "Keep the account",
+      "ru": "Оставить аккаунт",
+      "es": "Conservar la cuenta",
+      "zh": "保留账号",
+      "ar": "الاحتفاظ بالحساب"
+    },
+    "delete.refused": {
+      "en": "This portal cannot delete accounts.",
+      "ru": "Этот портал не умеет удалять аккаунты.",
+      "es": "Este portal no puede eliminar cuentas.",
+      "zh": "本门户无法删除账号。",
+      "ar": "لا تستطيع هذه البوابة حذف الحسابات."
+    },
+    "facts.unknown": {
+      "en": "not known",
+      "ru": "неизвестно",
+      "es": "sin datos",
+      "zh": "未知",
+      "ar": "غير معروف"
+    }
+  }
+}

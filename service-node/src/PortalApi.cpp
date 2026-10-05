@@ -110,6 +110,7 @@ PortalApi::PortalApi(PortalApiOptions options, GrantStore& grants)
     : options_(std::move(options))
     , settings_(options_.settings)
     , assets_(options_.assetsDirectory)
+    , messages_(options_.assetsDirectory / "messages.json")
     , grants_(grants)
     , login_(options_.challengeSecret, settings_->get().loginConsumer)
     , session_(options_.sessionSecret, options_.sessionTtlSeconds)
@@ -280,6 +281,19 @@ void PortalApi::setupWebRoutes()
         });
     }
 
+    // The language switch. A visitor who clicks a language is sent back to the
+    // page they clicked it on, which is why the link carries where it came from:
+    // the cookie is the only state, and no script is involved in setting it.
+    http_->get("/lang/([a-z-]+)", [this](const http::Request& request) {
+        http::Response answer;
+        const std::string asked = request.captures.at(0);
+        if (messages_.knows(asked)) {
+            answer.headers["Set-Cookie"] = languageCookie(asked);
+        }
+        redirectTo(answer, sameSitePath(request.query("back")));
+        return answer;
+    });
+
     // The signed-in user, or empty for a visitor.
     const auto sessionUser = [this](const http::Request& request) -> std::string {
         try {
@@ -301,7 +315,7 @@ void PortalApi::setupWebRoutes()
             grants_.grantSubscription(user, settings().defaultQuotaBytes,
                 nowSeconds());
         }
-        sendHtml(response, homePage(user, std::string()));
+        sendHtml(response, homePage(request, user, std::string()));
     }));
 
     http_->post("/login", filled([this](const http::Request& request, http::Response& response) {
@@ -313,9 +327,7 @@ void PortalApi::setupWebRoutes()
         } catch (const std::exception& error) {
             bazarish::log::debug("portal sign-in refused: {}", error.what());
             sendHtml(response,
-                homePage(std::string(),
-                    "That signature did not check out. Sign the challenge below and paste the "
-                    "result again."),
+                homePage(request, std::string(), "{{t.signin.failed}}"),
                 401);
         }
     }));
@@ -337,13 +349,13 @@ void PortalApi::setupWebRoutes()
         }
         if (request.param("confirm") != "yes") {
             sendHtml(response,
-                page("Delete", assets_.render("session.html", {{"fingerprint", htmlEscape(user)}}),
+                page(request, "Delete", assets_.render("session.html", {{"fingerprint", htmlEscape(user)}}),
                     assets_.render("confirm-delete.html",
                         accountValues(user, grants_.peekSubscription(user)))));
             return;
         }
         if (!options_.deleteAccount) {
-            sendHtml(response, homePage(user, "This portal cannot delete accounts."), 503);
+            sendHtml(response, homePage(request, user, "{{t.delete.refused}}"), 503);
             return;
         }
         options_.deleteAccount(user);
@@ -352,16 +364,49 @@ void PortalApi::setupWebRoutes()
     }));
 }
 
-std::string PortalApi::page(
-    const std::string& title, const std::string& session, const std::string& content)
+std::string PortalApi::page(const http::Request& request, const std::string& title,
+    const std::string& session, const std::string& content)
 {
-    return assets_.render("page.html",
+    const std::string lang = language(request);
+    const std::string drawn = assets_.render("page.html",
         {
             {"title", htmlEscape(title)},
-            {"server", htmlEscape(options_.serverFingerprint)},
+            {"strapline",
+                htmlEscape(messages_.text(
+                    "page.strapline", lang, {options_.serverFingerprint}))},
             {"session", session},
             {"content", content},
+            {"lang", lang},
+            {"dir", messages_.language(lang).rightToLeft ? "rtl" : "ltr"},
+            {"switch", languageSwitch(lang, request.target)},
         });
+    // The words are chosen once, over the whole assembled page.
+    return messages_.translate(drawn, lang);
+}
+
+std::string PortalApi::language(const http::Request& request) const
+{
+    return messages_.codeFor(request.cookie("lang"));
+}
+
+// A disclosure holding one link per language: it opens, it is read by the
+// keyboard and it changes the language with a link, so nothing here needs a
+// script. Each link says where it came from, so a visitor lands back on the page
+// they were reading.
+std::string PortalApi::languageSwitch(const std::string& lang, const std::string& here) const
+{
+    std::string list;
+    for (const Language& language : messages_.languages()) {
+        const bool current = language.code == lang;
+        list += "      <li><a class=\"lang-one" + std::string(current ? " is-on" : "")
+            + "\" href=\"/lang/" + language.code + "?back=" + urlEncode(sameSitePath(here))
+            + "\"" + (current ? " aria-current=\"true\"" : "") + ">" + htmlEscape(language.name)
+            + "</a></li>\n";
+    }
+    return "  <details class=\"lang\">\n    <summary class=\"lang-now\" aria-label=\""
+        + htmlEscape(messages_.text("switch.title", lang)) + "\">"
+        + htmlEscape(messages_.language(lang).name) + "</summary>\n    <ul class=\"lang-list\">\n"
+        + list + "    </ul>\n  </details>\n";
 }
 
 std::map<std::string, std::string> PortalApi::accountValues(
@@ -379,8 +424,8 @@ std::map<std::string, std::string> PortalApi::accountValues(
         ? approval->message
         : values.registrationMessage;
 
-    std::string mailbox = "not known";
-    std::string devices = "not known";
+    std::string mailbox = "{{t.facts.unknown}}";
+    std::string devices = "{{t.facts.unknown}}";
     if (options_.accountUsage) {
         if (const std::optional<MailboxUsage> usage = options_.accountUsage(user);
             usage.has_value()) {
@@ -402,10 +447,11 @@ std::map<std::string, std::string> PortalApi::accountValues(
     };
 }
 
-std::string PortalApi::homePage(const std::string& user, const std::string& error)
+std::string PortalApi::homePage(
+    const http::Request& request, const std::string& user, const std::string& error)
 {
     if (user.empty()) {
-        return page("Sign in", std::string(),
+        return page(request, "Sign in", std::string(),
             assets_.render("signin.html",
                 {
                     {"challenge", htmlEscape(login().issue(nowSeconds()))},
@@ -417,7 +463,7 @@ std::string PortalApi::homePage(const std::string& user, const std::string& erro
         = assets_.render("session.html", {{"fingerprint", htmlEscape(user)}});
     // A refused key is told so and nothing else: no terms, no way in.
     if (const std::optional<GrantStore::Ban> ban = grants_.peekBan(user); ban.has_value()) {
-        return page("Refused", session,
+        return page(request, "Refused", session,
             assets_.render("banned.html", {{"message", htmlEscape(ban->reason)}}));
     }
 
@@ -427,9 +473,9 @@ std::string PortalApi::homePage(const std::string& user, const std::string& erro
     // is no third state to draw here.
     const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
     if (approval.has_value() && approval->pending()) {
-        return page("Waiting", session, assets_.render("waiting.html", account));
+        return page(request, "Waiting", session, assets_.render("waiting.html", account));
     }
-    return page("Registered", session,
+    return page(request, "Registered", session,
         assets_.render(settings().requireApproval ? "registered-approval.html" : "registered.html",
             account));
 }

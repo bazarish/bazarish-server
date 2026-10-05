@@ -1,16 +1,15 @@
   <section class="panel">
-    <h2 class="panel-title">delete this account</h2>
-    <p class="notice is-error">This cannot be undone. The mailbox and everything in it is dropped,
-      and the address stops being served.</p>
+    <h2 class="panel-title">{{t.delete.title}}</h2>
+    <p class="notice is-error">{{t.delete.warning}}</p>
     <ul class="facts">
-      <li><span>Mailbox</span>{{mailbox}}</li>
-      <li><span>Devices</span>{{devices}}</li>
+      <li><span>{{t.facts.mailbox}}</span>{{mailbox}}</li>
+      <li><span>{{t.facts.devices}}</span>{{devices}}</li>
     </ul>
     <div class="form-actions">
       <form class="inline" method="post" action="/delete">
         <input type="hidden" name="confirm" value="yes">
-        <button class="btn btn-danger" type="submit">Delete it</button>
+        <button class="btn btn-danger" type="submit">{{t.delete.do}}</button>
       </form>
-      <a class="btn btn-quiet" href="/">Keep the account</a>
+      <a class="btn btn-quiet" href="/">{{t.delete.keep}}</a>
     </div>
   </section>

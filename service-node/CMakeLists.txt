@@ -33,6 +33,7 @@ find_package(Threads REQUIRED)
 add_library(bazarish_service_lib STATIC
     src/SubscriptionStore.cpp
     src/AccountApi.cpp
+    src/Messages.cpp
     src/PortalApi.cpp
     src/GrantStore.cpp
     src/NodeSettings.cpp

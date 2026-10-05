@@ -70,6 +70,15 @@
     --bz-font: "Roboto Mono", ui-monospace, "DejaVu Sans Mono", SFMono-Regular, Menlo, monospace;
 }
 
+html[lang="zh"] {
+    --bz-font: "Noto Sans Mono CJK SC", "Sarasa Mono SC", "Microsoft YaHei", "PingFang SC",
+        ui-monospace, monospace;
+}
+
+html[lang="ar"] {
+    --bz-font: "Noto Sans Arabic", "Segoe UI", Tahoma, ui-monospace, monospace;
+}
+
 *,
 *::before,
 *::after {
@@ -571,7 +580,7 @@ a.btn {
     flex: 1 1 12rem;
     min-width: 0;
     padding: 0.55rem 0 0.55rem 0.7rem;
-    border-left: 2px solid var(--bz-line-2);
+    border-inline-start: 2px solid var(--bz-line-2);
     color: var(--bz-ink-dim);
     font-size: 0.8rem;
     overflow-wrap: anywhere;
@@ -734,4 +743,89 @@ body {
         outline: 2px solid;
         outline-offset: 2px;
     }
+}
+
+.lang {
+    position: relative;
+    align-self: flex-end;
+    margin-bottom: 0.4rem;
+    font-size: 0.75rem;
+}
+
+.lang-now {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-height: 2rem;
+    padding: 0 0.7rem;
+    background: var(--bz-surface);
+    border: 1px solid var(--bz-line-2);
+    border-radius: var(--bz-radius-sm);
+    color: var(--bz-ink-dim);
+    cursor: pointer;
+        list-style: none;
+}
+
+.lang-now::-webkit-details-marker {
+    display: none;
+}
+
+.lang-now::after {
+    content: "";
+    width: 0;
+    height: 0;
+    border-inline-start: 0.3rem solid transparent;
+    border-right: 0.3rem solid transparent;
+    border-top: 0.34rem solid currentColor;
+}
+
+.lang[open] .lang-now::after {
+    border-top: 0;
+    border-bottom: 0.34rem solid currentColor;
+}
+
+.lang-now:hover {
+    border-color: var(--bz-ink-faint);
+    color: var(--bz-ink);
+}
+
+.lang-now:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--bz-bg), 0 0 0 4px var(--bz-key);
+}
+
+.lang-list {
+    position: absolute;
+    inset-inline-end: 0;
+    z-index: 2;
+    min-width: 100%;
+    margin: 0.3rem 0 0;
+    padding: 0.3rem;
+    list-style: none;
+    background: var(--bz-surface-2);
+    border: 1px solid var(--bz-line-2);
+    border-radius: var(--bz-radius-sm);
+}
+
+.lang-one {
+    display: block;
+    padding: 0.4rem 0.7rem;
+    border-radius: var(--bz-radius-sm);
+    color: var(--bz-ink-dim);
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.lang-one:hover {
+    background: var(--bz-surface);
+    color: var(--bz-ink);
+}
+
+.lang-one.is-on {
+    color: var(--bz-key);
+}
+
+.lang-one:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--bz-surface-2), 0 0 0 4px var(--bz-key);
 }

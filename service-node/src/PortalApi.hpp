@@ -2,12 +2,14 @@
 #pragma once
 
 #include "GrantStore.hpp"
+#include "Messages.hpp"
 #include "NodeSettings.hpp"
 #include "OperatorPush.hpp"
 
 #include <bazarish/LoginChallenge.hpp>
 #include <bazarish/PortalSession.hpp>
-#include <bazarish/Restart.hpp>
+#include <Restart.hpp>
+
 #include <bazarish/WebAssets.hpp>
 
 #include <cstdint>
@@ -96,9 +98,14 @@ private:
     void setupWebRoutes();
     // The portal's one page, in whatever state the visitor is in. `error` is
     // shown on the step the visitor is standing on, empty when there is none.
-    std::string homePage(const std::string& user, const std::string& error);
+    std::string homePage(const bazarish::http::Request& request, const std::string& user,
+        const std::string& error);
+    // The language this request is answered in, and the switch that changes it.
+    std::string language(const bazarish::http::Request& request) const;
+    std::string languageSwitch(const std::string& lang, const std::string& here) const;
     // The page shell around one of the content templates.
-    std::string page(const std::string& title, const std::string& session,
+    std::string page(const bazarish::http::Request& request, const std::string& title,
+        const std::string& session,
         const std::string& content);
     // The values an account page fills in, whatever state the account is in.
     std::map<std::string, std::string> accountValues(const std::string& user,
@@ -114,6 +121,7 @@ private:
     PortalApiOptions options_;
     std::shared_ptr<NodeSettings> settings_;
     WebAssets assets_;
+    Messages messages_;
     GrantStore& grants_;
     LoginChallenge login_;
     PortalSession session_;

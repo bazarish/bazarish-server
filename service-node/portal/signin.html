@@ -1,15 +1,13 @@
   <section class="panel">
-    <h2 class="panel-title">sign in with your key</h2>
-    <p class="panel-note">Your Bazarish key signs you in here and at every other Bazarish
-      portal. The browser never receives it. Sign the challenge in Bazarish App under Signature
-      and paste the result back.</p>
+    <h2 class="panel-title">{{t.signin.title}}</h2>
+    <p class="panel-note">{{t.signin.note}}</p>
     {{error}}
-    <p class="field-label">Challenge</p>
+    <p class="field-label">{{t.signin.challenge}}</p>
     <pre class="copy">{{challenge}}</pre>
     <form method="post" action="/login">
       <input type="hidden" name="challenge" value="{{challenge}}">
-      <label class="field-label" for="blob">Signed blob</label>
+      <label class="field-label" for="blob">{{t.signin.blob}}</label>
       <textarea class="field" id="blob" name="blob" required autofocus></textarea>
-      <button class="btn" type="submit">Sign in</button>
+      <button class="btn" type="submit">{{t.signin.action}}</button>
     </form>
   </section>

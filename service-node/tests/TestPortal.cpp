@@ -244,6 +244,43 @@ void testWebFlow()
     // Signed out: the key step is the only one, and nothing is granted yet.
     CHECK(page.body.find("sign in with your key") != std::string::npos);
 
+    // --- the same page, in every language this face offers ---
+    //
+    // Nothing is asserted about the words themselves; what is asserted is that
+    // the page is drawn whole in each language, which a key nobody wrote a text
+    // for would break.
+    for (const char* const code : {"en", "ru", "es", "zh", "ar"}) {
+        const http::ClientResponse drawn
+            = call(port, "GET", "/", {{"Cookie", "lang=" + std::string(code)}});
+        CHECK(drawn.status == 200);
+        CHECK(drawn.body.find("{{t.") == std::string::npos);
+        CHECK(drawn.body.find("{{") == std::string::npos);
+        CHECK(drawn.body.find("lang=\"" + std::string(code) + "\"") != std::string::npos);
+        // Arabic is the one that reads the other way.
+        const std::string direction = std::string(code) == "ar" ? "rtl" : "ltr";
+        CHECK(drawn.body.find("dir=\"" + direction + "\"") != std::string::npos);
+        CHECK(drawn.body.find("class=\"lang-one is-on\"") != std::string::npos);
+    }
+    // A cookie naming a language this face does not serve is answered in the
+    // first one rather than refused.
+    const http::ClientResponse stranger = call(port, "GET", "/", {{"Cookie", "lang=de"}});
+    CHECK(stranger.status == 200);
+    CHECK(stranger.body.find("lang=\"en\"") != std::string::npos);
+
+    // Clicking a language leaves the cookie and comes back to the page it was
+    // clicked on, and is not a way to send somebody somewhere else.
+    const http::ClientResponse switched = call(port, "GET", "/lang/ru?back=%2Fportal%2Fme");
+    CHECK(switched.status == 303);
+    CHECK(switched.headers.at("location") == "/portal/me");
+    CHECK(switched.headers.at("set-cookie").find("lang=ru;") == 0);
+    const http::ClientResponse away
+        = call(port, "GET", "/lang/ru?back=https%3A%2F%2Fevil.example");
+    CHECK(away.status == 303);
+    CHECK(away.headers.at("location") == "/");
+    const http::ClientResponse unknown = call(port, "GET", "/lang/de?back=%2F");
+    CHECK(unknown.status == 303);
+    CHECK(unknown.headers.count("set-cookie") == 0);
+
     // The portal's own files are served beside the page.
     const http::ClientResponse style = call(port, "GET", "/style.css");
     CHECK(style.status == 200);

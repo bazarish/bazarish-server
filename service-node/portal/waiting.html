@@ -1,20 +1,19 @@
   <section class="panel">
-    <h2 class="panel-title">waiting for the operator</h2>
-    <p class="panel-note">The account exists. It is served once the operator approves it.</p>
+    <h2 class="panel-title">{{t.waiting.title}}</h2>
+    <p class="panel-note">{{t.waiting.note}}</p>
     {{message}}
     <ul class="facts">
-      <li><span>Mailbox</span>{{mailbox}}</li>
-      <li><span>Devices</span>{{devices}}</li>
+      <li><span>{{t.facts.mailbox}}</span>{{mailbox}}</li>
+      <li><span>{{t.facts.devices}}</span>{{devices}}</li>
     </ul>
-    <p class="field-label">Server descriptor</p>
+    <p class="field-label">{{t.descriptor.label}}</p>
     <pre class="copy">{{descriptor}}</pre>
-    <p class="panel-note">Paste it into Bazarish App to connect this account here.</p>
+    <p class="panel-note">{{t.descriptor.paste}}</p>
   </section>
   <section class="panel">
-    <h2 class="panel-title">delete this account</h2>
-    <p class="panel-note">Deleting drops the certificate, the mailbox and everything in it, and
-      the address stops being served. The same key can register here again.</p>
+    <h2 class="panel-title">{{t.delete.title}}</h2>
+    <p class="panel-note">{{t.delete.note}}</p>
     <form method="post" action="/delete">
-      <button class="btn btn-danger" type="submit">Delete my account</button>
+      <button class="btn btn-danger" type="submit">{{t.delete.mine}}</button>
     </form>
   </section>

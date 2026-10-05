@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{lang}}" dir="{{dir}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -9,17 +9,19 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<main class="screen">
+<div class="screen">
   <header class="masthead">
-    <img class="wordmark" src="logo.svg" alt="bazarish" width="404" height="76">
-    <p class="masthead-note">messaging server {{server}}</p>
+    <h1 class="masthead-title"><img class="wordmark" src="logo.svg" alt="bazarish"
+      width="404" height="76"></h1>
+    <p class="masthead-note">{{strapline}}</p>
   </header>
+{{switch}}
 {{session}}
-  <div class="view">
+  <main class="view">
 {{content}}
-  </div>
-  <footer class="colophon">A server of the Bazarish messenger. <a href="https://bazari.sh">bazari.sh</a></footer>
-</main>
+  </main>
+  <footer class="colophon">{{t.page.colophon}} <a href="https://bazari.sh">bazari.sh</a></footer>
+</div>
 <script src="portal.js" defer></script>
 </body>
 </html>

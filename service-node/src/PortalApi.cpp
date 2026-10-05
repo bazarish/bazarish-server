@@ -313,7 +313,7 @@ void PortalApi::setupWebRoutes()
         }
         if (request.param("confirm") != "yes") {
             sendHtml(response,
-                page(request, "Delete", assets_.render("session.html", {{"fingerprint", htmlEscape(user)}}),
+                page(request, "{{t.delete.title}}", assets_.render("session.html", {{"fingerprint", htmlEscape(user)}}),
                     assets_.render("confirm-delete.html",
                         accountValues(user, grants_.peekSubscription(user)))));
             return;
@@ -404,7 +404,7 @@ std::string PortalApi::homePage(
     const http::Request& request, const std::string& user, const std::string& error)
 {
     if (user.empty()) {
-        return page(request, "Sign in", std::string(),
+        return page(request, "{{t.signin.action}}", std::string(),
             assets_.render("signin.html",
                 {
                     {"challenge", htmlEscape(login().issue(nowSeconds()))},
@@ -415,7 +415,7 @@ std::string PortalApi::homePage(
     const std::string session
         = assets_.render("session.html", {{"fingerprint", htmlEscape(user)}});
     if (const std::optional<GrantStore::Ban> ban = grants_.peekBan(user); ban.has_value()) {
-        return page(request, "Refused", session,
+        return page(request, "{{t.banned.title}}", session,
             assets_.render("banned.html", {{"message", htmlEscape(ban->reason)}}));
     }
 
@@ -423,9 +423,9 @@ std::string PortalApi::homePage(
         = accountValues(user, grants_.peekSubscription(user));
     const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
     if (approval.has_value() && approval->pending()) {
-        return page(request, "Waiting", session, assets_.render("waiting.html", account));
+        return page(request, "{{t.waiting.title}}", session, assets_.render("waiting.html", account));
     }
-    return page(request, "Registered", session,
+    return page(request, "{{t.registered.title}}", session,
         assets_.render(settings().requireApproval ? "registered-approval.html" : "registered.html",
             account));
 }

@@ -5,7 +5,7 @@
 #include <bazarish/ConfigFile.hpp>
 #include <bazarish/I2p.hpp>
 #include <bazarish/Log.hpp>
-#include <bazarish/Restart.hpp>
+#include <Restart.hpp>
 
 #include <cstdio>
 #include <cstring>

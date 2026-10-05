@@ -13,7 +13,7 @@
 #include <bazarish/I2p.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/PrivateFile.hpp>
-#include <bazarish/Restart.hpp>
+#include <Restart.hpp>
 
 #include <bazarish/HttpClient.hpp>
 #include <nlohmann/json.hpp>

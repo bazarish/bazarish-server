@@ -19,6 +19,8 @@ add_subdirectory(${BAZARISH_COMMON_DIR} bazarish-common)
 
 enable_testing()
 
+add_subdirectory(shared)
+
 add_subdirectory(server-core)
 add_subdirectory(service-node)
 add_subdirectory(facade-http)

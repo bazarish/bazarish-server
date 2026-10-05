@@ -13,7 +13,7 @@
 #include <bazarish/Crypto.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/PrivateFile.hpp>
-#include <bazarish/Restart.hpp>
+#include <Restart.hpp>
 #include <bazarish/ServerDescriptor.hpp>
 
 #include <chrono>

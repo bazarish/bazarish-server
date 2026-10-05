@@ -10,7 +10,7 @@
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Clock.hpp>
 #include <bazarish/HttpServer.hpp>
-#include <bazarish/Restart.hpp>
+#include <Restart.hpp>
 
 #include <cstdint>
 #include <functional>

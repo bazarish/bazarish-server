@@ -6,7 +6,7 @@
 
 #include <bazarish/Bytes.hpp>
 #include <bazarish/I2p.hpp>
-#include <bazarish/Restart.hpp>
+#include <Restart.hpp>
 
 #include <atomic>
 #include <chrono>

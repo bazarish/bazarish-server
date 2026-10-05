@@ -19,6 +19,16 @@ if(NOT TARGET bazarish_common)
     add_subdirectory(${BAZARISH_COMMON_DIR} bazarish-common)
 endif()
 
+# What the servers here share and the client has no use for. Beside this
+# component when the whole repository is built, a sibling when it is not.
+if(NOT TARGET bazarish_server_shared)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/shared/CMakeLists.txt")
+        add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/shared bazarish-server-shared)
+    else()
+        add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../shared bazarish-server-shared)
+    endif()
+endif()
+
 find_package(Threads REQUIRED)
 
 add_library(bazarish_admin_lib STATIC
@@ -30,7 +40,7 @@ add_library(bazarish_admin_lib STATIC
     src/HttpApi.cpp
 )
 target_include_directories(bazarish_admin_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(bazarish_admin_lib PUBLIC Bazarish::Common Threads::Threads)
+target_link_libraries(bazarish_admin_lib PUBLIC Bazarish::Common Threads::Threads bazarish_server_shared)
 target_compile_options(bazarish_admin_lib PRIVATE -Wall -Wextra -Werror)
 
 add_executable(bazarish-admin-panel src/Main.cpp)

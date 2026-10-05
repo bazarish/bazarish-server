@@ -3,7 +3,7 @@
 #include "HttpApi.hpp"
 #include "PanelSettings.hpp"
 
-#include <bazarish/Restart.hpp>
+#include <Restart.hpp>
 
 #include <bazarish/Crypto.hpp>
 #include <bazarish/PrivateFile.hpp>

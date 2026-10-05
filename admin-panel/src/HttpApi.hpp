@@ -6,7 +6,7 @@
 #include "PanelSettings.hpp"
 #include "SessionStore.hpp"
 
-#include <bazarish/Restart.hpp>
+#include <Restart.hpp>
 #include <bazarish/WebAssets.hpp>
 
 #include <cstdint>

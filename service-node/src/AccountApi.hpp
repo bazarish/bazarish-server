@@ -9,7 +9,7 @@
 
 #include <bazarish/Auth.hpp>
 #include <bazarish/Bytes.hpp>
-#include <bazarish/Restart.hpp>
+#include <Restart.hpp>
 
 #include <cstdint>
 #include <functional>

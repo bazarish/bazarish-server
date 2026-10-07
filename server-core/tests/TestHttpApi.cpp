@@ -6,7 +6,7 @@
 
 #include <bazarish/Auth.hpp>
 #include <bazarish/Log.hpp>
-#include <bazarish/Cms.hpp>
+#include <bazarish/Hybrid.hpp>
 #include <bazarish/Limits.hpp>
 #include <bazarish/Pass.hpp>
 
@@ -74,7 +74,7 @@ Headers makeHeaders(const Identity& identity, const std::string& method,
 Bytes sealEnvelope(const Key& serverSealingPublic, const nlohmann::json& inner)
 {
     const std::string innerText = inner.dump();
-    return cms::seal(Bytes(innerText.begin(), innerText.end()), serverSealingPublic);
+    return hybrid::seal(Bytes(innerText.begin(), innerText.end()), serverSealingPublic);
 }
 
 }  // namespace
@@ -294,12 +294,12 @@ int main()
         const std::string inner = nlohmann::json{{"secret", toBase64(secret)},
             {"replyKey", toBase64(replyKey.publicDer())}}.dump();
         const std::string openBody = nlohmann::json{{"sealed",
-            toBase64(cms::seal(Bytes(inner.begin(), inner.end()), sealingPublic))}}.dump();
+            toBase64(hybrid::seal(Bytes(inner.begin(), inner.end()), sealingPublic))}}.dump();
 
         const http::ClientResponse opened = call(port, "POST", "/v1/auth/session",
             makeHeaders(alice, "POST", "/v1/auth/session", openBody, "alicedev"), openBody);
         CHECK(opened.status == 200);
-        const Bytes answer = cms::unseal(
+        const Bytes answer = hybrid::unseal(
             fromBase64(nlohmann::json::parse(opened.body).at("sealed").get<std::string>()),
             replyKey);
         const nlohmann::json term = nlohmann::json::parse(answer.begin(), answer.end());

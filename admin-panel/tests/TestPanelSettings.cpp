@@ -80,6 +80,7 @@ int main()
         const auth::Headers headers = auth::signRequest(owner, kNow, service::kLoginMethod,
             service::kLoginPath, Bytes(challenge.begin(), challenge.end()));
         const nlohmann::json blob = {{"k", headers.at(auth::kHeaderKeys)},
+            {"n", headers.at(auth::kHeaderNonce)},
             {"t", headers.at(auth::kHeaderTimestamp)},
             {"c", headers.at(auth::kHeaderSignatureClassical)},
             {"p", headers.at(auth::kHeaderSignaturePq)}};

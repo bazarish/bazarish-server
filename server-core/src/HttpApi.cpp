@@ -5,7 +5,7 @@
 
 #include <bazarish/Auth.hpp>
 #include <bazarish/Clock.hpp>
-#include <bazarish/Cms.hpp>
+#include <bazarish/Hybrid.hpp>
 #include <bazarish/ConfigFile.hpp>
 #include <bazarish/Crypto.hpp>
 #include <bazarish/Errors.hpp>
@@ -520,7 +520,7 @@ void HttpApi::setupRoutes()
             }
             const nlohmann::json body = nlohmann::json::parse(request.body);
             const Bytes opened
-                = cms::unseal(fromBase64(body.at("sealed").get<std::string>()), *assigned.servingKey);
+                = hybrid::unseal(fromBase64(body.at("sealed").get<std::string>()), *assigned.servingKey);
             const nlohmann::json inner = nlohmann::json::parse(opened.begin(), opened.end());
             const Bytes secret = fromBase64(inner.at("secret").get<std::string>());
             const Key replyKey
@@ -530,7 +530,7 @@ void HttpApi::setupRoutes()
             const nlohmann::json answer = {{"expiresUnix", expiresUnix}};
             const std::string answerText = answer.dump();
             return jsonResponse({{"sealed",
-                toBase64(cms::seal(Bytes(answerText.begin(), answerText.end()), replyKey))}});
+                toBase64(hybrid::seal(Bytes(answerText.begin(), answerText.end()), replyKey))}});
         }));
 
     http_->post("/v1/messaging/clients",

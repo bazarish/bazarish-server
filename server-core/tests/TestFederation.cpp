@@ -4,7 +4,7 @@
 #include "DeliveryEngine.hpp"
 #include "DiskStorage.hpp"
 
-#include <bazarish/Cms.hpp>
+#include <bazarish/Hybrid.hpp>
 #include <bazarish/Limits.hpp>
 #include <bazarish/Resolve.hpp>
 #include <bazarish/Pass.hpp>
@@ -95,7 +95,7 @@ Bytes makeSealed(const Key& sealingPublic, const std::string& kind,
         inner["pass"] = toBase64(pass);
     }
     const std::string text = inner.dump();
-    return cms::seal(Bytes(text.begin(), text.end()), sealingPublic);
+    return hybrid::seal(Bytes(text.begin(), text.end()), sealingPublic);
 }
 
 FederationDeliverResult roundTrip(DeliveryEngine& engine, const Bytes& sealed, const Bytes& payload,

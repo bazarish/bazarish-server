@@ -4,7 +4,6 @@
 #include <bazarish/Errors.hpp>
 #include <bazarish/Limits.hpp>
 
-#include <bazarish/Cms.hpp>
 #include <bazarish/Crypto.hpp>
 #include <bazarish/Resolve.hpp>
 

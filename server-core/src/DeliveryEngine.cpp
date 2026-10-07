@@ -4,7 +4,7 @@
 #include <bazarish/Log.hpp>
 
 #include <bazarish/Address.hpp>
-#include <bazarish/Cms.hpp>
+#include <bazarish/Hybrid.hpp>
 #include <bazarish/Errors.hpp>
 #include <bazarish/Limits.hpp>
 #include <bazarish/Pass.hpp>
@@ -61,7 +61,7 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
     std::string deliveryId;
     Bytes pass;
     try {
-        const Bytes plain = cms::unseal(sealed, sealingKey);
+        const Bytes plain = hybrid::unseal(sealed, sealingKey);
         const nlohmann::json inner = nlohmann::json::parse(plain.begin(), plain.end());
         deliveryClass = inner.at("class").get<std::string>();
         mailbox = inner.at("mailbox").get<std::string>();

@@ -6,7 +6,7 @@
 #include <bazarish/Auth.hpp>
 #include <bazarish/Certificates.hpp>
 #include <bazarish/Descriptor.hpp>
-#include <bazarish/Cms.hpp>
+#include <bazarish/Hybrid.hpp>
 #include <bazarish/Crypto.hpp>
 
 #include <bazarish/HttpClient.hpp>
@@ -137,7 +137,7 @@ int main()
     {
         const nlohmann::json forgedBody
             = {{"v", kCertificateFormatVersion}, {"user", alice.fingerprint()}};
-        const Bytes forged = cms::signJsonHybrid(forgedBody, mallory);
+        const Bytes forged = hybrid::signJson(forgedBody, mallory);
         const std::string body = nlohmann::json{{"card", toBase64(forged)}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
             makeHeaders(mallory, "POST", "/v1/account/card", body), body);

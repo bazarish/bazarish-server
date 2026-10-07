@@ -6,26 +6,22 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# The common library lives in a sibling repository inside the workspace.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/common/CMakeLists.txt")
-    set(_bazarish_common_default "${CMAKE_CURRENT_SOURCE_DIR}/common")
-else()
-    set(_bazarish_common_default "${CMAKE_CURRENT_SOURCE_DIR}/../common")
-endif()
-set(BAZARISH_COMMON_DIR "${_bazarish_common_default}" CACHE PATH
+# The common library is this repository's own submodule, named and not searched
+# for: a directory beside a component must not be able to take its place.
+get_filename_component(BAZARISH_SERVER_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
+set(BAZARISH_COMMON_DIR "${BAZARISH_SERVER_ROOT}/common" CACHE PATH
     "Path to the bazarish common library repository")
+if(NOT EXISTS "${BAZARISH_COMMON_DIR}/CMakeLists.txt")
+    message(FATAL_ERROR "no common library at ${BAZARISH_COMMON_DIR}"
+        " - run: git submodule update --init --recursive")
+endif()
 if(NOT TARGET bazarish_common)
     add_subdirectory(${BAZARISH_COMMON_DIR} bazarish-common)
 endif()
 
-# What the servers here share and the client has no use for. Beside this
-# component when the whole repository is built, a sibling when it is not.
+# What the servers here share and the client has no use for.
 if(NOT TARGET bazarish_server_shared)
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/shared/CMakeLists.txt")
-        add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/shared bazarish-server-shared)
-    else()
-        add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../shared bazarish-server-shared)
-    endif()
+    add_subdirectory(${BAZARISH_SERVER_ROOT}/shared bazarish-server-shared)
 endif()
 
 find_package(Threads REQUIRED)

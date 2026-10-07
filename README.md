@@ -2,7 +2,7 @@
 
 Every server-side component of Bazarish in one build tree. The protocol they
 implement is specified in the `docs-main` repository; the desktop client
-(`client-qt6`), the alias service (`alias-resolver`) and the shared library
+(`client-qt`), the alias service (`alias-resolver`) and the shared library
 (`common-cpp`) live in their own repositories.
 
 | Directory | Binary | Role |

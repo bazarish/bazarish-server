@@ -44,6 +44,27 @@
       "zh": "Bazarish 通讯工具的一台服务器。",
       "ar": "خادم من خوادم مرسال Bazarish."
     },
+    "copy.do": {
+      "en": "Copy",
+      "ru": "Копировать",
+      "es": "Copiar",
+      "zh": "复制",
+      "ar": "نسخ"
+    },
+    "copy.done": {
+      "en": "Copied",
+      "ru": "Скопировано",
+      "es": "Copiado",
+      "zh": "已复制",
+      "ar": "تم النسخ"
+    },
+    "copy.byhand": {
+      "en": "Select it and copy",
+      "ru": "Выделите и скопируйте",
+      "es": "Selecciónalo y cópialo",
+      "zh": "请手动选择并复制",
+      "ar": "حدّده وانسخه"
+    },
     "signin.title": {
       "en": "sign in with your key",
       "ru": "вход по ключу",

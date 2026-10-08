@@ -21,18 +21,19 @@
     }
 
     function addButton(block) {
+        var words = document.body.dataset;
         var button = document.createElement("button");
         button.type = "button";
         button.className = "btn btn-quiet btn-copy";
-        button.textContent = "Copy";
+        button.textContent = words.copyDo;
         button.addEventListener("click", function () {
             copy(block.textContent).then(function () {
-                button.textContent = "Copied";
+                button.textContent = words.copyDone;
             }, function () {
-                button.textContent = "Select it and copy";
+                button.textContent = words.copyByhand;
             }).then(function () {
                 window.setTimeout(function () {
-                    button.textContent = "Copy";
+                    button.textContent = words.copyDo;
                 }, kFeedbackMs);
             });
         });

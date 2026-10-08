@@ -11,11 +11,13 @@
 <body>
 <div class="screen">
   <header class="masthead">
-    <h1 class="masthead-title"><img class="wordmark" src="logo.svg" alt="bazarish"
-      width="404" height="76"></h1>
+    <div class="masthead-row">
+      <h1 class="masthead-title"><img class="wordmark" src="logo.svg" alt="bazarish"
+        width="404" height="76"></h1>
+{{switch}}
+    </div>
     <p class="masthead-note">{{strapline}}</p>
   </header>
-{{switch}}
 {{session}}
   <main class="view">
 {{content}}

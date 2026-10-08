@@ -31,11 +31,11 @@
       "ar": "اللغة"
     },
     "page.strapline": {
-      "en": "messaging server {0}",
-      "ru": "сервер сообщений {0}",
-      "es": "servidor de mensajería {0}",
-      "zh": "消息服务器 {0}",
-      "ar": "خادم رسائل {0}"
+      "en": "server {0}",
+      "ru": "сервер {0}",
+      "es": "servidor {0}",
+      "zh": "服务器 {0}",
+      "ar": "خادم {0}"
     },
     "page.colophon": {
       "en": "A server of the Bazarish messenger.",
@@ -52,11 +52,11 @@
       "ar": "الدخول بمفتاحك"
     },
     "signin.note": {
-      "en": "Your Bazarish key signs you in here and at every other Bazarish portal. The browser never receives it. Sign the challenge in Bazarish App under Signature and paste the result back.",
-      "ru": "Один и тот же ключ Bazarish открывает и этот кабинет, и любой другой портал Bazarish. В браузер он не попадает. Подпишите строку запроса в приложении Bazarish в разделе «Подпись» и вставьте результат сюда.",
-      "es": "Tu clave de Bazarish te identifica aquí y en cualquier otro portal de Bazarish, y el navegador nunca la recibe. Firma el desafío en la app de Bazarish, en «Firma», y pega el resultado aquí.",
-      "zh": "同一个 Bazarish 密钥可以登录这里和任何其他 Bazarish 门户，浏览器始终接触不到它。请在 Bazarish 应用的「签名」中签署下面的字符串，再把结果粘贴回来。",
-      "ar": "مفتاح Bazarish يعرّفك هنا وفي أي بوابة أخرى من بوابات Bazarish، ولا يصل إلى المتصفح أبدًا. وقّع النص أدناه في تطبيق Bazarish من قسم «التوقيع»، ثم ألصق الناتج هنا."
+      "en": "Sign the challenge in Bazarish App under Signature and paste the result back.",
+      "ru": "Подпишите строку запроса в приложении Bazarish в разделе «Подпись» и вставьте результат сюда.",
+      "es": "Firma el desafío en la app de Bazarish, en «Firma», y pega el resultado aquí.",
+      "zh": "请在 Bazarish 应用的「签名」中签署下面的字符串，再把结果粘贴回来。",
+      "ar": "وقّع النص أدناه في تطبيق Bazarish من قسم «التوقيع»، ثم ألصق الناتج هنا."
     },
     "signin.challenge": {
       "en": "Challenge",
@@ -80,11 +80,11 @@
       "ar": "تسجيل الدخول"
     },
     "signin.failed": {
-      "en": "That signature did not check out. Sign the challenge below and paste the result again.",
-      "ru": "Подпись не прошла проверку. Подпишите строку ниже и вставьте результат снова.",
-      "es": "Esa firma no cuadró. Firma el desafío de abajo y pega el resultado otra vez.",
-      "zh": "签名未通过验证。请重新签署下面的字符串，再把结果粘贴回来。",
-      "ar": "لم يُقبل هذا التوقيع. وقّع النص أدناه وألصق الناتج من جديد."
+      "en": "The signature did not verify, or the challenge had expired. Here is a fresh one.",
+      "ru": "Подпись не прошла проверку или строка для подписи устарела. Вот новая.",
+      "es": "La firma no se verificó o el desafío había caducado. Aquí tienes uno nuevo.",
+      "zh": "签名未通过验证，或待签名的字符串已过期。这是新的一条。",
+      "ar": "لم يُتحقق من التوقيع، أو انتهت صلاحية النص. وهذا نص جديد."
     },
     "session.signout": {
       "en": "Sign out",

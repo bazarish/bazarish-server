@@ -546,6 +546,20 @@ body {
     padding-bottom: 1.25rem;
 }
 
+.masthead-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.masthead-title {
+    margin: 0;
+    font-size: inherit;
+    font-weight: inherit;
+}
+
 .wordmark {
     display: block;
     height: 2rem;
@@ -649,8 +663,7 @@ body {
 
 .lang {
     position: relative;
-    align-self: flex-end;
-    margin-bottom: 0.4rem;
+    z-index: 3;
     font-size: 0.75rem;
 }
 

@@ -45,8 +45,6 @@ struct HttpApiOptions {
         std::int64_t expiresUnix)>
         provisionI2pDest;
     std::function<void(const std::string& user)> revokeI2pDest;
-    std::function<std::string(const std::string& user)> prepareServingKey;
-    std::function<bool(const std::string& user)> commitServingKey;
     AssignDestinationFn assignDestination;
 
     std::function<std::vector<Bytes>(std::size_t count)> reseedSample;

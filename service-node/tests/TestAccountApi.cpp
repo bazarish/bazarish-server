@@ -166,11 +166,8 @@ int main()
         CHECK(result.status == 200);
         CHECK(nlohmann::json::parse(result.body).at("quotaBytes") == kQuota);
 
-        const std::string view
-            = nlohmann::json::parse(result.body).at("view").get<std::string>();
-        CHECK(view.size() == bazarish::kViewCapabilityChars);
-        const http::ClientResponse looked = call(port, "GET",
-            "/v1/account/card?user=" + alice.fingerprint() + "&view=" + view);
+        const http::ClientResponse looked
+            = call(port, "GET", "/v1/account/card?user=" + alice.fingerprint());
         CHECK(looked.status == 200);
         const ContactCard fetched = ContactCard::verify(
             fromBase64(nlohmann::json::parse(looked.body).at("card").get<std::string>()));
@@ -194,8 +191,8 @@ int main()
                       makeHeaders(alice, "POST", "/v1/account/card", sameBody), sameBody)
                       .status
                 == 409);
-            const http::ClientResponse again = call(port, "GET",
-                "/v1/account/card?user=" + alice.fingerprint() + "&view=" + view);
+            const http::ClientResponse again
+                = call(port, "GET", "/v1/account/card?user=" + alice.fingerprint());
             CHECK(ContactCard::verify(fromBase64(
                       nlohmann::json::parse(again.body).at("card").get<std::string>()))
                       .dest
@@ -211,14 +208,9 @@ int main()
         }
         CHECK(fetched.sealingPublicKeyDer == sealing.publicDer());
 
-        const http::ClientResponse wrongKey = call(port, "GET",
-            "/v1/account/card?user=" + alice.fingerprint()
-                + "&view=ffffffffffffffffffffffffffffffff");
-        const http::ClientResponse unknown = call(port, "GET",
-            "/v1/account/card?user=" + mallory.fingerprint() + "&view=" + view);
-        CHECK(wrongKey.status == 404);
+        const http::ClientResponse unknown
+            = call(port, "GET", "/v1/account/card?user=" + mallory.fingerprint());
         CHECK(unknown.status == 404);
-        CHECK(wrongKey.body == unknown.body);
     }
 
     {

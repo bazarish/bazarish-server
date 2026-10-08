@@ -317,12 +317,6 @@ int main(const int argc, const char** argv)
     };
     options.forgetMailbox
         = [&promptPush](const std::string& user) { return promptPush.forgetMailbox(user); };
-    options.prepareServingKey = [&promptPush](const std::string& user) {
-        return promptPush.prepareServingKey(user);
-    };
-    options.commitServingKey = [&promptPush](const std::string& user) {
-        return promptPush.commitServingKey(user);
-    };
     options.publishQuota = [&promptPush](const std::string& user,
                                const std::uint64_t quotaBytes) {
         if (!promptPush.publishQuota(user, quotaBytes)) {

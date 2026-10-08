@@ -40,8 +40,6 @@ struct AccountApiOptions {
 
     std::function<void(const std::string& user, std::uint64_t quotaBytes)> publishQuota;
 
-    std::function<std::optional<std::string>(const std::string& user)> prepareServingKey;
-    std::function<bool(const std::string& user)> commitServingKey;
 
     std::shared_ptr<NodeSettings> settings;
 };

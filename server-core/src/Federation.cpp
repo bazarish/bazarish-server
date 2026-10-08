@@ -57,7 +57,7 @@ void federationServeFrame(const std::string& headerLine,
                     nlohmann::json({{"ok", false}, {"errorCode", "CARD_UNKNOWN"}}).dump());
                 return;
             }
-            const std::optional<Bytes> cardDer = getCard(query.fingerprint, query.view);
+            const std::optional<Bytes> cardDer = getCard(query.fingerprint);
             if (cardDer) {
                 writeReply(
                     nlohmann::json({{"ok", true}, {"sealed", toBase64(*cardDer)}}).dump());

@@ -28,7 +28,6 @@ constexpr int kFirstServerErrorStatus = 500;
 
 constexpr const char* kDestPath = "/v1/messaging/i2p-dest";
 constexpr const char* kQuotaPath = "/v1/messaging/quota";
-constexpr const char* kServingKeyPath = "/v1/messaging/serving-key";
 constexpr const char* kAccountPath = "/v1/messaging/account";
 
 }  // namespace
@@ -187,23 +186,6 @@ bool OperatorPush::publishQuota(const std::string& user, const std::uint64_t quo
 {
     const nlohmann::json body = {{"user", user}, {"quotaBytes", quotaBytes}};
     return put(kQuotaPath, body.dump());
-}
-
-std::optional<std::string> OperatorPush::prepareServingKey(const std::string& user) const
-{
-    const nlohmann::json body = {{"user", user}, {"phase", "prepare"}};
-    const std::optional<std::string> answer = putBody(kServingKeyPath, body.dump());
-    if (!answer.has_value()) {
-        return std::nullopt;
-    }
-    const nlohmann::json parsed = nlohmann::json::parse(*answer);
-    return parsed.at("servingKey").get<std::string>();
-}
-
-bool OperatorPush::commitServingKey(const std::string& user) const
-{
-    const nlohmann::json body = {{"user", user}, {"phase", "commit"}};
-    return put(kServingKeyPath, body.dump());
 }
 
 bool OperatorPush::publish(const std::string& user, const std::string& transientB64,

@@ -763,33 +763,9 @@ void HttpApi::setupRoutes()
             return jsonResponse({{"ok", true}});
         }));
 
-    http_->put("/v1/messaging/serving-key",
-        operatorOnly([this](const bazarish::http::Request& request) {
-            if (!options_.prepareServingKey || !options_.commitServingKey) {
-                return errorResponse(
-                    503, ErrorCode::eDeliveryRejected, "per-user destinations not available");
-            }
-            const nlohmann::json body = nlohmann::json::parse(request.body);
-            const std::string user = body.at("user").get<std::string>();
-            const std::string phase = body.at("phase").get<std::string>();
-            if (phase == "prepare") {
-                return jsonResponse({{"servingKey", options_.prepareServingKey(user)}});
-            }
-            if (phase == "commit") {
-                if (!options_.commitServingKey(user)) {
-                    return errorResponse(
-                        409, ErrorCode::eDeliveryRejected, "no prepared serving key for this user");
-                }
-                return jsonResponse({{"ok", true}});
-            }
-            return errorResponse(400, ErrorCode::eDeliveryRejected, "unknown phase");
-        }));
-
     for (const auto& [method, path] :
         std::vector<std::pair<const char*, const char*>>{
             {"POST", "/v1/account/card"},
-            {"POST", "/v1/account/serving-key"},
-            {"POST", "/v1/account/serving-key/commit"},
             {"POST", "/v1/account/registration"},
             {"DELETE", "/v1/account/registration"},
             {"GET", "/v1/account/portal"},

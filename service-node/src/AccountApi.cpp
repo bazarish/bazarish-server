@@ -686,9 +686,6 @@ void AccountApi::setupRoutes()
             record.quotaBytes = quota;
             record.dest = card.dest.empty() && held.has_value() ? held->dest : card.dest;
             record.delegatedAt = held.has_value() ? held->delegatedAt : 0;
-            record.view = held.has_value() && !held->view.empty()
-                ? held->view
-                : toHex(randomBytes(kViewCapabilityBytes));
             record.card = der;
             store_.putAccount(record);
             if (options_.publishQuota) {
@@ -702,7 +699,6 @@ void AccountApi::setupRoutes()
             respondJson(response,
                 {
                     {"quotaBytes", quota},
-                    {"view", record.view},
                     {"serverCard", toBase64(options_.serverCardDer)},
                     {"approval", pending ? "pending" : "approved"},
                     {"registrationMessage",
@@ -789,81 +785,9 @@ void AccountApi::setupRoutes()
                 });
         });
 
-    clientRoute("POST", "/v1/account/serving-key",
-        [this](const http::Request&, http::Response& response, const std::string& user) {
-            const std::optional<SubscriptionStore::Account> held = store_.getAccount(user);
-            if (!held.has_value()) {
-                respondError(response, 403, ErrorCode::eDeliveryRejected, "no account here");
-                return;
-            }
-            if (!options_.prepareServingKey) {
-                respondError(response, 503, ErrorCode::eDeliveryRejected,
-                    "the messaging server cannot rotate serving keys");
-                return;
-            }
-            const std::optional<std::string> prepared = options_.prepareServingKey(user);
-            if (!prepared.has_value()) {
-                respondError(response, 503, ErrorCode::eDeliveryRejected,
-                    "the messaging server did not prepare a key");
-                return;
-            }
-            SubscriptionStore::Account record = *held;
-            record.pendingServingKey = *prepared;
-            record.pendingView = toHex(randomBytes(kViewCapabilityBytes));
-            store_.putAccount(record);
-            respondJson(response,
-                {{"servingKey", record.pendingServingKey}, {"view", record.pendingView}});
-        });
-
-    clientRoute("POST", "/v1/account/serving-key/commit",
-        [this](const http::Request& request, http::Response& response,
-                          const std::string& user) {
-            const nlohmann::json body = nlohmann::json::parse(request.body);
-            const std::optional<SubscriptionStore::Account> held = store_.getAccount(user);
-            if (!held.has_value() || held->pendingServingKey.empty()) {
-                respondError(response, 409, ErrorCode::eDeliveryRejected,
-                    "no rotation is in progress");
-                return;
-            }
-            const Bytes der = fromBase64(body.at("card").get<std::string>());
-            ContactCard card;
-            try {
-                card = ContactCard::verify(der);
-            } catch (const std::exception& error) {
-                respondError(response, 400, ErrorCode::eDeliveryRejected,
-                    std::string("invalid contact card: ") + error.what());
-                return;
-            }
-            if (card.fingerprint() != user) {
-                respondError(response, 403, ErrorCode::eDeliveryRejected,
-                    "this card was signed by somebody else");
-                return;
-            }
-            if (toBase64(card.servingSealingKeyDer) != held->pendingServingKey) {
-                respondError(response, 400, ErrorCode::eDeliveryRejected,
-                    "the card does not carry the prepared serving key");
-                return;
-            }
-            SubscriptionStore::Account record = *held;
-            record.card = der;
-            record.dest = card.dest;
-            record.view = held->pendingView;
-            record.pendingView.clear();
-            record.pendingServingKey.clear();
-            store_.putAccount(record);
-            if (!options_.commitServingKey || !options_.commitServingKey(user)) {
-                store_.putAccount(*held);
-                respondError(response, 503, ErrorCode::eDeliveryRejected,
-                    "the messaging server did not take the new key - nothing was changed");
-                return;
-            }
-            respondJson(response, {{"ok", true}, {"view", record.view}});
-        });
-
     http_->get("/v1/account/card",
         filled([this](const http::Request& request, http::Response& response) {
             const std::string user = request.query("user");
-            const std::string view = request.query("view");
             std::optional<SubscriptionStore::Account> account;
             try {
                 account = user.empty() ? std::nullopt : store_.getAccount(user);
@@ -871,8 +795,7 @@ void AccountApi::setupRoutes()
                 bazarish::log::warn("account record of {} is unreadable: {}", log::redact(user),
                     error.what());
             }
-            const bool known = account.has_value() && !account->card.empty()
-                && !account->view.empty() && account->view == view;
+            const bool known = account.has_value() && !account->card.empty();
             if (!known) {
                 respondError(response, 404, ErrorCode::eClientUnregistered,
                     "that descriptor is out of date");

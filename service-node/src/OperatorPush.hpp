@@ -37,8 +37,6 @@ public:
 
     bool publishQuota(const std::string& user, std::uint64_t quotaBytes) const;
 
-    std::optional<std::string> prepareServingKey(const std::string& user) const;
-    bool commitServingKey(const std::string& user) const;
 
 private:
     std::optional<std::string> send(const std::string& method, const std::string& path,

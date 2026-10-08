@@ -43,14 +43,6 @@ nlohmann::json readRecord(const std::filesystem::path& path)
     return nlohmann::json::parse(text);
 }
 
-void rewriteRecord(
-    const std::filesystem::path& file, const std::function<void(nlohmann::json&)>& edit)
-{
-    nlohmann::json record = readRecord(file);
-    edit(record);
-    writePrivateFile(file, record.dump());
-}
-
 std::string addressOfTransient(const std::string& transientB64)
 {
     try {
@@ -395,38 +387,6 @@ std::size_t PerUserDestinations::sweepExpired(const std::int64_t now)
         }
     }
     return lapsed.size();
-}
-
-std::string PerUserDestinations::prepareServingKey(const std::string& userFp)
-{
-    const std::lock_guard<std::mutex> lock(mutex_);
-    const auto found = dests_.find(userFp);
-    if (found == dests_.end()) {
-        throw std::runtime_error("no destination to rotate a serving key for");
-    }
-    const std::string pem = Key::generateSealing().privatePem();
-    rewriteRecord(
-        pathFor(userFp), [&pem](nlohmann::json& record) { record["pendingSealingKey"] = pem; });
-    found->second->pendingSealingKey = std::make_shared<Key>(Key::fromPrivatePem(pem));
-    return toBase64(found->second->pendingSealingKey->publicDer());
-}
-
-bool PerUserDestinations::commitServingKey(const std::string& userFp)
-{
-    const std::lock_guard<std::mutex> lock(mutex_);
-    const auto found = dests_.find(userFp);
-    if (found == dests_.end() || !found->second->pendingSealingKey) {
-        return false;
-    }
-    const std::string pem = found->second->pendingSealingKey->privatePem();
-    rewriteRecord(pathFor(userFp), [&pem](nlohmann::json& record) {
-        record["sealingKey"] = pem;
-        record.erase("pendingSealingKey");
-    });
-    found->second->sealingKey = found->second->pendingSealingKey;
-    found->second->pendingSealingKey.reset();
-    bazarish::log::info("serving key rotated for {}", bazarish::log::redact(userFp));
-    return true;
 }
 
 void PerUserDestinations::startSweeper()

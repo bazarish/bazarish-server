@@ -53,8 +53,6 @@ public:
     };
     Assignment assignmentFor(const std::string& userFp, std::int64_t now) const;
 
-    std::string prepareServingKey(const std::string& userFp);
-    bool commitServingKey(const std::string& userFp);
 
 private:
     struct Destination {
@@ -64,7 +62,6 @@ private:
         std::string transientB64;
         std::int64_t expiresUnix = 0;
         std::shared_ptr<Key> sealingKey;
-        std::shared_ptr<Key> pendingSealingKey;
         std::shared_ptr<Key> signingKey;
         std::string dest;
         std::shared_ptr<bazarish::i2p::Endpoint> endpoint;

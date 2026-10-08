@@ -22,8 +22,7 @@
 namespace bazarish::server {
 
 // Looks up a local user's contact card (DER) for the federation card fetch.
-using GetCardFn = std::function<std::optional<Bytes>(
-    const std::string& fingerprint, const std::string& view)>;
+using GetCardFn = std::function<std::optional<Bytes>(const std::string& fingerprint)>;
 
 using SignAckFn = std::function<void(
     const std::string& deliveryId, Bytes& outSignerPublicDer, Bytes& outSignature)>;

@@ -26,9 +26,9 @@ is a service of its own and is not reached through here.
   says how long the current one lasts so any device knows when to issue the next;
   `undelegate` takes an account out of service without deleting it.
 - **The contact card.** `POST /v1/account/card` stores the user-signed card and
-  is what redeems a registration into an account; `serving-key` and
-  `serving-key/commit` rotate the per-user serving key, the node preparing and
-  the user signing, so a rotation that stops halfway changes nothing.
+  is what redeems a registration into an account. `GET /v1/account/card?user=`
+  hands it back to whoever reached this account's destination, which is the only
+  way in: the address itself is the secret.
 - **Quota.** This node grants it, stores it and pushes it to the messaging
   server, which would otherwise keep serving its own default.
 - **The operator's face**: listing and searching accounts, ban/unban, approve,

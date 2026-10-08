@@ -211,9 +211,9 @@ int main(const int argc, const char** argv)
                 std::map<std::string, std::pair<std::int64_t, bazarish::Bytes>> entries;
             };
             const auto cache = std::make_shared<CardCache>();
-            getCard = [serviceNodeUrl, cache](const std::string& fp,
-                          const std::string& view) -> std::optional<bazarish::Bytes> {
-                const std::string key = fp + "\n" + view;
+            getCard = [serviceNodeUrl, cache](
+                          const std::string& fp) -> std::optional<bazarish::Bytes> {
+                const std::string& key = fp;
                 const std::int64_t now = nowSeconds();
                 {
                     const std::lock_guard<std::mutex> lock(cache->mutex);
@@ -226,7 +226,7 @@ int main(const int argc, const char** argv)
                 const bazarish::http::Url node = bazarish::http::parseUrl(serviceNodeUrl);
                 bazarish::http::ClientRequest lookup;
                 lookup.method = "GET";
-                lookup.target = "/v1/account/card?user=" + fp + "&view=" + view;
+                lookup.target = "/v1/account/card?user=" + fp;
                 bazarish::http::ClientOptions options;
                 options.connectTimeout = std::chrono::seconds(kServiceNodeTimeoutSeconds);
                 options.readTimeout = std::chrono::seconds(kServiceNodeTimeoutSeconds);
@@ -306,12 +306,6 @@ int main(const int argc, const char** argv)
         };
         httpOptions.revokeI2pDest = [&perUserDests](const std::string& user) {
             perUserDests->revoke(user);
-        };
-        httpOptions.prepareServingKey = [&perUserDests](const std::string& user) {
-            return perUserDests->prepareServingKey(user);
-        };
-        httpOptions.commitServingKey = [&perUserDests](const std::string& user) {
-            return perUserDests->commitServingKey(user);
         };
     }
     bazarish::server::ServerSettings::Values settingValues;

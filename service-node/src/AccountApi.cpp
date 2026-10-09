@@ -642,8 +642,6 @@ void AccountApi::setupRoutes()
             handler(request, response, request.captures.at(0));
         };
     };
-    // The card lookup answers the messaging server and nobody else: it is a
-    // read of any registered user's contact card.
     const auto fromServer = [this](auto handler) {
         return [this, handler](const http::Request& request, http::Response& response) {
             try {

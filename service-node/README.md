@@ -35,8 +35,9 @@ is a service of its own and is not reached through here.
   way in: the address itself is the secret.
 - **Quota.** This node grants it, stores it and pushes it to the messaging
   server, which would otherwise keep serving its own default.
-- **The operator's face**: listing and searching accounts, ban/unban, approve,
-  live settings and a restart request - all signed with an operator identity, and
+- **The operator's face**: on a socket of its own (`opsListen`, TLS, answering
+  only the keys in `opsClients`): listing and searching accounts, ban/unban,
+  approve, live settings and a restart request - all signed with an identity, and
   what `admin-panel` drives.
 
 ## Build

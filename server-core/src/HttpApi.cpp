@@ -201,7 +201,6 @@ void HttpApi::expiredSweepLoop()
     constexpr std::chrono::seconds kSweepInterval{3600};
     while (!stopGate_.waitFor(kSweepInterval)) {
         try {
-            // Nothing can be replayed into a delegation that has already expired.
             storage_.purgeExpired(nowSeconds() - kMaxDelegationDays * kSecondsPerDay);
         } catch (const std::exception& error) {
             bazarish::log::warn("expiry sweep failed: {}", error.what());

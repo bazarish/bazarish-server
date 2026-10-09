@@ -37,6 +37,15 @@ in that service's `"operators"` list. There is no shared secret.
 The service node also signs its own quota and transient pushes, so server-core's
 list carries both the panel and the service node.
 
+The transport underneath is TLS both ways. Every service makes a certificate of
+its own on first start and prints the hash of its key; the panel is configured
+with that hash per service and accepts no other, and the service's operator
+socket accepts only the key the panel presents, which it prints the same way. A
+service URL that is not `https://`, or one with no key named, refuses to load.
+Nothing about who may call what moves into the certificates: that is still the
+signature and the `"operators"` list. What the certificates add is that the two
+sockets know each other, which is what lets them be on different machines.
+
 ## What it shows
 
 A sidebar with two views, drawn by a small script from the panel's own JSON API:
@@ -52,13 +61,13 @@ The sign-in page needs no JavaScript, so a fleet that is entirely down can still
 be logged into. The panel's web files live where the config's `assets` points (`web/` in this
 repository) - edit them to restyle the panel, then restart it.
 
-The panel is a co-located operations tool. It reaches services on their private
-listen addresses; `/healthz` and the operator endpoints are not exposed through
-the facade or over I2P. Everything the facade answers for an operator - health,
-settings, restart - is on the private socket its `opsListen` opens, never on its
-client-facing one, where any of it would admit a facade is there to a caller who
-does not know the secret base path. So the panel is configured with that ops
-address, not with the published facade URL.
+Every service keeps the operator's endpoints on a socket of its own, the one
+its `opsListen` opens, and the panel is configured with that address rather than
+the one clients reach. Nothing an operator asks for is on a client-facing socket:
+on the facade any of it would admit a facade is there to a caller who does not
+know the secret base path, and the same reasoning holds for the rest. Because
+the link is pinned TLS in both directions, those sockets do not have to be on
+this host - a fleet can sit on several machines without a tunnel between them.
 
 ## Configuration
 

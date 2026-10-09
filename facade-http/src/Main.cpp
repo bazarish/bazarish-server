@@ -69,6 +69,8 @@ int main(const int argc, const char** argv)
     const bazarish::ConfigView::Endpoint listen = config.endpoint("listen").value_or(
         bazarish::ConfigView::Endpoint{kDefaultHost, kDefaultPort});
     const std::optional<bazarish::ConfigView::Endpoint> ops = config.endpoint("opsListen");
+    const std::optional<bazarish::ConfigView::Endpoint> direct
+        = config.endpoint("directListen");
     const bool servePublicRoot = config.flag("public", false);
     const bool enableI2p = config.flag("i2p.enabled", false);
     const std::filesystem::path stateDir(config.text("state"));
@@ -183,6 +185,15 @@ int main(const int argc, const char** argv)
             return 1;
         }
         bazarish::log::info("ops listening on {}:{}", ops->host, ops->port);
+    }
+
+    if (direct.has_value()) {
+        if (facade.bindDirect(direct->host, direct->port) <= 0) {
+            bazarish::log::error(
+                "failed to listen on {}:{} (direct)", direct->host, direct->port);
+            return 1;
+        }
+        bazarish::log::info("direct listening on {}:{}", direct->host, direct->port);
     }
 
     bazarish::log::info("listening on {}:{}{}", listen.host, listen.port,

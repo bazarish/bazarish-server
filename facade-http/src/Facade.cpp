@@ -115,11 +115,29 @@ int Facade::bind(const std::string& host, const int port)
     options.port = port;
     options.readTimeout = std::chrono::seconds(kUpstreamTimeoutSeconds + kFrontReadSlackSeconds);
     http_ = std::make_unique<bazarish::http::Server>(options);
-    setupRoutes();
+    setupRoutes(*http_);
     try {
         return http_->start();
     } catch (const std::exception& error) {
         bazarish::log::error("facade cannot listen on {}:{}: {}", host, port, error.what());
+        return 0;
+    }
+}
+
+int Facade::bindDirect(const std::string& host, const int port)
+{
+    bazarish::http::Server::Options options;
+    options.host = host;
+    options.port = port;
+    options.readTimeout = std::chrono::seconds(kUpstreamTimeoutSeconds + kFrontReadSlackSeconds);
+    options.certificate = options_.tlsCertificate;
+    options.key = options_.tlsKey;
+    direct_ = std::make_unique<bazarish::http::Server>(options);
+    setupRoutes(*direct_);
+    try {
+        return direct_->start();
+    } catch (const std::exception& error) {
+        bazarish::log::error("cannot listen on {}:{}: {}", host, port, error.what());
         return 0;
     }
 }
@@ -154,14 +172,17 @@ void Facade::stop()
     if (http_) {
         http_->stop();
     }
+    if (direct_) {
+        direct_->stop();
+    }
     if (ops_) {
         ops_->stop();
     }
 }
 
-void Facade::setupRoutes()
+void Facade::setupRoutes(bazarish::http::Server& server)
 {
-    const auto handler = [this](const bazarish::http::Request& request,
+    const auto handler = [this, &server](const bazarish::http::Request& request,
                              bazarish::http::Responder respond)
         -> std::optional<bazarish::http::Response> {
         load_.record(nowSeconds());
@@ -181,8 +202,8 @@ void Facade::setupRoutes()
         }
 
         boost::asio::co_spawn(
-            http_->executor(),
-            [executor = http_->executor(), host = options_.messagingHost,
+            server.executor(),
+            [executor = server.executor(), host = options_.messagingHost,
                 port = options_.messagingPort, pin = options_.messagingPin,
                 forwarded = std::move(forwarded), respond,
                 inFlight]() -> boost::asio::awaitable<void> {
@@ -201,7 +222,7 @@ void Facade::setupRoutes()
     };
 
     for (const char* const method : {"GET", "POST", "PUT", "DELETE"}) {
-        http_->routeAsync(method, "(.*)", handler);
+        server.routeAsync(method, "(.*)", handler);
     }
 }
 

@@ -25,9 +25,6 @@ struct FacadeOptions {
     std::string stateDirectory;
     std::string version;
     std::vector<std::string> operatorFingerprints;
-
-    // The certificate this facade presents on both sockets, and the key allowed
-    // to open the operator's one: the admin panel.
     std::string tlsCertificate;
     std::string tlsKey;
     std::vector<std::string> opsClientPins;
@@ -43,17 +40,19 @@ public:
 
     int bind(const std::string& host, int port);
     int bindOps(const std::string& host, int port);
+    int bindDirect(const std::string& host, int port);
 
     void wait();
     void stop();
 
 private:
-    void setupRoutes();
+    void setupRoutes(bazarish::http::Server& server);
     void setupOpsRoutes();
 
     const FacadeOptions options_;
     std::unique_ptr<bazarish::http::Server> http_;
     std::unique_ptr<bazarish::http::Server> ops_;
+    std::unique_ptr<bazarish::http::Server> direct_;
     Load load_;
     bazarish::StopGate stopGate_;
     std::int64_t startedAt_ = 0;

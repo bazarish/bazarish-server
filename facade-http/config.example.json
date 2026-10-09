@@ -3,6 +3,10 @@
   // fronting proxy owns the secret, in which case set "public": true instead.
   "basePath": "/REPLACE_WITH_A_SECRET_PATH",
   "listen": {"host": "0.0.0.0", "port": 8419},
+  // A TLS socket carrying exactly what the I2P destination carries, for a
+  // gateway the operator has given a route to this address. Left out, the only
+  // way in is the destination.
+  "directListen": {"host": "0.0.0.0", "port": 8418},
   // A private socket serving the operator-signed health, settings and restart
   // for the admin panel. Never published to clients.
   "opsListen": {"host": "127.0.0.1", "port": 8429},

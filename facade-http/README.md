@@ -54,4 +54,16 @@ facade under a secret URI of its own; the facade refuses to start with neither.
 `opsListen` opens a second, private socket carrying everything that is the
 operator's: the signed `/healthz`, `GET`/`PUT /settings` and `POST /restart`. It is
 never published to clients - on the public socket any of it would admit a facade
-is here to a caller who does not know the secret base path.
+is here to a caller who does not know the secret base path. It speaks TLS and
+answers only the key the admin panel presents, named in `opsClients`; the facade
+makes its own certificate in `state` on first start and prints the hash of its
+key, which is what the panel is configured with.
+
+`directListen` opens a third socket serving exactly what the I2P destination
+serves, over TLS with the same certificate. It is for a gateway the same
+operator runs: given a route, that gateway dials this address instead of the
+destination, and the flow does not enter I2P. Left out, the destination is the
+only way in.
+
+The backend is reached over TLS as well, pinned by the key the messaging server
+prints: `"messaging": {"host": ..., "port": ..., "pin": ...}`.

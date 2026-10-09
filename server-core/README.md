@@ -19,7 +19,8 @@ sealed to the server's sealing key.
   envelope alone, whoever dialled.
 - **Storage** - per-user client registry, the passes an account has issued, and
   pending blobs. Content is deleted as soon as every registered client has acked
-  it, with a retention backstop for mail no device ever collected.
+  it, and otherwise when the account goes: a mailbox nobody collects is the
+  client's business, and the quota is what bounds it.
 - **HTTP API** - one route a facade can see: the sealed tunnel every client
   request travels inside, carrying `/v1/messaging/*` (client registry, passes and
   their revocation, pending fetch/ack, the write a device makes into its own

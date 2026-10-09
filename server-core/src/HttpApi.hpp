@@ -55,8 +55,6 @@ struct HttpApiOptions {
     Bytes serverCardDer;
     std::string serviceNodeUrl;
     std::string serviceNodePin;
-    // The certificate this server presents on both its sockets, and the keys
-    // allowed to open the operator's one: the admin panel and the service node.
     std::string tlsCertificate;
     std::string tlsKey;
     std::vector<std::string> opsClientPins;

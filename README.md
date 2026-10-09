@@ -14,9 +14,11 @@ implement is specified in the `docs-main` repository; the desktop client
 | `common` | - | submodule of `common-cpp`: crypto, I2P transport, embedded i2pd |
 
 The components stay separate processes and separate deployment units - a facade
-compromise still must not reach the server. Sharing a repository only removes the
-per-component submodule bump and the per-component rebuild of the embedded I2P
-router.
+compromise still must not reach the server. They reach each other over TLS,
+pinned by the key each one prints when it starts, so a fleet can be spread over
+several machines without a tunnel between them. Sharing a repository only
+removes the per-component submodule bump and the per-component rebuild of the
+embedded I2P router.
 
 Every component takes exactly one flag: `--config <path>`. Values live in that
 file (JSON, comments allowed) rather than in unit files, so nothing is settable

@@ -43,9 +43,6 @@ struct AccountApiOptions {
 
 
     std::shared_ptr<NodeSettings> settings;
-
-    // The certificate this node presents, and the keys allowed to open the
-    // operator's socket: the admin panel.
     std::string tlsCertificate;
     std::string tlsKey;
     std::vector<std::string> opsClientPins;

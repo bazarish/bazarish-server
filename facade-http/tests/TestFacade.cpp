@@ -46,6 +46,23 @@ http::ClientResponse call(const int port, const std::string& method, const std::
     return http::request("127.0.0.1", port, request, {});
 }
 
+http::ClientResponse callTls(const int port, const std::string& pin, const std::string& method,
+    const std::string& path, const Headers& headers = {}, const std::string& body = {})
+{
+    http::ClientRequest request;
+    request.method = method;
+    request.target = path;
+    request.headers = headers;
+    request.body = body;
+    if (!body.empty()) {
+        request.contentType = "application/json";
+    }
+    http::ClientOptions options;
+    options.tls = true;
+    options.pin = pin;
+    return http::request("127.0.0.1", port, request, options);
+}
+
 void installBackend(http::Server& server, const std::string& name)
 {
     const http::Handler echo = [name](const http::Request& request) {
@@ -153,11 +170,29 @@ int main()
     options.settings = facadeSettings;
     const bazarish::Identity operatorIdentity = bazarish::Identity::generate();
     options.operatorFingerprints = {operatorIdentity.fingerprint()};
+    const std::filesystem::path facadeState
+        = std::filesystem::temp_directory_path() / "bazarish-facade-test-own";
+    const bazarish::tls::Credential facadeCredential = bazarish::tls::selfSigned(facadeState);
+    options.tlsCertificate = facadeCredential.certificate.string();
+    options.tlsKey = facadeCredential.key.string();
     bazarish::facade::Facade facade(options);
     const int facadePort = facade.bind("127.0.0.1", 0);
     CHECK(facadePort > 0);
     const int opsPort = facade.bindOps("127.0.0.1", 0);
     CHECK(opsPort > 0);
+    const int directPort = facade.bindDirect("127.0.0.1", 0);
+    CHECK(directPort > 0);
+
+    {
+        const std::string sealed = "opaque-frame-bytes";
+        const http::ClientResponse direct
+            = callTls(directPort, facadeCredential.pin, "POST", "/s/secret123/t", {}, sealed);
+        CHECK(direct.status == 200);
+        CHECK(nlohmann::json::parse(direct.body).at("backend") == "messaging");
+        CHECK(callTls(directPort, facadeCredential.pin, "GET", "/s/secret123/nowhere").status
+            == 404);
+        CHECK(call(directPort, "POST", "/s/secret123/t", {}, sealed).status == 0);
+    }
 
     {
         const std::string sealed = "opaque-frame-bytes";
@@ -243,18 +278,18 @@ int main()
     }
 
     {
-        const http::ClientResponse unauthenticated = call(opsPort, "GET", "/healthz");
+        const http::ClientResponse unauthenticated = callTls(opsPort, facadeCredential.pin, "GET", "/healthz");
         CHECK(unauthenticated.status == 403);
-        const http::ClientResponse proxied = call(opsPort, "GET", "/s/secret123/v1/messaging/self");
+        const http::ClientResponse proxied = callTls(opsPort, facadeCredential.pin, "GET", "/s/secret123/v1/messaging/self");
         CHECK(proxied.status == 404);
     }
 
     {
         const std::string path = "/settings";
-        CHECK(call(opsPort, "GET", path).status == 403);
+        CHECK(callTls(opsPort, facadeCredential.pin, "GET", path).status == 403);
 
         const http::ClientResponse shown
-            = call(opsPort, "GET", path, signedHeaders(operatorIdentity, "GET", path, {}));
+            = callTls(opsPort, facadeCredential.pin, "GET", path, signedHeaders(operatorIdentity, "GET", path, {}));
         CHECK(shown.status == 200);
         const nlohmann::json values = nlohmann::json::parse(shown.body);
         CHECK(values.at("basePath").get<std::string>() == "/s/secret123");
@@ -262,7 +297,7 @@ int main()
 
         const std::string body
             = nlohmann::json{{"basePath", "/s/secret456"}, {"i2pTunnelQuantity", 8}}.dump();
-        CHECK(call(opsPort, "PUT", path, signedHeaders(operatorIdentity, "PUT", path, body), body)
+        CHECK(callTls(opsPort, facadeCredential.pin, "PUT", path, signedHeaders(operatorIdentity, "PUT", path, body), body)
                   .status
             == 200);
         CHECK(facadeSettings->get().basePath == "/s/secret456");
@@ -273,7 +308,7 @@ int main()
         CHECK(onDisk.at("i2p").at("tunnelQuantity").get<int>() == 8);
 
         const std::string bad = nlohmann::json{{"basePath", "secret/"}}.dump();
-        CHECK(call(opsPort, "PUT", path, signedHeaders(operatorIdentity, "PUT", path, bad), bad)
+        CHECK(callTls(opsPort, facadeCredential.pin, "PUT", path, signedHeaders(operatorIdentity, "PUT", path, bad), bad)
                   .status
             == 400);
         CHECK(facadeSettings->get().basePath == "/s/secret456");
@@ -282,7 +317,7 @@ int main()
         CHECK(call(facadePort, "GET", "/s/secret123/settings").status != 200);
 
         const std::string restart = "/restart";
-        CHECK(call(opsPort, "POST", restart,
+        CHECK(callTls(opsPort, facadeCredential.pin, "POST", restart,
                   signedHeaders(operatorIdentity, "POST", restart, {}))
                   .status
             == 503);

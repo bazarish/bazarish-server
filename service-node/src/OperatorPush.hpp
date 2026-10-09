@@ -29,8 +29,14 @@ public:
     static constexpr int kBackgroundAttempts = 3;
     static constexpr int kPromptAttempts = 1;
 
-    OperatorPush(std::string baseUrl, std::string pin, const Identity& signer,
-        int attempts = kBackgroundAttempts);
+    struct Dial {
+        std::string url;
+        std::string pin;
+        std::string certificate;
+        std::string key;
+    };
+
+    OperatorPush(Dial backend, const Identity& signer, int attempts = kBackgroundAttempts);
 
     bool waitReachable(std::chrono::seconds budget) const;
 
@@ -49,8 +55,7 @@ private:
     std::optional<std::string> putBody(const std::string& path, const std::string& bodyText) const;
     bool put(const std::string& path, const std::string& bodyText) const;
 
-    std::string baseUrl_;
-    std::string pin_;
+    Dial backend_;
     const Identity& signer_;
     const int attempts_;
 };

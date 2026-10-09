@@ -290,10 +290,10 @@ int main(const int argc, const char** argv)
     bazarish::service::GrantStore grants(stateDir / "store");
     const std::string messagingUrl = "https://" + nodeConfig.messaging.host + ":"
         + std::to_string(nodeConfig.messaging.port);
-    const bazarish::service::OperatorPush operatorPush(
-        messagingUrl, nodeConfig.messagingPin, nodeIdentity);
-    const bazarish::service::OperatorPush promptPush(messagingUrl, nodeConfig.messagingPin,
-        nodeIdentity,
+    const bazarish::service::OperatorPush::Dial backend{messagingUrl, nodeConfig.messagingPin,
+        credential.certificate.string(), credential.key.string()};
+    const bazarish::service::OperatorPush operatorPush(backend, nodeIdentity);
+    const bazarish::service::OperatorPush promptPush(backend, nodeIdentity,
         bazarish::service::OperatorPush::kPromptAttempts);
 
     if (nodeConfig.allowFacadeWithoutI2pForDevPurposes) {

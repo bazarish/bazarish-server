@@ -32,10 +32,8 @@ constexpr const char* kAccountPath = "/v1/messaging/account";
 
 }  // namespace
 
-OperatorPush::OperatorPush(std::string baseUrl, std::string pin, const Identity& signer,
-    const int attempts)
-    : baseUrl_(std::move(baseUrl))
-    , pin_(std::move(pin))
+OperatorPush::OperatorPush(Dial backend, const Identity& signer, const int attempts)
+    : backend_(std::move(backend))
     , signer_(signer)
     , attempts_(attempts)
 {
@@ -43,7 +41,7 @@ OperatorPush::OperatorPush(std::string baseUrl, std::string pin, const Identity&
 
 bool OperatorPush::waitReachable(const std::chrono::seconds budget) const
 {
-    if (baseUrl_.empty()) {
+    if (backend_.url.empty()) {
         return false;
     }
     const std::chrono::steady_clock::time_point deadline
@@ -52,13 +50,15 @@ bool OperatorPush::waitReachable(const std::chrono::seconds budget) const
     std::string lastError;
     while (true) {
         try {
-            const bazarish::http::Url target = bazarish::http::parseUrl(baseUrl_);
+            const bazarish::http::Url target = bazarish::http::parseUrl(backend_.url);
             bazarish::http::ClientRequest ask;
             ask.method = "GET";
             ask.target = "/healthz";
             bazarish::http::ClientOptions options;
             options.tls = target.tls;
-            options.pin = pin_;
+            options.pin = backend_.pin;
+            options.certificate = backend_.certificate;
+            options.key = backend_.key;
             options.connectTimeout = std::chrono::seconds(kConnectTimeoutSeconds);
             options.readTimeout = std::chrono::seconds(kReadTimeoutSeconds);
             const bazarish::http::ClientResponse response
@@ -76,11 +76,11 @@ bool OperatorPush::waitReachable(const std::chrono::seconds budget) const
         if (std::chrono::steady_clock::now() >= deadline) {
             bazarish::log::warn("the messaging server at {} is not answering ({}); what this "
                                 "node has for it will be pushed when it is",
-                baseUrl_, lastError.empty() ? std::string("no answer") : lastError);
+                backend_.url, lastError.empty() ? std::string("no answer") : lastError);
             return false;
         }
         if (!waited) {
-            bazarish::log::info("waiting for the messaging server at {}", baseUrl_);
+            bazarish::log::info("waiting for the messaging server at {}", backend_.url);
             waited = true;
         }
         std::this_thread::sleep_for(std::chrono::seconds(kReadyPollSeconds));
@@ -90,11 +90,11 @@ bool OperatorPush::waitReachable(const std::chrono::seconds budget) const
 std::optional<MailboxUsage> OperatorPush::accountUsage(
     const std::string& user) const
 {
-    if (baseUrl_.empty()) {
+    if (backend_.url.empty()) {
         return std::nullopt;
     }
     const std::string path = "/v1/messaging/account";
-    const bazarish::http::Url target = bazarish::http::parseUrl(baseUrl_);
+    const bazarish::http::Url target = bazarish::http::parseUrl(backend_.url);
     const auth::Headers signature = auth::signRequest(
         signer_, static_cast<std::int64_t>(std::time(nullptr)), "GET", path, Bytes());
     bazarish::http::ClientRequest ask;
@@ -103,7 +103,9 @@ std::optional<MailboxUsage> OperatorPush::accountUsage(
     ask.headers = std::map<std::string, std::string>(signature.begin(), signature.end());
     bazarish::http::ClientOptions options;
     options.tls = target.tls;
-    options.pin = pin_;
+    options.pin = backend_.pin;
+    options.certificate = backend_.certificate;
+    options.key = backend_.key;
     options.connectTimeout = std::chrono::seconds(kConnectTimeoutSeconds);
     options.readTimeout = std::chrono::seconds(kReadTimeoutSeconds);
     const bazarish::http::ClientResponse response
@@ -146,12 +148,12 @@ bool OperatorPush::forgetMailbox(const std::string& user) const
 std::optional<std::string> OperatorPush::send(const std::string& method, const std::string& path,
     const std::string& target, const std::string& bodyText) const
 {
-    if (baseUrl_.empty()) {
+    if (backend_.url.empty()) {
         return std::nullopt;
     }
     for (int attempt = 1; attempt <= attempts_; ++attempt) {
         try {
-            const bazarish::http::Url backend = bazarish::http::parseUrl(baseUrl_);
+            const bazarish::http::Url backend = bazarish::http::parseUrl(backend_.url);
             const auth::Headers signature = auth::signRequest(signer_,
                 static_cast<std::int64_t>(std::time(nullptr)), method, path,
                 Bytes(bodyText.begin(), bodyText.end()));
@@ -163,7 +165,9 @@ std::optional<std::string> OperatorPush::send(const std::string& method, const s
             push.contentType = "application/json";
             bazarish::http::ClientOptions options;
             options.tls = backend.tls;
-            options.pin = pin_;
+            options.pin = backend_.pin;
+            options.certificate = backend_.certificate;
+            options.key = backend_.key;
             options.connectTimeout = std::chrono::seconds(kConnectTimeoutSeconds);
             options.readTimeout = std::chrono::seconds(kReadTimeoutSeconds);
             const bazarish::http::ClientResponse response
@@ -172,15 +176,15 @@ std::optional<std::string> OperatorPush::send(const std::string& method, const s
                 return response.body;
             }
             if (response.status > 0 && response.status < kFirstServerErrorStatus) {
-                bazarish::log::warn("operator push to {}{} refused with {}: {}", baseUrl_, path,
+                bazarish::log::warn("operator push to {}{} refused with {}: {}", backend_.url, path,
                     response.status, response.body);
                 return std::nullopt;
             }
-            bazarish::log::warn("operator push to {}{} did not land (attempt {}/{}): {}", baseUrl_,
+            bazarish::log::warn("operator push to {}{} did not land (attempt {}/{}): {}", backend_.url,
                 path, attempt, attempts_,
                 response.status > 0 ? std::to_string(response.status) : response.error);
         } catch (const std::exception& error) {
-            bazarish::log::warn("operator push to {}{} failed (attempt {}/{}): {}", baseUrl_, path,
+            bazarish::log::warn("operator push to {}{} failed (attempt {}/{}): {}", backend_.url, path,
                 attempt, attempts_, error.what());
         }
         if (attempt < attempts_) {

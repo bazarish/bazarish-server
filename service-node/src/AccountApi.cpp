@@ -11,6 +11,7 @@
 #include <bazarish/Errors.hpp>
 #include <Health.hpp>
 #include <bazarish/HttpServer.hpp>
+#include <bazarish/I2p.hpp>
 #include <bazarish/Limits.hpp>
 #include <bazarish/Log.hpp>
 
@@ -471,6 +472,9 @@ void AccountApi::setupOpsRoutes()
                     std::string url = entry.get<std::string>();
                     if (url.empty()) {
                         continue;
+                    }
+                    if (!bazarish::i2p::isReseedUrl(url)) {
+                        throw std::invalid_argument("a reseed is an https URL: " + url);
                     }
                     if (bazarish::isI2pFacadeUrl(url)
                         && !bazarish::allowFacadeWithoutI2pForDevPurposes()) {

@@ -550,7 +550,7 @@ void HttpApi::setupOpsRoutes()
         operatorOnly([this](const bazarish::http::Request&) -> bazarish::http::Response {
             const std::string archive = reseedArchive();
             if (archive.empty()) {
-                return errorResponse(503, ErrorCode::eI2pUnavailable, "no reseed available");
+                return errorResponse(503, ErrorCode::eDeliveryRejected, "no reseed available");
             }
             return bazarish::http::Response{200, "application/octet-stream", {}, archive};
         }));

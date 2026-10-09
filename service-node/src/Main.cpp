@@ -12,6 +12,7 @@
 #include <bazarish/Clock.hpp>
 #include <bazarish/ConfigFile.hpp>
 #include <bazarish/Crypto.hpp>
+#include <bazarish/I2p.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/PrivateFile.hpp>
 #include <bazarish/Tls.hpp>
@@ -157,6 +158,11 @@ NodeConfig loadNodeConfig(const fs::path& path)
     config.portal.links = view.list("portal.links");
     config.portal.facades = view.list("portal.facades");
     config.portal.reseeds = view.list("portal.reseeds");
+    for (const std::string& reseed : config.portal.reseeds) {
+        if (!bazarish::i2p::isReseedUrl(reseed)) {
+            throw std::invalid_argument("portal.reseeds holds " + reseed + ", not an https URL");
+        }
+    }
     config.allowFacadeWithoutI2pForDevPurposes
         = view.flag("allowFacadeWithoutI2pForDevPurposes", false);
     config.registration.requireApproval

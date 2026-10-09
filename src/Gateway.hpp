@@ -5,6 +5,7 @@
 #include "Sessions.hpp"
 #include "Settings.hpp"
 
+#include <bazarish/Auth.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <bazarish/I2p.hpp>
 #include <bazarish/WebSocket.hpp>
@@ -117,6 +118,7 @@ private:
     std::unique_ptr<http::Server> ops_;
     SessionStore sessions_;
     mutable std::mutex mutex_;
+    mutable auth::ReplayCache operatorReplays_;
     std::map<const http::Socket*, Connection> connections_;
     std::map<std::string, Local> published_;
     std::thread status_;

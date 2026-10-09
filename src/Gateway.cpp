@@ -91,7 +91,7 @@ http::Response Gateway::health(const http::Request& request) const
 {
     try {
         auth::authorizeRequest(http::collectAuthHeaders(request), nowSeconds(), request.method,
-            request.path, Bytes(), settings_.operators);
+            request.path, Bytes(), settings_.operators, operatorReplays_);
     } catch (const std::exception& error) {
         bazarish::log::debug("gateway: health refused: {}", error.what());
         return {403, "application/json", {},

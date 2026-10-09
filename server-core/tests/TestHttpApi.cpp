@@ -7,6 +7,7 @@
 #include <bazarish/Auth.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/Hybrid.hpp>
+#include <bazarish/I2p.hpp>
 #include <bazarish/Limits.hpp>
 #include <bazarish/Pass.hpp>
 
@@ -426,7 +427,7 @@ int main()
         const nlohmann::json values = nlohmann::json::parse(shown.body);
         CHECK(values.at("federationRateLimit").get<int>() == 240);
         CHECK(values.at("i2pPrivacy").get<std::string>() == "max");
-        CHECK(!values.at("canRestart").get<bool>());
+        CHECK(values.at("i2pTunnelQuantityMax").get<int>() == bazarish::i2p::kMaxTunnelQuantity);
 
         const std::string body = nlohmann::json{{"logLevel", "debug"},
             {"i2pPrivacy", "middle"}, {"federationRateLimit", 60},

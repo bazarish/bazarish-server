@@ -259,6 +259,23 @@ int main()
     }
 
     {
+        const nlohmann::json banned = nlohmann::json::parse(
+            call(port, panel, "GET", "/v1/account/users?state=banned").body);
+        CHECK(banned.at("total").get<std::size_t>() == 1);
+        CHECK(banned.at("users").at(0).at("user").get<std::string>() == served);
+        CHECK(banned.at("users").at(0).at("banned").get<bool>());
+
+        const nlohmann::json everyone = nlohmann::json::parse(
+            call(port, panel, "GET", "/v1/account/users").body);
+        CHECK(everyone.at("total").get<std::size_t>() == 1);
+        CHECK(everyone.at("users").at(0).at("user").get<std::string>() == served);
+
+        const nlohmann::json waiting = nlohmann::json::parse(
+            call(port, panel, "GET", "/v1/account/users?state=pending").body);
+        CHECK(waiting.at("total").get<std::size_t>() == 0);
+    }
+
+    {
         const nlohmann::json shown
             = nlohmann::json::parse(call(port, panel, "GET", "/v1/account/settings").body);
         CHECK(shown.at("loginConsumer").at("name").get<std::string>() == "Bazarish stand");

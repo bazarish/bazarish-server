@@ -26,6 +26,11 @@ struct HealthResult {
     std::uint64_t requestsLastHour = 0;
     std::uint64_t requestsLastDay = 0;
     std::uint64_t inFlight = 0;
+    std::uint64_t sessions = 0;
+    std::uint64_t destinations = 0;
+    std::uint64_t streams = 0;
+    std::uint64_t refused = 0;
+    std::string router;
 };
 
 HealthResult probeHealth(const ServiceEntry& service, const Identity& identity);

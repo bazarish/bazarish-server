@@ -349,6 +349,11 @@ void HttpApi::registerRoutes()
                 {"requestsLastHour", health.requestsLastHour},
                 {"requestsLastDay", health.requestsLastDay},
                 {"inFlight", health.inFlight},
+                {"sessions", health.sessions},
+                {"destinations", health.destinations},
+                {"streams", health.streams},
+                {"refused", health.refused},
+                {"router", health.router},
             });
         }
         nlohmann::json fleets = nlohmann::json::array();
@@ -370,11 +375,6 @@ void HttpApi::registerRoutes()
         proxyToNode(request.query("fleet"), response, "GET", query, std::string());
     }));
 
-    http_->get("/api/user", api([this](const http::Request& request, http::Response& response) {
-        proxyToNode(request.query("fleet"), response, "GET",
-            "/v1/account/user?user=" + urlEncoded(request.query("user")), {});
-    }));
-
     http_->post("/api/approve", api([this](const http::Request& request, http::Response& response) {
         const nlohmann::json body = nlohmann::json::parse(request.body);
         proxyToNode(request.query("fleet"), response, "POST", "/v1/account/approve",
@@ -392,7 +392,7 @@ void HttpApi::registerRoutes()
 
     http_->post("/api/delete", api([this](const http::Request& request, http::Response& response) {
         const nlohmann::json body = nlohmann::json::parse(request.body);
-        proxyToNode(body.value("fleet", std::string()), response, "DELETE",
+        proxyToNode(request.query("fleet"), response, "DELETE",
             "/v1/account/user?user=" + urlEncoded(body.at("user").get<std::string>()), {});
     }));
 
@@ -464,7 +464,6 @@ void HttpApi::registerRoutes()
         proxyToNode(request.query("fleet"), response, "PUT", "/v1/account/settings", request.body);
     }));
 
-    // The configuration of one service, straight from the service that owns it.
     const auto toService = [this](const http::Request& request, http::Response& response,
                                const std::string& method, const bool restarting) {
         const std::string kind = request.query("kind");
@@ -515,7 +514,6 @@ void HttpApi::registerRoutes()
                 {"listen", {{"host", panel.listenHost}, {"port", panel.listenPort}}},
                 {"fleets", fleetsJson(panel.fleets)},
                 {"fingerprint", identity_.fingerprint()},
-                {"canRestart", static_cast<bool>(options_.requestRestart)},
                 {"configPath", settings_->configPath().string()},
                 {"stateDir", panel.stateDir},
                 {"assetsDir", panel.assetsDir},

@@ -103,6 +103,11 @@ HealthResult probeHealth(const ServiceEntry& service, const Identity& identity)
         out.requestsLastHour = body.value("requestsLastHour", static_cast<std::uint64_t>(0));
         out.requestsLastDay = body.value("requestsLastDay", static_cast<std::uint64_t>(0));
         out.inFlight = body.value("inFlight", static_cast<std::uint64_t>(0));
+        out.sessions = body.value("sessions", static_cast<std::uint64_t>(0));
+        out.destinations = body.value("destinations", static_cast<std::uint64_t>(0));
+        out.streams = body.value("streams", static_cast<std::uint64_t>(0));
+        out.refused = body.value("refused", static_cast<std::uint64_t>(0));
+        out.router = body.value("i2pd", std::string());
         out.reachable = true;
     } catch (const std::exception& error) {
         out.error = std::string("bad health body: ") + error.what();

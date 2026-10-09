@@ -631,6 +631,7 @@ void HttpApi::setupRoutes()
                 {"i2pLog", values.i2pLog},
                 {"i2pPrivacy", values.i2pPrivacy},
                 {"i2pTunnelQuantity", values.i2pTunnelQuantity},
+                {"i2pTunnelQuantityMax", bazarish::i2p::kMaxTunnelQuantity},
                 {"federationRateLimit", values.federationRateLimit},
                 {"mailboxRetentionDays", values.mailboxRetentionDays},
                 {"listen", {{"host", values.listenHost}, {"port", values.listenPort}}},
@@ -638,7 +639,6 @@ void HttpApi::setupRoutes()
                 {"stateDirectory", options_.stateDirectory},
                 {"fingerprint", options_.fingerprint},
                 {"version", options_.version},
-                {"canRestart", static_cast<bool>(options_.requestRestart)},
             });
         }));
 

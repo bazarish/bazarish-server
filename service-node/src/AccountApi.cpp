@@ -329,6 +329,9 @@ void AccountApi::setupRoutes()
                 }
                 const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
                 const bool pending = approval.has_value() && approval->pending();
+                if (state == "banned" && !grants_.peekBan(user).has_value()) {
+                    continue;
+                }
                 if ((state == "pending" && !pending)
                     || (state == "approved" && (!approval.has_value() || pending))) {
                     continue;
@@ -431,7 +434,6 @@ void AccountApi::setupRoutes()
                         {{"host", values.messagingHost}, {"port", values.messagingPort}}},
                     {"defaultQuotaBytes", values.defaultQuotaBytes},
                     {"idleDeleteDays", values.idleDeleteDays},
-                    {"canRestart", static_cast<bool>(options_.requestRestart)},
                     {"accounts", accounts},
                     {"allocatedBytes", allocated},
                 });

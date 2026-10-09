@@ -242,11 +242,12 @@ void Facade::setupOpsRoutes()
                 {"opsListen", {{"host", values.opsHost}, {"port", values.opsPort}}},
                 {"i2pEnabled", values.i2pEnabled},
                 {"i2pDestinations", values.i2pDestinations},
+                {"i2pDestinationsMax", kMaxI2pDestinations},
                 {"i2pPrivacy", values.i2pPrivacy},
                 {"i2pTunnelQuantity", values.i2pTunnelQuantity},
+                {"i2pTunnelQuantityMax", bazarish::i2p::kMaxTunnelQuantity},
                 {"stateDirectory", options_.stateDirectory},
                 {"version", options_.version},
-                {"canRestart", static_cast<bool>(options_.requestRestart)},
             }
                 .dump()};
     }));

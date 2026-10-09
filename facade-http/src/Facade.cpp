@@ -232,8 +232,8 @@ void Facade::setupOpsRoutes()
         return [this, handler](
                    const bazarish::http::Request& request) -> bazarish::http::Response {
             if (const std::optional<bazarish::http::Response> refused
-                = bazarish::http::operatorRefusal(
-                    request, nowSeconds(), options_.operatorFingerprints);
+                = bazarish::http::operatorRefusal(request, nowSeconds(),
+                    options_.operatorFingerprints, operatorReplays_);
                 refused.has_value()) {
                 return *refused;
             }

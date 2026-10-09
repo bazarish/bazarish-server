@@ -4,6 +4,7 @@
 #include "FacadeSettings.hpp"
 #include "Load.hpp"
 
+#include <bazarish/Auth.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <Restart.hpp>
 
@@ -54,6 +55,7 @@ private:
     std::unique_ptr<bazarish::http::Server> ops_;
     std::unique_ptr<bazarish::http::Server> direct_;
     Load load_;
+    bazarish::auth::ReplayCache operatorReplays_;
     bazarish::StopGate stopGate_;
     std::int64_t startedAt_ = 0;
 };

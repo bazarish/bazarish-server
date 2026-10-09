@@ -58,11 +58,12 @@ int main()
     options.clientPins = {panelPins.pin};
     options.port = 0;
     http::Server service(options);
-    const auto authorize = [&panel](const http::Request& request) -> bool {
+    auth::ReplayCache replays;
+    const auto authorize = [&panel, &replays](const http::Request& request) -> bool {
         try {
             auth::authorizeRequest(collectAuthHeaders(request), nowSeconds(), request.method,
                 request.path, Bytes(request.body.begin(), request.body.end()),
-                {panel.fingerprint()});
+                {panel.fingerprint()}, replays);
             return true;
         } catch (const std::exception&) {
             return false;

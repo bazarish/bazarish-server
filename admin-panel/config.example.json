@@ -6,7 +6,7 @@
   // set "place" to the address you actually open when the panel is fronted.
   // Left out: "Bazarish admin panel" (plus the fleet name, when one is named)
   // at the address below, as "Administrator".
-  // "consumer": {"name": "...", "place": "https://panel.example", "role": "..."},
+  // "consumer": {"name": "...", "place": ["https://panel.example"], "role": "..."},
   "state": "/var/lib/bazarish/admin-panel",
   "assets": "/opt/bazarish/bazarish-server/admin-panel/web",
   "listen": {"host": "127.0.0.1", "port": 8460},

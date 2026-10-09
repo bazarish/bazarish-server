@@ -241,6 +241,8 @@ int main()
         CHECK(pubUser == alice.fingerprint());
         CHECK(pubTransient == "user-transient-b64");
         CHECK(pubExpires == now + 7 * 24 * 3600);
+        const std::int64_t delegatedAt = store.getAccount(alice.fingerprint())->delegatedAt;
+        CHECK(delegatedAt >= now);
         {
             const nlohmann::json served = nlohmann::json::parse(ok.body);
             CHECK(served.at("dest").get<std::string>() == kServedDest);
@@ -267,6 +269,7 @@ int main()
         CHECK(pubCalls == 3);
         CHECK(pubTransient.empty());
         CHECK(pubExpires == 0);
+        CHECK(store.getAccount(alice.fingerprint())->delegatedAt == delegatedAt);
     }
 
     {

@@ -32,6 +32,7 @@ add_library(bazarish_service_lib STATIC
     src/Messages.cpp
     src/PortalApi.cpp
     src/GrantStore.cpp
+    src/IdleSweep.cpp
     src/NodeSettings.cpp
     src/OperatorPush.cpp
 )
@@ -62,6 +63,7 @@ endfunction()
 bazarish_service_add_test(TestSubscriptionStore)
 bazarish_service_add_test(TestAccountApi)
 bazarish_service_add_test(TestGrantStore)
+bazarish_service_add_test(TestIdleSweep)
 bazarish_service_add_test(TestModeratedRegistration)
 bazarish_service_add_test(TestPortal)
 bazarish_service_add_test(TestOperatorApi)

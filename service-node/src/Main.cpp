@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #include "AccountApi.hpp"
 #include "GrantStore.hpp"
+#include "IdleSweep.hpp"
 #include "NodeSettings.hpp"
 #include "OperatorPush.hpp"
 #include "PortalApi.hpp"
@@ -26,7 +27,6 @@
 #include <iterator>
 #include <memory>
 #include <optional>
-#include <set>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -178,59 +178,6 @@ bazarish::service::LoginConsumer portalConsumer(const NodeConfig& config)
                                                    : config.portal.address;
     consumer.role = config.portal.role.empty() ? kDefaultPortalRole : config.portal.role;
     return consumer;
-}
-
-std::int64_t idleSince(const std::optional<bazarish::service::SubscriptionStore::Account>& account,
-    bazarish::service::GrantStore& grants, const std::string& user)
-{
-    if (account.has_value() && account->delegatedAt != 0) {
-        return account->delegatedAt;
-    }
-    if (account.has_value() && account->registeredAt != 0) {
-        return account->registeredAt;
-    }
-    if (const std::optional<bazarish::service::GrantStore::Approval> approval
-        = grants.peekApproval(user);
-        approval.has_value()) {
-        return approval->requestedAt;
-    }
-    if (const std::optional<bazarish::service::GrantStore::SubscriptionGrant> grant
-        = grants.peekSubscription(user);
-        grant.has_value()) {
-        return grant->grantedAt;
-    }
-    return 0;
-}
-
-void sweepIdleAccounts(bazarish::service::SubscriptionStore& store,
-    bazarish::service::GrantStore& grants, const bazarish::service::OperatorPush& push,
-    const std::int64_t idleDays, const std::int64_t now)
-{
-    if (idleDays <= 0) {
-        return;
-    }
-    const std::int64_t idleSeconds = idleDays * bazarish::kSecondsPerDay;
-    std::set<std::string> users;
-    for (const std::string& user : grants.allUsers()) {
-        users.insert(user);
-    }
-    for (const bazarish::service::SubscriptionStore::Account& account : store.allAccounts()) {
-        users.insert(account.user);
-    }
-    for (const std::string& user : users) {
-        const std::int64_t since = idleSince(store.getAccount(user), grants, user);
-        if (since == 0 || since + idleSeconds > now) {
-            continue;
-        }
-        if (!push.publish(user, std::string(), 0)) {
-            bazarish::log::warn("destination of swept account {} not revoked on the messaging"
-                                " server",
-                bazarish::log::redact(user));
-        }
-        grants.erase(user);
-        store.deleteAccount(user);
-        bazarish::log::info("swept idle account {}", bazarish::log::redact(user));
-    }
 }
 
 }  // namespace
@@ -413,7 +360,7 @@ int main(const int argc, const char** argv)
     std::thread sweeper([&]() {
         while (!stopping.waitFor(kIdleSweepInterval)) {
             try {
-                sweepIdleAccounts(store, grants, operatorPush, settings->get().idleDeleteDays,
+                bazarish::service::sweepIdleAccounts(store, grants, operatorPush, settings->get().idleDeleteDays,
                     bazarish::nowSeconds());
             } catch (const std::exception& error) {
                 bazarish::log::warn("idle sweep failed: {}", error.what());

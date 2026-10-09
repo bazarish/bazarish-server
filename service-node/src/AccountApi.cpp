@@ -262,7 +262,8 @@ void AccountApi::setupOpsRoutes()
     const auto operatorOnly = [this](auto handler) {
         return [this, handler](const http::Request& request, http::Response& response) {
             if (const std::optional<http::Response> refused
-                = http::operatorRefusal(request, nowSeconds(), options_.operatorFingerprints);
+                = http::operatorRefusal(
+                    request, nowSeconds(), options_.operatorFingerprints, replayCache_);
                 refused.has_value()) {
                 response = *refused;
                 return;
@@ -630,7 +631,7 @@ void AccountApi::setupRoutes()
         return [this, handler](const http::Request& request, http::Response& response) {
             try {
                 auth::authorizeRequest(collectAuthHeaders(request), nowSeconds(), request.method,
-                    request.path, bodyBytes(request), {options_.serverFingerprint});
+                    request.path, bodyBytes(request), {options_.serverFingerprint}, replayCache_);
             } catch (const std::exception& error) {
                 respondError(response, 403, ErrorCode::eDeliveryRejected, error.what());
                 return;
@@ -646,7 +647,7 @@ void AccountApi::setupRoutes()
         return [this, handler](const http::Request& request, http::Response& response) {
             try {
                 auth::authorizeRequest(collectAuthHeaders(request), nowSeconds(), request.method,
-                    request.path, bodyBytes(request), {options_.serverFingerprint});
+                    request.path, bodyBytes(request), {options_.serverFingerprint}, replayCache_);
             } catch (const std::exception& error) {
                 respondError(response, 403, ErrorCode::eDeliveryRejected, error.what());
                 return;
@@ -800,14 +801,15 @@ void AccountApi::setupRoutes()
                 return;
             }
             grants_.setI2pTransient(user, expiresUnix, now);
-            if (transient.empty()) {
-                if (const std::optional<SubscriptionStore::Account> held
-                    = store_.getAccount(user);
-                    held.has_value() && !held->dest.empty()) {
-                    SubscriptionStore::Account record = *held;
+            if (const std::optional<SubscriptionStore::Account> held = store_.getAccount(user);
+                held.has_value()) {
+                SubscriptionStore::Account record = *held;
+                if (transient.empty()) {
                     record.dest.clear();
-                    store_.putAccount(record);
+                } else {
+                    record.delegatedAt = now;
                 }
+                store_.putAccount(record);
             }
             respondJson(response,
                 {{"dest", served->dest}, {"servingKey", served->servingKeyB64}});

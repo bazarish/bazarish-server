@@ -187,7 +187,7 @@ void testWebFlow()
     constexpr std::uint64_t kQuota = 20 * 1024 * 1024;
     NodeSettings::Values values;
     values.loginConsumer
-        = LoginConsumer{"Bazarish service node", "http://node.example", "Account owner"};
+        = LoginConsumer{"Bazarish service node", {"http://node.example"}, "Account owner"};
     values.defaultQuotaBytes = kQuota;
     values.facades = {"http://abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqr.b32.i2p/s"};
     PortalApiOptions options;

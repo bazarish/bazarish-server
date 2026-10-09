@@ -64,7 +64,7 @@ int main()
     Config initial;
     initial.admins = {"jmqwewpdvbdns4x7ojmdxtznznkit6dhdt3ftaozjmkjb2cnmexq"};
     initial.consumer
-        = service::LoginConsumer{"Bazarish admin panel", "http://127.0.0.1", "Administrator"};
+        = service::LoginConsumer{"Bazarish admin panel", {"http://127.0.0.1"}, "Administrator"};
     const auto settings = std::make_shared<PanelSettings>(configPath, initial);
     const Identity identity = Identity::generate();
 

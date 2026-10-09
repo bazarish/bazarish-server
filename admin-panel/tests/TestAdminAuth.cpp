@@ -55,7 +55,8 @@ std::string forgeBlob(const Identity& identity, const std::string& challenge, st
 
 service::LoginConsumer panelConsumer()
 {
-    return service::LoginConsumer{"Bazarish admin panel", "http://127.0.0.1:8460", "Administrator"};
+    return service::LoginConsumer{
+        "Bazarish admin panel", {"http://127.0.0.1:8460"}, "Administrator"};
 }
 
 std::string foreignChallenge(const service::LoginConsumer& consumer, std::int64_t ts)
@@ -129,7 +130,7 @@ int main()
     {
         AdminAuth auth(panelWith({admin.fingerprint()}));
         service::LoginConsumer somewhereElse = panelConsumer();
-        somewhereElse.place = "http://192.0.2.10:8460";
+        somewhereElse.place = {"http://192.0.2.10:8460"};
         service::LoginChallenge other("another-portal-secret", somewhereElse);
         const std::string challenge = other.issue(kNow);
         CHECK_THROWS(auth.login(challenge, forgeBlob(admin, challenge, kNow), kNow));

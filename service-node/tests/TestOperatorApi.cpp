@@ -107,7 +107,7 @@ int main()
     }
     NodeSettings::Values initial;
     initial.loginConsumer
-        = LoginConsumer{"Bazarish stand", "http://127.0.0.1:8431", "Account owner"};
+        = LoginConsumer{"Bazarish stand", {"http://127.0.0.1:8431"}, "Account owner"};
     initial.logLevel = "info";
     initial.defaultQuotaBytes = kQuota;
     const auto settings = std::make_shared<NodeSettings>(configPath, initial);
@@ -265,16 +265,22 @@ int main()
         CHECK(shown.at("loginConsumer").at("role").get<std::string>() == "Account owner");
 
         const std::string renamed = nlohmann::json{{"loginConsumer",
-            {{"name", "Bazarish alpha"}, {"place", "https://alpha.example"},
+            {{"name", "Bazarish alpha"},
+                {"place", {"https://alpha.example", "http://alpha.b32.i2p"}},
                 {"role", "Alpha tester"}}}}
                                         .dump();
         CHECK(call(port, panel, "PUT", "/v1/account/settings", renamed).status == 200);
-        CHECK(settings->get().loginConsumer.place == "https://alpha.example");
+        const std::vector<std::string> bothPlaces
+            = {"https://alpha.example", "http://alpha.b32.i2p"};
+        CHECK(settings->get().loginConsumer.place == bothPlaces);
 
         std::ifstream written(configPath);
         const nlohmann::json onDisk = nlohmann::json::parse(written);
         CHECK(onDisk.at("portal").at("name").get<std::string>() == "Bazarish alpha");
-        CHECK(onDisk.at("portal").at("address").get<std::string>() == "https://alpha.example");
+        CHECK(onDisk.at("portal").at("address").at(0).get<std::string>()
+            == "https://alpha.example");
+        CHECK(onDisk.at("portal").at("address").at(1).get<std::string>()
+            == "http://alpha.b32.i2p");
         CHECK(onDisk.at("portal").at("role").get<std::string>() == "Alpha tester");
 
         CHECK(bazarish::log::level() != bazarish::log::Level::eDebug);

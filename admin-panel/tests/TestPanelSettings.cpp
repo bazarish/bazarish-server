@@ -102,7 +102,7 @@ int main()
 
         Config wanted = config;
         wanted.consumer.name = "Bazarish alpha panel";
-        wanted.consumer.place = "https://panel.example";
+        wanted.consumer.place = {"https://panel.example", "http://panel.b32.i2p"};
         wanted.consumer.role = "Administrator";
         wanted.listenPort = 9460;
         wanted.fleets = {Fleet{"alpha", {ServiceEntry{"core", "server-core",
@@ -111,7 +111,10 @@ int main()
 
         const nlohmann::json written = read(path);
         CHECK(written.at("consumer").at("name").get<std::string>() == "Bazarish alpha panel");
-        CHECK(written.at("consumer").at("place").get<std::string>() == "https://panel.example");
+        CHECK(written.at("consumer").at("place").at(0).get<std::string>()
+            == "https://panel.example");
+        CHECK(written.at("consumer").at("place").at(1).get<std::string>()
+            == "http://panel.b32.i2p");
         CHECK(written.at("listen").at("port").get<int>() == 9460);
         CHECK(written.at("listen").at("host").get<std::string>() == "127.0.0.1");
         CHECK(written.at("fleets").at(0).at("services").at(0).at("kind").get<std::string>()

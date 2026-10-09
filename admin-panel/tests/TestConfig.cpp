@@ -58,7 +58,8 @@ int main()
     CHECK(minimal.consumer.name == "Bazarish admin panel");
     CHECK(minimal.listenHost == "127.0.0.1");
     CHECK(minimal.listenPort == 8460);
-    CHECK(minimal.consumer.place == "http://127.0.0.1:8460");
+    CHECK(minimal.consumer.place.size() == 1);
+    CHECK(minimal.consumer.place.front() == "http://127.0.0.1:8460");
     CHECK(minimal.consumer.role == "Administrator");
     CHECK(minimal.fleets.empty());
 

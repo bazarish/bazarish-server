@@ -87,7 +87,7 @@ bazarish::Identity loadOrCreateIdentity(const fs::path& stateDir)
 struct PortalConfig {
     std::string message;
     std::string name;
-    std::string address;
+    std::vector<std::string> address;
     std::string role;
     std::vector<std::string> links;
     std::vector<std::string> facades;
@@ -140,7 +140,7 @@ NodeConfig loadNodeConfig(const fs::path& path)
         view.number("freeStorageBytes", static_cast<std::int64_t>(config.freeStorageBytes)));
     config.portal.message = view.text("portal.message");
     config.portal.name = view.text("portal.name");
-    config.portal.address = view.text("portal.address");
+    config.portal.address = view.list("portal.address");
     config.portal.role = view.text("portal.role");
     config.portal.links = view.list("portal.links");
     config.portal.facades = view.list("portal.facades");
@@ -161,9 +161,8 @@ bazarish::service::LoginConsumer portalConsumer(const NodeConfig& config)
     const char* const kDefaultPortalRole = "Account owner";
     bazarish::service::LoginConsumer consumer;
     consumer.name = config.portal.name.empty() ? kDefaultPortalName : config.portal.name;
-    consumer.place = config.portal.address.empty()
-        ? (config.portal.links.empty() ? std::string() : config.portal.links.front())
-        : config.portal.address;
+    consumer.place = config.portal.address.empty() ? config.portal.links
+                                                   : config.portal.address;
     consumer.role = config.portal.role.empty() ? kDefaultPortalRole : config.portal.role;
     return consumer;
 }

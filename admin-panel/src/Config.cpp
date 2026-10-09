@@ -101,7 +101,7 @@ Config Config::fromJson(const std::string& text)
     if (json.contains("consumer")) {
         const nlohmann::json& consumer = json.at("consumer");
         config.consumer.name = consumer.value("name", std::string());
-        config.consumer.place = consumer.value("place", std::string());
+        config.consumer.place = consumer.value("place", std::vector<std::string>());
         config.consumer.role = consumer.value("role", std::string());
     }
 
@@ -128,7 +128,7 @@ Config Config::fromJson(const std::string& text)
     }
     if (config.consumer.place.empty()) {
         config.consumer.place
-            = "http://" + config.listenHost + ":" + std::to_string(config.listenPort);
+            = {"http://" + config.listenHost + ":" + std::to_string(config.listenPort)};
     }
     if (config.consumer.role.empty()) {
         config.consumer.role = "Administrator";

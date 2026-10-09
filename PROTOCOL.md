@@ -734,15 +734,17 @@ number about nothing.
 
 ## The health report
 
-`GET <base path>/healthz` answers the fleet's health report and what this
-gateway is holding: sessions, destinations, streams, sockets, rejoins and
-refusals. It takes the token like everything else at that path, and on top of
-it a signature from a fingerprint the operator listed - the token says the
-request may reach the gateway, the signature says who is asking.
+`GET /healthz` on the operator socket (`opsListen`) answers the fleet's health
+report and what this gateway is holding: sessions, destinations, streams,
+sockets, rejoins and refusals. The socket speaks TLS and admits only the keys
+the operator listed in `opsClients`, and the request carries a signature from a
+fingerprint in `operators` - the key says the caller may reach the socket, the
+signature says who is asking. Every other service keeps the same kind of socket
+for the admin panel.
 
-It is not on a socket of its own, as the other services put theirs. A well-known
-`/healthz` on the public address would tell a scan that this host runs a
-gateway, which is the one thing the secret path is for.
+The public address has no health path: `<base path>/healthz` is the same 404 as
+any other path there. A `/healthz` on it would tell a scan that this host runs
+a gateway, which is the one thing the secret path is for.
 
 ## Errors
 

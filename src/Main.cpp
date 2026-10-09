@@ -39,7 +39,7 @@ void printUsage()
                 "gateway that came up without them would be one anybody could\n"
                 "walk into. TLS, the public address and the cover site belong to\n"
                 "the front this listens behind. \"operators\" names who may read\n"
-                "<basePath>/healthz. The README has the rest.\n",
+                "/healthz on \"opsListen\". The README has the rest.\n",
         bazarish::gateway::kVersion);
 }
 

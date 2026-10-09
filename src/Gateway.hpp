@@ -41,7 +41,6 @@ private:
     bool admitted(const http::Request& request) const;
     http::Response decoy() const;
     http::Response health(const http::Request& request) const;
-    std::string healthPath() const;
     void bindOps();
 
     void socketOpened(const http::SocketPtr& socket, const http::Request& request);

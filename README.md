@@ -91,8 +91,9 @@ The client takes it in its settings and checks it before keeping it.
 
 ## Health
 
-`GET <basePath>/healthz`, with the token and a signature from a fingerprint in
+`GET /healthz` on the `opsListen` socket, with a signature from a fingerprint in
 `operators`, answers the fleet's health report plus what this gateway holds:
-sessions, destinations, streams, sockets, rejoins and refusals. Without the
-token it is the same 404 as anything else, so a scan learns nothing from the
-path.
+sessions, destinations, streams, sockets, rejoins and refusals. That socket
+admits only the keys in `opsClients`, which is how the admin panel reaches it.
+The public listener has no health path: `<basePath>/healthz` is the same 404 as
+anything else, so a scan learns nothing from it.

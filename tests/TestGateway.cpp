@@ -2,6 +2,8 @@
 #include "Gateway.hpp"
 
 #include <bazarish/Clock.hpp>
+#include <bazarish/HttpClient.hpp>
+#include <bazarish/Tls.hpp>
 
 #include "TestRouter.hpp"
 #include "TestUtil.hpp"
@@ -33,6 +35,7 @@ namespace {
 
 constexpr const char* kPath = "/f3a9c2e1b7d4";
 constexpr const char* kToken = "a-static-token";
+constexpr const char* kHealthPath = "/healthz";
 constexpr int kSweepGraceSeconds = 5;
 constexpr int kDialDeadlineSeconds = 4;
 constexpr std::size_t kDecoyLow = 1024;
@@ -71,6 +74,26 @@ Answer request(const int port, const std::string& method, const std::string& pat
     answer.contentType = std::string(in[bhttp::field::content_type]);
     answer.server = std::string(in[bhttp::field::server]);
     return answer;
+}
+
+int unusedPort()
+{
+    asio::io_context io;
+    const tcp::acceptor door(io, tcp::endpoint(asio::ip::make_address("127.0.0.1"), 0));
+    return door.local_endpoint().port();
+}
+
+http::ClientResponse askOps(const int port, const std::string& pin,
+    const auth::Headers& signed_ = {})
+{
+    http::ClientRequest out;
+    out.method = "GET";
+    out.target = kHealthPath;
+    out.headers = signed_;
+    http::ClientOptions options;
+    options.tls = true;
+    options.pin = pin;
+    return http::request("127.0.0.1", port, out, options);
 }
 
 struct Dialled {
@@ -147,6 +170,8 @@ int main()
     settings.sessionTtlSeconds = 2;
     const Identity operatorIdentity = Identity::generate();
     settings.operators.push_back(operatorIdentity.fingerprint());
+    settings.opsHost = "127.0.0.1";
+    settings.opsPort = unusedPort();
 
     i2p::Router router(i2p::offlineRouter(root / "i2p"));
 
@@ -169,17 +194,17 @@ int main()
     CHECK(wrongToken.status == stranger.status);
     CHECK(deepPath.body == stranger.body);
 
-    const std::string healthPath = std::string(kPath) + "/healthz";
-    CHECK(request(port, "GET", healthPath, {}).body == stranger.body);
-    CHECK(request(port, "GET", healthPath, "not-the-token").body == stranger.body);
-    CHECK(request(port, "GET", healthPath, kToken).status == 403);
+    CHECK(request(port, "GET", std::string(kPath) + kHealthPath, kToken).body == stranger.body);
+
+    const std::string opsPin = tls::selfSigned(settings.stateDir).pin;
+    CHECK(askOps(settings.opsPort, opsPin).status == 403);
     const Identity stranger2 = Identity::generate();
-    CHECK(request(port, "GET", healthPath, kToken,
-              auth::signRequest(stranger2, nowSeconds(), "GET", healthPath, Bytes()))
+    CHECK(askOps(settings.opsPort, opsPin,
+              auth::signRequest(stranger2, nowSeconds(), "GET", kHealthPath, Bytes()))
               .status
         == 403);
-    const Answer reported = request(port, "GET", healthPath, kToken,
-        auth::signRequest(operatorIdentity, nowSeconds(), "GET", healthPath, Bytes()));
+    const http::ClientResponse reported = askOps(settings.opsPort, opsPin,
+        auth::signRequest(operatorIdentity, nowSeconds(), "GET", kHealthPath, Bytes()));
     CHECK(reported.status == 200);
     const nlohmann::json report = nlohmann::json::parse(reported.body);
     CHECK(report["service"] == "gateway");

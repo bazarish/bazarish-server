@@ -76,15 +76,10 @@ http::Response Gateway::notFound() const
 
 bool Gateway::admitted(const http::Request& request) const
 {
-    if (request.path != settings_.basePath && request.path != healthPath()) {
+    if (request.path != settings_.basePath) {
         return false;
     }
     return service::constantTimeEqual(request.header(kTokenHeader), settings_.token);
-}
-
-std::string Gateway::healthPath() const
-{
-    return settings_.basePath + "/healthz";
 }
 
 http::Response Gateway::health(const http::Request& request) const
@@ -166,7 +161,7 @@ int Gateway::start()
         if (!admitted(request)) {
             return notFound();
         }
-        return request.path == healthPath() ? health(request) : decoy();
+        return decoy();
     };
     for (const char* method : {"GET", "POST", "PUT", "DELETE", "HEAD"}) {
         server_.route(method, "(.*)", answer);

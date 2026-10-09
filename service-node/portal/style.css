@@ -595,6 +595,10 @@ body {
 }
 
 .colophon {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.3rem 1rem;
     margin-top: 2.5rem;
     padding-top: 1rem;
     border-top: 1px solid var(--bz-line);

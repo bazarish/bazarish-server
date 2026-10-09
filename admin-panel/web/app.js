@@ -1223,12 +1223,21 @@
             row.appendChild(kind);
             var url = element("input", "field");
             url.type = "text";
-            url.placeholder = "http://127.0.0.1:8420";
+            url.placeholder = "https://127.0.0.1:8428";
             url.value = service ? service.url : "";
             row.appendChild(url);
             var drop = element("button", "chip", "remove");
             row.appendChild(drop);
             wrap.appendChild(row);
+
+            var pinRow = element("div", "service-token");
+            pinRow.appendChild(element("span", "control-label", "Key"));
+            var pin = element("input", "field");
+            pin.type = "text";
+            pin.placeholder = "the pin this service prints at startup";
+            pin.value = service ? (service.pin || "") : "";
+            pinRow.appendChild(pin);
+            wrap.appendChild(pinRow);
 
             var tokenRow = element("div", "service-token");
             tokenRow.appendChild(element("span", "control-label", "Gateway token"));
@@ -1242,8 +1251,8 @@
                 tokenRow.hidden = kind.value !== "gateway";
             });
 
-            var entry = { fleet: fleetName, name: name, kind: kind, url: url, token: token,
-                dropped: false };
+            var entry = { fleet: fleetName, name: name, kind: kind, url: url, pin: pin,
+                token: token, dropped: false };
             drop.addEventListener("click", function () {
                 entry.dropped = true;
                 wrap.remove();
@@ -1303,10 +1312,11 @@
                     return !entry.dropped;
                 });
                 var incomplete = kept.filter(function (entry) {
-                    return !entry.name.value.trim() || !entry.url.value.trim();
+                    return !entry.name.value.trim() || !entry.url.value.trim()
+                        || !entry.pin.value.trim();
                 });
                 if (incomplete.length > 0) {
-                    throw new Error("A service needs a name and a URL.");
+                    throw new Error("A service needs a name, an https URL and a key.");
                 }
                 var byFleet = {};
                 fleets.forEach(function (entry) {
@@ -1317,6 +1327,7 @@
                         name: entry.name.value.trim(),
                         kind: entry.kind.value,
                         url: entry.url.value.trim(),
+                        pin: entry.pin.value.trim(),
                         token: entry.token.value.trim()
                     });
                 });

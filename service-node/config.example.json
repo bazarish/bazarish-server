@@ -3,11 +3,17 @@
   "state": "/var/lib/bazarish/service-node",
   // The card of the messaging server this node belongs to.
   "serverCard": "/var/lib/bazarish/server-core/server-card.der",
+  // What the facades and the messaging server reach, over TLS.
   "listen": {"host": "127.0.0.1", "port": 8421},
-  // The messaging server's private channel, for the pushes this node owes it.
-  "messaging": {"host": "127.0.0.1", "port": 8420},
+  // The operator's socket: the panel and nothing else.
+  "opsListen": {"host": "127.0.0.1", "port": 8427},
+  // The messaging server's operator socket, for the pushes this node owes it.
+  // "pin" is the key that server prints when it starts.
+  "messaging": {"host": "127.0.0.1", "port": 8428, "pin": ""},
   // Who may call the operator endpoints (the admin panel).
   "operators": [],
+  // The keys allowed to open the operator's socket (the panel's).
+  "opsClients": [],
   "logLevel": "info",
 
   // What a new account gets.

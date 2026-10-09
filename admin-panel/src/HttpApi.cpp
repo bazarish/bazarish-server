@@ -148,9 +148,10 @@ std::string humanizeUptime(const std::int64_t seconds)
 namespace bazarish::admin {
 
 HttpApi::HttpApi(std::shared_ptr<PanelSettings> settings, const Identity& identity,
-    HttpApiOptions options)
+    bazarish::tls::Credential credential, HttpApiOptions options)
     : settings_(std::move(settings))
     , identity_(identity)
+    , credential_(std::move(credential))
     , options_(std::move(options))
     , auth_(settings_)
     , sessions_(options_.sessionTtlSeconds)
@@ -187,7 +188,7 @@ void HttpApi::proxyToNode(const std::string& fleet, http::Response& response,
         sendError(response, 503, "this deployment has no service node the panel can reach");
         return;
     }
-    const JsonResult result = callJson(*node, identity_, method, path, body);
+    const JsonResult result = callJson(*node, identity_, credential_, method, path, body);
     if (result.status == 0) {
         bazarish::log::warn("service-node unreachable: {}", result.error);
         sendError(response, 502, result.error.empty() ? "service-node unreachable" : result.error);
@@ -331,7 +332,7 @@ void HttpApi::registerRoutes()
         probes.reserve(all.size());
         for (const auto& [fleet, service] : all) {
             probes.push_back(std::async(std::launch::async,
-                [this, service]() { return probeHealth(service, identity_); }));
+                [this, service]() { return probeHealth(service, identity_, credential_); }));
         }
         nlohmann::json services = nlohmann::json::array();
         for (std::size_t i = 0; i < all.size(); ++i) {
@@ -421,7 +422,7 @@ void HttpApi::registerRoutes()
             sendError(response, 503, "no server-core configured in this panel");
             return;
         }
-        const JsonResult account = callJson(*core, identity_, "GET",
+        const JsonResult account = callJson(*core, identity_, credential_, "GET",
             "/v1/messaging/account?user=" + urlEncoded(request.query("user")));
         if (account.status == 0) {
             bazarish::log::warn("server-core unreachable: {}", account.error);
@@ -440,7 +441,8 @@ void HttpApi::registerRoutes()
             sendError(response, 503, "this deployment has no service node the panel can reach");
             return;
         }
-        const JsonResult settings = callJson(*node, identity_, "GET", "/v1/account/settings");
+        const JsonResult settings
+            = callJson(*node, identity_, credential_, "GET", "/v1/account/settings");
         if (!settings.ok) {
             bazarish::log::warn("service-node settings unavailable: {}", settings.error);
             sendJson(response, settings.body, settings.status == 0 ? 502 : settings.status);
@@ -452,7 +454,8 @@ void HttpApi::registerRoutes()
         if (const std::optional<ServiceEntry> core
             = serviceOfKind(request.query("fleet"), kServerCoreKind);
             core.has_value()) {
-            const JsonResult disk = callJson(*core, identity_, "GET", "/v1/messaging/storage");
+            const JsonResult disk
+                = callJson(*core, identity_, credential_, "GET", "/v1/messaging/storage");
             if (disk.ok) {
                 merged["diskUsedBytes"] = nlohmann::json::parse(disk.body).at("usedBytes");
                 merged["diskError"] = "";
@@ -481,7 +484,8 @@ void HttpApi::registerRoutes()
             sendError(response, 503, "this deployment has no " + kind + " the panel can reach");
             return;
         }
-        const JsonResult result = callJson(*service, identity_, method, path, request.body);
+        const JsonResult result
+            = callJson(*service, identity_, credential_, method, path, request.body);
         if (result.status == 0) {
             bazarish::log::warn("{} unreachable: {}", kind, result.error);
             sendError(response, 502, result.error.empty() ? kind + " unreachable" : result.error);
@@ -585,6 +589,7 @@ void HttpApi::registerRoutes()
                         service.kind = item.value("kind", std::string());
                         service.url = item.value("url", std::string());
                         service.token = item.value("token", std::string());
+                        service.pin = item.value("pin", std::string());
                         takeTokenFromUrl(service);
                         if (!isKnownServiceKind(service.kind)) {
                             throw std::invalid_argument(
@@ -593,6 +598,14 @@ void HttpApi::registerRoutes()
                         }
                         if (service.url.empty() || service.name.empty()) {
                             throw std::invalid_argument("a service needs a name and a URL");
+                        }
+                        if (service.url.rfind("https://", 0) != 0) {
+                            throw std::invalid_argument(
+                                "a service is reached over https: " + service.url);
+                        }
+                        if (service.pin.empty()) {
+                            throw std::invalid_argument(
+                                "a service is named by the key it presents: " + service.name);
                         }
                         fleet.services.push_back(std::move(service));
                     }

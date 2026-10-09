@@ -20,6 +20,7 @@ struct ServiceEntry {
     std::string kind;
     std::string url;
     std::string token;
+    std::string pin;
 
     friend bool operator==(const ServiceEntry&, const ServiceEntry&) = default;
 };

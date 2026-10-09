@@ -7,6 +7,7 @@
 #include <nlohmann/json.hpp>
 #include <bazarish/Certificates.hpp>
 #include <bazarish/Auth.hpp>
+#include <bazarish/Tls.hpp>
 
 #include <cstdio>
 #include <ctime>
@@ -111,7 +112,14 @@ Headers signedHeaders(const bazarish::Identity& identity, const std::string& met
 int main()
 {
     testLoadSample();
-    http::Server messaging(backendOptions());
+    const std::filesystem::path backendState
+        = std::filesystem::temp_directory_path() / "bazarish-facade-test-backend";
+    const bazarish::tls::Credential backendCredential
+        = bazarish::tls::selfSigned(backendState);
+    http::Server::Options messagingOptions = backendOptions();
+    messagingOptions.certificate = backendCredential.certificate.string();
+    messagingOptions.key = backendCredential.key.string();
+    http::Server messaging(messagingOptions);
     installBackend(messaging, "messaging");
     const int messagingPort = messaging.start();
     CHECK(messagingPort > 0);
@@ -119,6 +127,7 @@ int main()
     bazarish::facade::FacadeOptions options;
     options.messagingHost = "127.0.0.1";
     options.messagingPort = messagingPort;
+    options.messagingPin = backendCredential.pin;
     options.basePath = "/s/secret123";
     const std::filesystem::path configPath
         = std::filesystem::temp_directory_path() / "bazarish-facade-test.json";

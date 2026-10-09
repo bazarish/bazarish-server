@@ -45,7 +45,7 @@ nlohmann::json fleetsJson(const std::vector<Fleet>& fleets)
         nlohmann::json services = nlohmann::json::array();
         for (const ServiceEntry& service : fleet.services) {
             services.push_back({{"name", service.name}, {"kind", service.kind},
-                {"url", service.url}, {"token", service.token}});
+                {"url", service.url}, {"token", service.token}, {"pin", service.pin}});
         }
         list.push_back({{"name", fleet.name}, {"services", services}});
     }
@@ -89,9 +89,16 @@ Config Config::fromJson(const std::string& text)
             entry.kind = item.at("kind").get<std::string>();
             entry.url = item.at("url").get<std::string>();
             entry.token = item.value("token", std::string());
+            entry.pin = item.value("pin", std::string());
             takeTokenFromUrl(entry);
             if (!isKnownServiceKind(entry.kind)) {
                 throw std::runtime_error("unknown service kind \"" + entry.kind + "\"");
+            }
+            if (entry.url.rfind("https://", 0) != 0) {
+                throw std::runtime_error("service \"" + entry.name + "\" is not an https URL");
+            }
+            if (entry.pin.empty()) {
+                throw std::runtime_error("service \"" + entry.name + "\" has no pin");
             }
             services.push_back(std::move(entry));
         }

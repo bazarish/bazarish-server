@@ -7,6 +7,7 @@
 
 #include <bazarish/Crypto.hpp>
 #include <bazarish/PrivateFile.hpp>
+#include <bazarish/Tls.hpp>
 
 #include <cstdio>
 #include <cstring>
@@ -99,6 +100,7 @@ int main(const int argc, const char** argv)
     options.version = kVersion;
     options.assetsDirectory = config.assetsDir;
     const bool unclaimed = config.admins.empty();
+    const bazarish::tls::Credential credential = bazarish::tls::selfSigned(config.stateDir);
     const auto settings
         = std::make_shared<PanelSettings>(fs::path(configPath), std::move(config));
     const auto restartHook = std::make_shared<std::function<void()>>();
@@ -109,7 +111,7 @@ int main(const int argc, const char** argv)
     };
     std::optional<HttpApi> api;
     try {
-        api.emplace(settings, identity, options);
+        api.emplace(settings, identity, credential, options);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "panel not started: %s\n", error.what());
         return 2;
@@ -118,6 +120,8 @@ int main(const int argc, const char** argv)
     std::printf("bazarish-admin-panel %s\n", kVersion);
     std::printf("panel operator fingerprint: %s\n", identity.fingerprint().c_str());
     std::printf("put this fingerprint in each service's \"operators\" list\n");
+    std::printf("panel socket pin: %s\n", credential.pin.c_str());
+    std::printf("put this pin in each service's \"opsClients\" list\n");
     std::printf("listening on %s:%d\n", host.c_str(), port);
     if (unclaimed) {
         std::printf("no administrator configured yet: open http://%s:%d/setup and sign in -\n"

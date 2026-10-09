@@ -5,6 +5,7 @@
 #include <bazarish/ConfigFile.hpp>
 #include <bazarish/I2p.hpp>
 #include <bazarish/Log.hpp>
+#include <bazarish/Tls.hpp>
 #include <Restart.hpp>
 
 #include <cstdio>
@@ -108,6 +109,7 @@ int main(const int argc, const char** argv)
         messaging.has_value()) {
         options.messagingHost = messaging->host;
         options.messagingPort = messaging->port;
+        options.messagingPin = config.text("messaging.pin");
     }
 
     if (options.basePath.empty() && !servePublicRoot) {
@@ -155,6 +157,10 @@ int main(const int argc, const char** argv)
     options.settings = std::make_shared<bazarish::facade::FacadeSettings>(
         std::filesystem::path(argv[2]), settingValues);
     options.stateDirectory = stateDir.string();
+    const bazarish::tls::Credential credential = bazarish::tls::selfSigned(stateDir);
+    options.tlsCertificate = credential.certificate.string();
+    options.tlsKey = credential.key.string();
+    options.opsClientPins = config.list("opsClients");
     const auto restartHook = std::make_shared<std::function<void()>>();
     options.requestRestart = [restartHook]() {
         if (*restartHook) {
@@ -167,6 +173,7 @@ int main(const int argc, const char** argv)
     bazarish::RestartSwitch restart([&facade]() { facade.stop(); });
     *restartHook = [&restart]() { restart.request(); };
     std::printf("bazarish-facade-http %s\n", kVersion);
+    std::printf("facade socket pin: %s\n", credential.pin.c_str());
     std::fflush(stdout);
     bazarish::log::info("messaging -> {}:{}", options.messagingHost, options.messagingPort);
 

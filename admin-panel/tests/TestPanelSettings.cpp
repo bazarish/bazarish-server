@@ -106,7 +106,7 @@ int main()
         wanted.consumer.role = "Administrator";
         wanted.listenPort = 9460;
         wanted.fleets = {Fleet{"alpha", {ServiceEntry{"core", "server-core",
-                                            "http://127.0.0.1:8420", {}}}}};
+                                            "https://127.0.0.1:8428", {}, "pin-of-core"}}}};
         settings->set(wanted);
 
         const nlohmann::json written = read(path);
@@ -124,7 +124,8 @@ int main()
         const Config again = Config::fromFile(path.string());
         CHECK(again.listenPort == 9460);
         CHECK(again.fleets.size() == 1);
-        CHECK(again.fleets.front().services.front().url == "http://127.0.0.1:8420");
+        CHECK(again.fleets.front().services.front().url == "https://127.0.0.1:8428");
+        CHECK(again.fleets.front().services.front().pin == "pin-of-core");
         fs::remove(path);
     }
 

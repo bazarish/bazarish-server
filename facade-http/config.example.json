@@ -7,8 +7,11 @@
   // for the admin panel. Never published to clients.
   "opsListen": {"host": "127.0.0.1", "port": 8429},
   // The only backend: the messaging server, which carries the sealed tunnel.
-  "messaging": {"host": "127.0.0.1", "port": 8420},
+  // "pin" is the key it prints when it starts.
+  "messaging": {"host": "127.0.0.1", "port": 8420, "pin": ""},
   "operators": [],
+  // The keys allowed to open the ops socket (the panel's).
+  "opsClients": [],
   "state": "/var/lib/bazarish/facade",
   "i2p": {"enabled": true, "destinations": 1, "privacy": "minimal", "tunnelQuantity": 3},
   "logLevel": "info"

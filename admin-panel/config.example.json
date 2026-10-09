@@ -15,13 +15,19 @@
   // front of the pair. Add more entries to manage more of them from here; they
   // only have to be reachable from this host (a private network, a VPN, a tunnel
   // the operator set up - the panel does not care which).
+  // Each service is reached on its operator socket, over TLS, and is named by
+  // the key it prints when it starts - put that in "pin". There is no other
+  // way in: an http URL or a missing pin refuses to load.
   "fleets": [
     {
       "name": "home",
       "services": [
-        {"name": "server-core",  "kind": "server-core",  "url": "http://127.0.0.1:8420"},
-        {"name": "service-node", "kind": "service-node", "url": "http://127.0.0.1:8421"},
-        {"name": "facade",       "kind": "facade",       "url": "http://127.0.0.1:8429"}
+        {"name": "server-core",  "kind": "server-core",
+         "url": "https://127.0.0.1:8428", "pin": ""},
+        {"name": "service-node", "kind": "service-node",
+         "url": "https://127.0.0.1:8427", "pin": ""},
+        {"name": "facade",       "kind": "facade",
+         "url": "https://127.0.0.1:8429", "pin": ""}
       ]
     }
   ]

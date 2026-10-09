@@ -4,6 +4,8 @@
 #include "AdminAuth.hpp"
 #include "Config.hpp"
 #include "PanelSettings.hpp"
+
+#include <bazarish/Tls.hpp>
 #include "SessionStore.hpp"
 
 #include <Restart.hpp>
@@ -37,6 +39,7 @@ struct HttpApiOptions {
 class HttpApi {
 public:
     HttpApi(std::shared_ptr<PanelSettings> settings, const Identity& identity,
+        bazarish::tls::Credential credential,
         HttpApiOptions options);
     ~HttpApi();
 
@@ -56,6 +59,7 @@ private:
 
     std::shared_ptr<PanelSettings> settings_;
     const Identity& identity_;
+    bazarish::tls::Credential credential_;
     HttpApiOptions options_;
     AdminAuth auth_;
     SessionStore sessions_;

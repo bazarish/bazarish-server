@@ -11,6 +11,10 @@ namespace bazarish {
 class Identity;
 }
 
+namespace bazarish::tls {
+struct Credential;
+}
+
 namespace bazarish::admin {
 
 struct HealthResult {
@@ -33,7 +37,8 @@ struct HealthResult {
     std::string router;
 };
 
-HealthResult probeHealth(const ServiceEntry& service, const Identity& identity);
+HealthResult probeHealth(const ServiceEntry& service, const Identity& identity,
+    const tls::Credential& credential);
 
 struct JsonResult {
     bool ok = false;
@@ -43,6 +48,7 @@ struct JsonResult {
 };
 
 JsonResult callJson(const ServiceEntry& service, const Identity& identity,
-    const std::string& method, const std::string& path, const std::string& body = {});
+    const tls::Credential& credential, const std::string& method, const std::string& path,
+    const std::string& body = {});
 
 }  // namespace bazarish::admin

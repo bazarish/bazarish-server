@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #include "ServiceClient.hpp"
 
+#include <bazarish/Tls.hpp>
+
 #include <bazarish/GatewayProtocol.hpp>
 
 #include <bazarish/Clock.hpp>
@@ -32,7 +34,8 @@ bazarish::http::ClientOptions clientOptions()
 }
 
 bazarish::http::ClientResponse call(const ServiceEntry& service, const Identity& identity,
-    const std::string& method, const std::string& target, const std::string& body)
+    const bazarish::tls::Credential& credential, const std::string& method,
+    const std::string& target, const std::string& body)
 {
     const bazarish::http::Url address = bazarish::http::parseUrl(service.url);
     const std::string full = address.path + target;
@@ -52,6 +55,9 @@ bazarish::http::ClientResponse call(const ServiceEntry& service, const Identity&
     }
     bazarish::http::ClientOptions options = clientOptions();
     options.tls = address.tls;
+    options.pin = service.pin;
+    options.certificate = credential.certificate.string();
+    options.key = credential.key.string();
     return bazarish::http::request(address.host, address.port, out, options);
 }
 
@@ -73,13 +79,14 @@ std::string errorMessage(const bazarish::http::ClientResponse& result)
 
 }  // namespace
 
-HealthResult probeHealth(const ServiceEntry& service, const Identity& identity)
+HealthResult probeHealth(const ServiceEntry& service, const Identity& identity,
+    const bazarish::tls::Credential& credential)
 {
     HealthResult out;
 
     const auto start = std::chrono::steady_clock::now();
     const bazarish::http::ClientResponse result
-        = call(service, identity, "GET", "/healthz", std::string());
+        = call(service, identity, credential, "GET", "/healthz", std::string());
     const auto end = std::chrono::steady_clock::now();
     out.latencyMs
         = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
@@ -116,9 +123,11 @@ HealthResult probeHealth(const ServiceEntry& service, const Identity& identity)
 }
 
 JsonResult callJson(const ServiceEntry& service, const Identity& identity,
-    const std::string& method, const std::string& path, const std::string& body)
+    const bazarish::tls::Credential& credential, const std::string& method,
+    const std::string& path, const std::string& body)
 {
-    const bazarish::http::ClientResponse response = call(service, identity, method, path, body);
+    const bazarish::http::ClientResponse response
+        = call(service, identity, credential, method, path, body);
     JsonResult result;
     result.status = response.status;
     result.ok = response.status >= 200 && response.status < 300;

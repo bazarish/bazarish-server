@@ -4,6 +4,7 @@
 
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Crypto.hpp>
+#include <bazarish/Tls.hpp>
 #include <bazarish/HttpClient.hpp>
 #include <bazarish/Log.hpp>
 
@@ -71,7 +72,9 @@ int main()
     HttpApiOptions options;
     options.version = "test";
     options.assetsDirectory = std::filesystem::path(BAZARISH_PANEL_WEB_DIR);
-    HttpApi api(settings, identity, options);
+    const bazarish::tls::Credential credential = bazarish::tls::selfSigned(
+        std::filesystem::temp_directory_path() / "bazarish-login-page-test");
+    HttpApi api(settings, identity, credential, options);
     const int port = api.bind("127.0.0.1", 0);
     CHECK(port > 0);
     std::thread serverThread([&api]() { api.wait(); });

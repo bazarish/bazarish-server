@@ -130,6 +130,9 @@ int Facade::bindOps(const std::string& host, const int port)
     options.host = host;
     options.port = port;
     options.threads = 1;
+    options.certificate = options_.tlsCertificate;
+    options.key = options_.tlsKey;
+    options.clientPins = options_.opsClientPins;
     ops_ = std::make_unique<bazarish::http::Server>(options);
     setupOpsRoutes();
     try {
@@ -180,10 +183,17 @@ void Facade::setupRoutes()
         boost::asio::co_spawn(
             http_->executor(),
             [executor = http_->executor(), host = options_.messagingHost,
-                port = options_.messagingPort, forwarded = std::move(forwarded), respond,
+                port = options_.messagingPort, pin = options_.messagingPin,
+                forwarded = std::move(forwarded), respond,
                 inFlight]() -> boost::asio::awaitable<void> {
+                bazarish::http::ClientOptions upstreamOptions;
+                upstreamOptions.tls = true;
+                upstreamOptions.pin = pin;
+                upstreamOptions.connectTimeout = std::chrono::seconds(kUpstreamTimeoutSeconds);
+                upstreamOptions.readTimeout = std::chrono::seconds(kUpstreamTimeoutSeconds);
+                upstreamOptions.writeTimeout = std::chrono::seconds(kUpstreamTimeoutSeconds);
                 const bazarish::http::Response upstream = co_await bazarish::http::fetch(
-                    executor, host, port, forwarded, std::chrono::seconds(kUpstreamTimeoutSeconds));
+                    executor, host, port, forwarded, upstreamOptions);
                 respond(upstream.status == 0 ? gatewayFailure() : upstream);
             },
             boost::asio::detached);

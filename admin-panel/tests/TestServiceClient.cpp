@@ -8,10 +8,12 @@
 #include <Health.hpp>
 
 #include <bazarish/HttpServer.hpp>
+#include <bazarish/Tls.hpp>
 #include <nlohmann/json.hpp>
 
 #include <chrono>
 #include <cstdio>
+#include <filesystem>
 #include <cstdlib>
 #include <string>
 #include <thread>
@@ -40,12 +42,20 @@ using bazarish::http::collectAuthHeaders;
 int main()
 {
     const Identity panel = Identity::generate();
+    const std::filesystem::path keyRoot
+        = std::filesystem::temp_directory_path() / "bazarish-panel-client-test";
+    std::filesystem::remove_all(keyRoot);
+    const bazarish::tls::Credential servicePins = bazarish::tls::selfSigned(keyRoot / "service");
+    const bazarish::tls::Credential panelPins = bazarish::tls::selfSigned(keyRoot / "panel");
 
     std::string quotaUser;
     std::uint64_t quotaBytes = 0;
     std::string searchedQuery;
 
     http::Server::Options options;
+    options.certificate = servicePins.certificate.string();
+    options.key = servicePins.key.string();
+    options.clientPins = {panelPins.pin};
     options.port = 0;
     http::Server service(options);
     const auto authorize = [&panel](const http::Request& request) -> bool {
@@ -101,9 +111,10 @@ int main()
     ServiceEntry entry;
     entry.name = "core";
     entry.kind = "server-core";
-    entry.url = "http://127.0.0.1:" + std::to_string(port);
+    entry.url = "https://127.0.0.1:" + std::to_string(port);
+    entry.pin = servicePins.pin;
 
-    const HealthResult ok = probeHealth(entry, panel);
+    const HealthResult ok = probeHealth(entry, panel, panelPins);
     CHECK(ok.reachable);
     CHECK(ok.status == 200);
     CHECK(ok.version == "9.9.9");
@@ -111,11 +122,11 @@ int main()
     CHECK(ok.ramBytes > 0);
 
     const Identity stranger = Identity::generate();
-    const HealthResult denied = probeHealth(entry, stranger);
+    const HealthResult denied = probeHealth(entry, stranger, panelPins);
     CHECK(!denied.reachable);
     CHECK(denied.status == 403);
 
-    const JsonResult quota = callJson(entry, panel, "PUT", "/v1/account/quota",
+    const JsonResult quota = callJson(entry, panel, panelPins, "PUT", "/v1/account/quota",
         "{\"user\":\"alicefp\",\"quotaBytes\":5000}");
     CHECK(quota.ok);
     CHECK(quota.status == 200);
@@ -124,17 +135,25 @@ int main()
     CHECK(quotaBytes == 5000);
 
     const JsonResult searched
-        = callJson(entry, panel, "GET", "/v1/account/users?q=abc&state=pending");
+        = callJson(entry, panel, panelPins, "GET", "/v1/account/users?q=abc&state=pending");
     CHECK(searched.ok);
     CHECK(searched.body == "{\"users\":[],\"total\":0}");
     CHECK(searchedQuery == "q=abc&state=pending");
 
-    const JsonResult quotaDenied = callJson(entry, stranger, "PUT", "/v1/account/quota",
+    const JsonResult quotaDenied = callJson(entry, stranger, panelPins, "PUT", "/v1/account/quota",
         "{\"user\":\"alicefp\",\"quotaBytes\":5000}");
     CHECK(!quotaDenied.ok);
     CHECK(quotaDenied.status == 403);
 
+    const bazarish::tls::Credential outsider = bazarish::tls::selfSigned(keyRoot / "outsider");
+    CHECK(!probeHealth(entry, panel, outsider).reachable);
+
+    ServiceEntry wrongPin = entry;
+    wrongPin.pin = panelPins.pin;
+    CHECK(!probeHealth(wrongPin, panel, panelPins).reachable);
+
     service.stop();
+    std::filesystem::remove_all(keyRoot);
     std::printf("TestServiceClient: all checks passed\n");
     return 0;
 }

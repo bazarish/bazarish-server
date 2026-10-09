@@ -128,6 +128,36 @@ std::optional<MailboxUsage> OperatorPush::accountUsage(
     }
 }
 
+std::string OperatorPush::reseedArchive() const
+{
+    if (backend_.url.empty()) {
+        return {};
+    }
+    const std::string path = "/internal/i2pseeds.su3";
+    const bazarish::http::Url target = bazarish::http::parseUrl(backend_.url);
+    const auth::Headers signature = auth::signRequest(
+        signer_, static_cast<std::int64_t>(std::time(nullptr)), "GET", path, Bytes());
+    bazarish::http::ClientRequest ask;
+    ask.method = "GET";
+    ask.target = path;
+    ask.headers = std::map<std::string, std::string>(signature.begin(), signature.end());
+    bazarish::http::ClientOptions options;
+    options.tls = target.tls;
+    options.pin = backend_.pin;
+    options.certificate = backend_.certificate;
+    options.key = backend_.key;
+    options.connectTimeout = std::chrono::seconds(kConnectTimeoutSeconds);
+    options.readTimeout = std::chrono::seconds(kReadTimeoutSeconds);
+    const bazarish::http::ClientResponse response
+        = bazarish::http::request(target.host, target.port, ask, options);
+    if (response.status != 200 || response.body.empty()) {
+        bazarish::log::warn("the messaging server has no reseed archive (HTTP {}): {}",
+            response.status, response.error.empty() ? response.body : response.error);
+        return {};
+    }
+    return response.body;
+}
+
 bool OperatorPush::put(const std::string& path, const std::string& bodyText) const
 {
     return putBody(path, bodyText).has_value();

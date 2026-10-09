@@ -31,7 +31,7 @@ struct PortalApiOptions {
     std::string challengeSecret;
     std::string sessionSecret;
     std::int64_t sessionTtlSeconds = 3600;
-    std::string reseedArchiveUrl;
+    std::function<std::string()> fetchReseedArchive;
     std::filesystem::path assetsDirectory;
     std::shared_ptr<NodeSettings> settings;
 

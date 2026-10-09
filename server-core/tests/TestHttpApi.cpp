@@ -377,6 +377,15 @@ int main()
     }
 
     {
+        const std::string seeds = "/internal/i2pseeds.su3";
+        CHECK(call(port, "GET", seeds).status == 404);
+        CHECK(call(opsPort, "GET", seeds).status == 403);
+        CHECK(call(opsPort, "GET", seeds, makeHeaders(operatorIdentity, "GET", seeds, "", ""))
+                  .status
+            == 503);
+    }
+
+    {
         const http::ClientResponse unauth = call(opsPort, "GET", "/healthz");
         CHECK(unauth.status == 403);
         const http::ClientResponse ok = call(opsPort, "GET",

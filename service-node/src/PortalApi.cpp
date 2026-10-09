@@ -212,18 +212,11 @@ std::string PortalApi::reseedArchive()
         return reseedSu3_;
     }
     try {
-        const bazarish::http::Url archive = bazarish::http::parseUrl(options_.reseedArchiveUrl);
-        bazarish::http::ClientRequest ask;
-        ask.method = "GET";
-        ask.target = archive.path.empty() ? "/" : archive.path;
-        const bazarish::http::ClientResponse answer
-            = bazarish::http::request(archive.host, archive.port, ask, {});
-        if (answer.status != 200 || answer.body.empty()) {
-            bazarish::log::warn("portal: the messaging server has no reseed archive ({})",
-                answer.status);
+        const std::string archive = options_.fetchReseedArchive();
+        if (archive.empty()) {
             return reseedSu3_;
         }
-        reseedSu3_ = answer.body;
+        reseedSu3_ = archive;
         reseedFetchedAt_ = now;
     } catch (const std::exception& error) {
         bazarish::log::warn("portal: could not fetch the reseed archive: {}", error.what());
@@ -233,7 +226,7 @@ std::string PortalApi::reseedArchive()
 
 void PortalApi::setupWebRoutes()
 {
-    if (!options_.reseedArchiveUrl.empty()) {
+    if (options_.fetchReseedArchive) {
         http_->get("/i2pseeds.su3", [this](const http::Request&) {
             http::Response response;
             const std::string archive = reseedArchive();

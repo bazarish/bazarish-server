@@ -546,6 +546,15 @@ void HttpApi::setupOpsRoutes()
             return jsonResponse({{"restarting", true}});
         }));
 
+    ops_->get(std::string(kReseedPath),
+        operatorOnly([this](const bazarish::http::Request&) -> bazarish::http::Response {
+            const std::string archive = reseedArchive();
+            if (archive.empty()) {
+                return errorResponse(503, ErrorCode::eI2pUnavailable, "no reseed available");
+            }
+            return bazarish::http::Response{200, "application/octet-stream", {}, archive};
+        }));
+
     ops_->get("/v1/messaging/storage", operatorOnly([this](const bazarish::http::Request&) {
         if (!options_.diskUsage) {
             return errorResponse(
@@ -748,16 +757,6 @@ void HttpApi::setupRoutes()
             store.unregisterClient(user, request.captures.at(0));
             return jsonResponse({{"ok", true}});
         }));
-
-    http_->get(std::string(kReseedPath),
-        [this](const bazarish::http::Request&) -> bazarish::http::Response {
-            const std::string archive = reseedArchive();
-            if (archive.empty()) {
-                return errorResponse(503, ErrorCode::eI2pUnavailable, "no reseed available");
-            }
-            return bazarish::http::Response{
-                200, "application/octet-stream", {}, archive};
-        });
 
     http_->get("/v1/messaging/destination",
         authenticated([this](const bazarish::http::Request&, const std::string& user)

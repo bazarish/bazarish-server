@@ -379,7 +379,8 @@ int main(const int argc, const char** argv)
         }
         bazarish::service::PortalApiOptions portalOptions;
         portalOptions.serverFingerprint = card.server;
-        portalOptions.reseedArchiveUrl = messagingUrl + "/internal/i2pseeds.su3";
+        portalOptions.fetchReseedArchive
+            = [&operatorPush]() { return operatorPush.reseedArchive(); };
         portalOptions.challengeSecret = bazarish::toHex(bazarish::randomBytes(kPortalSecretBytes));
         portalOptions.sessionSecret = bazarish::toHex(bazarish::randomBytes(kPortalSecretBytes));
         portalOptions.assetsDirectory = fs::path(nodeConfig.portalAssets);

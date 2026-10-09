@@ -73,10 +73,17 @@ this host - a fleet can sit on several machines without a tunnel between them.
 
 See `config.example.json`: the authorised admin fingerprints (one string or a
 list), the listen address, and the deployments it manages - no secrets. Each
-deployment is a `server-core`, the `service-node` bound to it and its facades;
-several can be listed, and the account views act on the one chosen in the
-sidebar. The alias service is not here: it is one central service for the whole
-project, not part of an operator's server.
+service is named by its operator socket and by the `pin` it presents there; an
+`http://` URL or a missing pin refuses to load, so a service cannot quietly be
+reached unauthenticated. Each deployment is a `server-core`, the `service-node`
+bound to it and its facades; several can be listed, and the account views act on
+the one chosen in the sidebar. The alias service is not here: it is one central
+service for the whole project, not part of an operator's server.
+
+The panel makes its own certificate in `<state>` on first start and prints the
+hash of its key next to its fingerprint. Both go out to the fleet: the
+fingerprint into each service's `"operators"`, the key hash into its
+`"opsClients"`.
 
 ## Build & test
 

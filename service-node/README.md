@@ -66,6 +66,17 @@ The server card is produced by the messaging server and binds this node to it.
 The service node sits behind the facade (`facade-http` in this repository), which
 routes `/v1/account/*` to it.
 
+`listen` and `opsListen` both speak TLS, with a certificate this node makes in
+its state directory on first start; the hash of its key is printed at startup
+and is what a peer is configured with. `listen` is what the facade and the
+messaging server reach. `opsListen` carries the operator's face and admits only
+a certificate listed in `opsClients`, which is the admin panel's. What this node
+asks of the messaging server - quotas, destinations, a deleted mailbox, the
+reseed archive the portal publishes - goes to that server's operator socket:
+`"messaging": {"host": ..., "port": ..., "pin": ...}`, signed with this node's
+identity and presenting this node's certificate, which the messaging server
+lists in its own `opsClients`.
+
 `portal.listen` opens the browser-facing portal: one JS-free page where a user
 proves their key, which is the whole registration. It also publishes this
 server's reseed archive at `i2pseeds.su3`, because a client needs that before it

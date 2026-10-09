@@ -48,11 +48,21 @@ bazarish-server --config <path>
 ```
 
 One flag and no others: everything is in that file (see
-`config.example.json`) - the state directory, the address it listens on, the
+`config.example.json`) - the state directory, the addresses it listens on, the
 operators who may call its operator endpoints, the service node beside it, and
 the I2P settings. Keys are generated in the state directory on first start and
 the server card is written there as `server-card.der` (its sealing key and
 transport endpoints).
+
+Both sockets speak TLS, with a certificate this server makes in its state
+directory on first start; the hash of its key is printed at startup and is what
+a peer is configured with. `listen` carries the sealed tunnel and federation,
+which the facade forwards to. `opsListen` carries everything that is the
+operator's - health, settings, restart, quotas, destinations, the reseed archive
+the portal serves - and admits only a certificate listed in `opsClients`: the
+admin panel's and the service node's. The node beside it is named the same way,
+`"serviceNode": {"url": "https://...", "pin": "..."}`, and the pin is not
+optional: without one the dial is refused rather than trusted.
 
 The I2P router is **in this process**: `common` carries the engine, so there is
 no daemon to install and no SAM bridge to run beside it.

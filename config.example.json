@@ -10,6 +10,8 @@
 
     "decoy": { "minBytes": 1024, "maxBytes": 262144 },
 
+    "direct": [],
+
     "sessionTtlSeconds": 300,
 
     "serverName": "nginx",

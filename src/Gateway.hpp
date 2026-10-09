@@ -100,6 +100,7 @@ private:
         std::weak_ptr<Session> session;
         std::weak_ptr<EndpointEntry> endpoint;
     };
+    std::optional<DirectRoute> directFor(const std::string& host) const;
     std::shared_ptr<EndpointEntry> localFor(
         const std::string& host, std::shared_ptr<Session>& owner) const;
     bool meetLocally(const std::shared_ptr<Session>& session,

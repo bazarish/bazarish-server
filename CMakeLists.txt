@@ -26,6 +26,7 @@ find_package(OpenSSL 3.5 REQUIRED)
 
 add_library(bazarish_gateway_lib STATIC
     src/Health.cpp
+    src/Conduit.cpp
     src/Gateway.cpp
     src/Settings.cpp
     src/Sessions.cpp
@@ -68,3 +69,4 @@ bazarish_gateway_add_test(TestLostFrame)
 bazarish_gateway_add_test(TestLostDest)
 bazarish_gateway_add_test(TestSessions)
 bazarish_gateway_add_test(TestSettings)
+bazarish_gateway_add_test(TestDirectRoute)

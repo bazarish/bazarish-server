@@ -75,6 +75,25 @@ int main()
         "basePath": "/s", "token": "t", "state": "/t", "notFound": "/no/such/page.html"
     })")));
 
+    const Settings routed = Settings::from(document(R"({
+        "basePath": "/s", "token": "t", "state": "/t",
+        "direct": [{"dest": "alpha.b32.i2p", "host": "10.0.0.2", "port": 8418, "pin": "ab12"}]
+    })"));
+    CHECK(routed.direct.size() == 1);
+    CHECK(routed.direct.front().dest == "alpha.b32.i2p");
+    CHECK(routed.direct.front().host == "10.0.0.2");
+    CHECK(routed.direct.front().port == 8418);
+    CHECK(routed.direct.front().pin == "ab12");
+
+    CHECK_THROWS(Settings::from(document(R"({
+        "basePath": "/s", "token": "t", "state": "/t",
+        "direct": [{"dest": "alpha.b32.i2p", "host": "10.0.0.2", "port": 8418}]
+    })")));
+    CHECK_THROWS(Settings::from(document(R"({
+        "basePath": "/s", "token": "t", "state": "/t",
+        "direct": [{"host": "10.0.0.2", "port": 8418, "pin": "ab12"}]
+    })")));
+
     std::printf("TestSettings ok\n");
     return 0;
 }

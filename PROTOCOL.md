@@ -35,6 +35,14 @@ The operator of a gateway sees:
 - the timing and the volume of all of the client's I2P traffic,
 - the client's IP address.
 
+An operator who runs a Bazarish server as well can give the gateway a direct
+route to it: a destination named in `direct` is dialled over TLS to the address
+serving it, pinned by the key that address presents, and that flow does not
+enter I2P at all. The server then sees the gateway's address where it would have
+seen a destination, and the client cannot tell the two apart from its side. It
+is a route between two things one operator owns; a gateway somebody else runs
+carries the flow over I2P because it has no such route to give.
+
 The operator does not see: the account identity keys, the profile database, the
 message content (end to end encrypted above this layer), or the master key of
 the account's serving destination.
@@ -528,6 +536,12 @@ The gateway re-issues the dial every `kDialRetryDelay` until that deadline, and
 only a failure that is not "unreachable" is terminal. This is the SAM backend's
 lesson, learned against a live router and not against a fake: a LeaseSet that is
 not in the netDb yet is a reason to try again, not a reason to fail.
+
+A destination with a direct route skips the router: the gateway opens a pinned
+TLS socket to the configured address and splices the stream into it, and a
+handshake whose key is not the pinned one fails the dial like any other
+unreachable destination. Everything above the transport is unchanged, because
+the bytes are the same ones the destination would have carried.
 
 The dial ends in `stream-opened`, or in `stream-reset` with `unreachable`,
 `timeout` or `refused`. A dial in flight when the socket drops keeps going: the

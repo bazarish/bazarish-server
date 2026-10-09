@@ -771,17 +771,30 @@ void Gateway::onStreamOpen(const std::shared_ptr<Session>& session,
     }).detach();
 }
 
+std::optional<DirectRoute> Gateway::directFor(const std::string& host) const
+{
+    for (const DirectRoute& route : settings_.direct) {
+        if (route.dest == host) {
+            return route;
+        }
+    }
+    return std::nullopt;
+}
+
 void Gateway::dial(const std::shared_ptr<Session>& session,
     const std::shared_ptr<EndpointEntry>& from, const std::uint32_t stream, std::string host,
     const std::chrono::seconds deadline, const http::SocketPtr& answerTo)
 {
     const auto until = std::chrono::steady_clock::now() + deadline;
-    std::unique_ptr<i2p::Stream> opened;
+    const std::optional<DirectRoute> route = directFor(host);
+    std::unique_ptr<Conduit> opened;
     while (std::chrono::steady_clock::now() < until && from->running.load()) {
-        const auto left = std::chrono::duration_cast<std::chrono::seconds>(
-            until - std::chrono::steady_clock::now());
+        const auto left = std::max(std::chrono::duration_cast<std::chrono::seconds>(
+                                       until - std::chrono::steady_clock::now()),
+            std::chrono::seconds(1));
         try {
-            opened = from->endpoint->connect(host, std::max(left, std::chrono::seconds(1)));
+            opened = route.has_value() ? overTls(*route, left)
+                                       : overI2p(from->endpoint->connect(host, left));
         } catch (const std::exception&) {
             opened.reset();
         }
@@ -915,7 +928,7 @@ void Gateway::acceptLoop(
         }
         std::shared_ptr<StreamEntry> inbound = std::make_shared<StreamEntry>();
         inbound->endpoint = entry->id;
-        inbound->stream = std::move(caller);
+        inbound->stream = overI2p(std::move(caller));
         {
             const std::lock_guard<std::mutex> lock(mutex_);
             if (!entry->running.load()) {

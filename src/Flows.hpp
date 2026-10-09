@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #pragma once
 
+#include "Conduit.hpp"
+
 #include <bazarish/GatewayStreamBook.hpp>
 
 #include <bazarish/Bytes.hpp>
@@ -36,7 +38,7 @@ struct EndpointEntry {
 struct StreamEntry {
     std::uint32_t id = 0;
     std::uint32_t endpoint = 0;
-    std::unique_ptr<i2p::Stream> stream;
+    std::unique_ptr<Conduit> stream;
     std::weak_ptr<StreamEntry> peer;
     std::weak_ptr<Session> peerSession;
     Bytes waiting;

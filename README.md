@@ -32,6 +32,7 @@ One file, given with `--config`. `config.example.json` is a starting point.
 | `reseed` | su3 archives a router with no peers starts from. Empty leaves the engine its built-in hosts |
 | `decoy.minBytes`, `decoy.maxBytes` | The length of a decoy answer, drawn between them |
 | `sessionTtlSeconds` | How long a session outlives its last socket |
+| `direct` | Destinations this gateway reaches without I2P: `dest`, the `host` and `port` serving it, and the `pin` that address presents |
 | `operators` | Fingerprints allowed to read the health report |
 | `serverName` | The `Server` header on the 404 |
 | `notFound` | A file whose contents are that 404. Empty serves nginx's own page |

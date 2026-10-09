@@ -68,6 +68,23 @@ Settings Settings::from(const ConfigView& config)
         settings.operators.push_back(fingerprint);
     }
 
+    const nlohmann::json& document = config.document();
+    if (document.contains("direct")) {
+        for (const nlohmann::json& item : document.at("direct")) {
+            DirectRoute route;
+            route.dest = item.value("dest", std::string());
+            route.host = item.value("host", std::string());
+            route.port = item.value("port", 0);
+            route.pin = item.value("pin", std::string());
+            if (route.dest.empty() || route.host.empty() || route.port <= 0
+                || route.pin.empty()) {
+                throw std::runtime_error(
+                    "\"direct\" names a destination, an address and the key it presents");
+            }
+            settings.direct.push_back(std::move(route));
+        }
+    }
+
     settings.sessionTtlSeconds
         = config.number("sessionTtlSeconds", kSessionTtl.count());
     if (settings.sessionTtlSeconds <= 0) {

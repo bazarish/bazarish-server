@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #pragma once
 
+#include "Conduit.hpp"
+
 #include <bazarish/GatewayProtocol.hpp>
 
 #include <bazarish/ConfigFile.hpp>
@@ -26,6 +28,7 @@ struct Settings {
     std::string notFoundBody;
     std::string serverName = "nginx";
     std::vector<std::string> operators;
+    std::vector<DirectRoute> direct;
     std::int64_t sessionTtlSeconds = kSessionTtl.count();
 
     static Settings from(const ConfigView& config);

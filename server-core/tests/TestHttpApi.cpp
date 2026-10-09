@@ -119,7 +119,6 @@ int main()
     initialSettings.i2pPrivacy = "max";
     initialSettings.i2pTunnelQuantity = 16;
     initialSettings.federationRateLimit = 240;
-    initialSettings.mailboxRetentionDays = 30;
     initialSettings.listenHost = "127.0.0.1";
     initialSettings.listenPort = 8420;
     initialSettings.serviceNodeUrl = "http://127.0.0.1:8421";
@@ -430,8 +429,7 @@ int main()
         CHECK(values.at("i2pTunnelQuantityMax").get<int>() == bazarish::i2p::kMaxTunnelQuantity);
 
         const std::string body = nlohmann::json{{"logLevel", "debug"},
-            {"i2pPrivacy", "middle"}, {"federationRateLimit", 60},
-            {"mailboxRetentionDays", 7}}
+            {"i2pPrivacy", "middle"}, {"federationRateLimit", 60}}
                                      .dump();
         CHECK(call(port, "PUT", path, makeHeaders(operatorIdentity, "PUT", path, body, {}), body)
                   .status
@@ -444,7 +442,6 @@ int main()
         CHECK(onDisk.at("logLevel").get<std::string>() == "debug");
         CHECK(onDisk.at("i2p").at("privacy").get<std::string>() == "middle");
         CHECK(onDisk.at("federationRateLimit").get<int>() == 60);
-        CHECK(onDisk.at("mailboxRetentionDays").get<int>() == 7);
         CHECK(onDisk.at("state").get<std::string>() == "/var/lib/bazarish/server-core");
 
         const std::string nonsense = nlohmann::json{{"i2pPrivacy", "invisible"}}.dump();

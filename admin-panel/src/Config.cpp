@@ -67,7 +67,7 @@ Config Config::fromJson(const std::string& text)
     }
     for (const std::string& fingerprint : config.admins) {
         if (fingerprint.empty()) {
-            throw std::runtime_error("config: \"admin\" fingerprint must not be empty");
+            throw std::runtime_error("\"admin\" fingerprint must not be empty");
         }
     }
     config.stateDir = json.value("state", std::string());
@@ -91,7 +91,7 @@ Config Config::fromJson(const std::string& text)
             entry.token = item.value("token", std::string());
             takeTokenFromUrl(entry);
             if (!isKnownServiceKind(entry.kind)) {
-                throw std::runtime_error("config: unknown service kind \"" + entry.kind + "\"");
+                throw std::runtime_error("unknown service kind \"" + entry.kind + "\"");
             }
             services.push_back(std::move(entry));
         }

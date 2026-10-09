@@ -18,7 +18,6 @@ const char* const kI2pLogKey = "log";
 const char* const kI2pPrivacyKey = "privacy";
 const char* const kI2pTunnelsKey = "tunnelQuantity";
 const char* const kFederationRateKey = "federationRateLimit";
-const char* const kRetentionKey = "mailboxRetentionDays";
 const char* const kListenKey = "listen";
 const char* const kHostKey = "host";
 const char* const kPortKey = "port";
@@ -58,7 +57,6 @@ void ServerSettings::persist(const Values& values) const
         file, {kI2pKey, kI2pTunnelsKey}, values.i2pTunnelQuantity, values_.i2pTunnelQuantity);
     setIfChanged(
         file, {kFederationRateKey}, values.federationRateLimit, values_.federationRateLimit);
-    setIfChanged(file, {kRetentionKey}, values.mailboxRetentionDays, values_.mailboxRetentionDays);
     setIfChanged(file, {kListenKey, kHostKey}, values.listenHost, values_.listenHost);
     setIfChanged(file, {kListenKey, kPortKey}, values.listenPort, values_.listenPort);
     setIfChanged(file, {kServiceNodeKey}, values.serviceNodeUrl, values_.serviceNodeUrl);

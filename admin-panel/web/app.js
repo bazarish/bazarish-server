@@ -182,7 +182,8 @@
             api("GET", "/api/services").then(function (data) {
                 groups.innerHTML = "";
                 if (!data.services.length) {
-                    groups.appendChild(element("p", "muted", "No services configured."));
+                    groups.appendChild(element("p", "muted",
+                        "No services yet. Add them in Settings, Panel."));
                     return;
                 }
                 data.fleets.forEach(function (name) {
@@ -622,7 +623,7 @@
         { id: "portal", label: "Portal" },
         { id: "addresses", label: "Addresses" },
         { id: "accounts", label: "Accounts" },
-        { id: "server", label: "Messaging server" },
+        { id: "server", label: "Server" },
         { id: "facade", label: "Facade" },
         { id: "panel", label: "Panel" }
     ];
@@ -706,6 +707,9 @@
                 Object.keys(chips).forEach(function (key) {
                     chips[key].className = "chip" + (key === String(picked) ? " is-on" : "");
                 });
+                if (options.onPick) {
+                    options.onPick(picked);
+                }
             });
             chips[String(choice.value)] = chip;
             row.appendChild(chip);
@@ -854,13 +858,16 @@
     }
 
     function renderRegistrationTab(form, data) {
+        var says;
         var how = section(form, "Who gets an account");
         var moderated = chipRow(how, "",
             "Open: an account is served as soon as it registers. Moderated: it waits for you.",
             [{ value: false, label: "open" }, { value: true, label: "moderated" }],
-            Boolean(data.requireApproval));
+            Boolean(data.requireApproval),
+            { onPick: function (picked) { says.hidden = !picked; } });
 
-        var says = section(form, "What people are told");
+        says = section(form, "What people are told");
+        says.hidden = !data.requireApproval;
         var portalMessage = textareaBlock(says, "Before registering", data.portalMessage,
             "What this server is, and what registering here means",
             "Shown by a client that reaches this server without an account here.");
@@ -1049,17 +1056,11 @@
             hint: "Parallel tunnels per destination. Lower it on a thin uplink."
         });
 
-        var limits = section(form, "What it accepts and keeps");
+        var limits = section(form, "What it accepts");
         var rate = fieldRow(limits, "Inbound per peer", data.federationRateLimit, {
             type: "number", narrow: true, min: 1, unit: "deliveries / minute", restart: true,
             hint: "Per peer destination. It bounds one sender, not the server."
         });
-        var retention = fieldRow(limits, "Keep unacknowledged mail", data.mailboxRetentionDays, {
-            type: "number", narrow: true, min: 0, unit: "days (0: forever)", restart: true,
-            hint: "Mail no device collected is deleted after this. Acknowledged mail is deleted"
-                + " at once."
-        });
-
         var wiring = section(form, "Where it stands");
         var listen = endpointRow(wiring, "Listens on", data.listen,
             "The private channel the facade and the node reach it on. Never public.", true);
@@ -1084,7 +1085,6 @@
                         i2pPrivacy: privacy(),
                         i2pTunnelQuantity: Math.round(Number(tunnels.value) || 0),
                         federationRateLimit: Math.round(Number(rate.value) || 0),
-                        mailboxRetentionDays: Math.max(0, Math.round(Number(retention.value) || 0)),
                         listen: {
                             host: listen.host.value.trim(),
                             port: portRead(listen.port, "The messaging server")

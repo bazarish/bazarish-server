@@ -39,6 +39,7 @@ constexpr const char* kDefaultHost = "127.0.0.1";
 constexpr int kDefaultPort = 8420;
 constexpr int kServiceNodeTimeoutSeconds = 5;
 constexpr std::int64_t kCardCacheSeconds = 60;
+constexpr int kDefaultTunnelQuantity = 5;
 
 void printUsage()
 {
@@ -136,7 +137,7 @@ int main(const int argc, const char** argv)
         privacy = *parsed;
     }
     const int tunnelQuantity = static_cast<int>(
-        config.number("i2p.tunnelQuantity", bazarish::i2p::kMaxTunnelQuantity));
+        config.number("i2p.tunnelQuantity", kDefaultTunnelQuantity));
     if (tunnelQuantity < 1 || tunnelQuantity > bazarish::i2p::kMaxTunnelQuantity) {
         std::fprintf(stderr, "config: i2p.tunnelQuantity is between 1 and %d\n",
             bazarish::i2p::kMaxTunnelQuantity);
@@ -145,7 +146,6 @@ int main(const int argc, const char** argv)
     const std::size_t federationRateLimit
         = static_cast<std::size_t>(config.number("federationRateLimit", 240));
     constexpr std::int64_t kFederationRateWindowSeconds = bazarish::kSecondsPerMinute;
-    const std::int64_t mailboxRetentionDays = config.number("mailboxRetentionDays", 30);
     bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
     if (const std::string level = config.text("logLevel"); !level.empty()) {
         const std::optional<bazarish::log::Level> parsed = bazarish::log::levelFromString(level);
@@ -274,8 +274,6 @@ int main(const int argc, const char** argv)
     httpOptions.version = kVersion;
     httpOptions.eventGate = &eventGate;
     httpOptions.defaultQuotaBytes = engineOptions.defaultQuotaBytes;
-    httpOptions.mailboxRetentionSeconds
-        = mailboxRetentionDays > 0 ? mailboxRetentionDays * bazarish::kSecondsPerDay : 0;
     httpOptions.reseedSample
         = [](const std::size_t count) { return bazarish::i2p::sampleRouterInfos(count); };
     httpOptions.diskUsage = [stateDir]() {
@@ -317,7 +315,6 @@ int main(const int argc, const char** argv)
     settingValues.i2pPrivacy = bazarish::i2p::privacyName(privacy);
     settingValues.i2pTunnelQuantity = tunnelQuantity;
     settingValues.federationRateLimit = federationRateLimit;
-    settingValues.mailboxRetentionDays = mailboxRetentionDays;
     settingValues.listenHost = host;
     settingValues.listenPort = port;
     settingValues.serviceNodeUrl = serviceNodeUrl;

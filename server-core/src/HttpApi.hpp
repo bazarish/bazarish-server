@@ -38,7 +38,6 @@ struct HttpApiOptions {
     std::string stateDirectory;
     std::string fingerprint;
     std::uint64_t defaultQuotaBytes = 50 * 1024 * 1024;
-    std::int64_t mailboxRetentionSeconds = 30 * kSecondsPerDay;
     std::vector<std::string> operatorFingerprints;
     std::string version;
     std::function<DestinationAssignment(const std::string& user,
@@ -81,7 +80,7 @@ private:
         const bazarish::http::Request& request, const std::string& user);
     std::string reseedArchive();
 
-    void mailboxJanitorLoop();
+    void expiredSweepLoop();
 
     std::mutex reseedMutex_;
     std::string reseedSu3_;

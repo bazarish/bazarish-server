@@ -834,12 +834,13 @@ void AccountApi::setupRoutes()
         const NodeSettings::Values live = settings();
         respondJson(response,
             {
-                {"message", live.portalMessage},
+                {"message", live.requireApproval ? live.portalMessage : std::string()},
                 {"links", live.portalLinks},
                 {"registration",
                     {
                         {"requiresApproval", live.requireApproval},
-                        {"message", live.registrationMessage},
+                        {"message", live.requireApproval ? live.registrationMessage
+                                                         : std::string()},
                     }},
                 {"quotaBytes", live.defaultQuotaBytes},
             });

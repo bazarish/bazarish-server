@@ -16,11 +16,13 @@
   "portal": {
     "listen": {"host": "0.0.0.0", "port": 8431},
     "assets": "/opt/bazarish/bazarish-server/service-node/portal",
-    "message": "Sign in with your key to register.",
+    // What a client is told before it registers here. Shown only while
+    // requireApproval is on.
+    "message": "Registration here is confirmed by hand. The portal is at example.i2p",
     // What the portal calls itself and where users open it. A client shows these
     // words before it signs a login, and the user compares them with the address
     // bar, so "address" has to be the address they actually opened. Left out,
-    // the name is "Bazarish service node" and the address is the first link
+    // the name is "Bazarish server" and the address is the first link
     // below - and with no links either, the portal refuses to start.
     "name": "",
     "address": "",
@@ -34,13 +36,14 @@
   },
 
   // Two modes and no third. requireApproval false: proving a key is the whole
-  // registration. true: the account is created the same way and waits for an
-  // operator, and "message" is what it is shown meanwhile. idleDeleteDays is how
-  // long an account with no destination delegated here is kept before it is
-  // deleted - the delegation is the only sign of life a server has.
+  // registration, and neither notice is shown to anyone. true: the account is
+  // created the same way and waits for an operator, and "message" is what it is
+  // shown meanwhile. idleDeleteDays is how long an account with no destination
+  // delegated here is kept before it is deleted - the delegation is the only
+  // sign of life a server has.
   "registration": {
     "requireApproval": false,
-    "message": "",
+    "message": "Send a few sentences about yourself and your key fingerprint to me@example.com.",
     "idleDeleteDays": 180
   }
 }

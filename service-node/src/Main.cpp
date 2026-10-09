@@ -40,6 +40,10 @@ constexpr int kDefaultPort = 8421;
 constexpr std::size_t kPortalSecretBytes = 16;
 constexpr std::chrono::hours kIdleSweepInterval{1};
 constexpr std::chrono::seconds kBackendWaitBudget{60};
+constexpr const char* kDefaultPortalMessage
+    = "Registration here is confirmed by hand. The portal is at example.i2p";
+constexpr const char* kDefaultRegistrationMessage
+    = "Send a few sentences about yourself and your key fingerprint to me@example.com.";
 
 void printUsage()
 {
@@ -85,7 +89,7 @@ bazarish::Identity loadOrCreateIdentity(const fs::path& stateDir)
 }
 
 struct PortalConfig {
-    std::string message;
+    std::string message = kDefaultPortalMessage;
     std::string name;
     std::vector<std::string> address;
     std::string role;
@@ -96,7 +100,7 @@ struct PortalConfig {
 
 struct RegistrationConfig {
     bool requireApproval = false;
-    std::string message;
+    std::string message = kDefaultRegistrationMessage;
     std::int64_t idleDeleteDays = 180;
 };
 
@@ -138,7 +142,7 @@ NodeConfig loadNodeConfig(const fs::path& path)
     }
     config.freeStorageBytes = static_cast<std::uint64_t>(
         view.number("freeStorageBytes", static_cast<std::int64_t>(config.freeStorageBytes)));
-    config.portal.message = view.text("portal.message");
+    config.portal.message = view.text("portal.message", config.portal.message);
     config.portal.name = view.text("portal.name");
     config.portal.address = view.list("portal.address");
     config.portal.role = view.text("portal.role");
@@ -149,7 +153,8 @@ NodeConfig loadNodeConfig(const fs::path& path)
         = view.flag("allowFacadeWithoutI2pForDevPurposes", false);
     config.registration.requireApproval
         = view.flag("registration.requireApproval", config.registration.requireApproval);
-    config.registration.message = view.text("registration.message");
+    config.registration.message
+        = view.text("registration.message", config.registration.message);
     config.registration.idleDeleteDays
         = view.number("registration.idleDeleteDays", config.registration.idleDeleteDays);
     return config;
@@ -157,7 +162,7 @@ NodeConfig loadNodeConfig(const fs::path& path)
 
 bazarish::service::LoginConsumer portalConsumer(const NodeConfig& config)
 {
-    const char* const kDefaultPortalName = "Bazarish service node";
+    const char* const kDefaultPortalName = "Bazarish server";
     const char* const kDefaultPortalRole = "Account owner";
     bazarish::service::LoginConsumer consumer;
     consumer.name = config.portal.name.empty() ? kDefaultPortalName : config.portal.name;

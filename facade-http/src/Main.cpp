@@ -84,6 +84,11 @@ int main(const int argc, const char** argv)
     }
     const int tunnelQuantity = static_cast<int>(
         config.number("i2p.tunnelQuantity", bazarish::i2p::kDefaultTunnelQuantity));
+    if (tunnelQuantity < 1 || tunnelQuantity > bazarish::i2p::kMaxTunnelQuantity) {
+        std::fprintf(stderr, "config: i2p.tunnelQuantity is between 1 and %d\n",
+            bazarish::i2p::kMaxTunnelQuantity);
+        return 2;
+    }
     bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
     if (const std::string level = config.text("logLevel"); !level.empty()) {
         const std::optional<bazarish::log::Level> parsed = bazarish::log::levelFromString(level);

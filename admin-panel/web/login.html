@@ -11,7 +11,7 @@
 <body class="centred">
 <main class="sheet">
   <img class="wordmark" src="logo.svg" alt="bazarish" width="404" height="76">
-  <p class="sheet-note">Operator panel</p>
+  <p class="sheet-note">Admin</p>
   {{error}}
   <p class="panel-note">Sign this challenge in Bazarish under Signature and paste the result
     back.</p>
@@ -19,7 +19,7 @@
   <pre class="copy">{{challenge}}</pre>
   <form method="post" action="/login">
     <input type="hidden" name="challenge" value="{{challenge}}">
-    <label class="field-label" for="blob">Signed blob</label>
+    <label class="field-label" for="blob">Signature</label>
     <textarea class="field" id="blob" name="blob" required autofocus></textarea>
     <button class="btn" type="submit">Sign in</button>
   </form>

@@ -10,6 +10,6 @@
   "messaging": {"host": "127.0.0.1", "port": 8420},
   "operators": [],
   "state": "/var/lib/bazarish/facade",
-  "i2p": {"enabled": true, "destinations": 1, "privacy": "minimal", "tunnelQuantity": 2},
+  "i2p": {"enabled": true, "destinations": 1, "privacy": "minimal", "tunnelQuantity": 3},
   "logLevel": "info"
 }

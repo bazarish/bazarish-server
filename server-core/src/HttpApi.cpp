@@ -111,7 +111,7 @@ HttpApi::HttpApi(Storage& storage, const HttpApiOptions options)
     , options_(options)
     , startedAt_(nowSeconds())
 {
-    janitorThread_ = std::thread([this]() { mailboxJanitorLoop(); });
+    janitorThread_ = std::thread([this]() { expiredSweepLoop(); });
 }
 
 HttpApi::~HttpApi()
@@ -172,17 +172,15 @@ std::string HttpApi::reseedArchive()
     return reseedSu3_;
 }
 
-void HttpApi::mailboxJanitorLoop()
+void HttpApi::expiredSweepLoop()
 {
     constexpr std::chrono::seconds kSweepInterval{3600};
     while (!stopGate_.waitFor(kSweepInterval)) {
-        if (options_.mailboxRetentionSeconds <= 0) {
-            continue;
-        }
         try {
-            storage_.purgeExpired(nowSeconds() - options_.mailboxRetentionSeconds);
+            // Nothing can be replayed into a delegation that has already expired.
+            storage_.purgeExpired(nowSeconds() - kMaxDelegationDays * kSecondsPerDay);
         } catch (const std::exception& error) {
-            bazarish::log::warn("mailbox sweep failed: {}", error.what());
+            bazarish::log::warn("expiry sweep failed: {}", error.what());
         }
     }
 }
@@ -633,7 +631,6 @@ void HttpApi::setupRoutes()
                 {"i2pTunnelQuantity", values.i2pTunnelQuantity},
                 {"i2pTunnelQuantityMax", bazarish::i2p::kMaxTunnelQuantity},
                 {"federationRateLimit", values.federationRateLimit},
-                {"mailboxRetentionDays", values.mailboxRetentionDays},
                 {"listen", {{"host", values.listenHost}, {"port", values.listenPort}}},
                 {"serviceNode", values.serviceNodeUrl},
                 {"stateDirectory", options_.stateDirectory},
@@ -684,14 +681,6 @@ void HttpApi::setupRoutes()
                             "a rate limit of zero accepts nothing from anyone");
                     }
                     values.federationRateLimit = static_cast<std::size_t>(limit);
-                }
-                if (body.contains("mailboxRetentionDays")) {
-                    const std::int64_t days
-                        = body.at("mailboxRetentionDays").get<std::int64_t>();
-                    if (days < 0) {
-                        throw std::invalid_argument("a retention cannot be negative");
-                    }
-                    values.mailboxRetentionDays = days;
                 }
                 readEndpointInto(body, "listen", values.listenHost, values.listenPort);
                 if (body.contains("serviceNode")) {

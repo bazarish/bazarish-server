@@ -78,7 +78,13 @@ int main(const int argc, const char** argv)
         return 2;
     }
 
-    Config config = Config::fromFile(configPath);
+    Config config;
+    try {
+        config = Config::fromFile(configPath);
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "config: %s\n", error.what());
+        return 2;
+    }
     if (config.stateDir.empty() || config.assetsDir.empty()) {
         std::fprintf(stderr, "config: \"state\" and \"assets\" are required\n");
         return 2;

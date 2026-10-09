@@ -379,18 +379,6 @@ void DiskStorage::purgeExpired(const std::int64_t receivedBefore)
     }
     for (const fs::path& userPath : users) {
         const std::lock_guard<std::mutex> lock(mutex_);
-        for (const std::string& blobId : listDirectoryNames(userPath / "blobs")) {
-            const fs::path metaPath = userPath / "meta" / (blobId + ".json");
-            std::error_code missing;
-            if (!fs::exists(metaPath, missing)) {
-                continue;
-            }
-            if (readJsonFile(metaPath).at("receivedAt").get<std::int64_t>() < receivedBefore) {
-                std::error_code ignored;
-                fs::remove(userPath / "blobs" / blobId, ignored);
-                fs::remove(metaPath, ignored);
-            }
-        }
         for (const std::string& deliveryId : listDirectoryNames(userPath / "seen")) {
             const fs::path marker = userPath / "seen" / deliveryId;
             std::ifstream in(marker, std::ios::binary);

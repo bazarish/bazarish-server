@@ -271,6 +271,10 @@ void HttpApi::registerRoutes()
 
     http_->post("/login", filled([this, loginPage](
                               const http::Request& request, http::Response& response) {
+        if (settings_->unclaimed()) {
+            redirectTo(response, "/setup");
+            return;
+        }
         try {
             auth_.login(request.param("challenge"), request.param("blob"), nowSeconds());
             setSessionCookie(response, sessions_.create(nowSeconds()));

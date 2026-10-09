@@ -19,6 +19,7 @@
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <string>
 #include <map>
@@ -106,7 +107,12 @@ void testPortalDiscovery()
     values.registrationMessage = "write to the operator";
     AccountApiOptions options;
     options.serverFingerprint = "server-fp";
-    options.settings = std::make_shared<NodeSettings>(fs::path(), values);
+    const fs::path configPath = root / "node.json";
+    {
+        std::ofstream config(configPath);
+        config << "{\n  \"state\": \"" << root.string() << "\"\n}\n";
+    }
+    options.settings = std::make_shared<NodeSettings>(configPath, values);
 
     AccountApi api(store, grants, options);
     const int port = api.bind("127.0.0.1", 0);
@@ -131,6 +137,16 @@ void testPortalDiscovery()
     CHECK(registration.at("requiresApproval").get<bool>());
     CHECK(registration.at("message").get<std::string>() == "write to the operator");
     CHECK(body.at("quotaBytes").get<std::uint64_t>() == 20 * 1024 * 1024);
+
+    NodeSettings::Values opened = values;
+    opened.requireApproval = false;
+    options.settings->set(opened);
+    const nlohmann::json open
+        = nlohmann::json::parse(call(port, "GET", "/v1/account/portal").body);
+    CHECK(!open.at("registration").at("requiresApproval").get<bool>());
+    CHECK(open.at("message").get<std::string>().empty());
+    CHECK(open.at("registration").at("message").get<std::string>().empty());
+    CHECK(open.at("links").size() == 2);
 
     api.stop();
     serverThread.join();

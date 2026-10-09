@@ -24,8 +24,8 @@
     --bz-line-2: #333a40;
 
     --bz-ink: #d7dbd8;
-    --bz-ink-dim: #8b948c;
-    --bz-ink-faint: #80888b;
+    --bz-ink-dim: #b0b8b1;
+    --bz-ink-faint: #9aa3a5;
 
     --bz-accent: #f2f4f2;
     --bz-on-accent: #11151a;
@@ -168,7 +168,7 @@ body {
     font-size: 0.7rem;
     letter-spacing: 0.16em;
     text-transform: uppercase;
-    color: var(--bz-ink-faint);
+    color: var(--bz-ink);
 }
 
 .field {
@@ -242,7 +242,7 @@ textarea.field {
 
 .control-label {
     flex: 0 0 5rem;
-    color: var(--bz-ink-dim);
+    color: var(--bz-ink);
     font-size: 0.75rem;
 }
 
@@ -504,7 +504,7 @@ a.btn {
     min-width: 0;
     padding: 0.55rem 0 0.55rem 0.7rem;
     border-inline-start: 2px solid var(--bz-line-2);
-    color: var(--bz-ink-dim);
+    color: var(--bz-ink);
     font-size: 0.8rem;
     overflow-wrap: anywhere;
     user-select: text;

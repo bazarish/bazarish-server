@@ -24,8 +24,8 @@
     --bz-line-2: #333a40;
 
     --bz-ink: #d7dbd8;
-    --bz-ink-dim: #8b948c;
-    --bz-ink-faint: #80888b;
+    --bz-ink-dim: #b0b8b1;
+    --bz-ink-faint: #9aa3a5;
 
     --bz-accent: #f2f4f2;
     --bz-on-accent: #11151a;
@@ -42,7 +42,7 @@
     --bz-err-line: #7a2b2b;
 
     --bz-key: #ffc24d;
-    --bz-key-dim: #9f7c1b;
+    --bz-key-dim: #ab861d;
     --bz-key-bg: #2a2109;
     --bz-key-glow: rgba(255, 194, 77, 0.35);
 
@@ -71,11 +71,12 @@ body {
     display: flex;
     flex-wrap: wrap;
     gap: 0.35rem;
+    margin-bottom: 1rem;
     border-bottom: 1px solid var(--bz-line);
 }
 
 .tab {
-    padding: 0.5rem 0.85rem;
+    padding: 0.5rem 0.55rem;
     background: transparent;
     border: 0;
     border-bottom: 2px solid transparent;
@@ -83,7 +84,7 @@ body {
     text-decoration: none;
     font: inherit;
     font-size: 0.72rem;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
     cursor: pointer;
 }
@@ -144,7 +145,7 @@ body {
     font-weight: 400;
     letter-spacing: 0.16em;
     text-transform: uppercase;
-    color: var(--bz-ink-faint);
+    color: var(--bz-key-dim);
 }
 
 .hint {
@@ -159,7 +160,7 @@ body {
     font-size: 0.7rem;
     letter-spacing: 0.16em;
     text-transform: uppercase;
-    color: var(--bz-ink-faint);
+    color: var(--bz-ink);
 }
 
 .field {
@@ -243,7 +244,7 @@ textarea.field {
 
 .control-label {
     flex: 0 0 11rem;
-    color: var(--bz-ink-dim);
+    color: var(--bz-ink);
     font-size: 0.75rem;
 }
 
@@ -510,9 +511,10 @@ a.btn {
     min-width: 0;
     padding: 0.55rem 0 0.55rem 0.7rem;
     border-left: 2px solid var(--bz-line-2);
-    color: var(--bz-ink-dim);
+    color: var(--bz-ink);
     font-size: 0.8rem;
     overflow-wrap: anywhere;
+    word-break: break-all;
     user-select: text;
 }
 
@@ -761,6 +763,11 @@ body.centred {
     overflow: hidden;
 }
 
+.rows > .muted {
+    margin: 0;
+    padding: 0.9rem;
+}
+
 .row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto auto;
@@ -942,6 +949,12 @@ body.centred {
     border-top: 1px solid var(--bz-line);
 }
 
+.block:first-child {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0;
+}
+
 .block .block-title {
     margin: 0;
 }
@@ -970,7 +983,7 @@ body.centred {
     font-weight: 400;
     letter-spacing: 0.16em;
     text-transform: uppercase;
-    color: var(--bz-ink-faint);
+    color: var(--bz-key-dim);
 }
 
 .section-title::before {

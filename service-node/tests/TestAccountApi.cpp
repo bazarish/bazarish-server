@@ -33,6 +33,9 @@ using namespace bazarish::service;
 
 namespace {
 
+constexpr const char* kServedDest = "servedaddressb33";
+constexpr const char* kServedServingKey = "c2VydmluZy1rZXk=";
+
 namespace http = bazarish::http;
 
 using Headers = std::map<std::string, std::string>;
@@ -90,12 +93,16 @@ int main()
     int pubCalls = 0;
     bool pubAccepts = true;
     options.publishI2pTransient = [&](const std::string& user, const std::string& transientB64,
-                                      const std::int64_t expiresUnix) {
+                                      const std::int64_t expiresUnix)
+        -> std::optional<ServedDestination> {
         pubUser = user;
         pubTransient = transientB64;
         pubExpires = expiresUnix;
         ++pubCalls;
-        return pubAccepts;
+        if (!pubAccepts) {
+            return std::nullopt;
+        }
+        return ServedDestination{kServedDest, kServedServingKey};
     };
     std::string forgottenMailbox;
     options.forgetMailbox = [&forgottenMailbox](const std::string& user) {
@@ -231,6 +238,11 @@ int main()
         CHECK(pubUser == alice.fingerprint());
         CHECK(pubTransient == "user-transient-b64");
         CHECK(pubExpires == now + 7 * 24 * 3600);
+        {
+            const nlohmann::json served = nlohmann::json::parse(ok.body);
+            CHECK(served.at("dest").get<std::string>() == kServedDest);
+            CHECK(served.at("servingKey").get<std::string>() == kServedServingKey);
+        }
 
         {
             pubAccepts = false;

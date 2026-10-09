@@ -41,8 +41,8 @@ struct HttpApiOptions {
     std::int64_t mailboxRetentionSeconds = 30 * kSecondsPerDay;
     std::vector<std::string> operatorFingerprints;
     std::string version;
-    std::function<void(const std::string& user, const std::string& transientB64,
-        std::int64_t expiresUnix)>
+    std::function<DestinationAssignment(const std::string& user,
+        const std::string& transientB64, std::int64_t expiresUnix)>
         provisionI2pDest;
     std::function<void(const std::string& user)> revokeI2pDest;
     AssignDestinationFn assignDestination;

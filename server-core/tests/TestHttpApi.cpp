@@ -132,10 +132,12 @@ int main()
     std::int64_t provisionedExpires = 0;
     std::string revokedUser;
     httpOptions.provisionI2pDest = [&](const std::string& user, const std::string& transientB64,
-                                       const std::int64_t expiresUnix) {
+                                       const std::int64_t expiresUnix)
+        -> bazarish::server::DestinationAssignment {
         provisionedUser = user;
         provisionedTransient = transientB64;
         provisionedExpires = expiresUnix;
+        return {serverDest, serverServingKey, "building"};
     };
     httpOptions.revokeI2pDest = [&](const std::string& user) { revokedUser = user; };
 
@@ -359,6 +361,12 @@ int main()
         CHECK(provisionedUser == "alicefp");
         CHECK(provisionedTransient == "tb64");
         CHECK(provisionedExpires == 1780001234);
+        {
+            const nlohmann::json served = nlohmann::json::parse(ok.body);
+            CHECK(served.at("dest").get<std::string>() == serverDest);
+            CHECK(served.at("servingKey").get<std::string>()
+                == toBase64(serverServingKey->publicDer()));
+        }
         const std::string revokeBody = nlohmann::json{{"user", "alicefp"}}.dump();
         const http::ClientResponse revoked = call(port, "PUT", "/v1/messaging/i2p-dest",
             makeHeaders(operatorIdentity, "PUT", "/v1/messaging/i2p-dest", revokeBody, ""),

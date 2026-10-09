@@ -191,6 +191,7 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
     dest->expiresUnix = expiresUnix;
     dest->sealingKey = std::make_shared<Key>(Key::fromPrivatePem(sealingKeyPem));
     dest->signingKey = std::make_shared<Key>(Key::fromPrivatePem(signingKeyPem));
+    dest->dest = addressOfTransient(transientB64);
     Destination* const raw = dest.get();
     if (router_ != nullptr) {
         for (std::size_t i = 1; i < kServeWorkers; ++i) {
@@ -204,7 +205,6 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
                     keys, privacy_, tunnelQuantity_, true});
                 {
                     const std::lock_guard<std::mutex> lock(mutex_);
-                    raw->dest = endpoint->routingHost();
                     raw->endpoint = endpoint;
                 }
                 bool up = false;
@@ -216,6 +216,7 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
                     }
                 }
                 if (!raw->running.load()) {
+                    endpoint->stop();
                     return;
                 }
                 if (up) {
@@ -299,6 +300,9 @@ void PerUserDestinations::teardownLocked(const std::string& userFp)
         return;
     }
     it->second->running = false;
+    if (it->second->endpoint) {
+        it->second->endpoint->stop();
+    }
     {
         const std::lock_guard<std::mutex> lock(retiringMutex_);
         retiring_.push_back(std::move(it->second));
@@ -306,62 +310,69 @@ void PerUserDestinations::teardownLocked(const std::string& userFp)
     dests_.erase(it);
 }
 
-void PerUserDestinations::provision(const std::string& userFp, const std::string& transientB64,
-    const std::int64_t expiresUnix)
+PerUserDestinations::Assignment PerUserDestinations::provision(const std::string& userFp,
+    const std::string& transientB64, const std::int64_t expiresUnix)
 {
     requireUsableDelegation(transientB64, expiresUnix);
     reapRetired();
-    const std::lock_guard<std::mutex> lock(mutex_);
-    const auto existing = dests_.find(userFp);
-    if (existing != dests_.end() && existing->second->transientB64 == transientB64) {
-        return;
-    }
-    const std::string address = addressOfTransient(transientB64);
-    const bool sameAddress = !address.empty()
-        && ((existing != dests_.end()
-                && addressOfTransient(existing->second->transientB64) == address)
-            || recordedAddress(pathFor(userFp)) == address);
-
-    std::string sealingKeyPem;
-    std::string signingKeyPem;
-    if (sameAddress && existing != dests_.end() && existing->second->sealingKey) {
-        sealingKeyPem = existing->second->sealingKey->privatePem();
-    }
-    if (sameAddress && existing != dests_.end() && existing->second->signingKey) {
-        signingKeyPem = existing->second->signingKey->privatePem();
-    }
-    if (sameAddress && (sealingKeyPem.empty() || signingKeyPem.empty())) {
-        try {
-            const nlohmann::json record = readRecord(pathFor(userFp));
-            if (sealingKeyPem.empty()) {
-                sealingKeyPem = record.value("sealingKey", std::string());
-            }
-            if (signingKeyPem.empty()) {
-                signingKeyPem = record.value("signingKey", std::string());
-            }
-        } catch (const std::exception& error) {
-            bazarish::log::warn("destination record for {} unreadable, minting fresh keys: {}",
-                bazarish::log::redact(userFp), error.what());
+    Assignment served;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        const auto existing = dests_.find(userFp);
+        if (existing != dests_.end() && existing->second->transientB64 == transientB64) {
+            return assignedLocked(*existing->second, nowSeconds());
         }
+        const std::string address = addressOfTransient(transientB64);
+        const bool sameAddress = !address.empty()
+            && ((existing != dests_.end()
+                    && addressOfTransient(existing->second->transientB64) == address)
+                || recordedAddress(pathFor(userFp)) == address);
+
+        std::string sealingKeyPem;
+        std::string signingKeyPem;
+        if (sameAddress && existing != dests_.end() && existing->second->sealingKey) {
+            sealingKeyPem = existing->second->sealingKey->privatePem();
+        }
+        if (sameAddress && existing != dests_.end() && existing->second->signingKey) {
+            signingKeyPem = existing->second->signingKey->privatePem();
+        }
+        if (sameAddress && (sealingKeyPem.empty() || signingKeyPem.empty())) {
+            try {
+                const nlohmann::json record = readRecord(pathFor(userFp));
+                if (sealingKeyPem.empty()) {
+                    sealingKeyPem = record.value("sealingKey", std::string());
+                }
+                if (signingKeyPem.empty()) {
+                    signingKeyPem = record.value("signingKey", std::string());
+                }
+            } catch (const std::exception& error) {
+                bazarish::log::warn("destination record for {} unreadable, minting fresh keys: {}",
+                    bazarish::log::redact(userFp), error.what());
+            }
+        }
+        if (sealingKeyPem.empty()) {
+            sealingKeyPem = Key::generateSealing().privatePem();
+        }
+        if (signingKeyPem.empty()) {
+            signingKeyPem = Key::generateSigning().privatePem();
+        }
+        std::error_code ec;
+        std::filesystem::create_directories(destsDir(), ec);
+        const nlohmann::json record = {{"transient", transientB64},
+            {"expiresUnix", expiresUnix}, {"address", address},
+            {"sealingKey", sealingKeyPem}, {"signingKey", signingKeyPem}};
+        try {
+            writePrivateFile(pathFor(userFp), record.dump());
+        } catch (const std::exception& error) {
+            throw std::runtime_error("cannot persist the destination record for "
+                + bazarish::log::redact(userFp) + ": " + error.what());
+        }
+        teardownLocked(userFp);
+        bringUp(userFp, transientB64, expiresUnix, sealingKeyPem, signingKeyPem);
+        served = assignedLocked(*dests_.at(userFp), nowSeconds());
     }
-    if (sealingKeyPem.empty()) {
-        sealingKeyPem = Key::generateSealing().privatePem();
-    }
-    if (signingKeyPem.empty()) {
-        signingKeyPem = Key::generateSigning().privatePem();
-    }
-    std::error_code ec;
-    std::filesystem::create_directories(destsDir(), ec);
-    const nlohmann::json record = {{"transient", transientB64}, {"expiresUnix", expiresUnix},
-        {"address", address}, {"sealingKey", sealingKeyPem}, {"signingKey", signingKeyPem}};
-    try {
-        writePrivateFile(pathFor(userFp), record.dump());
-    } catch (const std::exception& error) {
-        throw std::runtime_error("cannot persist the destination record for "
-            + bazarish::log::redact(userFp) + ": " + error.what());
-    }
-    teardownLocked(userFp);
-    bringUp(userFp, transientB64, expiresUnix, sealingKeyPem, signingKeyPem);
+    reapRetired();
+    return served;
 }
 
 std::size_t PerUserDestinations::sweepExpired(const std::int64_t now)
@@ -409,15 +420,17 @@ void PerUserDestinations::startSweeper()
 
 void PerUserDestinations::revoke(const std::string& userFp)
 {
-    reapRetired();
-    const std::lock_guard<std::mutex> lock(mutex_);
-    std::error_code ec;
-    std::filesystem::remove(pathFor(userFp), ec);
-    if (ec) {
-        bazarish::log::warn("revoked destination record for {} not removed: {}",
-            bazarish::log::redact(userFp), ec.message());
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        std::error_code ec;
+        std::filesystem::remove(pathFor(userFp), ec);
+        if (ec) {
+            bazarish::log::warn("revoked destination record for {} not removed: {}",
+                bazarish::log::redact(userFp), ec.message());
+        }
+        teardownLocked(userFp);
     }
-    teardownLocked(userFp);
+    reapRetired();
 }
 
 void PerUserDestinations::reloadPersisted(const std::int64_t now)
@@ -497,7 +510,12 @@ PerUserDestinations::Assignment PerUserDestinations::assignmentFor(
     if (found == dests_.end()) {
         return {};
     }
-    const Destination& destination = *found->second;
+    return assignedLocked(*found->second, now);
+}
+
+PerUserDestinations::Assignment PerUserDestinations::assignedLocked(
+    const Destination& destination, const std::int64_t now)
+{
     Assignment assignment;
     assignment.dest = destination.dest;
     assignment.sealingKey = destination.sealingKey;

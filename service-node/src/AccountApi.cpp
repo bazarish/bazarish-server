@@ -750,7 +750,9 @@ void AccountApi::setupRoutes()
                     "this delegation has already run out");
                 return;
             }
-            if (!options_.publishI2pTransient(user, transient, expiresUnix)) {
+            const std::optional<ServedDestination> served
+                = options_.publishI2pTransient(user, transient, expiresUnix);
+            if (!served.has_value()) {
                 respondError(response, 503, ErrorCode::eDeliveryRejected,
                     "the messaging server did not accept the delegation");
                 return;
@@ -765,7 +767,8 @@ void AccountApi::setupRoutes()
                     store_.putAccount(record);
                 }
             }
-            respondJson(response, {{"ok", true}});
+            respondJson(response,
+                {{"dest", served->dest}, {"servingKey", served->servingKeyB64}});
         });
 
     clientRoute("GET", "/v1/account/i2p-status",

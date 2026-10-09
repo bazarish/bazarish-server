@@ -19,6 +19,11 @@ struct MailboxUsage {
     std::size_t devices = 0;
 };
 
+struct ServedDestination {
+    std::string dest;
+    std::string servingKeyB64;
+};
+
 class OperatorPush {
 public:
     static constexpr int kBackgroundAttempts = 3;
@@ -29,8 +34,8 @@ public:
 
     bool waitReachable(std::chrono::seconds budget) const;
 
-    bool publish(const std::string& user, const std::string& transientB64,
-        std::int64_t expiresUnix) const;
+    std::optional<ServedDestination> publish(const std::string& user,
+        const std::string& transientB64, std::int64_t expiresUnix) const;
     std::optional<MailboxUsage> accountUsage(const std::string& user) const;
 
     bool forgetMailbox(const std::string& user) const;

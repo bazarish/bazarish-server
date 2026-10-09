@@ -3,6 +3,7 @@
 
 #include "GrantStore.hpp"
 #include "NodeSettings.hpp"
+#include "OperatorPush.hpp"
 #include "SubscriptionStore.hpp"
 
 #include <nlohmann/json.hpp>
@@ -32,8 +33,8 @@ struct AccountApiOptions {
     std::vector<std::string> operatorFingerprints;
     std::function<void()> requestRestart;
 
-    std::function<bool(const std::string& user, const std::string& transientB64,
-        std::int64_t expiresUnix)>
+    std::function<std::optional<ServedDestination>(const std::string& user,
+        const std::string& transientB64, std::int64_t expiresUnix)>
         publishI2pTransient;
 
     std::function<bool(const std::string& user)> forgetMailbox;

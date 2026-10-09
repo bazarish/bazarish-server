@@ -68,6 +68,7 @@ int main()
     const std::string transientA = toBase64(shortTerm.blob());
     const std::string transientB = toBase64(longTerm.blob());
     const std::string movedAway = toBase64(otherMaster.blob());
+    const std::string addressA = bazarish::i2p::routingHost(shortTerm.publicBase64());
     const std::int64_t shortExpiry = shortTerm.transientExpires();
     const std::int64_t longExpiry = longTerm.transientExpires();
     const std::int64_t movedAwayExpiry = otherMaster.transientExpires();
@@ -93,7 +94,10 @@ int main()
     {
         PerUserDestinations dests(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
 
-        dests.provision(alice, transientA, shortExpiry);
+        const PerUserDestinations::Assignment served
+            = dests.provision(alice, transientA, shortExpiry);
+        CHECK(served.dest == addressA);
+        CHECK(served.sealingKey != nullptr);
         CHECK(std::filesystem::exists(aliceFile));
         CHECK(readFile(aliceFile).find(transientA) != std::string::npos);
         CHECK(dests.size() == 1);
@@ -103,7 +107,8 @@ int main()
         CHECK(servingKeyA != nullptr);
         const Bytes servingA = servingKeyA->publicDer();
         CHECK(readFile(aliceFile).find("sealingKey") != std::string::npos);
-        CHECK(dests.assignmentFor(alice, shortExpiry - 1).dest.empty());
+        CHECK(dests.assignmentFor(alice, shortExpiry - 1).dest == addressA);
+        CHECK(dests.provision(alice, transientA, shortExpiry).dest == addressA);
 
         CHECK(readFile(aliceFile).find("signingKey") != std::string::npos);
         const std::string signingA = fieldOf(aliceFile, "signingKey");
@@ -117,7 +122,7 @@ int main()
         dests.provision(alice, transientA, shortExpiry);
         CHECK(dests.size() == 1);
 
-        dests.provision(alice, transientB, longExpiry);
+        CHECK(dests.provision(alice, transientB, longExpiry).dest == addressA);
         CHECK(dests.size() == 1);
         CHECK(readFile(aliceFile).find(transientB) != std::string::npos);
         CHECK(dests.assignmentFor(alice, shortExpiry - 1).sealingKey->publicDer() == servingA);

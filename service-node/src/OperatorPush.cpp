@@ -188,15 +188,28 @@ bool OperatorPush::publishQuota(const std::string& user, const std::uint64_t quo
     return put(kQuotaPath, body.dump());
 }
 
-bool OperatorPush::publish(const std::string& user, const std::string& transientB64,
-    const std::int64_t expiresUnix) const
+std::optional<ServedDestination> OperatorPush::publish(const std::string& user,
+    const std::string& transientB64, const std::int64_t expiresUnix) const
 {
     nlohmann::json body = {{"user", user}};
     if (!transientB64.empty()) {
         body["transient"] = transientB64;
         body["expiresUnix"] = expiresUnix;
     }
-    return put(kDestPath, body.dump());
+    const std::optional<std::string> answer = putBody(kDestPath, body.dump());
+    if (!answer.has_value()) {
+        return std::nullopt;
+    }
+    try {
+        const nlohmann::json served = nlohmann::json::parse(*answer);
+        return ServedDestination{served.value("dest", std::string()),
+            served.value("servingKey", std::string())};
+    } catch (const std::exception& error) {
+        bazarish::log::warn("the messaging server's answer about the destination of {} is "
+                            "unreadable: {}",
+            bazarish::log::redact(user), error.what());
+        return std::nullopt;
+    }
 }
 
 }  // namespace bazarish::service

@@ -91,9 +91,9 @@ int main()
     options.settings = std::make_shared<NodeSettings>(std::filesystem::path(), values);
     int pubCalls = 0;
     options.publishI2pTransient = [&pubCalls](const std::string&, const std::string&,
-                                      std::int64_t) {
+                                      std::int64_t) -> std::optional<ServedDestination> {
         ++pubCalls;
-        return true;
+        return ServedDestination{};
     };
     AccountApi api(store, grants, options);
 

@@ -32,7 +32,13 @@ public:
     PerUserDestinations(const PerUserDestinations&) = delete;
     PerUserDestinations& operator=(const PerUserDestinations&) = delete;
 
-    void provision(const std::string& userFp, const std::string& transientB64,
+    struct Assignment {
+        std::string dest;
+        std::shared_ptr<Key> sealingKey;
+        std::string state = "none";
+    };
+
+    Assignment provision(const std::string& userFp, const std::string& transientB64,
         std::int64_t expiresUnix);
 
     void revoke(const std::string& userFp);
@@ -46,11 +52,6 @@ public:
 
     std::size_t size() const;
 
-    struct Assignment {
-        std::string dest;
-        std::shared_ptr<Key> sealingKey;
-        std::string state = "none";
-    };
     Assignment assignmentFor(const std::string& userFp, std::int64_t now) const;
 
 
@@ -72,6 +73,7 @@ private:
         const std::string& signingKeyPem);
     void teardownLocked(const std::string& userFp);
     void reapRetired();
+    static Assignment assignedLocked(const Destination& destination, std::int64_t now);
     void serveLoop(Destination* destination, const std::string& userFp);
     void startWatchdog();
     void watchStream(const std::shared_ptr<bazarish::i2p::Stream>& stream);

@@ -22,9 +22,13 @@ is a service of its own and is not reached through here.
   while its owner keeps a destination delegated here, and an idle one is swept
   after `registration.idleDeleteDays`.
 - **The user's own destination.** `POST /v1/account/i2p-dest` takes the offline
-  transient that lets the messaging server operate the address; `i2p-status`
+  transient that lets the messaging server operate the address and answers with
+  the `{dest, servingKey}` that destination now serves under, so the client can
+  issue its card from one answer instead of asking again; `i2p-status`
   says how long the current one lasts so any device knows when to issue the next;
-  `undelegate` takes an account out of service without deleting it.
+  `undelegate` takes an account out of service without deleting it. A transient
+  over a different address replaces the destination outright - the old one is
+  stopped and dropped in the same call, with no grace period.
 - **The contact card.** `POST /v1/account/card` stores the user-signed card and
   is what redeems a registration into an account. `GET /v1/account/card?user=`
   hands it back to whoever reached this account's destination, which is the only

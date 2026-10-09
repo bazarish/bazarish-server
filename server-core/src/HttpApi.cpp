@@ -756,11 +756,15 @@ void HttpApi::setupRoutes()
             const std::string transient = body.value("transient", std::string());
             if (transient.empty()) {
                 options_.revokeI2pDest(user);
-            } else {
-                options_.provisionI2pDest(
-                    user, transient, body.at("expiresUnix").get<std::int64_t>());
+                return jsonResponse({{"dest", ""}, {"servingKey", ""}});
             }
-            return jsonResponse({{"ok", true}});
+            const DestinationAssignment served = options_.provisionI2pDest(
+                user, transient, body.at("expiresUnix").get<std::int64_t>());
+            return jsonResponse({
+                {"dest", served.dest},
+                {"servingKey",
+                    served.servingKey ? toBase64(served.servingKey->publicDer()) : std::string()},
+            });
         }));
 
     for (const auto& [method, path] :

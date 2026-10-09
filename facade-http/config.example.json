@@ -1,8 +1,8 @@
 {
-  // The secret prefix the whole clearnet API lives under. Mandatory unless a
-  // fronting proxy owns the secret, in which case set "public": true instead.
+  // The secret prefix the API lives under. Mandatory.
   "basePath": "/REPLACE_WITH_A_SECRET_PATH",
-  "listen": {"host": "0.0.0.0", "port": 8419},
+  // What the facade's own I2P destinations relay to, on loopback.
+  "listen": {"host": "127.0.0.1", "port": 8419},
   // A TLS socket carrying exactly what the I2P destination carries, for a
   // gateway the operator has given a route to this address. Left out, the only
   // way in is the destination.

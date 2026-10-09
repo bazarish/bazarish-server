@@ -19,13 +19,10 @@ struct ServiceEntry {
     std::string name;
     std::string kind;
     std::string url;
-    std::string token;
     std::string pin;
 
     friend bool operator==(const ServiceEntry&, const ServiceEntry&) = default;
 };
-
-void takeTokenFromUrl(ServiceEntry& entry);
 
 struct Fleet {
     std::string name;

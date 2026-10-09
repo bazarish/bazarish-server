@@ -3,8 +3,6 @@
 
 #include <bazarish/Tls.hpp>
 
-#include <bazarish/GatewayProtocol.hpp>
-
 #include <bazarish/Clock.hpp>
 #include <bazarish/Auth.hpp>
 #include <bazarish/Bytes.hpp>
@@ -46,9 +44,6 @@ bazarish::http::ClientResponse call(const ServiceEntry& service, const Identity&
     out.method = method;
     out.target = full;
     out.headers = std::map<std::string, std::string>(signature.begin(), signature.end());
-    if (!service.token.empty()) {
-        out.headers[bazarish::gateway::kTokenHeader] = service.token;
-    }
     out.body = body;
     if (!body.empty()) {
         out.contentType = "application/json";

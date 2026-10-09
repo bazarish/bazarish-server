@@ -17,6 +17,7 @@ const char* const kBasePathKey = "basePath";
 const char* const kMessagingKey = "messaging";
 const char* const kListenKey = "listen";
 const char* const kOpsListenKey = "opsListen";
+const char* const kDirectListenKey = "directListen";
 const char* const kHostKey = "host";
 const char* const kPortKey = "port";
 const char* const kI2pKey = "i2p";
@@ -68,6 +69,8 @@ void FacadeSettings::persist(const Values& values) const
     setIfChanged(file, {kListenKey, kPortKey}, values.listenPort, values_.listenPort);
     setIfChanged(file, {kOpsListenKey, kHostKey}, values.opsHost, values_.opsHost);
     setIfChanged(file, {kOpsListenKey, kPortKey}, values.opsPort, values_.opsPort);
+    setIfChanged(file, {kDirectListenKey, kHostKey}, values.directHost, values_.directHost);
+    setIfChanged(file, {kDirectListenKey, kPortKey}, values.directPort, values_.directPort);
     setIfChanged(file, {kI2pKey, kI2pEnabledKey}, values.i2pEnabled, values_.i2pEnabled);
     setIfChanged(
         file, {kI2pKey, kI2pDestinationsKey}, values.i2pDestinations, values_.i2pDestinations);

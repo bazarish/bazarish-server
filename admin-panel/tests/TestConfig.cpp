@@ -93,19 +93,6 @@ int main()
     CHECK_THROWS(Config::fromJson(R"({"admin": "fp", "services": [
         {"name": "x", "kind": "server-core"}]})"));
 
-    const Config pasted = Config::fromJson(R"({"admin": "fp", "services": [
-        {"name": "gate", "kind": "gateway",
-         "url": "https://gate.example/f3a9c2e1#a-long-token", "pin": "a-pin"}]})");
-    CHECK(pasted.fleets.at(0).services.at(0).url == "https://gate.example/f3a9c2e1");
-    CHECK(pasted.fleets.at(0).services.at(0).token == "a-long-token");
-
-    const Config named = Config::fromJson(R"({"admin": "fp", "services": [
-        {"name": "gate", "kind": "gateway",
-         "url": "https://192.168.0.70:8440/f3a9c2e1", "token": "a-long-token",
-         "pin": "a-pin"}]})");
-    CHECK(named.fleets.at(0).services.at(0).url == "https://192.168.0.70:8440/f3a9c2e1");
-    CHECK(named.fleets.at(0).services.at(0).token == "a-long-token");
-
     std::printf("TestConfig: all checks passed\n");
     return 0;
 }

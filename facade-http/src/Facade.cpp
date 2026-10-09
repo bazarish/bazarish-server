@@ -65,13 +65,10 @@ bool isForwarded(const std::string& method, const std::string& path)
 std::optional<std::string> forwardedTarget(
     const bazarish::facade::FacadeOptions& options, const bazarish::http::Request& request)
 {
-    std::string target = request.target;
-    if (!options.basePath.empty()) {
-        if (!startsWith(target, options.basePath)) {
-            return std::nullopt;
-        }
-        target = target.substr(options.basePath.size());
+    if (!startsWith(request.target, options.basePath)) {
+        return std::nullopt;
     }
+    const std::string target = request.target.substr(options.basePath.size());
     if (!isForwarded(request.method, pathOf(target))) {
         return std::nullopt;
     }
@@ -271,6 +268,7 @@ void Facade::setupOpsRoutes()
                 {"messaging", {{"host", values.messagingHost}, {"port", values.messagingPort}}},
                 {"listen", {{"host", values.listenHost}, {"port", values.listenPort}}},
                 {"opsListen", {{"host", values.opsHost}, {"port", values.opsPort}}},
+                {"directListen", {{"host", values.directHost}, {"port", values.directPort}}},
                 {"i2pEnabled", values.i2pEnabled},
                 {"i2pDestinations", values.i2pDestinations},
                 {"i2pDestinationsMax", kMaxI2pDestinations},
@@ -308,6 +306,7 @@ void Facade::setupOpsRoutes()
         readEndpointInto(body, "messaging", values.messagingHost, values.messagingPort);
         readEndpointInto(body, "listen", values.listenHost, values.listenPort);
         readEndpointInto(body, "opsListen", values.opsHost, values.opsPort);
+        readEndpointInto(body, "directListen", values.directHost, values.directPort);
         if (body.contains("i2pEnabled")) {
             values.i2pEnabled = body.at("i2pEnabled").get<bool>();
         }

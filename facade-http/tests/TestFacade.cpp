@@ -32,6 +32,9 @@ namespace http = bazarish::http;
 
 using Headers = std::map<std::string, std::string>;
 
+constexpr int kDirectPort = 8418;
+constexpr int kMovedDirectPort = 8417;
+
 http::ClientResponse call(const int port, const std::string& method, const std::string& path,
     const Headers& headers = {}, const std::string& body = {})
 {
@@ -161,6 +164,8 @@ int main()
     facadeValues.listenPort = 8419;
     facadeValues.opsHost = "127.0.0.1";
     facadeValues.opsPort = 8429;
+    facadeValues.directHost = "127.0.0.1";
+    facadeValues.directPort = kDirectPort;
     facadeValues.i2pEnabled = true;
     facadeValues.i2pDestinations = 1;
     facadeValues.i2pPrivacy = "max";
@@ -294,18 +299,22 @@ int main()
         const nlohmann::json values = nlohmann::json::parse(shown.body);
         CHECK(values.at("basePath").get<std::string>() == "/s/secret123");
         CHECK(values.at("i2pTunnelQuantity").get<int>() == 3);
+        CHECK(values.at("directListen").at("port").get<int>() == kDirectPort);
 
-        const std::string body
-            = nlohmann::json{{"basePath", "/s/secret456"}, {"i2pTunnelQuantity", 8}}.dump();
+        const nlohmann::json wanted = {{"basePath", "/s/secret456"}, {"i2pTunnelQuantity", 8},
+            {"directListen", {{"host", "127.0.0.1"}, {"port", kMovedDirectPort}}}};
+        const std::string body = wanted.dump();
         CHECK(callTls(opsPort, facadeCredential.pin, "PUT", path, signedHeaders(operatorIdentity, "PUT", path, body), body)
                   .status
             == 200);
         CHECK(facadeSettings->get().basePath == "/s/secret456");
+        CHECK(facadeSettings->get().directPort == kMovedDirectPort);
 
         std::ifstream written(configPath);
         const nlohmann::json onDisk = nlohmann::json::parse(written);
         CHECK(onDisk.at("basePath").get<std::string>() == "/s/secret456");
         CHECK(onDisk.at("i2p").at("tunnelQuantity").get<int>() == 8);
+        CHECK(onDisk.at("directListen").at("port").get<int>() == kMovedDirectPort);
 
         const std::string bad = nlohmann::json{{"basePath", "secret/"}}.dump();
         CHECK(callTls(opsPort, facadeCredential.pin, "PUT", path, signedHeaders(operatorIdentity, "PUT", path, bad), bad)

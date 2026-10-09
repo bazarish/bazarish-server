@@ -1110,11 +1110,15 @@
             data.logLevel || "info");
 
         var sockets = section(form, "Sockets");
-        var listen = endpointRow(sockets, "Public", data.listen,
-            "Where clients reach it, under the base path above.", true);
+        var listen = endpointRow(sockets, "API", data.listen,
+            "What its own I2P addresses relay to, under the base path above. Keep it on"
+            + " loopback.", true);
         var ops = endpointRow(sockets, "Operator", data.opsListen,
             "The private socket this page is talking to: health, settings, restart. Never"
             + " published to clients.", true);
+        var direct = endpointRow(sockets, "Direct", data.directListen,
+            "What the I2P addresses serve, over TLS, for a gateway given a route here. Empty:"
+            + " not opened.", true);
 
         var backends = section(form, "What it forwards to");
         var messaging = endpointRow(backends, "Messaging server", data.messaging,
@@ -1151,7 +1155,7 @@
                 if (path.length === 0 || path.charAt(0) !== "/" || path.slice(-1) === "/") {
                     throw new Error("A base path starts with / and does not end with one.");
                 }
-                return {
+                var request = {
                     method: "PUT",
                     path: withFleet("/api/service-settings?kind=facade"),
                     body: {
@@ -1159,7 +1163,7 @@
                         logLevel: level(),
                         listen: {
                             host: listen.host.value.trim(),
-                            port: portRead(listen.port, "The public listener")
+                            port: portRead(listen.port, "The API listener")
                         },
                         opsListen: {
                             host: ops.host.value.trim(),
@@ -1175,6 +1179,13 @@
                         i2pTunnelQuantity: Math.round(Number(tunnels.value) || 0)
                     }
                 };
+                if (direct.host.value.trim() !== "" || direct.port.value !== "") {
+                    request.body.directListen = {
+                        host: direct.host.value.trim(),
+                        port: portRead(direct.port, "The direct listener")
+                    };
+                }
+                return request;
             });
         restartButton(footer, "facade");
     }
@@ -1230,7 +1241,7 @@
             row.appendChild(drop);
             wrap.appendChild(row);
 
-            var pinRow = element("div", "service-token");
+            var pinRow = element("div", "service-key");
             pinRow.appendChild(element("span", "control-label", "Key"));
             var pin = element("input", "field");
             pin.type = "text";
@@ -1239,20 +1250,8 @@
             pinRow.appendChild(pin);
             wrap.appendChild(pinRow);
 
-            var tokenRow = element("div", "service-token");
-            tokenRow.appendChild(element("span", "control-label", "Gateway token"));
-            var token = element("input", "field");
-            token.type = "text";
-            token.value = service ? (service.token || "") : "";
-            tokenRow.appendChild(token);
-            tokenRow.hidden = kind.value !== "gateway";
-            wrap.appendChild(tokenRow);
-            kind.addEventListener("change", function () {
-                tokenRow.hidden = kind.value !== "gateway";
-            });
-
             var entry = { fleet: fleetName, name: name, kind: kind, url: url, pin: pin,
-                token: token, dropped: false };
+                dropped: false };
             drop.addEventListener("click", function () {
                 entry.dropped = true;
                 wrap.remove();
@@ -1285,8 +1284,8 @@
             serviceBlock.appendChild(addRow);
         });
         serviceBlock.appendChild(element("p", "hint",
-            "Each service must list this panel's fingerprint as an operator. A gateway's URL"
-            + " includes its base path."));
+            "Each service must list this panel's fingerprint as an operator. Its address is"
+            + " the operator socket its opsListen opens."));
 
         var where = section(form, "Where the panel listens");
         var listen = endpointRow(where, "Listens on", data.listen,
@@ -1327,8 +1326,7 @@
                         name: entry.name.value.trim(),
                         kind: entry.kind.value,
                         url: entry.url.value.trim(),
-                        pin: entry.pin.value.trim(),
-                        token: entry.token.value.trim()
+                        pin: entry.pin.value.trim()
                     });
                 });
                 return {

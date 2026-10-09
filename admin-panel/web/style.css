@@ -1044,18 +1044,14 @@ body.centred {
     padding: 0.55rem 0.7rem;
 }
 
-.service-token {
+.service-key {
     display: flex;
     align-items: center;
     gap: 0.5rem;
     margin-top: 0.4rem;
 }
 
-.service-token[hidden] {
-    display: none;
-}
-
-.service-token .field {
+.service-key .field {
     flex: 1 1 12rem;
     width: auto;
 }

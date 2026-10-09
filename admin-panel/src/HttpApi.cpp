@@ -588,9 +588,7 @@ void HttpApi::registerRoutes()
                         service.name = item.value("name", std::string());
                         service.kind = item.value("kind", std::string());
                         service.url = item.value("url", std::string());
-                        service.token = item.value("token", std::string());
                         service.pin = item.value("pin", std::string());
-                        takeTokenFromUrl(service);
                         if (!isKnownServiceKind(service.kind)) {
                             throw std::invalid_argument(
                                 "the panel does not know a service of kind \"" + service.kind

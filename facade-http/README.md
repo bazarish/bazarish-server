@@ -17,9 +17,9 @@ and answers everything else with the same bare 404:
 The facade holds **no keys and no content at rest**; it parses nothing and
 stores nothing identifying. Compromising it must not damage the server
 infrastructure - it knows only the private-channel address of its backend and
-the (end-to-end encrypted) traffic passing through. It is meant to sit
-behind a reverse proxy (Caddy, nginx, ...) published at a secret URI known only
-to clients.
+the (end-to-end encrypted) traffic passing through. Clients reach it through
+its own I2P destinations, which relay to the `listen` socket on loopback, under
+a secret prefix known only to them.
 
 ## Build
 
@@ -47,9 +47,6 @@ served by the portal, which is what faces the clearnet. Anything else - an
 unknown path, the API root, `/healthz` - is the same bare 404, so a scan of the
 host learns nothing. The signed canonical request
 path is the post-strip path, so signatures verify on the backend regardless.
-
-Set `"public": true` instead only when a fronting reverse proxy already publishes this
-facade under a secret URI of its own; the facade refuses to start with neither.
 
 `opsListen` opens a second, private socket carrying everything that is the
 operator's: the signed `/healthz`, `GET`/`PUT /settings` and `POST /restart`. It is

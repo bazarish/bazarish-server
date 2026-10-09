@@ -106,7 +106,7 @@ int main()
         wanted.consumer.role = "Administrator";
         wanted.listenPort = 9460;
         wanted.fleets = {Fleet{"alpha", {ServiceEntry{"core", "server-core",
-                                            "https://127.0.0.1:8428", {}, "pin-of-core"}}}};
+                                            "https://127.0.0.1:8428", "pin-of-core"}}}};
         settings->set(wanted);
 
         const nlohmann::json written = read(path);

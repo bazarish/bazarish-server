@@ -33,13 +33,12 @@ void printUsage()
         "Everything it runs on is in the config file.\n"
         "\n"
         "\"basePath\" is mandatory: it is the only thing standing between a scan of\n"
-        "the host and the clearnet API, and it reaches a client only inside the\n"
-        "facade URL of the server descriptor. Set \"public\": true instead solely\n"
-        "when a fronting proxy already publishes this facade under a secret URI.\n"
-        "\"i2p\" publishes the same API on the facade's own destination(s) - the\n"
-        "preferred way in: clients reach it without touching the clearnet at all.\n"
-        "The keys live in \"state\" and the addresses are stable across restarts,\n"
-        "because they travel in the server descriptor.\n"
+        "the host and the API, and it reaches a client only inside the facade URL\n"
+        "of the server descriptor.\n"
+        "\"listen\" is the socket the facade's own I2P destination(s) relay to;\n"
+        "keep it on loopback. \"i2p\" publishes those destinations, which is how\n"
+        "clients reach the API. The keys live in \"state\" and the addresses are\n"
+        "stable across restarts, because they travel in the server descriptor.\n"
         "\"opsListen\" adds a private socket serving the operator-signed health,\n"
         "settings and restart for the admin panel; it is never published to clients.\n",
         kVersion);
@@ -71,7 +70,6 @@ int main(const int argc, const char** argv)
     const std::optional<bazarish::ConfigView::Endpoint> ops = config.endpoint("opsListen");
     const std::optional<bazarish::ConfigView::Endpoint> direct
         = config.endpoint("directListen");
-    const bool servePublicRoot = config.flag("public", false);
     const bool enableI2p = config.flag("i2p.enabled", false);
     const std::filesystem::path stateDir(config.text("state"));
     const std::size_t i2pDests = static_cast<std::size_t>(config.number("i2p.destinations", 1));
@@ -114,17 +112,13 @@ int main(const int argc, const char** argv)
         options.messagingPin = config.text("messaging.pin");
     }
 
-    if (options.basePath.empty() && !servePublicRoot) {
+    if (options.basePath.empty()) {
         std::fprintf(stderr,
-            "the clearnet API must not be reachable without a secret prefix: set\n"
-            "\"basePath\", or \"public\": true when a fronting proxy owns the secret\n");
+            "config: \"basePath\" is mandatory: the API must not be reachable without a\n"
+            "secret prefix\n");
         return 2;
     }
-    if (!options.basePath.empty() && servePublicRoot) {
-        std::fprintf(stderr, "config: \"public\" and \"basePath\" contradict each other\n");
-        return 2;
-    }
-    if (!options.basePath.empty() && !bazarish::facade::isValidBasePath(options.basePath)) {
+    if (!bazarish::facade::isValidBasePath(options.basePath)) {
         std::fprintf(stderr,
             "config: \"basePath\" is an absolute prefix such as /h9fd/kshdcy,\n"
             "with no trailing slash and no query\n");
@@ -152,6 +146,8 @@ int main(const int argc, const char** argv)
     settingValues.listenPort = listen.port;
     settingValues.opsHost = ops.has_value() ? ops->host : std::string();
     settingValues.opsPort = ops.has_value() ? ops->port : 0;
+    settingValues.directHost = direct.has_value() ? direct->host : std::string();
+    settingValues.directPort = direct.has_value() ? direct->port : 0;
     settingValues.i2pEnabled = enableI2p;
     settingValues.i2pDestinations = static_cast<int>(i2pDests);
     settingValues.i2pPrivacy = std::string(bazarish::i2p::privacyName(privacy));
@@ -196,9 +192,7 @@ int main(const int argc, const char** argv)
         bazarish::log::info("direct listening on {}:{}", direct->host, direct->port);
     }
 
-    bazarish::log::info("listening on {}:{}{}", listen.host, listen.port,
-        options.basePath.empty() ? " (no secret prefix: fronting proxy owns it)"
-                                 : options.basePath);
+    bazarish::log::info("listening on {}:{}{}", listen.host, listen.port, options.basePath);
     if (facade.bind(listen.host, listen.port) <= 0) {
         bazarish::log::error("failed to listen on {}:{}", listen.host, listen.port);
         return 1;

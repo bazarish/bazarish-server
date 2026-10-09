@@ -18,16 +18,6 @@ const char* const kKnownKinds[]
 
 }  // namespace
 
-void takeTokenFromUrl(ServiceEntry& entry)
-{
-    const auto hash = entry.url.find('#');
-    if (hash == std::string::npos) {
-        return;
-    }
-    entry.token = entry.url.substr(hash + 1);
-    entry.url = entry.url.substr(0, hash);
-}
-
 bool isKnownServiceKind(const std::string& kind)
 {
     for (const char* const known : kKnownKinds) {
@@ -45,7 +35,7 @@ nlohmann::json fleetsJson(const std::vector<Fleet>& fleets)
         nlohmann::json services = nlohmann::json::array();
         for (const ServiceEntry& service : fleet.services) {
             services.push_back({{"name", service.name}, {"kind", service.kind},
-                {"url", service.url}, {"token", service.token}, {"pin", service.pin}});
+                {"url", service.url}, {"pin", service.pin}});
         }
         list.push_back({{"name", fleet.name}, {"services", services}});
     }
@@ -88,9 +78,7 @@ Config Config::fromJson(const std::string& text)
             entry.name = item.at("name").get<std::string>();
             entry.kind = item.at("kind").get<std::string>();
             entry.url = item.at("url").get<std::string>();
-            entry.token = item.value("token", std::string());
             entry.pin = item.value("pin", std::string());
-            takeTokenFromUrl(entry);
             if (!isKnownServiceKind(entry.kind)) {
                 throw std::runtime_error("unknown service kind \"" + entry.kind + "\"");
             }

@@ -32,8 +32,10 @@ constexpr const char* kAccountPath = "/v1/messaging/account";
 
 }  // namespace
 
-OperatorPush::OperatorPush(std::string baseUrl, const Identity& signer, const int attempts)
+OperatorPush::OperatorPush(std::string baseUrl, std::string pin, const Identity& signer,
+    const int attempts)
     : baseUrl_(std::move(baseUrl))
+    , pin_(std::move(pin))
     , signer_(signer)
     , attempts_(attempts)
 {
@@ -55,6 +57,8 @@ bool OperatorPush::waitReachable(const std::chrono::seconds budget) const
             ask.method = "GET";
             ask.target = "/healthz";
             bazarish::http::ClientOptions options;
+            options.tls = target.tls;
+            options.pin = pin_;
             options.connectTimeout = std::chrono::seconds(kConnectTimeoutSeconds);
             options.readTimeout = std::chrono::seconds(kReadTimeoutSeconds);
             const bazarish::http::ClientResponse response
@@ -98,6 +102,8 @@ std::optional<MailboxUsage> OperatorPush::accountUsage(
     ask.target = path + "?user=" + user;
     ask.headers = std::map<std::string, std::string>(signature.begin(), signature.end());
     bazarish::http::ClientOptions options;
+    options.tls = target.tls;
+    options.pin = pin_;
     options.connectTimeout = std::chrono::seconds(kConnectTimeoutSeconds);
     options.readTimeout = std::chrono::seconds(kReadTimeoutSeconds);
     const bazarish::http::ClientResponse response
@@ -156,6 +162,8 @@ std::optional<std::string> OperatorPush::send(const std::string& method, const s
             push.body = bodyText;
             push.contentType = "application/json";
             bazarish::http::ClientOptions options;
+            options.tls = backend.tls;
+            options.pin = pin_;
             options.connectTimeout = std::chrono::seconds(kConnectTimeoutSeconds);
             options.readTimeout = std::chrono::seconds(kReadTimeoutSeconds);
             const bazarish::http::ClientResponse response

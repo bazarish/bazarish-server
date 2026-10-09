@@ -98,6 +98,7 @@ int main()
     AccountApi api(store, grants, options);
 
     const int port = api.bind("127.0.0.1", 0);
+    const int opsPort = api.bindOps("127.0.0.1", 0);
     CHECK(port > 0);
     std::thread serverThread([&api]() { api.wait(); });
 
@@ -128,7 +129,7 @@ int main()
     }
 
     {
-        const http::ClientResponse result = call(port, "GET", "/v1/account/users?state=pending",
+        const http::ClientResponse result = call(opsPort, "GET", "/v1/account/users?state=pending",
             makeHeaders(panel, "GET", "/v1/account/users", ""));
         CHECK(result.status == 200);
         const nlohmann::json users = nlohmann::json::parse(result.body).at("users");
@@ -139,12 +140,12 @@ int main()
 
     {
         const std::string body = nlohmann::json{{"user", alice.fingerprint()}}.dump();
-        const http::ClientResponse forged = call(port, "POST", "/v1/account/approve",
+        const http::ClientResponse forged = call(opsPort, "POST", "/v1/account/approve",
             makeHeaders(alice, "POST", "/v1/account/approve", body), body);
         CHECK(forged.status == 403);
         CHECK(grants.peekApproval(alice.fingerprint())->pending());
 
-        const http::ClientResponse result = call(port, "POST", "/v1/account/approve",
+        const http::ClientResponse result = call(opsPort, "POST", "/v1/account/approve",
             makeHeaders(panel, "POST", "/v1/account/approve", body), body);
         CHECK(result.status == 200);
     }
@@ -155,7 +156,7 @@ int main()
         CHECK(result.status == 200);
         CHECK(pubCalls == 1);
 
-        const http::ClientResponse pending = call(port, "GET", "/v1/account/users?state=pending",
+        const http::ClientResponse pending = call(opsPort, "GET", "/v1/account/users?state=pending",
             makeHeaders(panel, "GET", "/v1/account/users", ""));
         CHECK(nlohmann::json::parse(pending.body).at("users").empty());
     }

@@ -127,10 +127,31 @@ int HttpApi::bind(const std::string& host, const int port)
     bazarish::http::Server::Options options;
     options.host = host;
     options.port = port;
+    options.certificate = options_.tlsCertificate;
+    options.key = options_.tlsKey;
     http_ = std::make_unique<bazarish::http::Server>(options);
     setupRoutes();
     try {
         return http_->start();
+    } catch (const std::exception& error) {
+        bazarish::log::error("cannot listen on {}:{}: {}", host, port, error.what());
+        return 0;
+    }
+}
+
+int HttpApi::bindOps(const std::string& host, const int port)
+{
+    bazarish::http::Server::Options options;
+    options.host = host;
+    options.port = port;
+    options.threads = 1;
+    options.certificate = options_.tlsCertificate;
+    options.key = options_.tlsKey;
+    options.clientPins = options_.opsClientPins;
+    ops_ = std::make_unique<bazarish::http::Server>(options);
+    setupOpsRoutes();
+    try {
+        return ops_->start();
     } catch (const std::exception& error) {
         bazarish::log::error("cannot listen on {}:{}: {}", host, port, error.what());
         return 0;
@@ -147,6 +168,9 @@ void HttpApi::stop()
     stopGate_.stop();
     if (http_) {
         http_->stop();
+    }
+    if (ops_) {
+        ops_->stop();
     }
 }
 
@@ -369,8 +393,9 @@ std::optional<bazarish::http::Response> HttpApi::authenticateRequest(
     return std::nullopt;
 }
 
-void HttpApi::setupRoutes()
+void HttpApi::setupOpsRoutes()
 {
+    Storage& store = storage_;
     const auto operatorOnly = [this](auto handler) {
         return [this, handler](
                    const bazarish::http::Request& request) -> bazarish::http::Response {
@@ -390,6 +415,179 @@ void HttpApi::setupRoutes()
         };
     };
 
+    ops_->get("/healthz", operatorOnly([this](const bazarish::http::Request&) {
+        return bazarish::http::Response{200, "application/json", {},
+            health::reportJson(
+                "server-core", options_.version, startedAt_, nowSeconds(), std::string())};
+    }));
+
+    ops_->get("/v1/messaging/account",
+        operatorOnly([this, &store](const bazarish::http::Request& request) {
+            const std::string user = request.query("user");
+            if (user.empty()) {
+                return errorResponse(400, ErrorCode::eDeliveryRejected, "no user named");
+            }
+            return jsonResponse({
+                {"devices", store.listClients(user).size()},
+                {"usedBytes", store.usage(user)},
+                {"quotaBytes", store.userQuota(user, options_.defaultQuotaBytes)},
+            });
+        }));
+
+    ops_->del("/v1/messaging/account",
+        operatorOnly([&store](const bazarish::http::Request& request) {
+            const std::string user = request.query("user");
+            if (user.empty()) {
+                return errorResponse(400, ErrorCode::eDeliveryRejected, "no user named");
+            }
+            store.forgetUser(user);
+            bazarish::log::info("mailbox of {} dropped: the account was deleted",
+                bazarish::log::redact(user));
+            return jsonResponse({{"ok", true}});
+        }));
+
+    ops_->get("/v1/messaging/settings",
+        operatorOnly([this](const bazarish::http::Request&) {
+            if (!options_.settings) {
+                return errorResponse(503, ErrorCode::eDeliveryRejected,
+                    "this server was started without a config file to write to");
+            }
+            const ServerSettings::Values values = options_.settings->get();
+            return jsonResponse({
+                {"logLevel", values.logLevel},
+                {"i2pLog", values.i2pLog},
+                {"i2pPrivacy", values.i2pPrivacy},
+                {"i2pTunnelQuantity", values.i2pTunnelQuantity},
+                {"i2pTunnelQuantityMax", bazarish::i2p::kMaxTunnelQuantity},
+                {"federationRateLimit", values.federationRateLimit},
+                {"listen", {{"host", values.listenHost}, {"port", values.listenPort}}},
+                {"serviceNode", values.serviceNodeUrl},
+                {"stateDirectory", options_.stateDirectory},
+                {"fingerprint", options_.fingerprint},
+                {"version", options_.version},
+            });
+        }));
+
+    ops_->put("/v1/messaging/settings",
+        operatorOnly([this](const bazarish::http::Request& request) {
+            if (!options_.settings) {
+                return errorResponse(503, ErrorCode::eDeliveryRejected,
+                    "this server was started without a config file to write to");
+            }
+            ServerSettings::Values values = options_.settings->get();
+            {
+                const nlohmann::json body = nlohmann::json::parse(request.body);
+                if (body.contains("logLevel")) {
+                    const std::string level = body.at("logLevel").get<std::string>();
+                    if (!bazarish::log::levelFromString(level).has_value()) {
+                        throw std::invalid_argument("not a log level: " + level);
+                    }
+                    values.logLevel = level;
+                }
+                if (body.contains("i2pLog")) {
+                    values.i2pLog = body.at("i2pLog").get<bool>();
+                }
+                if (body.contains("i2pPrivacy")) {
+                    const std::string named = body.at("i2pPrivacy").get<std::string>();
+                    if (!bazarish::i2p::privacyFromString(named).has_value()) {
+                        throw std::invalid_argument("not a privacy level: " + named);
+                    }
+                    values.i2pPrivacy = named;
+                }
+                if (body.contains("i2pTunnelQuantity")) {
+                    const int quantity = body.at("i2pTunnelQuantity").get<int>();
+                    if (quantity < 1 || quantity > bazarish::i2p::kMaxTunnelQuantity) {
+                        throw std::invalid_argument("a destination carries between 1 and "
+                            + std::to_string(bazarish::i2p::kMaxTunnelQuantity) + " tunnels");
+                    }
+                    values.i2pTunnelQuantity = quantity;
+                }
+                if (body.contains("federationRateLimit")) {
+                    const std::int64_t limit
+                        = body.at("federationRateLimit").get<std::int64_t>();
+                    if (limit < 1) {
+                        throw std::invalid_argument(
+                            "a rate limit of zero accepts nothing from anyone");
+                    }
+                    values.federationRateLimit = static_cast<std::size_t>(limit);
+                }
+                readEndpointInto(body, "listen", values.listenHost, values.listenPort);
+                if (body.contains("serviceNode")) {
+                    values.serviceNodeUrl = body.at("serviceNode").get<std::string>();
+                }
+            }
+
+            const ServerSettings::Values before = options_.settings->get();
+            try {
+                options_.settings->set(values);
+            } catch (const std::exception& error) {
+                return errorResponse(500, ErrorCode::eDeliveryRejected, error.what());
+            }
+            if (values.logLevel != before.logLevel) {
+                if (const std::optional<bazarish::log::Level> level
+                    = bazarish::log::levelFromString(values.logLevel);
+                    level.has_value()) {
+                    bazarish::log::setLevel(*level);
+                }
+            }
+            if (values.i2pLog != before.i2pLog) {
+                bazarish::i2p::setI2pLogging(values.i2pLog);
+            }
+            return jsonResponse({{"logLevel", values.logLevel}, {"i2pLog", values.i2pLog}});
+        }));
+
+    ops_->post("/v1/messaging/restart",
+        operatorOnly([this](const bazarish::http::Request&) {
+            if (!options_.requestRestart) {
+                return errorResponse(503, ErrorCode::eDeliveryRejected,
+                    "this server cannot restart itself: it was started without a supervisor");
+            }
+            bazarish::log::info("restarting at the operator's request");
+            options_.requestRestart();
+            return jsonResponse({{"restarting", true}});
+        }));
+
+    ops_->get("/v1/messaging/storage", operatorOnly([this](const bazarish::http::Request&) {
+        if (!options_.diskUsage) {
+            return errorResponse(
+                503, ErrorCode::eDeliveryRejected, "this server cannot measure its storage");
+        }
+        return jsonResponse({{"usedBytes", options_.diskUsage()}});
+    }));
+
+    ops_->put("/v1/messaging/quota",
+        operatorOnly([&store](const bazarish::http::Request& request) {
+            const nlohmann::json body = nlohmann::json::parse(request.body);
+            store.setUserQuota(body.at("user").get<std::string>(),
+                body.at("quotaBytes").get<std::uint64_t>());
+            return jsonResponse({{"ok", true}});
+        }));
+
+    ops_->put("/v1/messaging/i2p-dest",
+        operatorOnly([this](const bazarish::http::Request& request) {
+            if (!options_.provisionI2pDest || !options_.revokeI2pDest) {
+                return errorResponse(
+                    503, ErrorCode::eDeliveryRejected, "per-user destinations not available");
+            }
+            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const std::string user = body.at("user").get<std::string>();
+            const std::string transient = body.value("transient", std::string());
+            if (transient.empty()) {
+                options_.revokeI2pDest(user);
+                return jsonResponse({{"dest", ""}, {"servingKey", ""}});
+            }
+            const DestinationAssignment served = options_.provisionI2pDest(
+                user, transient, body.at("expiresUnix").get<std::int64_t>());
+            return jsonResponse({
+                {"dest", served.dest},
+                {"servingKey",
+                    served.servingKey ? toBase64(served.servingKey->publicDer()) : std::string()},
+            });
+        }));
+}
+
+void HttpApi::setupRoutes()
+{
     http_->get(std::string(bazarish::tunnel::kServerCardPath),
         [this](const bazarish::http::Request&) -> bazarish::http::Response {
             if (options_.serverCardDer.empty()) {
@@ -408,12 +606,6 @@ void HttpApi::setupRoutes()
             serveTunnel(request, std::move(respond));
             return std::nullopt;
         });
-
-    http_->get("/healthz", operatorOnly([this](const bazarish::http::Request&) {
-        return bazarish::http::Response{200, "application/json", {},
-            health::reportJson(
-                "server-core", options_.version, startedAt_, nowSeconds(), std::string())};
-    }));
 
     const auto authenticate = [this](auto handler, const bool allowSession) {
         return [this, handler, allowSession](
@@ -590,170 +782,6 @@ void HttpApi::setupRoutes()
                     {"usedBytes", storage_.usage(user)},
                     {"quotaBytes", storage_.userQuota(user, options_.defaultQuotaBytes)},
                 });
-        }));
-
-    http_->get("/v1/messaging/account",
-        operatorOnly([this, &store](const bazarish::http::Request& request) {
-            const std::string user = request.query("user");
-            if (user.empty()) {
-                return errorResponse(400, ErrorCode::eDeliveryRejected, "no user named");
-            }
-            return jsonResponse({
-                {"devices", store.listClients(user).size()},
-                {"usedBytes", store.usage(user)},
-                {"quotaBytes", store.userQuota(user, options_.defaultQuotaBytes)},
-            });
-        }));
-
-    http_->del("/v1/messaging/account",
-        operatorOnly([&store](const bazarish::http::Request& request) {
-            const std::string user = request.query("user");
-            if (user.empty()) {
-                return errorResponse(400, ErrorCode::eDeliveryRejected, "no user named");
-            }
-            store.forgetUser(user);
-            bazarish::log::info("mailbox of {} dropped: the account was deleted",
-                bazarish::log::redact(user));
-            return jsonResponse({{"ok", true}});
-        }));
-
-    http_->get("/v1/messaging/settings",
-        operatorOnly([this](const bazarish::http::Request&) {
-            if (!options_.settings) {
-                return errorResponse(503, ErrorCode::eDeliveryRejected,
-                    "this server was started without a config file to write to");
-            }
-            const ServerSettings::Values values = options_.settings->get();
-            return jsonResponse({
-                {"logLevel", values.logLevel},
-                {"i2pLog", values.i2pLog},
-                {"i2pPrivacy", values.i2pPrivacy},
-                {"i2pTunnelQuantity", values.i2pTunnelQuantity},
-                {"i2pTunnelQuantityMax", bazarish::i2p::kMaxTunnelQuantity},
-                {"federationRateLimit", values.federationRateLimit},
-                {"listen", {{"host", values.listenHost}, {"port", values.listenPort}}},
-                {"serviceNode", values.serviceNodeUrl},
-                {"stateDirectory", options_.stateDirectory},
-                {"fingerprint", options_.fingerprint},
-                {"version", options_.version},
-            });
-        }));
-
-    http_->put("/v1/messaging/settings",
-        operatorOnly([this](const bazarish::http::Request& request) {
-            if (!options_.settings) {
-                return errorResponse(503, ErrorCode::eDeliveryRejected,
-                    "this server was started without a config file to write to");
-            }
-            ServerSettings::Values values = options_.settings->get();
-            {
-                const nlohmann::json body = nlohmann::json::parse(request.body);
-                if (body.contains("logLevel")) {
-                    const std::string level = body.at("logLevel").get<std::string>();
-                    if (!bazarish::log::levelFromString(level).has_value()) {
-                        throw std::invalid_argument("not a log level: " + level);
-                    }
-                    values.logLevel = level;
-                }
-                if (body.contains("i2pLog")) {
-                    values.i2pLog = body.at("i2pLog").get<bool>();
-                }
-                if (body.contains("i2pPrivacy")) {
-                    const std::string named = body.at("i2pPrivacy").get<std::string>();
-                    if (!bazarish::i2p::privacyFromString(named).has_value()) {
-                        throw std::invalid_argument("not a privacy level: " + named);
-                    }
-                    values.i2pPrivacy = named;
-                }
-                if (body.contains("i2pTunnelQuantity")) {
-                    const int quantity = body.at("i2pTunnelQuantity").get<int>();
-                    if (quantity < 1 || quantity > bazarish::i2p::kMaxTunnelQuantity) {
-                        throw std::invalid_argument("a destination carries between 1 and "
-                            + std::to_string(bazarish::i2p::kMaxTunnelQuantity) + " tunnels");
-                    }
-                    values.i2pTunnelQuantity = quantity;
-                }
-                if (body.contains("federationRateLimit")) {
-                    const std::int64_t limit
-                        = body.at("federationRateLimit").get<std::int64_t>();
-                    if (limit < 1) {
-                        throw std::invalid_argument(
-                            "a rate limit of zero accepts nothing from anyone");
-                    }
-                    values.federationRateLimit = static_cast<std::size_t>(limit);
-                }
-                readEndpointInto(body, "listen", values.listenHost, values.listenPort);
-                if (body.contains("serviceNode")) {
-                    values.serviceNodeUrl = body.at("serviceNode").get<std::string>();
-                }
-            }
-
-            const ServerSettings::Values before = options_.settings->get();
-            try {
-                options_.settings->set(values);
-            } catch (const std::exception& error) {
-                return errorResponse(500, ErrorCode::eDeliveryRejected, error.what());
-            }
-            if (values.logLevel != before.logLevel) {
-                if (const std::optional<bazarish::log::Level> level
-                    = bazarish::log::levelFromString(values.logLevel);
-                    level.has_value()) {
-                    bazarish::log::setLevel(*level);
-                }
-            }
-            if (values.i2pLog != before.i2pLog) {
-                bazarish::i2p::setI2pLogging(values.i2pLog);
-            }
-            return jsonResponse({{"logLevel", values.logLevel}, {"i2pLog", values.i2pLog}});
-        }));
-
-    http_->post("/v1/messaging/restart",
-        operatorOnly([this](const bazarish::http::Request&) {
-            if (!options_.requestRestart) {
-                return errorResponse(503, ErrorCode::eDeliveryRejected,
-                    "this server cannot restart itself: it was started without a supervisor");
-            }
-            bazarish::log::info("restarting at the operator's request");
-            options_.requestRestart();
-            return jsonResponse({{"restarting", true}});
-        }));
-
-    http_->get("/v1/messaging/storage", operatorOnly([this](const bazarish::http::Request&) {
-        if (!options_.diskUsage) {
-            return errorResponse(
-                503, ErrorCode::eDeliveryRejected, "this server cannot measure its storage");
-        }
-        return jsonResponse({{"usedBytes", options_.diskUsage()}});
-    }));
-
-    http_->put("/v1/messaging/quota",
-        operatorOnly([&store](const bazarish::http::Request& request) {
-            const nlohmann::json body = nlohmann::json::parse(request.body);
-            store.setUserQuota(body.at("user").get<std::string>(),
-                body.at("quotaBytes").get<std::uint64_t>());
-            return jsonResponse({{"ok", true}});
-        }));
-
-    http_->put("/v1/messaging/i2p-dest",
-        operatorOnly([this](const bazarish::http::Request& request) {
-            if (!options_.provisionI2pDest || !options_.revokeI2pDest) {
-                return errorResponse(
-                    503, ErrorCode::eDeliveryRejected, "per-user destinations not available");
-            }
-            const nlohmann::json body = nlohmann::json::parse(request.body);
-            const std::string user = body.at("user").get<std::string>();
-            const std::string transient = body.value("transient", std::string());
-            if (transient.empty()) {
-                options_.revokeI2pDest(user);
-                return jsonResponse({{"dest", ""}, {"servingKey", ""}});
-            }
-            const DestinationAssignment served = options_.provisionI2pDest(
-                user, transient, body.at("expiresUnix").get<std::int64_t>());
-            return jsonResponse({
-                {"dest", served.dest},
-                {"servingKey",
-                    served.servingKey ? toBase64(served.servingKey->publicDer()) : std::string()},
-            });
         }));
 
     for (const auto& [method, path] :

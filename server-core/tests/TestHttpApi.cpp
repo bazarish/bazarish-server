@@ -144,6 +144,7 @@ int main()
     HttpApi api(storage, httpOptions);
 
     const int port = api.bind("127.0.0.1", 0);
+    const int opsPort = api.bindOps("127.0.0.1", 0);
     CHECK(port > 0);
     std::thread serverThread([&api]() { api.wait(); });
 
@@ -350,12 +351,12 @@ int main()
             {"user", "alicefp"}, {"transient", "tb64"}, {"expiresUnix", 1780001234}}
                                      .dump();
         const http::ClientResponse noAuth
-            = call(port, "PUT", "/v1/messaging/i2p-dest", {}, body);
+            = call(opsPort, "PUT", "/v1/messaging/i2p-dest", {}, body);
         CHECK(noAuth.status == 403);
-        const http::ClientResponse badAuth = call(port, "PUT", "/v1/messaging/i2p-dest",
+        const http::ClientResponse badAuth = call(opsPort, "PUT", "/v1/messaging/i2p-dest",
             makeHeaders(Identity::generate(), "PUT", "/v1/messaging/i2p-dest", body, ""), body);
         CHECK(badAuth.status == 403);
-        const http::ClientResponse ok = call(port, "PUT", "/v1/messaging/i2p-dest",
+        const http::ClientResponse ok = call(opsPort, "PUT", "/v1/messaging/i2p-dest",
             makeHeaders(operatorIdentity, "PUT", "/v1/messaging/i2p-dest", body, ""), body);
         CHECK(ok.status == 200);
         CHECK(provisionedUser == "alicefp");
@@ -368,7 +369,7 @@ int main()
                 == toBase64(serverServingKey->publicDer()));
         }
         const std::string revokeBody = nlohmann::json{{"user", "alicefp"}}.dump();
-        const http::ClientResponse revoked = call(port, "PUT", "/v1/messaging/i2p-dest",
+        const http::ClientResponse revoked = call(opsPort, "PUT", "/v1/messaging/i2p-dest",
             makeHeaders(operatorIdentity, "PUT", "/v1/messaging/i2p-dest", revokeBody, ""),
             revokeBody);
         CHECK(revoked.status == 200);
@@ -376,9 +377,9 @@ int main()
     }
 
     {
-        const http::ClientResponse unauth = call(port, "GET", "/healthz");
+        const http::ClientResponse unauth = call(opsPort, "GET", "/healthz");
         CHECK(unauth.status == 403);
-        const http::ClientResponse ok = call(port, "GET",
+        const http::ClientResponse ok = call(opsPort, "GET",
             "/healthz", makeHeaders(operatorIdentity, "GET", "/healthz", "", ""));
         CHECK(ok.status == 200);
         const nlohmann::json health = nlohmann::json::parse(ok.body);
@@ -398,19 +399,19 @@ int main()
                   .delivered);
         CHECK(storage.usage(alice.fingerprint()) > 0);
 
-        CHECK(call(port, "DELETE", path).status == 403);
-        CHECK(call(port, "DELETE", path,
+        CHECK(call(opsPort, "DELETE", path).status == 403);
+        CHECK(call(opsPort, "DELETE", path,
                    makeHeaders(Identity::generate(), "DELETE", "/v1/messaging/account", "", ""))
                   .status
             == 403);
 
-        const http::ClientResponse deleted = call(port, "DELETE", path,
+        const http::ClientResponse deleted = call(opsPort, "DELETE", path,
             makeHeaders(operatorIdentity, "DELETE", "/v1/messaging/account", "", ""));
         CHECK(deleted.status == 200);
         CHECK(storage.usage(alice.fingerprint()) == 0);
         CHECK(storage.listClients(alice.fingerprint()).empty());
         CHECK(storage.passCount(alice.fingerprint()) == 0);
-        CHECK(call(port, "DELETE", path,
+        CHECK(call(opsPort, "DELETE", path,
                    makeHeaders(operatorIdentity, "DELETE", "/v1/messaging/account", "", ""))
                   .status
             == 200);
@@ -418,10 +419,10 @@ int main()
 
     {
         const std::string path = "/v1/messaging/settings";
-        CHECK(call(port, "GET", path).status == 403);
+        CHECK(call(opsPort, "GET", path).status == 403);
 
         const http::ClientResponse shown
-            = call(port, "GET", path, makeHeaders(operatorIdentity, "GET", path, {}, {}));
+            = call(opsPort, "GET", path, makeHeaders(operatorIdentity, "GET", path, {}, {}));
         CHECK(shown.status == 200);
         const nlohmann::json values = nlohmann::json::parse(shown.body);
         CHECK(values.at("federationRateLimit").get<int>() == 240);
@@ -431,7 +432,7 @@ int main()
         const std::string body = nlohmann::json{{"logLevel", "debug"},
             {"i2pPrivacy", "middle"}, {"federationRateLimit", 60}}
                                      .dump();
-        CHECK(call(port, "PUT", path, makeHeaders(operatorIdentity, "PUT", path, body, {}), body)
+        CHECK(call(opsPort, "PUT", path, makeHeaders(operatorIdentity, "PUT", path, body, {}), body)
                   .status
             == 200);
         CHECK(bazarish::log::level() == bazarish::log::Level::eDebug);
@@ -445,22 +446,22 @@ int main()
         CHECK(onDisk.at("state").get<std::string>() == "/var/lib/bazarish/server-core");
 
         const std::string nonsense = nlohmann::json{{"i2pPrivacy", "invisible"}}.dump();
-        CHECK(call(port, "PUT", path,
+        CHECK(call(opsPort, "PUT", path,
                   makeHeaders(operatorIdentity, "PUT", path, nonsense, {}), nonsense)
                   .status
             == 400);
         const std::string tooMany = nlohmann::json{{"i2pTunnelQuantity", 99}}.dump();
-        CHECK(call(port, "PUT", path,
+        CHECK(call(opsPort, "PUT", path,
                   makeHeaders(operatorIdentity, "PUT", path, tooMany, {}), tooMany)
                   .status
             == 400);
         const std::string quiet = nlohmann::json{{"logLevel", "info"}}.dump();
-        CHECK(call(port, "PUT", path, makeHeaders(operatorIdentity, "PUT", path, quiet, {}), quiet)
+        CHECK(call(opsPort, "PUT", path, makeHeaders(operatorIdentity, "PUT", path, quiet, {}), quiet)
                   .status
             == 200);
 
         const std::string restart = "/v1/messaging/restart";
-        CHECK(call(port, "POST", restart,
+        CHECK(call(opsPort, "POST", restart,
                   makeHeaders(operatorIdentity, "POST", restart, {}, {}))
                   .status
             == 503);

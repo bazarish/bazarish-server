@@ -43,6 +43,12 @@ struct AccountApiOptions {
 
 
     std::shared_ptr<NodeSettings> settings;
+
+    // The certificate this node presents, and the keys allowed to open the
+    // operator's socket: the admin panel.
+    std::string tlsCertificate;
+    std::string tlsKey;
+    std::vector<std::string> opsClientPins;
 };
 
 class AccountApi {
@@ -54,6 +60,7 @@ public:
     AccountApi& operator=(const AccountApi&) = delete;
 
     int bind(const std::string& host, int port);
+    int bindOps(const std::string& host, int port);
     void wait();
     void stop();
 
@@ -69,12 +76,14 @@ private:
         const std::string& user, const std::optional<GrantStore::Approval>& approval);
 
     void setupRoutes();
+    void setupOpsRoutes();
 
     std::shared_ptr<NodeSettings> settings_;
     SubscriptionStore& store_;
     GrantStore& grants_;
     const AccountApiOptions options_;
     std::unique_ptr<bazarish::http::Server> http_;
+    std::unique_ptr<bazarish::http::Server> ops_;
     std::int64_t startedAt_ = 0;
     bazarish::StopGate stopGate_;
 

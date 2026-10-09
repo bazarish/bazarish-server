@@ -29,8 +29,8 @@ public:
     static constexpr int kBackgroundAttempts = 3;
     static constexpr int kPromptAttempts = 1;
 
-    OperatorPush(
-        std::string baseUrl, const Identity& signer, int attempts = kBackgroundAttempts);
+    OperatorPush(std::string baseUrl, std::string pin, const Identity& signer,
+        int attempts = kBackgroundAttempts);
 
     bool waitReachable(std::chrono::seconds budget) const;
 
@@ -50,6 +50,7 @@ private:
     bool put(const std::string& path, const std::string& bodyText) const;
 
     std::string baseUrl_;
+    std::string pin_;
     const Identity& signer_;
     const int attempts_;
 };

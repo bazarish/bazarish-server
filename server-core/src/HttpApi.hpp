@@ -54,6 +54,12 @@ struct HttpApiOptions {
     std::shared_ptr<Key> sealingKey;
     Bytes serverCardDer;
     std::string serviceNodeUrl;
+    std::string serviceNodePin;
+    // The certificate this server presents on both its sockets, and the keys
+    // allowed to open the operator's one: the admin panel and the service node.
+    std::string tlsCertificate;
+    std::string tlsKey;
+    std::vector<std::string> opsClientPins;
 };
 
 class HttpApi {
@@ -65,6 +71,7 @@ public:
     HttpApi& operator=(const HttpApi&) = delete;
 
     int bind(const std::string& host, int port);
+    int bindOps(const std::string& host, int port);
     void wait();
     void stop();
 
@@ -72,6 +79,7 @@ private:
     void wakeUser(const std::string& user);
 
     void setupRoutes();
+    void setupOpsRoutes();
     std::optional<bazarish::http::Response> authenticateRequest(
         const bazarish::http::Request& request, std::string* outUser,
         bool allowSession = true);
@@ -90,6 +98,7 @@ private:
     const HttpApiOptions options_;
 
     std::unique_ptr<bazarish::http::Server> http_;
+    std::unique_ptr<bazarish::http::Server> ops_;
     SessionStore sessions_;
     std::int64_t startedAt_ = 0;
 

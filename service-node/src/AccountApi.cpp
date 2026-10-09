@@ -129,10 +129,31 @@ int AccountApi::bind(const std::string& host, const int port)
     http::Server::Options options;
     options.host = host;
     options.port = port;
+    options.certificate = options_.tlsCertificate;
+    options.key = options_.tlsKey;
     http_ = std::make_unique<http::Server>(options);
     setupRoutes();
     try {
         return http_->start();
+    } catch (const std::exception& error) {
+        bazarish::log::error("cannot listen on {}:{}: {}", host, port, error.what());
+        return 0;
+    }
+}
+
+int AccountApi::bindOps(const std::string& host, const int port)
+{
+    http::Server::Options options;
+    options.host = host;
+    options.port = port;
+    options.threads = 1;
+    options.certificate = options_.tlsCertificate;
+    options.key = options_.tlsKey;
+    options.clientPins = options_.opsClientPins;
+    ops_ = std::make_unique<http::Server>(options);
+    setupOpsRoutes();
+    try {
+        return ops_->start();
     } catch (const std::exception& error) {
         bazarish::log::error("cannot listen on {}:{}: {}", host, port, error.what());
         return 0;
@@ -149,6 +170,9 @@ void AccountApi::stop()
     stopGate_.stop();
     if (http_) {
         http_->stop();
+    }
+    if (ops_) {
+        ops_->stop();
     }
 }
 
@@ -233,53 +257,8 @@ nlohmann::json AccountApi::userRecord(
     };
 }
 
-void AccountApi::setupRoutes()
+void AccountApi::setupOpsRoutes()
 {
-    const auto authenticated = [this](auto handler) {
-        return [this, handler](const http::Request& request, http::Response& response) {
-            std::string user;
-            try {
-                user = auth::verifyRequest(collectAuthHeaders(request), nowSeconds(),
-                    request.method, request.path, bodyBytes(request), replayCache_,
-                    request.header("X-Bazarish-Client"));
-            } catch (const std::exception& error) {
-                respondError(response, 401, ErrorCode::eDeliveryRejected, error.what());
-                return;
-            }
-            try {
-                handler(request, response, user);
-            } catch (const nlohmann::json::exception& error) {
-                respondError(response, 400, ErrorCode::eDeliveryRejected, error.what());
-            } catch (const std::invalid_argument& error) {
-                respondError(response, 400, ErrorCode::eDeliveryRejected, error.what());
-            }
-        };
-    };
-
-    const auto vouched = [this](auto handler) {
-        return [this, handler](const http::Request& request, http::Response& response) {
-            try {
-                auth::authorizeRequest(collectAuthHeaders(request), nowSeconds(), request.method,
-                    request.path, bodyBytes(request), {options_.serverFingerprint});
-            } catch (const std::exception& error) {
-                respondError(response, 403, ErrorCode::eDeliveryRejected, error.what());
-                return;
-            }
-            if (request.captures.empty() || request.captures.at(0).empty()) {
-                respondError(response, 400, ErrorCode::eDeliveryRejected, "no user named");
-                return;
-            }
-            handler(request, response, request.captures.at(0));
-        };
-    };
-    const auto clientRoute = [this, &authenticated, &vouched](const std::string& method,
-                                 const std::string& path, auto handler) {
-        http_->route(method, path, filled(authenticated(handler)));
-        http_->route(method,
-            std::string(bazarish::tunnel::kVouchedPrefix) + kFingerprintPattern + path,
-            filled(vouched(handler)));
-    };
-
     const auto operatorOnly = [this](auto handler) {
         return [this, handler](const http::Request& request, http::Response& response) {
             if (const std::optional<http::Response> refused
@@ -298,14 +277,14 @@ void AccountApi::setupRoutes()
         };
     };
 
-    http_->get("/healthz",
+    ops_->get("/healthz",
         filled(operatorOnly([this](const http::Request&, http::Response& response) {
             response.contentType = "application/json";
             response.body
                 = health::reportJson("service-node", options_.version, startedAt_, nowSeconds());
         })));
 
-    http_->get("/v1/account/users",
+    ops_->get("/v1/account/users",
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const std::string query = lowercased(request.query("q"));
             const std::string state = request.query("state");
@@ -346,7 +325,7 @@ void AccountApi::setupRoutes()
                 {{"users", users}, {"total", matched}, {"limit", limit}, {"offset", offset}});
         })));
 
-    http_->post("/v1/account/undelegate",
+    ops_->post("/v1/account/undelegate",
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = nlohmann::json::parse(request.body);
             const std::string user = body.at("user").get<std::string>();
@@ -363,7 +342,7 @@ void AccountApi::setupRoutes()
             respondJson(response, userRecord(user, grants_.peekApproval(user)));
         })));
 
-    http_->del("/v1/account/user",
+    ops_->del("/v1/account/user",
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const std::string user = request.query("user");
             if (!grants_.peekApproval(user).has_value()
@@ -375,7 +354,7 @@ void AccountApi::setupRoutes()
             respondJson(response, {{"ok", true}});
         })));
 
-    http_->post("/v1/account/ban",
+    ops_->post("/v1/account/ban",
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = nlohmann::json::parse(request.body);
             const std::string user = body.at("user").get<std::string>();
@@ -386,7 +365,7 @@ void AccountApi::setupRoutes()
             respondJson(response, userRecord(user, grants_.peekApproval(user)));
         })));
 
-    http_->post("/v1/account/unban",
+    ops_->post("/v1/account/unban",
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = nlohmann::json::parse(request.body);
             const std::string user = body.at("user").get<std::string>();
@@ -394,7 +373,7 @@ void AccountApi::setupRoutes()
             respondJson(response, {{"ok", true}});
         })));
 
-    http_->get("/v1/account/settings",
+    ops_->get("/v1/account/settings",
         filled(operatorOnly([this](const http::Request&, http::Response& response) {
             const NodeSettings::Values values = settings();
             std::uint64_t allocated = 0;
@@ -439,7 +418,7 @@ void AccountApi::setupRoutes()
                 });
         })));
 
-    http_->put("/v1/account/settings",
+    ops_->put("/v1/account/settings",
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = nlohmann::json::parse(request.body);
             NodeSettings::Values values = settings();
@@ -559,7 +538,7 @@ void AccountApi::setupRoutes()
                 });
         })));
 
-    http_->post("/v1/account/restart",
+    ops_->post("/v1/account/restart",
         filled(operatorOnly([this](const http::Request&, http::Response& response) {
             if (!options_.requestRestart) {
                 respondError(response, 503, ErrorCode::eDeliveryRejected,
@@ -571,7 +550,7 @@ void AccountApi::setupRoutes()
             respondJson(response, {{"restarting", true}});
         })));
 
-    http_->get("/v1/account/user",
+    ops_->get("/v1/account/user",
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const std::string user = request.query("user");
             const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
@@ -582,7 +561,7 @@ void AccountApi::setupRoutes()
             respondJson(response, userRecord(user, approval));
         })));
 
-    http_->put("/v1/account/quota",
+    ops_->put("/v1/account/quota",
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = nlohmann::json::parse(request.body);
             const std::string user = body.at("user").get<std::string>();
@@ -610,7 +589,7 @@ void AccountApi::setupRoutes()
             respondJson(response, userRecord(user, approval));
         })));
 
-    http_->post("/v1/account/approve",
+    ops_->post("/v1/account/approve",
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = nlohmann::json::parse(request.body);
             const std::string user = body.at("user").get<std::string>();
@@ -621,6 +600,69 @@ void AccountApi::setupRoutes()
             grants_.approve(user, nowSeconds());
             respondJson(response, {{"ok", true}});
         })));
+
+}
+
+void AccountApi::setupRoutes()
+{
+    const auto authenticated = [this](auto handler) {
+        return [this, handler](const http::Request& request, http::Response& response) {
+            std::string user;
+            try {
+                user = auth::verifyRequest(collectAuthHeaders(request), nowSeconds(),
+                    request.method, request.path, bodyBytes(request), replayCache_,
+                    request.header("X-Bazarish-Client"));
+            } catch (const std::exception& error) {
+                respondError(response, 401, ErrorCode::eDeliveryRejected, error.what());
+                return;
+            }
+            try {
+                handler(request, response, user);
+            } catch (const nlohmann::json::exception& error) {
+                respondError(response, 400, ErrorCode::eDeliveryRejected, error.what());
+            } catch (const std::invalid_argument& error) {
+                respondError(response, 400, ErrorCode::eDeliveryRejected, error.what());
+            }
+        };
+    };
+
+    const auto vouched = [this](auto handler) {
+        return [this, handler](const http::Request& request, http::Response& response) {
+            try {
+                auth::authorizeRequest(collectAuthHeaders(request), nowSeconds(), request.method,
+                    request.path, bodyBytes(request), {options_.serverFingerprint});
+            } catch (const std::exception& error) {
+                respondError(response, 403, ErrorCode::eDeliveryRejected, error.what());
+                return;
+            }
+            if (request.captures.empty() || request.captures.at(0).empty()) {
+                respondError(response, 400, ErrorCode::eDeliveryRejected, "no user named");
+                return;
+            }
+            handler(request, response, request.captures.at(0));
+        };
+    };
+    // The card lookup answers the messaging server and nobody else: it is a
+    // read of any registered user's contact card.
+    const auto fromServer = [this](auto handler) {
+        return [this, handler](const http::Request& request, http::Response& response) {
+            try {
+                auth::authorizeRequest(collectAuthHeaders(request), nowSeconds(), request.method,
+                    request.path, bodyBytes(request), {options_.serverFingerprint});
+            } catch (const std::exception& error) {
+                respondError(response, 403, ErrorCode::eDeliveryRejected, error.what());
+                return;
+            }
+            handler(request, response);
+        };
+    };
+    const auto clientRoute = [this, &authenticated, &vouched](const std::string& method,
+                                 const std::string& path, auto handler) {
+        http_->route(method, path, filled(authenticated(handler)));
+        http_->route(method,
+            std::string(bazarish::tunnel::kVouchedPrefix) + kFingerprintPattern + path,
+            filled(vouched(handler)));
+    };
 
     clientRoute("POST", "/v1/account/card",
         [this](const http::Request& request, http::Response& response,
@@ -791,7 +833,7 @@ void AccountApi::setupRoutes()
         });
 
     http_->get("/v1/account/card",
-        filled([this](const http::Request& request, http::Response& response) {
+        filled(fromServer([this](const http::Request& request, http::Response& response) {
             const std::string user = request.query("user");
             std::optional<SubscriptionStore::Account> account;
             try {
@@ -807,7 +849,7 @@ void AccountApi::setupRoutes()
                 return;
             }
             respondJson(response, {{"user", user}, {"card", toBase64(account->card)}});
-        }));
+        })));
 
     clientRoute("POST", "/v1/account/registration",
         [this](const http::Request&, http::Response& response,

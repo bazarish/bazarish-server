@@ -6,6 +6,7 @@
 #include "HttpApi.hpp"
 #include "PerUserDestinations.hpp"
 
+#include <bazarish/Auth.hpp>
 #include <bazarish/Certificates.hpp>
 #include <bazarish/Clock.hpp>
 #include <bazarish/ConfigFile.hpp>
@@ -13,6 +14,7 @@
 #include <bazarish/I2p.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/PrivateFile.hpp>
+#include <bazarish/Tls.hpp>
 #include <Restart.hpp>
 
 #include <bazarish/HttpClient.hpp>
@@ -37,6 +39,7 @@ namespace fs = std::filesystem;
 constexpr const char* kVersion = "0.0.2";
 constexpr const char* kDefaultHost = "127.0.0.1";
 constexpr int kDefaultPort = 8420;
+constexpr int kDefaultOpsPort = 8428;
 constexpr int kServiceNodeTimeoutSeconds = 5;
 constexpr std::int64_t kCardCacheSeconds = 60;
 constexpr int kDefaultTunnelQuantity = 5;
@@ -117,6 +120,9 @@ int main(const int argc, const char** argv)
             kDefaultPort});
     const std::string host = listen.host;
     const int port = listen.port;
+    const bazarish::ConfigView::Endpoint opsListen
+        = config.endpoint("opsListen").value_or(bazarish::ConfigView::Endpoint{kDefaultHost,
+            kDefaultOpsPort});
     if (!config.flag("i2p.enabled", true)) {
         std::fprintf(stderr,
             "I2P federation is required: \"i2p\": {\"enabled\": false} is not a server this "
@@ -125,7 +131,9 @@ int main(const int argc, const char** argv)
     }
     bazarish::server::DeliveryEngineOptions engineOptions;
     const std::vector<std::string> operatorFingerprints = config.list("operators");
-    const std::string serviceNodeUrl = config.text("serviceNode");
+    const std::string serviceNodeUrl = config.text("serviceNode.url");
+    const std::string serviceNodePin = config.text("serviceNode.pin");
+    const std::vector<std::string> opsClientPins = config.list("opsClients");
     bazarish::i2p::Privacy privacy = bazarish::i2p::Privacy::eMax;
     if (const std::string named = config.text("i2p.privacy"); !named.empty()) {
         const std::optional<bazarish::i2p::Privacy> parsed
@@ -185,8 +193,10 @@ int main(const int argc, const char** argv)
     bazarish::server::DeliveryEngine engine(
         storage, identity->fingerprint(), sealing, engineOptions);
 
+    const bazarish::tls::Credential credential = bazarish::tls::selfSigned(stateDir);
     std::printf("bazarish-server %s\n", kVersion);
     std::printf("server fingerprint: %s\n", identity->fingerprint().c_str());
+    std::printf("server socket pin: %s\n", credential.pin.c_str());
     std::fflush(stdout);
 
     std::unique_ptr<bazarish::i2p::Router> router;
@@ -211,7 +221,7 @@ int main(const int argc, const char** argv)
                 std::map<std::string, std::pair<std::int64_t, bazarish::Bytes>> entries;
             };
             const auto cache = std::make_shared<CardCache>();
-            getCard = [serviceNodeUrl, cache](
+            getCard = [serviceNodeUrl, serviceNodePin, identity, cache](
                           const std::string& fp) -> std::optional<bazarish::Bytes> {
                 const std::string& key = fp;
                 const std::int64_t now = nowSeconds();
@@ -227,7 +237,11 @@ int main(const int argc, const char** argv)
                 bazarish::http::ClientRequest lookup;
                 lookup.method = "GET";
                 lookup.target = "/v1/account/card?user=" + fp;
+                lookup.headers = bazarish::auth::signRequest(
+                    *identity, now, "GET", "/v1/account/card", {});
                 bazarish::http::ClientOptions options;
+                options.tls = node.tls;
+                options.pin = serviceNodePin;
                 options.connectTimeout = std::chrono::seconds(kServiceNodeTimeoutSeconds);
                 options.readTimeout = std::chrono::seconds(kServiceNodeTimeoutSeconds);
                 options.writeTimeout = std::chrono::seconds(kServiceNodeTimeoutSeconds);
@@ -326,6 +340,10 @@ int main(const int argc, const char** argv)
     httpOptions.serverCardDer = card;
     httpOptions.identity = identity;
     httpOptions.serviceNodeUrl = serviceNodeUrl;
+    httpOptions.serviceNodePin = serviceNodePin;
+    httpOptions.tlsCertificate = credential.certificate.string();
+    httpOptions.tlsKey = credential.key.string();
+    httpOptions.opsClientPins = opsClientPins;
     const auto restartHook = std::make_shared<std::function<void()>>();
     httpOptions.requestRestart = [restartHook]() {
         if (*restartHook) {
@@ -340,6 +358,14 @@ int main(const int argc, const char** argv)
 
     bazarish::log::info("listening on {}:{} (private channel for facades)", host, port);
 
+    if (api.bindOps(opsListen.host, opsListen.port) <= 0) {
+        if (restart.requested()) {
+            return bazarish::kRestartExitCode;
+        }
+        bazarish::log::error(
+            "failed to listen on {}:{}", opsListen.host, opsListen.port);
+        return 1;
+    }
     if (api.bind(host, port) <= 0) {
         if (restart.requested()) {
             return bazarish::kRestartExitCode;

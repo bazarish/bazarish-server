@@ -174,7 +174,8 @@ int main()
         CHECK(nlohmann::json::parse(result.body).at("quotaBytes") == kQuota);
 
         const http::ClientResponse looked
-            = call(port, "GET", "/v1/account/card?user=" + alice.fingerprint());
+            = call(port, "GET", "/v1/account/card?user=" + alice.fingerprint(),
+                makeHeaders(serverIdentity, "GET", "/v1/account/card", ""));
         CHECK(looked.status == 200);
         const ContactCard fetched = ContactCard::verify(
             fromBase64(nlohmann::json::parse(looked.body).at("card").get<std::string>()));
@@ -199,7 +200,8 @@ int main()
                       .status
                 == 409);
             const http::ClientResponse again
-                = call(port, "GET", "/v1/account/card?user=" + alice.fingerprint());
+                = call(port, "GET", "/v1/account/card?user=" + alice.fingerprint(),
+                    makeHeaders(serverIdentity, "GET", "/v1/account/card", ""));
             CHECK(ContactCard::verify(fromBase64(
                       nlohmann::json::parse(again.body).at("card").get<std::string>()))
                       .dest
@@ -216,7 +218,8 @@ int main()
         CHECK(fetched.sealingPublicKeyDer == sealing.publicDer());
 
         const http::ClientResponse unknown
-            = call(port, "GET", "/v1/account/card?user=" + mallory.fingerprint());
+            = call(port, "GET", "/v1/account/card?user=" + mallory.fingerprint(),
+                    makeHeaders(serverIdentity, "GET", "/v1/account/card", ""));
         CHECK(unknown.status == 404);
     }
 

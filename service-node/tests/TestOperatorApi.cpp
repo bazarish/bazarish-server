@@ -115,6 +115,7 @@ int main()
 
     AccountApi api(store, grants, options);
     const int port = api.bind("127.0.0.1", 0);
+    const int opsPort = api.bindOps("127.0.0.1", 0);
     CHECK(port > 0);
     std::thread serverThread([&api]() { api.wait(); });
 
@@ -129,10 +130,10 @@ int main()
     std::vector<std::string> inOrder = {served, waitingOne, waitingTwo};
     std::sort(inOrder.begin(), inOrder.end());
 
-    CHECK(call(port, stranger, "GET", "/v1/account/users").status == 403);
+    CHECK(call(opsPort, stranger, "GET", "/v1/account/users").status == 403);
 
     {
-        const http::ClientResponse all = call(port, panel, "GET", "/v1/account/users");
+        const http::ClientResponse all = call(opsPort, panel, "GET", "/v1/account/users");
         CHECK(all.status == 200);
         const nlohmann::json body = nlohmann::json::parse(all.body);
         CHECK(body.at("total").get<std::size_t>() == 3);
@@ -141,7 +142,7 @@ int main()
 
     {
         const http::ClientResponse pending
-            = call(port, panel, "GET", "/v1/account/users?state=pending");
+            = call(opsPort, panel, "GET", "/v1/account/users?state=pending");
         CHECK(pending.status == 200);
         const nlohmann::json body = nlohmann::json::parse(pending.body);
         CHECK(body.at("total").get<std::size_t>() == 2);
@@ -156,20 +157,20 @@ int main()
             c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
         }
         const http::ClientResponse found
-            = call(port, panel, "GET", "/v1/account/users?q=" + needle);
+            = call(opsPort, panel, "GET", "/v1/account/users?q=" + needle);
         CHECK(found.status == 200);
         const nlohmann::json body = nlohmann::json::parse(found.body);
         CHECK(body.at("total").get<std::size_t>() == 1);
         CHECK(body.at("users").at(0).at("user").get<std::string>() == waitingTwo);
 
         const http::ClientResponse none
-            = call(port, panel, "GET", "/v1/account/users?q=zzzznobodyhere");
+            = call(opsPort, panel, "GET", "/v1/account/users?q=zzzznobodyhere");
         CHECK(nlohmann::json::parse(none.body).at("total").get<std::size_t>() == 0);
     }
 
     {
         const http::ClientResponse page
-            = call(port, panel, "GET", "/v1/account/users?limit=1&offset=1");
+            = call(opsPort, panel, "GET", "/v1/account/users?limit=1&offset=1");
         CHECK(page.status == 200);
         const nlohmann::json body = nlohmann::json::parse(page.body);
         CHECK(body.at("total").get<std::size_t>() == 3);
@@ -179,15 +180,15 @@ int main()
 
     {
         const http::ClientResponse one
-            = call(port, panel, "GET", "/v1/account/user?user=" + served);
+            = call(opsPort, panel, "GET", "/v1/account/user?user=" + served);
         CHECK(one.status == 200);
         const nlohmann::json body = nlohmann::json::parse(one.body);
         CHECK(body.at("approval").get<std::string>() == "approved");
         CHECK(body.at("quotaBytes").get<std::uint64_t>() == kQuota);
         CHECK(body.at("grantPending").get<bool>());
 
-        CHECK(call(port, panel, "GET", "/v1/account/user?user=" + unknown).status == 404);
-        CHECK(call(port, panel, "GET", "/v1/account/user?user=not-a-fingerprint").status == 400);
+        CHECK(call(opsPort, panel, "GET", "/v1/account/user?user=" + unknown).status == 404);
+        CHECK(call(opsPort, panel, "GET", "/v1/account/user?user=not-a-fingerprint").status == 400);
     }
 
     {
@@ -195,7 +196,7 @@ int main()
         const std::string body
             = nlohmann::json{{"user", served}, {"quotaBytes", raised}}.dump();
         const http::ClientResponse set
-            = call(port, panel, "PUT", "/v1/account/quota", body);
+            = call(opsPort, panel, "PUT", "/v1/account/quota", body);
         CHECK(set.status == 200);
         CHECK(nlohmann::json::parse(set.body).at("quotaBytes").get<std::uint64_t>() == raised);
         CHECK(quotaUser == served);
@@ -204,21 +205,21 @@ int main()
 
         const std::string missing
             = nlohmann::json{{"user", unknown}, {"quotaBytes", raised}}.dump();
-        CHECK(call(port, panel, "PUT", "/v1/account/quota", missing).status == 404);
-        CHECK(call(port, stranger, "PUT", "/v1/account/quota", body).status == 403);
+        CHECK(call(opsPort, panel, "PUT", "/v1/account/quota", missing).status == 404);
+        CHECK(call(opsPort, stranger, "PUT", "/v1/account/quota", body).status == 403);
     }
 
     {
         const std::string body = nlohmann::json{{"user", served},
             {"message", "Talk to the operator before this comes back."}}
                                      .dump();
-        CHECK(call(port, panel, "POST", "/v1/account/undelegate",
+        CHECK(call(opsPort, panel, "POST", "/v1/account/undelegate",
                    nlohmann::json{{"user", served}}.dump())
                   .status
             == 400);
 
         const http::ClientResponse held
-            = call(port, panel, "POST", "/v1/account/undelegate", body);
+            = call(opsPort, panel, "POST", "/v1/account/undelegate", body);
         CHECK(held.status == 200);
         CHECK(revokedUser == served);
         CHECK(revokedTransient.empty());
@@ -231,53 +232,53 @@ int main()
 
     {
         const http::ClientResponse gone
-            = call(port, panel, "DELETE", "/v1/account/user?user=" + waitingOne);
+            = call(opsPort, panel, "DELETE", "/v1/account/user?user=" + waitingOne);
         CHECK(gone.status == 200);
         CHECK(!grants.peekApproval(waitingOne).has_value());
-        CHECK(call(port, panel, "GET", "/v1/account/user?user=" + waitingOne).status == 404);
+        CHECK(call(opsPort, panel, "GET", "/v1/account/user?user=" + waitingOne).status == 404);
     }
 
     {
         const std::string body
             = nlohmann::json{{"user", waitingTwo}, {"reason", "Spam"}}.dump();
-        CHECK(call(port, panel, "POST", "/v1/account/ban", body).status == 200);
+        CHECK(call(opsPort, panel, "POST", "/v1/account/ban", body).status == 200);
         CHECK(!grants.peekApproval(waitingTwo).has_value());
         CHECK(grants.peekBan(waitingTwo)->reason == "Spam");
 
         const http::ClientResponse listed
-            = call(port, panel, "GET", "/v1/account/users?q=" + waitingTwo);
+            = call(opsPort, panel, "GET", "/v1/account/users?q=" + waitingTwo);
         const nlohmann::json record = nlohmann::json::parse(listed.body).at("users").at(0);
         CHECK(record.at("banned").get<bool>());
         CHECK(record.at("banReason").get<std::string>() == "Spam");
 
         const std::string bare = nlohmann::json{{"user", served}}.dump();
-        CHECK(call(port, panel, "POST", "/v1/account/ban", bare).status == 200);
+        CHECK(call(opsPort, panel, "POST", "/v1/account/ban", bare).status == 200);
         CHECK(grants.peekBan(served)->reason == "Banned");
 
-        CHECK(call(port, panel, "POST", "/v1/account/unban", body).status == 200);
+        CHECK(call(opsPort, panel, "POST", "/v1/account/unban", body).status == 200);
         CHECK(!grants.peekBan(waitingTwo).has_value());
     }
 
     {
         const nlohmann::json banned = nlohmann::json::parse(
-            call(port, panel, "GET", "/v1/account/users?state=banned").body);
+            call(opsPort, panel, "GET", "/v1/account/users?state=banned").body);
         CHECK(banned.at("total").get<std::size_t>() == 1);
         CHECK(banned.at("users").at(0).at("user").get<std::string>() == served);
         CHECK(banned.at("users").at(0).at("banned").get<bool>());
 
         const nlohmann::json everyone = nlohmann::json::parse(
-            call(port, panel, "GET", "/v1/account/users").body);
+            call(opsPort, panel, "GET", "/v1/account/users").body);
         CHECK(everyone.at("total").get<std::size_t>() == 1);
         CHECK(everyone.at("users").at(0).at("user").get<std::string>() == served);
 
         const nlohmann::json waiting = nlohmann::json::parse(
-            call(port, panel, "GET", "/v1/account/users?state=pending").body);
+            call(opsPort, panel, "GET", "/v1/account/users?state=pending").body);
         CHECK(waiting.at("total").get<std::size_t>() == 0);
     }
 
     {
         const nlohmann::json shown
-            = nlohmann::json::parse(call(port, panel, "GET", "/v1/account/settings").body);
+            = nlohmann::json::parse(call(opsPort, panel, "GET", "/v1/account/settings").body);
         CHECK(shown.at("loginConsumer").at("name").get<std::string>() == "Bazarish stand");
         CHECK(shown.at("loginConsumer").at("role").get<std::string>() == "Account owner");
 
@@ -286,7 +287,7 @@ int main()
                 {"place", {"https://alpha.example", "http://alpha.b32.i2p"}},
                 {"role", "Alpha tester"}}}}
                                         .dump();
-        CHECK(call(port, panel, "PUT", "/v1/account/settings", renamed).status == 200);
+        CHECK(call(opsPort, panel, "PUT", "/v1/account/settings", renamed).status == 200);
         const std::vector<std::string> bothPlaces
             = {"https://alpha.example", "http://alpha.b32.i2p"};
         CHECK(settings->get().loginConsumer.place == bothPlaces);
@@ -302,26 +303,26 @@ int main()
 
         CHECK(bazarish::log::level() != bazarish::log::Level::eDebug);
         const std::string louder = nlohmann::json{{"logLevel", "debug"}}.dump();
-        CHECK(call(port, panel, "PUT", "/v1/account/settings", louder).status == 200);
+        CHECK(call(opsPort, panel, "PUT", "/v1/account/settings", louder).status == 200);
         CHECK(bazarish::log::level() == bazarish::log::Level::eDebug);
         CHECK(settings->get().logLevel == "debug");
         const std::string nonsense = nlohmann::json{{"logLevel", "loud"}}.dump();
-        CHECK(call(port, panel, "PUT", "/v1/account/settings", nonsense).status == 400);
+        CHECK(call(opsPort, panel, "PUT", "/v1/account/settings", nonsense).status == 400);
         const std::string quieter = nlohmann::json{{"logLevel", "info"}}.dump();
-        CHECK(call(port, panel, "PUT", "/v1/account/settings", quieter).status == 200);
+        CHECK(call(opsPort, panel, "PUT", "/v1/account/settings", quieter).status == 200);
         CHECK(bazarish::log::level() == bazarish::log::Level::eInfo);
 
         const std::string wiring
             = nlohmann::json{{"portalListen", {{"host", "0.0.0.0"}, {"port", 8531}}}}.dump();
-        CHECK(call(port, panel, "PUT", "/v1/account/settings", wiring).status == 200);
+        CHECK(call(opsPort, panel, "PUT", "/v1/account/settings", wiring).status == 200);
         std::ifstream rewritten(configPath);
         const nlohmann::json onDiskAgain = nlohmann::json::parse(rewritten);
         CHECK(onDiskAgain.at("portal").at("listen").at("port").get<int>() == 8531);
         const std::string badPort = nlohmann::json{{"listen", {{"port", 0}}}}.dump();
-        CHECK(call(port, panel, "PUT", "/v1/account/settings", badPort).status == 400);
+        CHECK(call(opsPort, panel, "PUT", "/v1/account/settings", badPort).status == 400);
 
         const std::string nameless = nlohmann::json{{"loginConsumer", {{"name", ""}}}}.dump();
-        CHECK(call(port, panel, "PUT", "/v1/account/settings", nameless).status == 400);
+        CHECK(call(opsPort, panel, "PUT", "/v1/account/settings", nameless).status == 400);
         CHECK(settings->get().loginConsumer.name == "Bazarish alpha");
     }
 

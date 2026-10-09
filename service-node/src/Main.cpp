@@ -13,6 +13,7 @@
 #include <bazarish/Crypto.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/PrivateFile.hpp>
+#include <bazarish/Tls.hpp>
 #include <Restart.hpp>
 #include <bazarish/ServerDescriptor.hpp>
 
@@ -37,6 +38,7 @@ namespace fs = std::filesystem;
 constexpr const char* kVersion = "0.0.1";
 constexpr const char* kDefaultHost = "127.0.0.1";
 constexpr int kDefaultPort = 8421;
+constexpr int kDefaultOpsPort = 8427;
 constexpr std::size_t kPortalSecretBytes = 16;
 constexpr std::chrono::hours kIdleSweepInterval{1};
 constexpr std::chrono::seconds kBackendWaitBudget{60};
@@ -111,6 +113,9 @@ struct NodeConfig {
     bazarish::ConfigView::Endpoint portalListen;
     std::string portalAssets;
     bazarish::ConfigView::Endpoint messaging;
+    std::string messagingPin;
+    bazarish::ConfigView::Endpoint opsListen{kDefaultHost, kDefaultOpsPort};
+    std::vector<std::string> opsClients;
     std::vector<std::string> operators;
     bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
     std::string logLevelText = "info";
@@ -131,6 +136,9 @@ NodeConfig loadNodeConfig(const fs::path& path)
     config.portalListen = view.endpoint("portal.listen").value_or(config.portalListen);
     config.portalAssets = view.text("portal.assets");
     config.messaging = view.endpoint("messaging").value_or(config.messaging);
+    config.messagingPin = view.text("messaging.pin");
+    config.opsListen = view.endpoint("opsListen").value_or(config.opsListen);
+    config.opsClients = view.list("opsClients");
     config.operators = view.list("operators");
     if (const std::string level = view.text("logLevel"); !level.empty()) {
         const std::optional<bazarish::log::Level> parsed = bazarish::log::levelFromString(level);
@@ -275,13 +283,17 @@ int main(const int argc, const char** argv)
 
     fs::create_directories(stateDir);
     const bazarish::Identity nodeIdentity = loadOrCreateIdentity(stateDir);
+    const bazarish::tls::Credential credential = bazarish::tls::selfSigned(stateDir);
     std::printf("service-node operator fingerprint: %s\n", nodeIdentity.fingerprint().c_str());
+    std::printf("service-node socket pin: %s\n", credential.pin.c_str());
     bazarish::service::SubscriptionStore store(stateDir / "store");
     bazarish::service::GrantStore grants(stateDir / "store");
-    const std::string messagingUrl
-        = "http://" + nodeConfig.messaging.host + ":" + std::to_string(nodeConfig.messaging.port);
-    const bazarish::service::OperatorPush operatorPush(messagingUrl, nodeIdentity);
-    const bazarish::service::OperatorPush promptPush(messagingUrl, nodeIdentity,
+    const std::string messagingUrl = "https://" + nodeConfig.messaging.host + ":"
+        + std::to_string(nodeConfig.messaging.port);
+    const bazarish::service::OperatorPush operatorPush(
+        messagingUrl, nodeConfig.messagingPin, nodeIdentity);
+    const bazarish::service::OperatorPush promptPush(messagingUrl, nodeConfig.messagingPin,
+        nodeIdentity,
         bazarish::service::OperatorPush::kPromptAttempts);
 
     if (nodeConfig.allowFacadeWithoutI2pForDevPurposes) {
@@ -314,6 +326,9 @@ int main(const int argc, const char** argv)
     options.version = kVersion;
     options.operatorFingerprints = nodeConfig.operators;
     options.settings = settings;
+    options.tlsCertificate = credential.certificate.string();
+    options.tlsKey = credential.key.string();
+    options.opsClientPins = nodeConfig.opsClients;
     options.publishI2pTransient = [&promptPush](const std::string& user,
                                       const std::string& transientB64,
                                       const std::int64_t expiresUnix) {
@@ -421,7 +436,9 @@ int main(const int argc, const char** argv)
     bazarish::log::info("listening on {}:{} (private channel for facades)",
         nodeConfig.listen.host, nodeConfig.listen.port);
 
-    const bool bound = api.bind(nodeConfig.listen.host, nodeConfig.listen.port) > 0;
+    const bool boundOps = api.bindOps(nodeConfig.opsListen.host, nodeConfig.opsListen.port) > 0;
+    const bool bound
+        = boundOps && api.bind(nodeConfig.listen.host, nodeConfig.listen.port) > 0;
     if (bound) {
         api.wait();
     } else {

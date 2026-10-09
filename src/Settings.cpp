@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #include "Settings.hpp"
 
+#include <bazarish/I2p.hpp>
+
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -53,6 +55,9 @@ Settings Settings::from(const ConfigView& config)
     }
 
     for (const std::string& url : config.list("reseed")) {
+        if (!i2p::isReseedUrl(url)) {
+            throw std::runtime_error("\"reseed\" holds " + url + ", not an https URL");
+        }
         settings.reseedUrls.push_back(url);
     }
 

@@ -58,6 +58,8 @@ int main()
         Settings::from(document(R"({"basePath": "secret", "token": "t", "state": "/tmp/s"})")));
     CHECK_THROWS(Settings::from(document(R"({"basePath": "/s", "state": "/tmp/s"})")));
     CHECK_THROWS(Settings::from(document(R"({"basePath": "/s", "token": "", "state": "/t"})")));
+    CHECK_THROWS(Settings::from(document(
+        R"({"basePath": "/s", "token": "t", "state": "/t", "reseed": ["http://seed.example/"]})")));
     CHECK_THROWS(Settings::from(document(R"({"basePath": "/s", "token": "t"})")));
 
     CHECK_THROWS(Settings::from(document(R"({

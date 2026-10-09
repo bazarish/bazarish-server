@@ -33,6 +33,8 @@ One file, given with `--config`. `config.example.json` is a starting point.
 | `decoy.minBytes`, `decoy.maxBytes` | The length of a decoy answer, drawn between them |
 | `sessionTtlSeconds` | How long a session outlives its last socket |
 | `direct` | Destinations this gateway reaches without I2P: `dest`, the `host` and `port` serving it, and the `pin` that address presents |
+| `opsListen` | A TLS socket for the admin panel, answering only the keys in `opsClients`. It carries `/healthz` and nothing else |
+| `opsClients` | The keys allowed to open that socket: the panel prints its own |
 | `operators` | Fingerprints allowed to read the health report |
 | `serverName` | The `Server` header on the 404 |
 | `notFound` | A file whose contents are that 404. Empty serves nginx's own page |

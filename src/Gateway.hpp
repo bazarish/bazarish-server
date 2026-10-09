@@ -41,6 +41,7 @@ private:
     http::Response decoy() const;
     http::Response health(const http::Request& request) const;
     std::string healthPath() const;
+    void bindOps();
 
     void socketOpened(const http::SocketPtr& socket, const http::Request& request);
     void socketMessage(const http::SocketPtr& socket, const std::vector<unsigned char>& message);
@@ -113,6 +114,7 @@ private:
     Settings settings_;
     i2p::Router& router_;
     http::Server server_;
+    std::unique_ptr<http::Server> ops_;
     SessionStore sessions_;
     mutable std::mutex mutex_;
     std::map<const http::Socket*, Connection> connections_;

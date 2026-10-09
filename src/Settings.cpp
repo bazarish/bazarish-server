@@ -68,6 +68,15 @@ Settings Settings::from(const ConfigView& config)
         settings.operators.push_back(fingerprint);
     }
 
+    if (const std::optional<ConfigView::Endpoint> ops = config.endpoint("opsListen");
+        ops.has_value()) {
+        settings.opsHost = ops->host;
+        settings.opsPort = ops->port;
+    }
+    for (const std::string& pin : config.list("opsClients")) {
+        settings.opsClients.push_back(pin);
+    }
+
     const nlohmann::json& document = config.document();
     if (document.contains("direct")) {
         for (const nlohmann::json& item : document.at("direct")) {

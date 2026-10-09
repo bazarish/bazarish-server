@@ -6,6 +6,7 @@
 #include <Health.hpp>
 #include <bazarish/Hmac.hpp>
 #include <bazarish/Log.hpp>
+#include <bazarish/Tls.hpp>
 
 #include <algorithm>
 #include <set>
@@ -170,10 +171,31 @@ int Gateway::start()
     for (const char* method : {"GET", "POST", "PUT", "DELETE", "HEAD"}) {
         server_.route(method, "(.*)", answer);
     }
+    bindOps();
     const int bound = server_.start();
     running_.store(true);
     status_ = std::thread([this]() { statusLoop(); });
     return bound;
+}
+
+void Gateway::bindOps()
+{
+    if (settings_.opsPort == 0) {
+        return;
+    }
+    const tls::Credential credential = tls::selfSigned(settings_.stateDir);
+    http::Server::Options options;
+    options.host = settings_.opsHost;
+    options.port = settings_.opsPort;
+    options.threads = 1;
+    options.certificate = credential.certificate.string();
+    options.key = credential.key.string();
+    options.clientPins = settings_.opsClients;
+    ops_ = std::make_unique<http::Server>(options);
+    ops_->get("/healthz", [this](const http::Request& request) { return health(request); });
+    ops_->start();
+    bazarish::log::info("ops listening on {}:{}, key {}", settings_.opsHost, settings_.opsPort,
+        credential.pin);
 }
 
 void Gateway::stop()
@@ -190,6 +212,9 @@ void Gateway::stop()
         retire(session);
     }
     server_.stop();
+    if (ops_) {
+        ops_->stop();
+    }
 }
 
 int Gateway::port() const

@@ -29,6 +29,9 @@ struct Settings {
     std::string serverName = "nginx";
     std::vector<std::string> operators;
     std::vector<DirectRoute> direct;
+    std::string opsHost;
+    int opsPort = 0;
+    std::vector<std::string> opsClients;
     std::int64_t sessionTtlSeconds = kSessionTtl.count();
 
     static Settings from(const ConfigView& config);

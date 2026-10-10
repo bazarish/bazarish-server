@@ -32,7 +32,36 @@ std::string readFile(const std::filesystem::path& path)
     return text.str();
 }
 
+std::size_t poolDepth(const ConfigView& config, const std::string& path, const std::size_t fallback)
+{
+    const std::int64_t depth
+        = config.number(path, static_cast<std::int64_t>(fallback));
+    if (depth < 0 || depth > static_cast<std::int64_t>(kMaxPoolDepth)) {
+        throw std::runtime_error("\"" + path + "\" is between 0 and "
+            + std::to_string(kMaxPoolDepth));
+    }
+    return static_cast<std::size_t>(depth);
+}
+
 }  // namespace
+
+std::vector<DirectRoute> directRoutesFrom(const nlohmann::json& list)
+{
+    std::vector<DirectRoute> routes;
+    for (const nlohmann::json& item : list) {
+        DirectRoute route;
+        route.dest = item.value("dest", std::string());
+        route.host = item.value("host", std::string());
+        route.port = item.value("port", 0);
+        route.pin = item.value("pin", std::string());
+        if (route.dest.empty() || route.host.empty() || route.port <= 0 || route.pin.empty()) {
+            throw std::runtime_error(
+                "\"direct\" names a destination, an address and the key it presents");
+        }
+        routes.push_back(std::move(route));
+    }
+    return routes;
+}
 
 Settings Settings::from(const ConfigView& config)
 {
@@ -86,19 +115,7 @@ Settings Settings::from(const ConfigView& config)
 
     const nlohmann::json& document = config.document();
     if (document.contains("direct")) {
-        for (const nlohmann::json& item : document.at("direct")) {
-            DirectRoute route;
-            route.dest = item.value("dest", std::string());
-            route.host = item.value("host", std::string());
-            route.port = item.value("port", 0);
-            route.pin = item.value("pin", std::string());
-            if (route.dest.empty() || route.host.empty() || route.port <= 0
-                || route.pin.empty()) {
-                throw std::runtime_error(
-                    "\"direct\" names a destination, an address and the key it presents");
-            }
-            settings.direct.push_back(std::move(route));
-        }
+        settings.direct = directRoutesFrom(document.at("direct"));
     }
 
     if (const std::string named = config.text("i2p.privacy"); !named.empty()) {
@@ -114,6 +131,9 @@ Settings Settings::from(const ConfigView& config)
         throw std::runtime_error("\"i2p.tunnelQuantity\" is between 1 and "
             + std::to_string(i2p::kMaxTunnelQuantity));
     }
+
+    settings.streamPool = poolDepth(config, "pools.stream", kDefaultStreamPool);
+    settings.callPool = poolDepth(config, "pools.call", kDefaultCallPool);
 
     settings.sessionTtlSeconds
         = config.number("sessionTtlSeconds", kSessionTtl.count());

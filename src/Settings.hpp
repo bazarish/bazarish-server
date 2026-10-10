@@ -16,6 +16,9 @@
 namespace bazarish::gateway {
 
 inline constexpr const char* kVersion = "0.0.1";
+inline constexpr std::size_t kDefaultStreamPool = 4;
+inline constexpr std::size_t kDefaultCallPool = 2;
+inline constexpr std::size_t kMaxPoolDepth = 16;
 
 struct Settings {
     std::string listenHost = "127.0.0.1";
@@ -36,8 +39,12 @@ struct Settings {
     std::int64_t sessionTtlSeconds = kSessionTtl.count();
     i2p::Privacy tunnelPrivacy = i2p::Privacy::eMinimal;
     int tunnelQuantity = i2p::kDefaultTunnelQuantity;
+    std::size_t streamPool = kDefaultStreamPool;
+    std::size_t callPool = kDefaultCallPool;
 
     static Settings from(const ConfigView& config);
 };
+
+std::vector<DirectRoute> directRoutesFrom(const nlohmann::json& list);
 
 }  // namespace bazarish::gateway

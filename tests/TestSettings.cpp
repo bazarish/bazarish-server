@@ -24,7 +24,8 @@ const char* kWhole = R"({
     "decoy": { "minBytes": 2048, "maxBytes": 4096 },
     "serverName": "caddy",
     "sessionTtlSeconds": 120,
-    "i2p": { "privacy": "max", "tunnelQuantity": 5 }
+    "i2p": { "privacy": "max", "tunnelQuantity": 5 },
+    "pools": { "stream": 0, "call": 7 }
 })";
 
 }  // namespace
@@ -43,6 +44,8 @@ int main()
     CHECK(whole.sessionTtlSeconds == 120);
     CHECK(whole.tunnelPrivacy == i2p::Privacy::eMax);
     CHECK(whole.tunnelQuantity == 5);
+    CHECK(whole.streamPool == 0);
+    CHECK(whole.callPool == 7);
 
     const Settings bare = Settings::from(document(R"({
         "basePath": "/secret", "token": "t", "state": "/tmp/s"
@@ -54,6 +57,8 @@ int main()
     CHECK(bare.serverName == "nginx");
     CHECK(bare.tunnelPrivacy == i2p::Privacy::eMinimal);
     CHECK(bare.tunnelQuantity == i2p::kDefaultTunnelQuantity);
+    CHECK(bare.streamPool == kDefaultStreamPool);
+    CHECK(bare.callPool == kDefaultCallPool);
     CHECK(bare.notFoundBody.find("404 Not Found") != std::string::npos);
 
     CHECK_THROWS(Settings::from(document(R"({"token": "t", "state": "/tmp/s"})")));
@@ -89,6 +94,12 @@ int main()
 
     CHECK_THROWS(Settings::from(document(R"({
         "basePath": "/s", "token": "t", "state": "/t", "notFound": "/no/such/page.html"
+    })")));
+    CHECK_THROWS(Settings::from(document(R"({
+        "basePath": "/s", "token": "t", "state": "/t", "pools": { "stream": -1 }
+    })")));
+    CHECK_THROWS(Settings::from(document(R"({
+        "basePath": "/s", "token": "t", "state": "/t", "pools": { "call": 17 }
     })")));
 
     const Settings routed = Settings::from(document(R"({

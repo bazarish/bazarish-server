@@ -9,7 +9,10 @@
 #include <bazarish/Tls.hpp>
 
 #include <algorithm>
+#include <optional>
 #include <set>
+#include <stdexcept>
+#include <string>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -24,9 +27,38 @@ constexpr std::size_t kSocketMessageBytes = kMaxFrameBytes;
 
 constexpr std::chrono::seconds kReplayGrace{5};
 
-constexpr std::size_t kStreamPoolDepth = 4;
-constexpr std::size_t kCallPoolDepth = 2;
 constexpr i2p::Privacy kCallPrivacy = i2p::Privacy::eMinimal;
+
+http::Response opsRefusal(const int status, const std::string& message)
+{
+    return {status, "application/json", {}, nlohmann::json{{"error", {{"message", message}}}}.dump()};
+}
+
+Settings writtenSettings(const std::filesystem::path& configPath)
+{
+    return Settings::from(ConfigView(ConfigFile(configPath).read()));
+}
+
+nlohmann::json editable(const Settings& written)
+{
+    nlohmann::json direct = nlohmann::json::array();
+    for (const DirectRoute& route : written.direct) {
+        direct.push_back(
+            {{"dest", route.dest}, {"host", route.host}, {"port", route.port}, {"pin", route.pin}});
+    }
+    return {
+        {"i2pPrivacy", std::string(i2p::privacyName(written.tunnelPrivacy))},
+        {"i2pTunnelQuantity", written.tunnelQuantity},
+        {"i2pTunnelQuantityMax", i2p::kMaxTunnelQuantity},
+        {"callPrivacy", std::string(i2p::privacyName(kCallPrivacy))},
+        {"streamPool", written.streamPool},
+        {"callPool", written.callPool},
+        {"poolMax", kMaxPoolDepth},
+        {"direct", direct},
+        {"stateDirectory", written.stateDir.string()},
+        {"version", kVersion},
+    };
+}
 
 std::size_t drawBetween(const std::size_t low, const std::size_t high)
 {
@@ -43,8 +75,9 @@ std::size_t drawBetween(const std::size_t low, const std::size_t high)
 
 }  // namespace
 
-Gateway::Gateway(Settings settings, i2p::Router& router)
+Gateway::Gateway(Settings settings, i2p::Router& router, OpsControl control)
     : settings_(std::move(settings))
+    , control_(std::move(control))
     , router_(router)
     , server_([&]() {
         http::Server::Options options;
@@ -53,6 +86,7 @@ Gateway::Gateway(Settings settings, i2p::Router& router)
         return options;
     }())
     , sessions_(settings_.sessionTtlSeconds)
+    , direct_(settings_.direct)
     , startedAt_(nowSeconds())
 {
 }
@@ -86,15 +120,26 @@ bool Gateway::admitted(const http::Request& request) const
     return service::constantTimeEqual(request.header(kTokenHeader), settings_.token);
 }
 
-http::Response Gateway::health(const http::Request& request) const
+std::optional<http::Response> Gateway::operatorRefusal(const http::Request& request) const
 {
     try {
         auth::authorizeRequest(http::collectAuthHeaders(request), nowSeconds(), request.method,
-            request.path, Bytes(), settings_.operators, operatorReplays_);
+            request.path, Bytes(request.body.begin(), request.body.end()), settings_.operators,
+            operatorReplays_);
     } catch (const std::exception& error) {
-        bazarish::log::debug("gateway: health refused: {}", error.what());
-        return {403, "application/json", {},
+        bazarish::log::debug("gateway: {} {} refused: {}", request.method, request.path,
+            error.what());
+        return http::Response{403, "application/json", {},
             R"({"error":{"message":"operator authentication required"}})"};
+    }
+    return std::nullopt;
+}
+
+http::Response Gateway::health(const http::Request& request) const
+{
+    if (const std::optional<http::Response> refused = operatorRefusal(request);
+        refused.has_value()) {
+        return *refused;
     }
     std::size_t sessions = 0;
     std::size_t endpoints = 0;
@@ -124,6 +169,93 @@ http::Response Gateway::health(const http::Request& request) const
     };
     return {200, "application/json", {},
         health::reportJson("gateway", kVersion, startedAt_, nowSeconds(), extras.dump())};
+}
+
+http::Response Gateway::settingsShown(const http::Request& request) const
+{
+    if (const std::optional<http::Response> refused = operatorRefusal(request);
+        refused.has_value()) {
+        return *refused;
+    }
+    if (control_.configPath.empty()) {
+        return opsRefusal(503, "this gateway was started without a config file to write to");
+    }
+    return {200, "application/json", {}, editable(writtenSettings(control_.configPath)).dump()};
+}
+
+http::Response Gateway::settingsChanged(const http::Request& request)
+{
+    if (const std::optional<http::Response> refused = operatorRefusal(request);
+        refused.has_value()) {
+        return *refused;
+    }
+    if (control_.configPath.empty()) {
+        return opsRefusal(503, "this gateway was started without a config file to write to");
+    }
+    std::vector<std::pair<std::vector<std::string>, nlohmann::json>> writes;
+    std::optional<std::vector<DirectRoute>> direct;
+    try {
+        const nlohmann::json body = nlohmann::json::parse(request.body);
+        if (body.contains("i2pPrivacy")) {
+            const std::string named = body.at("i2pPrivacy").get<std::string>();
+            if (!i2p::privacyFromString(named).has_value()) {
+                throw std::invalid_argument("not a privacy level: " + named);
+            }
+            writes.push_back({{"i2p", "privacy"}, named});
+        }
+        if (body.contains("i2pTunnelQuantity")) {
+            const int quantity = body.at("i2pTunnelQuantity").get<int>();
+            if (quantity < 1 || quantity > i2p::kMaxTunnelQuantity) {
+                throw std::invalid_argument("a destination carries between 1 and "
+                    + std::to_string(i2p::kMaxTunnelQuantity) + " tunnels");
+            }
+            writes.push_back({{"i2p", "tunnelQuantity"}, quantity});
+        }
+        for (const char* const pool : {"stream", "call"}) {
+            const std::string key = std::string(pool) + "Pool";
+            if (!body.contains(key)) {
+                continue;
+            }
+            const int depth = body.at(key).get<int>();
+            if (depth < 0 || depth > static_cast<int>(kMaxPoolDepth)) {
+                throw std::invalid_argument(
+                    "a pool holds between 0 and " + std::to_string(kMaxPoolDepth) + " destinations");
+            }
+            writes.push_back({{"pools", pool}, depth});
+        }
+        if (body.contains("direct")) {
+            direct = directRoutesFrom(body.at("direct"));
+            writes.push_back({{"direct"}, body.at("direct")});
+        }
+    } catch (const std::exception& error) {
+        return opsRefusal(400, error.what());
+    }
+
+    ConfigFile file(control_.configPath);
+    for (const auto& [keys, value] : writes) {
+        file.set(keys, value);
+    }
+    if (direct.has_value()) {
+        const std::lock_guard<std::mutex> lock(directMutex_);
+        direct_ = std::move(*direct);
+        bazarish::log::info("gateway: {} direct route(s) now", direct_.size());
+    }
+    return {200, "application/json", {}, editable(writtenSettings(control_.configPath)).dump()};
+}
+
+http::Response Gateway::restart(const http::Request& request)
+{
+    if (const std::optional<http::Response> refused = operatorRefusal(request);
+        refused.has_value()) {
+        return *refused;
+    }
+    if (!control_.requestRestart) {
+        return opsRefusal(503, "this gateway cannot restart itself: it was started without a"
+                               " supervisor");
+    }
+    bazarish::log::info("gateway: restarting at the operator's request");
+    control_.requestRestart();
+    return {200, "application/json", {}, R"({"restarting":true})"};
 }
 
 http::Response Gateway::decoy() const
@@ -171,9 +303,9 @@ int Gateway::start()
         server_.route(method, "(.*)", answer);
     }
     streamPool_ = std::make_unique<DestinationPool>(
-        router_, shapeOf(false, false, false), kStreamPoolDepth);
-    callPool_
-        = std::make_unique<DestinationPool>(router_, shapeOf(true, true, true), kCallPoolDepth);
+        router_, shapeOf(false, false, false), settings_.streamPool);
+    callPool_ = std::make_unique<DestinationPool>(
+        router_, shapeOf(true, true, true), settings_.callPool);
     bindOps();
     const int bound = server_.start();
     running_.store(true);
@@ -196,6 +328,11 @@ void Gateway::bindOps()
     options.clientPins = settings_.opsClients;
     ops_ = std::make_unique<http::Server>(options);
     ops_->get("/healthz", [this](const http::Request& request) { return health(request); });
+    ops_->get("/settings",
+        [this](const http::Request& request) { return settingsShown(request); });
+    ops_->put("/settings",
+        [this](const http::Request& request) { return settingsChanged(request); });
+    ops_->post("/restart", [this](const http::Request& request) { return restart(request); });
     ops_->start();
     bazarish::log::info("ops listening on {}:{}, key {}", settings_.opsHost, settings_.opsPort,
         credential.pin);
@@ -829,7 +966,8 @@ void Gateway::onStreamOpen(const std::shared_ptr<Session>& session,
 
 std::optional<DirectRoute> Gateway::directFor(const std::string& host) const
 {
-    for (const DirectRoute& route : settings_.direct) {
+    const std::lock_guard<std::mutex> lock(directMutex_);
+    for (const DirectRoute& route : direct_) {
         if (route.dest == host) {
             return route;
         }

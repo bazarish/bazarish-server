@@ -6,6 +6,7 @@
 #include <bazarish/I2p.hpp>
 #include <bazarish/Log.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
@@ -16,6 +17,9 @@
 namespace {
 
 constexpr std::chrono::seconds kRouterWarmup{120};
+// The fleet's restart code: a unit with Restart=on-failure brings the process back.
+constexpr int kRestartExitCode = 90;
+constexpr std::chrono::milliseconds kRestartAnswerGrace{300};
 
 volatile std::sig_atomic_t g_stop = 0;
 
@@ -38,8 +42,8 @@ void printUsage()
                 "\"basePath\" and \"token\" are mandatory and have no defaults: a\n"
                 "gateway that came up without them would be one anybody could\n"
                 "walk into. TLS, the public address and the cover site belong to\n"
-                "the front this listens behind. \"operators\" names who may read\n"
-                "/healthz on \"opsListen\". The README has the rest.\n",
+                "the front this listens behind. \"operators\" names who may use\n"
+                "\"opsListen\": health, settings and restart. The README has the rest.\n",
         bazarish::gateway::kVersion);
 }
 
@@ -75,7 +79,10 @@ int main(const int argc, const char** argv)
     router.start();
     bazarish::log::info("gateway: router {} starting", bazarish::i2p::routerVersion());
 
-    bazarish::gateway::Gateway gateway(settings, router);
+    std::atomic<bool> restartWanted{false};
+    bazarish::gateway::Gateway gateway(settings, router,
+        bazarish::gateway::OpsControl{
+            std::filesystem::path(argv[2]), [&restartWanted]() { restartWanted = true; }});
     const int port = gateway.start();
     std::printf("bazarish-gateway %s listening on %s:%d\n", bazarish::gateway::kVersion, settings.listenHost.c_str(),
         port);
@@ -86,7 +93,7 @@ int main(const int argc, const char** argv)
 
     const auto warm = std::chrono::steady_clock::now() + kRouterWarmup;
     bool announced = false;
-    while (g_stop == 0) {
+    while (g_stop == 0 && !restartWanted) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
         if (!announced && router.ready()) {
             bazarish::log::info("gateway: the router has tunnels");
@@ -98,8 +105,12 @@ int main(const int argc, const char** argv)
         }
     }
 
+    if (restartWanted) {
+        // The handler that asked has to get its answer out before the ops socket closes.
+        std::this_thread::sleep_for(kRestartAnswerGrace);
+    }
     bazarish::log::info("gateway: stopping");
     gateway.stop();
     router.stop();
-    return 0;
+    return restartWanted ? kRestartExitCode : 0;
 }

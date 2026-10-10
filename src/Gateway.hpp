@@ -13,6 +13,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -21,9 +23,14 @@
 
 namespace bazarish::gateway {
 
+struct OpsControl {
+    std::filesystem::path configPath;
+    std::function<void()> requestRestart;
+};
+
 class Gateway {
 public:
-    Gateway(Settings settings, i2p::Router& router);
+    Gateway(Settings settings, i2p::Router& router, OpsControl control = {});
     ~Gateway();
     Gateway(const Gateway&) = delete;
     Gateway& operator=(const Gateway&) = delete;
@@ -42,7 +49,11 @@ private:
     http::Response notFound() const;
     bool admitted(const http::Request& request) const;
     http::Response decoy() const;
+    std::optional<http::Response> operatorRefusal(const http::Request& request) const;
     http::Response health(const http::Request& request) const;
+    http::Response settingsShown(const http::Request& request) const;
+    http::Response settingsChanged(const http::Request& request);
+    http::Response restart(const http::Request& request);
     void bindOps();
 
     void socketOpened(const http::SocketPtr& socket, const http::Request& request);
@@ -116,6 +127,7 @@ private:
         const std::shared_ptr<StreamEntry>& entry);
 
     Settings settings_;
+    OpsControl control_;
     i2p::Router& router_;
     http::Server server_;
     std::unique_ptr<http::Server> ops_;
@@ -126,6 +138,8 @@ private:
     mutable auth::ReplayCache operatorReplays_;
     std::map<const http::Socket*, Connection> connections_;
     std::map<std::string, Local> published_;
+    mutable std::mutex directMutex_;
+    std::vector<DirectRoute> direct_;
     std::thread status_;
     std::atomic<std::size_t> rejoins_{0};
     std::atomic<std::size_t> refused_{0};

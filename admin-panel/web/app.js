@@ -1231,10 +1231,10 @@
             wrap.appendChild(row);
 
             var pinRow = element("div", "service-key");
-            pinRow.appendChild(element("span", "control-label", "Key"));
+            pinRow.appendChild(element("span", "control-label", "TLS pin"));
             var pin = element("input", "field");
             pin.type = "text";
-            pin.placeholder = "the pin this service prints at startup";
+            pin.placeholder = "the socket pin it prints at start, 64 hex";
             pin.value = service ? (service.pin || "") : "";
             pinRow.appendChild(pin);
             wrap.appendChild(pinRow);

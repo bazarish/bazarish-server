@@ -8,8 +8,31 @@
 #include <cstdio>
 #include <memory>
 #include <string>
+#include <thread>
 
 using namespace bazarish;
+
+namespace {
+
+constexpr std::chrono::seconds kReadyWait{180};
+constexpr std::chrono::seconds kStatusWait{2};
+constexpr std::chrono::milliseconds kStatusPoll{100};
+
+bool routedByGateway(const i2p::Router& router, const i2p::Endpoint& endpoint)
+{
+    const auto until = std::chrono::steady_clock::now() + kStatusWait;
+    while (std::chrono::steady_clock::now() < until) {
+        for (const i2p::LocalDestination& destination : router.localDestinations()) {
+            if (destination.host == endpoint.routingHost() && destination.localRoute) {
+                return true;
+            }
+        }
+        std::this_thread::sleep_for(kStatusPoll);
+    }
+    return false;
+}
+
+}  // namespace
 
 int main(const int argc, const char** argv)
 {
@@ -52,11 +75,22 @@ int main(const int argc, const char** argv)
     const std::shared_ptr<i2p::Endpoint> mine = router.createEndpoint(endpointConfig);
     std::printf("[smoke] the gateway minted %s\n", mine->routingHost().c_str());
 
-    const bool ready = mine->waitReady(std::chrono::seconds(180));
+    const bool ready = mine->waitReady(kReadyWait);
     std::printf("[smoke] %s after %s\n", ready ? "it has tunnels" : "still no tunnels",
         ready ? "the wait" : "three minutes");
     std::printf("[smoke] the gateway's router knows %d routers, %d floodfills\n",
         router.knownRouters(), router.floodfills());
+
+    i2p::EndpointConfig lookupConfig;
+    lookupConfig.published = false;
+    const auto askedAt = std::chrono::steady_clock::now();
+    const std::shared_ptr<i2p::Endpoint> lookup = router.createEndpoint(lookupConfig);
+    const bool warm = lookup->waitReady(kReadyWait);
+    const auto waited = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - askedAt);
+    std::printf("[smoke] an unpublished stream destination %s after %lld ms\n",
+        warm ? "had tunnels" : "still had none", static_cast<long long>(waited.count()));
+    lookup->stop();
 
     const auto media = [&router]() {
         i2p::EndpointConfig config;
@@ -85,6 +119,8 @@ int main(const int argc, const char** argv)
     const bool answered = carries(*callee, *caller);
     std::printf("[smoke] media both ways: %s\n",
         heard && answered ? "heard" : (heard ? "one way only" : "nothing arrived"));
+    std::printf("[smoke] media routed by the gateway itself: %s\n",
+        routedByGateway(router, *caller) && routedByGateway(router, *callee) ? "yes" : "no");
 
     caller->stop();
     callee->stop();

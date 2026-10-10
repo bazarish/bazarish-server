@@ -22,8 +22,6 @@ public:
         int opsPort = 0;
         std::string directHost;
         int directPort = 0;
-        bool i2pEnabled = false;
-        int i2pDestinations = 0;
         std::string i2pPrivacy;
         int i2pTunnelQuantity = 0;
     };

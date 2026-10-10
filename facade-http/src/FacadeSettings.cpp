@@ -21,8 +21,6 @@ const char* const kDirectListenKey = "directListen";
 const char* const kHostKey = "host";
 const char* const kPortKey = "port";
 const char* const kI2pKey = "i2p";
-const char* const kI2pEnabledKey = "enabled";
-const char* const kI2pDestinationsKey = "destinations";
 const char* const kI2pPrivacyKey = "privacy";
 const char* const kI2pTunnelsKey = "tunnelQuantity";
 
@@ -71,9 +69,6 @@ void FacadeSettings::persist(const Values& values) const
     setIfChanged(file, {kOpsListenKey, kPortKey}, values.opsPort, values_.opsPort);
     setIfChanged(file, {kDirectListenKey, kHostKey}, values.directHost, values_.directHost);
     setIfChanged(file, {kDirectListenKey, kPortKey}, values.directPort, values_.directPort);
-    setIfChanged(file, {kI2pKey, kI2pEnabledKey}, values.i2pEnabled, values_.i2pEnabled);
-    setIfChanged(
-        file, {kI2pKey, kI2pDestinationsKey}, values.i2pDestinations, values_.i2pDestinations);
     setIfChanged(file, {kI2pKey, kI2pPrivacyKey}, values.i2pPrivacy, values_.i2pPrivacy);
     setIfChanged(
         file, {kI2pKey, kI2pTunnelsKey}, values.i2pTunnelQuantity, values_.i2pTunnelQuantity);

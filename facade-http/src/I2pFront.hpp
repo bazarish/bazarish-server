@@ -9,7 +9,6 @@
 #include <memory>
 #include <string>
 #include <thread>
-#include <vector>
 
 namespace bazarish::facade {
 
@@ -19,7 +18,6 @@ public:
         std::filesystem::path stateDir;
         std::string localHost = "127.0.0.1";
         int localPort = 0;
-        std::size_t destinations = 1;
         bazarish::i2p::Privacy privacy = bazarish::i2p::Privacy::eMax;
         int tunnelQuantity = bazarish::i2p::kDefaultTunnelQuantity;
     };
@@ -30,17 +28,17 @@ public:
     I2pFront(const I2pFront&) = delete;
     I2pFront& operator=(const I2pFront&) = delete;
 
-    std::vector<std::string> start();
+    std::string start();
     void stop();
 
 private:
-    void acceptLoop(const std::shared_ptr<bazarish::i2p::Endpoint>& endpoint);
+    void acceptLoop();
 
     const Options options_;
     std::unique_ptr<bazarish::i2p::Router> router_;
-    std::vector<std::shared_ptr<bazarish::i2p::Endpoint>> endpoints_;
-    std::vector<std::thread> acceptThreads_;
-    std::vector<std::thread> readyThreads_;
+    std::shared_ptr<bazarish::i2p::Endpoint> endpoint_;
+    std::thread acceptThread_;
+    std::thread readyThread_;
     std::atomic<bool> running_{false};
     std::atomic<std::size_t> relays_{0};
 };

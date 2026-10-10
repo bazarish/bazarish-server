@@ -20,6 +20,7 @@ namespace {
 constexpr const char* kVersion = "0.0.1";
 constexpr const char* kDefaultHost = "127.0.0.1";
 constexpr int kDefaultPort = 8419;
+constexpr int kDefaultTunnelQuantity = 16;
 
 void printUsage()
 {
@@ -35,10 +36,10 @@ void printUsage()
         "\"basePath\" is mandatory: it is the only thing standing between a scan of\n"
         "the host and the API, and it reaches a client only inside the facade URL\n"
         "of the server descriptor.\n"
-        "\"listen\" is the socket the facade's own I2P destination(s) relay to;\n"
-        "keep it on loopback. \"i2p\" publishes those destinations, which is how\n"
-        "clients reach the API. The keys live in \"state\" and the addresses are\n"
-        "stable across restarts, because they travel in the server descriptor.\n"
+        "The facade's own I2P destination is how clients reach the API, and the\n"
+        "only way: \"listen\" is the socket it relays to, kept on loopback. Its key\n"
+        "lives in \"state\" and its address is stable across restarts, because it\n"
+        "travels in the server descriptor.\n"
         "\"opsListen\" adds a private socket serving the operator-signed health,\n"
         "settings and restart for the admin panel; it is never published to clients.\n",
         kVersion);
@@ -70,9 +71,7 @@ int main(const int argc, const char** argv)
     const std::optional<bazarish::ConfigView::Endpoint> ops = config.endpoint("opsListen");
     const std::optional<bazarish::ConfigView::Endpoint> direct
         = config.endpoint("directListen");
-    const bool enableI2p = config.flag("i2p.enabled", false);
     const std::filesystem::path stateDir(config.text("state"));
-    const std::size_t i2pDests = static_cast<std::size_t>(config.number("i2p.destinations", 1));
     bazarish::i2p::Privacy privacy = bazarish::i2p::Privacy::eMax;
     if (const std::string named = config.text("i2p.privacy"); !named.empty()) {
         const std::optional<bazarish::i2p::Privacy> parsed
@@ -84,7 +83,7 @@ int main(const int argc, const char** argv)
         privacy = *parsed;
     }
     const int tunnelQuantity = static_cast<int>(
-        config.number("i2p.tunnelQuantity", bazarish::i2p::kDefaultTunnelQuantity));
+        config.number("i2p.tunnelQuantity", kDefaultTunnelQuantity));
     if (tunnelQuantity < 1 || tunnelQuantity > bazarish::i2p::kMaxTunnelQuantity) {
         std::fprintf(stderr, "config: i2p.tunnelQuantity is between 1 and %d\n",
             bazarish::i2p::kMaxTunnelQuantity);
@@ -124,13 +123,9 @@ int main(const int argc, const char** argv)
             "with no trailing slash and no query\n");
         return 2;
     }
-    if (enableI2p && stateDir.empty()) {
-        std::fprintf(stderr, "config: \"i2p\" needs \"state\": the destination keys must"
-                             " persist,\ntheir addresses travel in the server descriptor\n");
-        return 2;
-    }
-    if (i2pDests == 0) {
-        std::fprintf(stderr, "config: \"i2p.destinations\" is at least 1\n");
+    if (stateDir.empty()) {
+        std::fprintf(stderr, "config: \"state\" is mandatory: the destination key must"
+                             " persist,\nits address travels in the server descriptor\n");
         return 2;
     }
 
@@ -148,8 +143,6 @@ int main(const int argc, const char** argv)
     settingValues.opsPort = ops.has_value() ? ops->port : 0;
     settingValues.directHost = direct.has_value() ? direct->host : std::string();
     settingValues.directPort = direct.has_value() ? direct->port : 0;
-    settingValues.i2pEnabled = enableI2p;
-    settingValues.i2pDestinations = static_cast<int>(i2pDests);
     settingValues.i2pPrivacy = std::string(bazarish::i2p::privacyName(privacy));
     settingValues.i2pTunnelQuantity = tunnelQuantity;
     options.settings = std::make_shared<bazarish::facade::FacadeSettings>(
@@ -198,26 +191,20 @@ int main(const int argc, const char** argv)
         return 1;
     }
 
-    std::unique_ptr<bazarish::facade::I2pFront> i2pFront;
-    if (enableI2p) {
-        bazarish::facade::I2pFront::Options frontOptions;
-        frontOptions.stateDir = stateDir;
-        frontOptions.localHost
-            = listen.host == "0.0.0.0" ? std::string("127.0.0.1") : listen.host;
-        frontOptions.localPort = listen.port;
-        frontOptions.destinations = i2pDests;
-        frontOptions.privacy = privacy;
-        frontOptions.tunnelQuantity = tunnelQuantity;
-        i2pFront = std::make_unique<bazarish::facade::I2pFront>(frontOptions);
-        bazarish::log::info("building I2P destination(s) for the facade API...");
-        for (const std::string& address : i2pFront->start()) {
-            std::printf("i2p facade: http://%s%s\n", address.c_str(), options.basePath.c_str());
-        }
-        std::fflush(stdout);
-    }
+    bazarish::facade::I2pFront::Options frontOptions;
+    frontOptions.stateDir = stateDir;
+    frontOptions.localHost = listen.host == "0.0.0.0" ? std::string("127.0.0.1") : listen.host;
+    frontOptions.localPort = listen.port;
+    frontOptions.privacy = privacy;
+    frontOptions.tunnelQuantity = tunnelQuantity;
+    bazarish::facade::I2pFront i2pFront(frontOptions);
+    bazarish::log::info("building the I2P destination for the facade API...");
+    const std::string address = i2pFront.start();
+    std::printf("i2p facade: http://%s%s\n", address.c_str(), options.basePath.c_str());
+    std::fflush(stdout);
 
     facade.wait();
-    i2pFront.reset();
+    i2pFront.stop();
     facade.stop();
     return restart.requested() ? bazarish::kRestartExitCode : 0;
 }

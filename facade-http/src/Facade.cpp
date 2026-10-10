@@ -39,8 +39,6 @@ namespace bazarish::facade {
 
 namespace {
 
-constexpr int kMaxI2pDestinations = 8;
-
 constexpr int kUpstreamTimeoutSeconds = 60;
 constexpr int kFrontReadSlackSeconds = 30;
 
@@ -269,9 +267,6 @@ void Facade::setupOpsRoutes()
                 {"listen", {{"host", values.listenHost}, {"port", values.listenPort}}},
                 {"opsListen", {{"host", values.opsHost}, {"port", values.opsPort}}},
                 {"directListen", {{"host", values.directHost}, {"port", values.directPort}}},
-                {"i2pEnabled", values.i2pEnabled},
-                {"i2pDestinations", values.i2pDestinations},
-                {"i2pDestinationsMax", kMaxI2pDestinations},
                 {"i2pPrivacy", values.i2pPrivacy},
                 {"i2pTunnelQuantity", values.i2pTunnelQuantity},
                 {"i2pTunnelQuantityMax", bazarish::i2p::kMaxTunnelQuantity},
@@ -307,17 +302,6 @@ void Facade::setupOpsRoutes()
         readEndpointInto(body, "listen", values.listenHost, values.listenPort);
         readEndpointInto(body, "opsListen", values.opsHost, values.opsPort);
         readEndpointInto(body, "directListen", values.directHost, values.directPort);
-        if (body.contains("i2pEnabled")) {
-            values.i2pEnabled = body.at("i2pEnabled").get<bool>();
-        }
-        if (body.contains("i2pDestinations")) {
-            const int count = body.at("i2pDestinations").get<int>();
-            if (count < 1 || count > kMaxI2pDestinations) {
-                throw std::invalid_argument("a facade carries between 1 and "
-                    + std::to_string(kMaxI2pDestinations) + " destinations");
-            }
-            values.i2pDestinations = count;
-        }
         if (body.contains("i2pPrivacy")) {
             const std::string named = body.at("i2pPrivacy").get<std::string>();
             if (!bazarish::i2p::privacyFromString(named).has_value()) {

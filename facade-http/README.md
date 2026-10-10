@@ -18,8 +18,8 @@ The facade holds **no keys and no content at rest**; it parses nothing and
 stores nothing identifying. Compromising it must not damage the server
 infrastructure - it knows only the private-channel address of its backend and
 the (end-to-end encrypted) traffic passing through. Clients reach it through
-its own I2P destinations, which relay to the `listen` socket on loopback, under
-a secret prefix known only to them.
+its own I2P destination, and through nothing else: it relays to the `listen`
+socket on loopback, under a secret prefix known only to them.
 
 ## Build
 

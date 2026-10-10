@@ -1111,41 +1111,32 @@
 
         var sockets = section(form, "Sockets");
         var listen = endpointRow(sockets, "API", data.listen,
-            "What its own I2P addresses relay to, under the base path above. Keep it on"
+            "What its I2P address relays to, under the base path above. Keep it on"
             + " loopback.", true);
         var ops = endpointRow(sockets, "Operator", data.opsListen,
             "The private socket this page is talking to: health, settings, restart. Never"
             + " published to clients.", true);
         var direct = endpointRow(sockets, "Direct", data.directListen,
-            "What the I2P addresses serve, over TLS, for a gateway given a route here. Empty:"
+            "What the I2P address serves, over TLS, for a gateway given a route here. Empty:"
             + " not opened.", true);
 
         var backends = section(form, "What it forwards to");
         var messaging = endpointRow(backends, "Messaging server", data.messaging,
             "Its only backend. The sealed client tunnel and the server card go here.", true);
 
-        var i2p = section(form, "Its I2P side");
-        var enabled = chipRow(i2p, "I2P",
-            "Off: the facade publishes no address, and no client can reach it.",
-            [{ value: true, label: "on" }, { value: false, label: "off" }],
-            data.i2pEnabled !== false, { restart: true });
-        var destinations = fieldRow(i2p, "Destinations", data.i2pDestinations, {
-            type: "number", narrow: true, min: 1, max: data.i2pDestinationsMax,
-            unit: "of " + data.i2pDestinationsMax, restart: true,
-            hint: "More than one spreads client traffic across separate addresses."
-        });
+        var i2p = section(form, "Its I2P address");
         var privacy = chipRow(i2p, "Privacy", "Hops each tunnel takes: minimal is one, max is"
             + " three.",
             kPrivacyLevels.map(function (name) { return { value: name, label: name }; }),
             data.i2pPrivacy || "max", { restart: true });
-        var tunnels = fieldRow(i2p, "Tunnels per address", data.i2pTunnelQuantity, {
+        var tunnels = fieldRow(i2p, "Tunnels", data.i2pTunnelQuantity, {
             type: "number", narrow: true, min: 1, max: data.i2pTunnelQuantityMax,
             unit: "of " + data.i2pTunnelQuantityMax, restart: true
         });
 
         var facts = section(form, "What this facade is");
         readOnlyRow(facts, "State", data.stateDirectory,
-            "Where its destination keys live, so its addresses survive a restart.");
+            "Where its destination key lives, so its address survives a restart.");
         readOnlyRow(facts, "Version", data.version);
 
         var footer = saveFooter(form,
@@ -1173,8 +1164,6 @@
                             host: messaging.host.value.trim(),
                             port: portRead(messaging.port, "The messaging server")
                         },
-                        i2pEnabled: enabled(),
-                        i2pDestinations: Math.round(Number(destinations.value) || 0),
                         i2pPrivacy: privacy(),
                         i2pTunnelQuantity: Math.round(Number(tunnels.value) || 0)
                     }

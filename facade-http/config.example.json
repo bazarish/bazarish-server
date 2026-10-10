@@ -1,7 +1,7 @@
 {
   // The secret prefix the API lives under. Mandatory.
   "basePath": "/REPLACE_WITH_A_SECRET_PATH",
-  // What the facade's own I2P destinations relay to, on loopback.
+  // What the facade's own I2P destination relays to, on loopback.
   "listen": {"host": "127.0.0.1", "port": 8419},
   // A TLS socket carrying exactly what the I2P destination carries, for a
   // gateway the operator has given a route to this address. Left out, the only
@@ -17,6 +17,6 @@
   // The keys allowed to open the ops socket (the panel's).
   "opsClients": [],
   "state": "/var/lib/bazarish/facade",
-  "i2p": {"enabled": true, "destinations": 1, "privacy": "minimal", "tunnelQuantity": 3},
+  "i2p": {"privacy": "minimal", "tunnelQuantity": 16},
   "logLevel": "info"
 }

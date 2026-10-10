@@ -32,6 +32,7 @@ constexpr int kReadyPollSeconds = 1;
 constexpr int kDrainMillis = 60000;
 constexpr int kDrainPollMillis = 50;
 constexpr std::size_t kMaxRelaysInFlight = 256;
+constexpr const char* kDestinationKeyFile = "facade-dest-0.key";
 
 using bazarish::readFileText;
 using bazarish::writePrivateFile;
@@ -116,7 +117,7 @@ I2pFront::~I2pFront()
     stop();
 }
 
-std::vector<std::string> I2pFront::start()
+std::string I2pFront::start()
 {
     running_ = true;
     std::error_code ec;
@@ -126,70 +127,54 @@ std::vector<std::string> I2pFront::start()
     routerConfig.role = bazarish::i2p::Role::eServer;
     router_ = std::make_unique<bazarish::i2p::Router>(routerConfig);
 
-    std::vector<std::string> hosts;
-    for (std::size_t i = 0; i < options_.destinations; ++i) {
-        const std::filesystem::path keyPath
-            = options_.stateDir / ("facade-dest-" + std::to_string(i) + ".key");
-        const std::string raw = std::filesystem::exists(keyPath) ? readFileText(keyPath) : "";
-        const bazarish::i2p::Keys keys = raw.empty()
-            ? bazarish::i2p::Keys::generate()
-            : bazarish::i2p::Keys::fromBlob(bazarish::Bytes(raw.begin(), raw.end()));
-        std::shared_ptr<bazarish::i2p::Endpoint> endpoint
-            = router_->createEndpoint(bazarish::i2p::EndpointConfig{
-                keys, options_.privacy, options_.tunnelQuantity, true});
-        if (raw.empty()) {
-            const bazarish::Bytes blob = endpoint->privateBlob();
-            writePrivateFile(keyPath, std::string(blob.begin(), blob.end()));
-        }
-        const std::string host = endpoint->routingHost();
-        hosts.push_back(host);
-        readyThreads_.emplace_back([this, endpoint, host]() {
-            for (int waited = 0; waited < kReadyWaitSeconds; waited += kReadyPollSeconds) {
-                if (endpoint->waitReady(std::chrono::seconds(kReadyPollSeconds))) {
-                    bazarish::log::info("i2p facade ready: {}", host);
-                    return;
-                }
-                if (!running_) {
-                    return;
-                }
+    const std::filesystem::path keyPath = options_.stateDir / kDestinationKeyFile;
+    const std::string raw = std::filesystem::exists(keyPath) ? readFileText(keyPath) : "";
+    const bazarish::i2p::Keys keys = raw.empty()
+        ? bazarish::i2p::Keys::generate()
+        : bazarish::i2p::Keys::fromBlob(bazarish::Bytes(raw.begin(), raw.end()));
+    endpoint_ = router_->createEndpoint(
+        bazarish::i2p::EndpointConfig{keys, options_.privacy, options_.tunnelQuantity, true});
+    if (raw.empty()) {
+        const bazarish::Bytes blob = endpoint_->privateBlob();
+        writePrivateFile(keyPath, std::string(blob.begin(), blob.end()));
+    }
+    const std::string host = endpoint_->routingHost();
+    readyThread_ = std::thread([this, host]() {
+        for (int waited = 0; waited < kReadyWaitSeconds; waited += kReadyPollSeconds) {
+            if (endpoint_->waitReady(std::chrono::seconds(kReadyPollSeconds))) {
+                bazarish::log::info("i2p facade ready: {}", host);
+                return;
             }
-            bazarish::log::warn("i2p facade not ready after {}s: {}", kReadyWaitSeconds, host);
-        });
-        endpoints_.push_back(std::move(endpoint));
-    }
-
-    for (const std::shared_ptr<bazarish::i2p::Endpoint>& endpoint : endpoints_) {
-        acceptThreads_.emplace_back([this, endpoint]() { acceptLoop(endpoint); });
-    }
-    return hosts;
+            if (!running_) {
+                return;
+            }
+        }
+        bazarish::log::warn("i2p facade not ready after {}s: {}", kReadyWaitSeconds, host);
+    });
+    acceptThread_ = std::thread([this]() { acceptLoop(); });
+    return host;
 }
 
 void I2pFront::stop()
 {
     running_ = false;
-    for (std::thread& thread : acceptThreads_) {
-        if (thread.joinable()) {
-            thread.join();
-        }
+    if (acceptThread_.joinable()) {
+        acceptThread_.join();
     }
-    acceptThreads_.clear();
-    for (std::thread& thread : readyThreads_) {
-        if (thread.joinable()) {
-            thread.join();
-        }
+    if (readyThread_.joinable()) {
+        readyThread_.join();
     }
-    readyThreads_.clear();
-    endpoints_.clear();
+    endpoint_.reset();
     router_.reset();
 }
 
-void I2pFront::acceptLoop(const std::shared_ptr<bazarish::i2p::Endpoint>& endpoint)
+void I2pFront::acceptLoop()
 {
     while (running_) {
         std::string peer;
         std::unique_ptr<bazarish::i2p::Stream> stream;
         try {
-            stream = endpoint->accept(peer, std::chrono::seconds(kAcceptTimeoutSeconds));
+            stream = endpoint_->accept(peer, std::chrono::seconds(kAcceptTimeoutSeconds));
         } catch (const std::exception& error) {
             bazarish::log::warn("i2p accept failed: {}", error.what());
             continue;

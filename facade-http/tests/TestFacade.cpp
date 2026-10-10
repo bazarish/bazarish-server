@@ -166,8 +166,6 @@ int main()
     facadeValues.opsPort = 8429;
     facadeValues.directHost = "127.0.0.1";
     facadeValues.directPort = kDirectPort;
-    facadeValues.i2pEnabled = true;
-    facadeValues.i2pDestinations = 1;
     facadeValues.i2pPrivacy = "max";
     facadeValues.i2pTunnelQuantity = 3;
     const auto facadeSettings
@@ -299,6 +297,8 @@ int main()
         const nlohmann::json values = nlohmann::json::parse(shown.body);
         CHECK(values.at("basePath").get<std::string>() == "/s/secret123");
         CHECK(values.at("i2pTunnelQuantity").get<int>() == 3);
+        CHECK(!values.contains("i2pEnabled"));
+        CHECK(!values.contains("i2pDestinations"));
         CHECK(values.at("directListen").at("port").get<int>() == kDirectPort);
 
         const nlohmann::json wanted = {{"basePath", "/s/secret456"}, {"i2pTunnelQuantity", 8},

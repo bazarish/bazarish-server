@@ -62,3 +62,6 @@ bazarish_admin_add_test(TestLoginPage)
 # real template rather than a stand-in that could escape what the real one does not.
 target_compile_definitions(TestLoginPage
     PRIVATE BAZARISH_PANEL_WEB_DIR="${CMAKE_CURRENT_SOURCE_DIR}/web")
+bazarish_admin_add_test(TestPanelFleet)
+target_compile_definitions(TestPanelFleet
+    PRIVATE BAZARISH_PANEL_WEB_DIR="${CMAKE_CURRENT_SOURCE_DIR}/web")

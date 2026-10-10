@@ -32,6 +32,7 @@ One file, given with `--config`. `config.example.json` is a starting point.
 | `reseed` | su3 archives a router with no peers starts from. Empty leaves the engine its built-in hosts |
 | `decoy.minBytes`, `decoy.maxBytes` | The length of a decoy answer, drawn between them |
 | `sessionTtlSeconds` | How long a session outlives its last socket |
+| `i2p.privacy`, `i2p.tunnelQuantity` | How long the tunnels of every client's destinations are and how many each keeps: one setting for everyone, since a client on a gateway sets none. `minimal` and 3 unless given; call media is always one hop |
 | `direct` | Destinations this gateway reaches without I2P: `dest`, the `host` and `port` serving it, and the `pin` that address presents |
 | `opsListen` | A TLS socket for the admin panel, answering only the keys in `opsClients`. It carries `/healthz` and nothing else |
 | `opsClients` | The keys allowed to open that socket: the panel prints its own |

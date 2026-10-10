@@ -17,6 +17,8 @@
 
     "sessionTtlSeconds": 300,
 
+    "i2p": { "privacy": "minimal", "tunnelQuantity": 3 },
+
     "serverName": "nginx",
     "notFound": ""
 }

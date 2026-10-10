@@ -4,8 +4,10 @@
 #include <bazarish/I2p.hpp>
 
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 
 namespace bazarish::gateway {
 
@@ -97,6 +99,20 @@ Settings Settings::from(const ConfigView& config)
             }
             settings.direct.push_back(std::move(route));
         }
+    }
+
+    if (const std::string named = config.text("i2p.privacy"); !named.empty()) {
+        const std::optional<i2p::Privacy> privacy = i2p::privacyFromString(named);
+        if (!privacy.has_value()) {
+            throw std::runtime_error("\"i2p.privacy\" is minimal, middle or max");
+        }
+        settings.tunnelPrivacy = *privacy;
+    }
+    settings.tunnelQuantity = static_cast<int>(
+        config.number("i2p.tunnelQuantity", i2p::kDefaultTunnelQuantity));
+    if (settings.tunnelQuantity < 1 || settings.tunnelQuantity > i2p::kMaxTunnelQuantity) {
+        throw std::runtime_error("\"i2p.tunnelQuantity\" is between 1 and "
+            + std::to_string(i2p::kMaxTunnelQuantity));
     }
 
     settings.sessionTtlSeconds

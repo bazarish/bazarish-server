@@ -39,8 +39,9 @@ An operator who runs a Bazarish server as well can give the gateway a direct
 route to it: a destination named in `direct` is dialled over TLS to the address
 serving it, pinned by the key that address presents, and that flow does not
 enter I2P at all. The server then sees the gateway's address where it would have
-seen a destination, and the client cannot tell the two apart from its side. It
-is a route between two things one operator owns; a gateway somebody else runs
+seen a destination, and the client learns only that its destination was routed
+by the gateway (`localRoute`, below), not where to. It is a route between two
+things one operator owns; a gateway somebody else runs
 carries the flow over I2P because it has no such route to give.
 
 The operator does not see: the account identity keys, the profile database, the
@@ -56,7 +57,7 @@ invariant the protocol keeps is narrow and exact:
 The client's durable key material is the account identity and the master of its
 serving destination. Neither is ever operated locally, so neither has any reason
 to travel. Everything the client does operate is minted for a single use and
-discarded with it: the facade link, the warm reserve, an outbound lease, a file
+discarded with it: the facade link, a lookup, an outbound lease, a file
 transfer and the media destination of a call.
 
 ## Transport
@@ -348,9 +349,9 @@ it answers.
 | 0x04 | `error` | gateway | echo | `{"code": "...", "message": "..."}` |
 | 0x05 | `resume` | client | echo | `{"streams": [{"id": n, "received": n}]}` |
 | 0x06 | `attach` | client | flow | `{"received": n}`, on a flow socket's first frame |
-| 0x10 | `endpoint-create` | client | endpoint | `{"kind": "stream\|raw", "privacy": "minimal\|middle\|max", "tunnels": 3, "published": true, "realtime": false}` |
+| 0x10 | `endpoint-create` | client | endpoint | `{"kind": "stream\|raw", "published": true, "realtime": false}` |
 | 0x11 | `endpoint-stop` | client | endpoint | `{}` |
-| 0x12 | `endpoint-status` | gateway | endpoint | `{"ready": true, "host": "<b33>.b32.i2p", "tunnelsIn": 3, "tunnelsOut": 3, "leaseSets": 2}` |
+| 0x12 | `endpoint-status` | gateway | endpoint | `{"ready": true, "host": "<b33>.b32.i2p", "tunnelsIn": 3, "tunnelsOut": 3, "leaseSets": 2, "localRoute": false}` |
 | 0x20 | `stream-open` | client | stream | `{"endpoint": n, "host": "...", "deadline": 60}` |
 | 0x21 | `stream-opened` | gateway | stream | `{}` |
 | 0x22 | `stream-inbound` | gateway | stream | `{"endpoint": n, "peer": "<base64>"}` |
@@ -373,12 +374,13 @@ The client sends `hello` as its first frame. The gateway answers `ready`:
   "version": 1,
   "i2pd": "2.61.0",
   "capabilities": { "routerCounters": false, "destinationCounters": true,
-                    "netDbSample": false, "proxy": false, "offlineKeys": false },
+                    "netDbSample": false, "proxy": false, "offlineKeys": false,
+                    "warmPool": true },
   "session": "<cookie>",
   "resumed": true,
   "endpoints": [ { "id": 2, "kind": "stream", "ready": true,
                    "host": "<b33>.b32.i2p", "tunnelsIn": 3, "tunnelsOut": 3,
-                   "leaseSets": 2 } ],
+                   "leaseSets": 2, "localRoute": false } ],
   "streams":   [ { "id": 4, "endpoint": 2, "received": 81920, "finished": false } ]
 }
 ```
@@ -470,8 +472,7 @@ all: it says what the destination is for and how it should be built, and the
 gateway answers `ok` with the address it created.
 
 ```
-client -> endpoint-create  ref=2  {"kind": "raw", "privacy": "minimal",
-                                   "tunnels": 3, "published": true,
+client -> endpoint-create  ref=2  {"kind": "raw", "published": true,
                                    "realtime": true}
 gateway -> ok              ref=2  {"host": "<b33>.b32.i2p", "kind": "raw"}
 ```
@@ -484,7 +485,7 @@ destination's base64, only the host it gives a peer.
 
 | `kind` | What it is | Who uses it |
 |---|---|---|
-| `stream` | TCP-like streams, dialled and accepted | The facade link, the warm reserve, an outbound lease, both ends of a file transfer |
+| `stream` | TCP-like streams, dialled and accepted | The facade link, a lookup, an outbound lease, both ends of a file transfer |
 | `raw` | Raw, non-repliable datagrams, no per-packet sender identity | A call's media, and nothing else |
 
 Repliable datagrams are not in version 1. Nothing in the client sends or
@@ -504,8 +505,36 @@ it was not given. `realtime` does travel, because it selects the lane the
 gateway pins the destination to, which is the difference between a call that
 stutters behind a file transfer and one that does not.
 
-The gateway pushes `endpoint-status` whenever readiness, the tunnel counts or
-the held LeaseSets change, and the client answers `ready()` and `waitReady()`
+### The tunnels are the gateway's
+
+A client on a gateway does not choose how its tunnels are built: how long they
+are and how many a destination keeps are the gateway's own settings,
+`i2p.privacy` and `i2p.tunnelQuantity` in its configuration, one for everyone it
+serves (minimal and 3 unless set). `endpoint-create` says what a destination is
+for and nothing about its tunnels; one that names `privacy` or `tunnels` is
+refused with `bad-frame`, not obeyed in part and not quietly ignored - a client
+that sent them would go on believing its setting was in force. The exception is
+fixed rather than configured: a `raw` destination carries a call's media and is
+always built with one hop each way, because a voice that waits for three hops is
+a voice that arrives late.
+
+### Warm pools
+
+Because the tunnels are the same for everyone, a destination built ahead of time
+fits whoever asks next. The gateway keeps two pools of them, built at start and
+refilled the moment one is taken: one of unpublished `stream` destinations on
+its own settings - the shape of the facade link, a lookup, an outbound lease and
+a download - and one of published, realtime `raw` destinations for call media.
+A request of either shape is answered with the oldest destination its pool holds,
+which has usually long had its tunnels; any other shape is built on demand. A
+pooled destination goes to one session, once, and is stopped when that session
+is done with it, exactly like one built for the request: it was minted by the
+gateway either way, and nobody knew its address before it was handed out. The
+client therefore keeps no warm reserve of its own here (`capabilities.warmPool`).
+This gateway keeps four of the first and two of the second.
+
+The gateway pushes `endpoint-status` whenever readiness, the tunnel counts, the
+held LeaseSets or `localRoute` change, and the client answers `ready()` and `waitReady()`
 out of what it was last told. `retagEndpoint` is local to the client and sends nothing.
 
 `endpoint-stop` gives up on everything the destination is waiting for and
@@ -651,9 +680,13 @@ The rules are narrow:
 - A directly connected stream reaches the other session as any other inbound
   stream, with `peer` set to the caller's public destination, which the gateway
   knows because it minted it.
-- Nothing announces which way a connection went. The client cannot act on the
-  difference, and a transport that behaves differently depending on who is
-  listening is one with two behaviours to test instead of one.
+- The destination says it was routed here, and nothing else changes: both
+  ends' `endpoint-status` carry `localRoute: true` from the first stream or
+  datagram joined inside the gateway on, as does a destination that dialled a
+  `direct` route. It is shown and never acted on, because a transport that
+  behaves differently depending on who is listening is one with two behaviours
+  to test instead of one. The users of one gateway learn from it that they share
+  that gateway; they already share its operator, who sees all of it.
 - The destination is still built and still published. The gateway cannot know
   who will dial an address before the address exists, so the shortcut saves the
   transit, not the setup.
@@ -683,8 +716,8 @@ chosen.
 ## The status panel
 
 A session's destinations appear in the I2P status panel exactly as they do when
-the router is the one in the process: every one-time destination by name, the
-warm reserve among them, with its host, its state and its counts. Running on a
+the router is the one in the process: every one-time destination by name, with
+its host, its state and its counts. Running on a
 gateway changes where the tunnels are, not what the user is shown.
 
 This needs almost nothing from the protocol, because the panel is already fed
@@ -699,11 +732,14 @@ gateway backend keeps the same registry:
 | `host` | The address `endpoint-create` answered with |
 | `published` | What the client asked for |
 | `closing` | The client stopped it and is waiting for it to go |
-| `ready`, `inboundTunnels`, `outboundTunnels`, `remoteLeaseSets` | The last `endpoint-status`, which is why `destinationCounters` is true here and false under SAM |
+| `ready`, `inboundTunnels`, `outboundTunnels`, `remoteLeaseSets`, `localRoute` | The last `endpoint-status`, which is why `destinationCounters` is true here and false under SAM |
 
-So the warm reserve reads "Warm reserve", a call's media destination reads
-"Call media", and a destination still building its tunnels reads "building" -
-the same words, from the same place, as on a desktop running its own engine.
+So a call's media destination reads "Call media" and a destination still
+building its tunnels reads "building" - the same words, from the same place, as
+on a desktop running its own engine. A destination with `localRoute` reads
+"gateway routing" where a LeaseSet count would be: a link the gateway carried
+itself looked nothing up, and "0 LeaseSets" beside a link that works says it
+does not.
 
 `localDestinations()` returns this session's endpoints and nothing else. A
 gateway serves several clients and each one sees its own, which is not a filter

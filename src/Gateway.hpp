@@ -2,6 +2,7 @@
 #pragma once
 
 #include <bazarish/GatewayProtocol.hpp>
+#include "DestinationPool.hpp"
 #include "Sessions.hpp"
 #include "Settings.hpp"
 
@@ -35,6 +36,7 @@ public:
     std::size_t rejoins() const { return rejoins_.load(); }
     std::size_t refusals() const { return refused_.load(); }
     std::size_t dials() const { return dials_.load(); }
+    std::size_t pooled() const;
 
 private:
     http::Response notFound() const;
@@ -54,6 +56,8 @@ private:
         const Frame& frame);
     void onEndpointCreate(const std::shared_ptr<Session>& session,
         const http::SocketPtr& socket, const Frame& frame);
+    i2p::EndpointConfig shapeOf(bool raw, bool published, bool realtime) const;
+    std::shared_ptr<i2p::Endpoint> endpointFor(const i2p::EndpointConfig& config);
     void onEndpointStop(const std::shared_ptr<Session>& session, const http::SocketPtr& socket,
         const Frame& frame);
     void onStreamOpen(const std::shared_ptr<Session>& session, const http::SocketPtr& socket,
@@ -115,6 +119,8 @@ private:
     i2p::Router& router_;
     http::Server server_;
     std::unique_ptr<http::Server> ops_;
+    std::unique_ptr<DestinationPool> streamPool_;
+    std::unique_ptr<DestinationPool> callPool_;
     SessionStore sessions_;
     mutable std::mutex mutex_;
     mutable auth::ReplayCache operatorReplays_;

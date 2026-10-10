@@ -23,7 +23,8 @@ const char* kWhole = R"({
     "reseed": ["https://reseed.example/i2pseeds.su3"],
     "decoy": { "minBytes": 2048, "maxBytes": 4096 },
     "serverName": "caddy",
-    "sessionTtlSeconds": 120
+    "sessionTtlSeconds": 120,
+    "i2p": { "privacy": "max", "tunnelQuantity": 5 }
 })";
 
 }  // namespace
@@ -40,6 +41,8 @@ int main()
     CHECK(whole.decoyMaxBytes == 4096);
     CHECK(whole.serverName == "caddy");
     CHECK(whole.sessionTtlSeconds == 120);
+    CHECK(whole.tunnelPrivacy == i2p::Privacy::eMax);
+    CHECK(whole.tunnelQuantity == 5);
 
     const Settings bare = Settings::from(document(R"({
         "basePath": "/secret", "token": "t", "state": "/tmp/s"
@@ -49,6 +52,8 @@ int main()
     CHECK(bare.decoyMaxBytes == kDecoyMaxBytes);
     CHECK(bare.sessionTtlSeconds == kSessionTtl.count());
     CHECK(bare.serverName == "nginx");
+    CHECK(bare.tunnelPrivacy == i2p::Privacy::eMinimal);
+    CHECK(bare.tunnelQuantity == i2p::kDefaultTunnelQuantity);
     CHECK(bare.notFoundBody.find("404 Not Found") != std::string::npos);
 
     CHECK_THROWS(Settings::from(document(R"({"token": "t", "state": "/tmp/s"})")));
@@ -71,6 +76,15 @@ int main()
     })")));
     CHECK_THROWS(Settings::from(document(R"({
         "basePath": "/s", "token": "t", "state": "/t", "sessionTtlSeconds": 0
+    })")));
+    CHECK_THROWS(Settings::from(document(R"({
+        "basePath": "/s", "token": "t", "state": "/t", "i2p": { "privacy": "short" }
+    })")));
+    CHECK_THROWS(Settings::from(document(R"({
+        "basePath": "/s", "token": "t", "state": "/t", "i2p": { "tunnelQuantity": 0 }
+    })")));
+    CHECK_THROWS(Settings::from(document(R"({
+        "basePath": "/s", "token": "t", "state": "/t", "i2p": { "tunnelQuantity": 17 }
     })")));
 
     CHECK_THROWS(Settings::from(document(R"({

@@ -33,6 +33,8 @@ struct EndpointEntry {
     int inboundTunnels = 0;
     int outboundTunnels = 0;
     int leaseSets = 0;
+    std::atomic<bool> localRoute{false};
+    bool reportedLocalRoute = false;
 };
 
 struct StreamEntry {

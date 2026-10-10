@@ -4,7 +4,9 @@
 #include "TestRouter.hpp"
 #include "TestUtil.hpp"
 
+#include <bazarish/HttpServer.hpp>
 #include <bazarish/I2p.hpp>
+#include <bazarish/Tls.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -23,6 +25,7 @@ namespace {
 constexpr const char* kPath = "/2b8e61a0d7c4";
 constexpr const char* kToken = "a-third-static-token";
 constexpr int kWaitSeconds = 20;
+constexpr const char* kServerDest = "fkc4nkqn6k2bwrqsgbabnkyx4g5s2cp3nvnrdnkqxz4bzcbzrfaa.b32.i2p";
 
 i2p::RouterConfig borrowedFrom(const int port)
 {
@@ -46,6 +49,16 @@ bool waitFor(const std::function<bool()>& done)
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     return done();
+}
+
+bool routedLocally(const i2p::Router& router, const std::string& host)
+{
+    for (const i2p::LocalDestination& destination : router.localDestinations()) {
+        if (destination.host == host) {
+            return destination.localRoute;
+        }
+    }
+    return false;
 }
 
 std::string readAll(i2p::Stream& stream, const std::size_t expected)
@@ -79,6 +92,25 @@ int main()
     settings.stateDir = root / "state";
     settings.notFoundBody = "<html>nothing</html>";
 
+    const tls::Credential server = tls::selfSigned(root / "server");
+    http::Server::Options serverOptions;
+    serverOptions.port = 0;
+    serverOptions.threads = 1;
+    serverOptions.certificate = server.certificate.string();
+    serverOptions.key = server.key.string();
+    http::Server listener(serverOptions);
+    listener.get("/v1/server/card", [](const http::Request&) {
+        return http::Response{200, "application/json", {}, R"({"card":"here"})"};
+    });
+    const int listenerPort = listener.start();
+    CHECK(listenerPort > 0);
+    DirectRoute route;
+    route.dest = kServerDest;
+    route.host = "127.0.0.1";
+    route.port = listenerPort;
+    route.pin = server.pin;
+    settings.direct.push_back(route);
+
     i2p::Router engine(i2p::offlineRouter(root / "i2p"));
 
     Gateway gateway(settings, engine);
@@ -105,9 +137,13 @@ int main()
 
     CHECK(waitFor([&]() { return gateway.sockets() == 3; }));
 
+    CHECK(!routedLocally(bob, his->routingHost()));
     const std::unique_ptr<i2p::Stream> out
         = his->connect(host, std::chrono::seconds(kWaitSeconds));
     CHECK(out != nullptr);
+    CHECK(waitFor([&]() {
+        return routedLocally(bob, his->routingHost()) && routedLocally(alice, host);
+    }));
 
     std::string caller;
     const std::unique_ptr<i2p::Stream> in
@@ -170,12 +206,25 @@ int main()
 
     CHECK(gateway.refusals() == 0);
 
+    i2p::EndpointConfig toServer;
+    toServer.privacy = i2p::Privacy::eMinimal;
+    toServer.published = false;
+    const std::shared_ptr<i2p::Endpoint> link = bob.createEndpoint(toServer);
+    CHECK(!routedLocally(bob, link->routingHost()));
+    const std::unique_ptr<i2p::Stream> card
+        = link->connect(kServerDest, std::chrono::seconds(kWaitSeconds));
+    CHECK(card != nullptr);
+    CHECK(waitFor([&]() { return routedLocally(bob, link->routingHost()); }));
+    card->close();
+    link->stop();
+
     out->close();
     his->stop();
     hers->stop();
     bob.stop();
     alice.stop();
     gateway.stop();
+    listener.stop();
     std::filesystem::remove_all(root);
     std::printf("TestLocalMeeting ok\n");
     return 0;

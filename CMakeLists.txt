@@ -27,6 +27,7 @@ find_package(OpenSSL 3.5 REQUIRED)
 add_library(bazarish_gateway_lib STATIC
     src/Health.cpp
     src/Conduit.cpp
+    src/DestinationPool.cpp
     src/Gateway.cpp
     src/Settings.cpp
     src/Sessions.cpp

@@ -55,6 +55,16 @@ bool waitFor(const std::function<bool()>& done)
     return done();
 }
 
+bool routedLocally(const i2p::Router& router, const std::string& host)
+{
+    for (const i2p::LocalDestination& destination : router.localDestinations()) {
+        if (destination.host == host) {
+            return destination.localRoute;
+        }
+    }
+    return false;
+}
+
 std::shared_ptr<i2p::Endpoint> mediaOn(i2p::Router& router)
 {
     i2p::EndpointConfig config;
@@ -109,8 +119,12 @@ int main()
     CHECK(waitFor([&]() { return gateway.sockets() == 4; }));
     CHECK(waitFor([&]() { return relay.connections() == 2; }));
 
+    CHECK(!routedLocally(bob, his->routingHost()));
     CHECK(mediaFlows(*his, *hers));
     CHECK(mediaFlows(*hers, *his));
+    CHECK(waitFor([&]() {
+        return routedLocally(bob, his->routingHost()) && routedLocally(alice, hers->routingHost());
+    }));
 
     CHECK_THROWS(his->connect(hers->routingHost(), std::chrono::seconds(1)));
     std::string nobody;
@@ -143,7 +157,7 @@ int main()
     CHECK(gateway.refusals() == 0);
 
     bob.stop();
-    CHECK(waitFor([&]() { return engine.localDestinations().size() == 1; }));
+    CHECK(waitFor([&]() { return engine.localDestinations().size() == 1 + gateway.pooled(); }));
 
     gateway.stop();
     CHECK(waitFor([&]() { return engine.localDestinations().empty(); }));

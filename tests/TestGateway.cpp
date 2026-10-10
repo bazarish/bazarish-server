@@ -19,6 +19,7 @@
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include <set>
 #include <thread>
 #include <string>
 #include <vector>
@@ -284,11 +285,30 @@ int main()
     Dialled twiceOver = dial(io, port, kToken, {});
     CHECK(twiceOver.socket != nullptr);
     (void)greet(*twiceOver.socket);
-    const nlohmann::json ask = {{"kind", "stream"}, {"privacy", "minimal"}, {"tunnels", 2},
+    send(*twiceOver.socket,
+        encodeJson(FrameType::eEndpointCreate, 2,
+            {{"kind", "stream"}, {"privacy", "max"}, {"published", false},
+                {"realtime", false}}));
+    const Frame overruled = receive(*twiceOver.socket);
+    CHECK(overruled.type == FrameType::eError);
+    CHECK(bodyJson(overruled)["code"] == "bad-frame");
+    send(*twiceOver.socket,
+        encodeJson(FrameType::eEndpointCreate, 4,
+            {{"kind", "stream"}, {"tunnels", 2}, {"published", false}, {"realtime", false}}));
+    CHECK(receive(*twiceOver.socket).type == FrameType::eError);
+
+    std::set<std::string> warm;
+    for (const i2p::LocalDestination& destination : router.localDestinations()) {
+        warm.insert(destination.host);
+    }
+    CHECK(warm.size() == gateway.pooled());
+    const nlohmann::json ask = {{"kind", "stream"},
         {"published", false}, {"realtime", false}};
     send(*twiceOver.socket, encodeJson(FrameType::eEndpointCreate, 6, ask));
     const Frame once = receive(*twiceOver.socket);
     CHECK(once.type == FrameType::eOk);
+    CHECK(warm.count(bodyJson(once)["host"].get<std::string>()) == 1);
+    CHECK(router.localDestinations().size() == gateway.pooled() + 1);
     send(*twiceOver.socket, encodeJson(FrameType::eEndpointCreate, 6, ask));
     const Frame repeat = receive(*twiceOver.socket);
     CHECK(repeat.type == FrameType::eOk);
@@ -302,7 +322,7 @@ int main()
     (void)greet(*asking.socket);
     send(*asking.socket,
         encodeJson(FrameType::eEndpointCreate, 8,
-            {{"kind", "stream"}, {"privacy", "minimal"}, {"tunnels", 2},
+            {{"kind", "stream"},
                 {"published", false}, {"realtime", false}}));
     CHECK(receive(*asking.socket).type == FrameType::eOk);
     const nlohmann::json dialAsk = {{"endpoint", 8},
@@ -322,7 +342,7 @@ int main()
     const std::string doomed = greet(*held.socket)["body"]["session"];
     send(*held.socket,
         encodeJson(FrameType::eEndpointCreate, 4,
-            {{"kind", "stream"}, {"privacy", "minimal"}, {"tunnels", 2},
+            {{"kind", "stream"},
                 {"published", true}, {"realtime", false}}));
     const Frame made = receive(*held.socket);
     CHECK(made.type == FrameType::eOk);
@@ -332,10 +352,11 @@ int main()
 
     const auto sweptBy = std::chrono::steady_clock::now()
         + std::chrono::seconds(settings.sessionTtlSeconds + kSweepGraceSeconds);
-    while (!router.localDestinations().empty() && std::chrono::steady_clock::now() < sweptBy) {
+    while (router.localDestinations().size() != gateway.pooled()
+        && std::chrono::steady_clock::now() < sweptBy) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
-    CHECK(router.localDestinations().empty());
+    CHECK(router.localDestinations().size() == gateway.pooled());
 
     Dialled after = dial(io, port, kToken, doomed);
     CHECK(after.socket != nullptr);

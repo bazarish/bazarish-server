@@ -24,6 +24,10 @@ constexpr std::size_t kSocketMessageBytes = kMaxFrameBytes;
 
 constexpr std::chrono::seconds kReplayGrace{5};
 
+constexpr std::size_t kStreamPoolDepth = 4;
+constexpr std::size_t kCallPoolDepth = 2;
+constexpr i2p::Privacy kCallPrivacy = i2p::Privacy::eMinimal;
+
 std::size_t drawBetween(const std::size_t low, const std::size_t high)
 {
     if (high <= low) {
@@ -166,6 +170,10 @@ int Gateway::start()
     for (const char* method : {"GET", "POST", "PUT", "DELETE", "HEAD"}) {
         server_.route(method, "(.*)", answer);
     }
+    streamPool_ = std::make_unique<DestinationPool>(
+        router_, shapeOf(false, false, false), kStreamPoolDepth);
+    callPool_
+        = std::make_unique<DestinationPool>(router_, shapeOf(true, true, true), kCallPoolDepth);
     bindOps();
     const int bound = server_.start();
     running_.store(true);
@@ -206,6 +214,12 @@ void Gateway::stop()
     for (const std::shared_ptr<Session>& session : held) {
         retire(session);
     }
+    if (streamPool_) {
+        streamPool_->stop();
+    }
+    if (callPool_) {
+        callPool_->stop();
+    }
     server_.stop();
     if (ops_) {
         ops_->stop();
@@ -215,6 +229,34 @@ void Gateway::stop()
 int Gateway::port() const
 {
     return server_.port();
+}
+
+std::size_t Gateway::pooled() const
+{
+    return (streamPool_ ? streamPool_->held() : 0) + (callPool_ ? callPool_->held() : 0);
+}
+
+i2p::EndpointConfig Gateway::shapeOf(const bool raw, const bool published, const bool realtime) const
+{
+    i2p::EndpointConfig config;
+    config.traffic = raw ? i2p::Traffic::eRaw : i2p::Traffic::eStream;
+    config.privacy = raw ? kCallPrivacy : settings_.tunnelPrivacy;
+    config.tunnelQuantity = raw ? i2p::kDefaultTunnelQuantity : settings_.tunnelQuantity;
+    config.published = published;
+    config.realtime = realtime;
+    config.label = raw ? "raw" : "stream";
+    return config;
+}
+
+std::shared_ptr<i2p::Endpoint> Gateway::endpointFor(const i2p::EndpointConfig& config)
+{
+    if (streamPool_->fits(config)) {
+        return streamPool_->take();
+    }
+    if (callPool_->fits(config)) {
+        return callPool_->take();
+    }
+    return router_.createEndpoint(config);
 }
 
 void Gateway::socketOpened(const http::SocketPtr& socket, const http::Request& request)
@@ -487,7 +529,8 @@ void Gateway::onHello(const http::SocketPtr& socket, const Frame& frame)
             endpoints.push_back({{"id", id}, {"kind", endpoint->raw ? "raw" : "stream"},
                 {"ready", endpoint->ready}, {"host", endpoint->host},
                 {"tunnelsIn", endpoint->inboundTunnels},
-                {"tunnelsOut", endpoint->outboundTunnels}, {"leaseSets", endpoint->leaseSets}});
+                {"tunnelsOut", endpoint->outboundTunnels}, {"leaseSets", endpoint->leaseSets},
+                {"localRoute", endpoint->localRoute.load()}});
         }
         for (const auto& [id, stream] : connection.session->streams) {
             streams.push_back({{"id", id}, {"endpoint", stream->endpoint},
@@ -505,7 +548,7 @@ void Gateway::onHello(const http::SocketPtr& socket, const Frame& frame)
         {"i2pd", i2p::routerVersion()},
         {"capabilities",
             {{"routerCounters", false}, {"destinationCounters", true}, {"netDbSample", false},
-                {"proxy", false}, {"offlineKeys", false}}},
+                {"proxy", false}, {"offlineKeys", false}, {"warmPool", true}}},
         {"session", connection.session->cookie()},
         {"resumed", connection.resumed},
         {"endpoints", endpoints},
@@ -581,21 +624,12 @@ void Gateway::onEndpointCreate(const std::shared_ptr<Session>& session,
         fail(socket, frame.ref, Fault::eBadFrame, "a destination is for streams or for raw");
         return;
     }
-    const std::optional<i2p::Privacy> privacy
-        = i2p::privacyFromString(body.value("privacy", std::string("max")));
-    if (!privacy.has_value()) {
-        fail(socket, frame.ref, Fault::eBadFrame, "that is not a privacy level");
+    if (body.contains("privacy") || body.contains("tunnels")) {
+        fail(socket, frame.ref, Fault::eBadFrame, "the tunnels are this gateway's to set");
         return;
     }
-
-    i2p::EndpointConfig config;
-    config.traffic = kind == "raw" ? i2p::Traffic::eRaw : i2p::Traffic::eStream;
-    config.privacy = privacy.value();
-    const int asked = static_cast<int>(body.value("tunnels", i2p::kDefaultTunnelQuantity));
-    config.tunnelQuantity = std::clamp(asked, 1, i2p::kMaxTunnelQuantity);
-    config.published = body.value("published", true);
-    config.realtime = body.value("realtime", false);
-    config.label = kind;
+    const i2p::EndpointConfig config = shapeOf(
+        kind == "raw", body.value("published", true), body.value("realtime", false));
 
     std::shared_ptr<EndpointEntry> entry;
     {
@@ -610,7 +644,7 @@ void Gateway::onEndpointCreate(const std::shared_ptr<Session>& session,
         entry->realtime = config.realtime;
         session->endpoints.emplace(entry->id, entry);
     }
-    entry->endpoint = router_.createEndpoint(config);
+    entry->endpoint = endpointFor(config);
     entry->host = entry->endpoint->routingHost();
     {
         const std::lock_guard<std::mutex> lock(mutex_);
@@ -701,6 +735,8 @@ void Gateway::onRawSend(const std::shared_ptr<Session>& session, const http::Soc
         }
     }
     if (peer != nullptr) {
+        from->localRoute.store(true);
+        peer->localRoute.store(true);
         if (peerLane) {
             peerLane->send(encode(FrameType::eRawRecv, peer->id, sent.payload));
         }
@@ -839,6 +875,9 @@ void Gateway::dial(const std::shared_ptr<Session>& session,
         return;
     }
 
+    if (route.has_value()) {
+        from->localRoute.store(true);
+    }
     std::shared_ptr<StreamEntry> entry = std::make_shared<StreamEntry>();
     entry->id = stream;
     entry->endpoint = from->id;
@@ -887,6 +926,8 @@ bool Gateway::meetLocally(const std::shared_ptr<Session>& session,
         session->remember(stream, answer);
         back = answerOn(*session, answerTo);
     }
+    from->localRoute.store(true);
+    to->localRoute.store(true);
     if (back) {
         back->send(answer);
     }
@@ -1254,18 +1295,22 @@ void Gateway::statusLoop()
                             break;
                         }
                     }
+                    const bool localRoute = entry->localRoute.load();
                     if (ready == entry->ready && in == entry->inboundTunnels
-                        && out == entry->outboundTunnels && leases == entry->leaseSets) {
+                        && out == entry->outboundTunnels && leases == entry->leaseSets
+                        && localRoute == entry->reportedLocalRoute) {
                         continue;
                     }
                     entry->ready = ready;
                     entry->inboundTunnels = in;
                     entry->outboundTunnels = out;
                     entry->leaseSets = leases;
+                    entry->reportedLocalRoute = localRoute;
                     outgoing.emplace_back(session->control,
                         encodeJson(FrameType::eEndpointStatus, id,
                             {{"ready", ready}, {"host", entry->host}, {"tunnelsIn", in},
-                                {"tunnelsOut", out}, {"leaseSets", leases}}));
+                                {"tunnelsOut", out}, {"leaseSets", leases},
+                                {"localRoute", localRoute}}));
                 }
             }
         }

@@ -6,6 +6,7 @@
 #include <bazarish/GatewayProtocol.hpp>
 
 #include <bazarish/ConfigFile.hpp>
+#include <bazarish/I2p.hpp>
 
 #include <cstddef>
 #include <filesystem>
@@ -33,6 +34,8 @@ struct Settings {
     int opsPort = 0;
     std::vector<std::string> opsClients;
     std::int64_t sessionTtlSeconds = kSessionTtl.count();
+    i2p::Privacy tunnelPrivacy = i2p::Privacy::eMinimal;
+    int tunnelQuantity = i2p::kDefaultTunnelQuantity;
 
     static Settings from(const ConfigView& config);
 };

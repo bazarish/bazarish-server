@@ -576,10 +576,8 @@ body.centred {
     text-transform: uppercase;
 }
 
-.sidebar-version {
-    margin: 0 0 2rem;
-    color: var(--bz-ink-faint);
-    font-size: 0.7rem;
+.sidebar-tag {
+    margin-bottom: 2rem;
 }
 
 .nav {
@@ -698,6 +696,39 @@ body.centred {
 .card-name {
     font-weight: 700;
     font-size: 0.9rem;
+}
+
+.item-link {
+    color: var(--bz-key);
+    text-decoration: none;
+}
+
+.item-link:hover,
+.item-link:focus-visible {
+    text-decoration: underline;
+}
+
+.facts .item-link {
+    color: var(--bz-key);
+    letter-spacing: normal;
+    text-transform: none;
+    font-size: 0.8rem;
+}
+
+.item-back {
+    display: inline-block;
+    margin-bottom: 0.75rem;
+    font-size: 0.8rem;
+}
+
+.item-back::before {
+    content: "<- ";
+}
+
+.item-title {
+    margin: 0 0 0.5rem;
+    color: var(--bz-ink);
+    font-size: 1.1rem;
 }
 
 .dot {

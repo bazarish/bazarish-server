@@ -33,6 +33,8 @@ struct Fleet {
 
 bool isKnownServiceKind(const std::string& kind);
 
+void requireCoherentFleet(const Fleet& fleet);
+
 nlohmann::json fleetsJson(const std::vector<Fleet>& fleets);
 
 struct Config {

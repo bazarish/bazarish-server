@@ -93,6 +93,27 @@ int main()
     CHECK_THROWS(Config::fromJson(R"({"admin": "fp", "services": [
         {"name": "x", "kind": "server-core"}]})"));
 
+    const Config spread = Config::fromJson(R"({"admin": "fp", "fleets": [
+        {"name": "home", "services": [
+            {"name": "core", "kind": "server-core", "url": "https://10.0.0.1:8428", "pin": "a-pin"},
+            {"name": "node", "kind": "service-node", "url": "https://10.0.0.1:8427", "pin": "a-pin"},
+            {"name": "facade-a", "kind": "facade", "url": "https://10.0.0.1:8429", "pin": "a-pin"},
+            {"name": "facade-b", "kind": "facade", "url": "https://10.0.0.3:8429", "pin": "a-pin"},
+            {"name": "gw-a", "kind": "gateway", "url": "https://10.0.0.4:8439", "pin": "a-pin"},
+            {"name": "gw-b", "kind": "gateway", "url": "https://10.0.0.5:8439", "pin": "a-pin"}]}
+    ]})");
+    CHECK(spread.fleets[0].services.size() == 6);
+
+    CHECK_THROWS(Config::fromJson(R"({"admin": "fp", "fleets": [{"name": "home", "services": [
+        {"name": "edge", "kind": "facade", "url": "https://10.0.0.1:8429", "pin": "a-pin"},
+        {"name": "edge", "kind": "gateway", "url": "https://10.0.0.4:8439", "pin": "a-pin"}]}]})"));
+    CHECK_THROWS(Config::fromJson(R"({"admin": "fp", "fleets": [{"name": "home", "services": [
+        {"name": "core", "kind": "server-core", "url": "https://10.0.0.1:8428", "pin": "a-pin"},
+        {"name": "core-2", "kind": "server-core", "url": "https://10.0.0.2:8428", "pin": "a-pin"}]}]})"));
+    CHECK_THROWS(Config::fromJson(R"({"admin": "fp", "services": [
+        {"name": "node", "kind": "service-node", "url": "https://10.0.0.1:8427", "pin": "a-pin"},
+        {"name": "node-2", "kind": "service-node", "url": "https://10.0.0.2:8427", "pin": "a-pin"}]})"));
+
     std::printf("TestConfig: all checks passed\n");
     return 0;
 }

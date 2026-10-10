@@ -32,6 +32,7 @@ add_library(bazarish_admin_lib STATIC
     src/AdminAuth.cpp
     src/SessionStore.cpp
     src/ServiceClient.cpp
+    src/FleetSync.cpp
     src/HttpApi.cpp
 )
 target_include_directories(bazarish_admin_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -55,6 +56,7 @@ bazarish_admin_add_test(TestConfig)
 bazarish_admin_add_test(TestPanelSettings)
 bazarish_admin_add_test(TestAdminAuth)
 bazarish_admin_add_test(TestServiceClient)
+bazarish_admin_add_test(TestFleetSync)
 bazarish_admin_add_test(TestLoginPage)
 # The sign-in page is drawn from the shipped web files, so the test renders the
 # real template rather than a stand-in that could escape what the real one does not.

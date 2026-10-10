@@ -5,6 +5,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <set>
 #include <stdexcept>
 
 namespace bazarish::admin {
@@ -26,6 +27,26 @@ bool isKnownServiceKind(const std::string& kind)
         }
     }
     return false;
+}
+
+void requireCoherentFleet(const Fleet& fleet)
+{
+    std::set<std::string> names;
+    std::size_t cores = 0;
+    std::size_t nodes = 0;
+    for (const ServiceEntry& service : fleet.services) {
+        if (!names.insert(service.name).second) {
+            throw std::invalid_argument("two services in \"" + fleet.name + "\" are named \""
+                + service.name + "\": each needs a name of its own");
+        }
+        cores += service.kind == kServerCoreKind ? 1 : 0;
+        nodes += service.kind == kServiceNodeKind ? 1 : 0;
+    }
+    if (cores > 1 || nodes > 1) {
+        throw std::invalid_argument("\"" + fleet.name
+            + "\" holds one server-core and one service-node at most: a second server is a"
+              " deployment of its own");
+    }
 }
 
 nlohmann::json fleetsJson(const std::vector<Fleet>& fleets)
@@ -105,12 +126,14 @@ Config Config::fromJson(const std::string& text)
             Fleet fleet;
             fleet.name = item.at("name").get<std::string>();
             fleet.services = readServices(item.at("services"));
+            requireCoherentFleet(fleet);
             config.fleets.push_back(std::move(fleet));
         }
     } else if (json.contains("services")) {
         Fleet fleet;
         fleet.name = "server";
         fleet.services = readServices(json.at("services"));
+        requireCoherentFleet(fleet);
         config.fleets.push_back(std::move(fleet));
     }
 

@@ -52,8 +52,11 @@ public:
 
 private:
     void registerRoutes();
+    std::optional<Fleet> fleetNamed(const std::string& fleet) const;
     std::optional<ServiceEntry> serviceOfKind(
         const std::string& fleet, const std::string& kind) const;
+    std::optional<ServiceEntry> serviceNamed(
+        const std::string& fleet, const std::string& name) const;
     void proxyToNode(const std::string& fleet, bazarish::http::Response& response,
         const std::string& method, const std::string& path, const std::string& body);
 

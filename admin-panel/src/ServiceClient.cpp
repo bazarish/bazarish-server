@@ -133,4 +133,22 @@ JsonResult callJson(const ServiceEntry& service, const Identity& identity,
     return result;
 }
 
+std::string failureText(const JsonResult& result)
+{
+    if (result.status == 0) {
+        return result.error;
+    }
+    try {
+        const nlohmann::json body = nlohmann::json::parse(result.body);
+        const nlohmann::json& error = body.at("error");
+        if (error.is_string()) {
+            return error.get<std::string>();
+        }
+        return error.at("message").get<std::string>();
+    } catch (const std::exception&) {
+        // error-hiding: allowed - not an error envelope, so the HTTP status below is the answer.
+    }
+    return "HTTP " + std::to_string(result.status);
+}
+
 }  // namespace bazarish::admin

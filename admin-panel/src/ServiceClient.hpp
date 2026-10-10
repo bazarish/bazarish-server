@@ -51,4 +51,6 @@ JsonResult callJson(const ServiceEntry& service, const Identity& identity,
     const tls::Credential& credential, const std::string& method, const std::string& path,
     const std::string& body = {});
 
+std::string failureText(const JsonResult& result);
+
 }  // namespace bazarish::admin

@@ -12,7 +12,9 @@
   "listen": {"host": "127.0.0.1", "port": 8460},
 
   // One deployment: a messaging server, the node bound to it, and the facades in
-  // front of the pair. Add more entries to manage more of them from here; they
+  // front of the pair, plus any gateways. Every service needs a name of its own;
+  // a deployment has one server-core and one service-node. Add more entries to
+  // manage more deployments from here; they
   // only have to be reachable from this host (a private network, a VPN, a tunnel
   // the operator set up - the panel does not care which).
   // Each service is reached on its operator socket, over TLS, and is named by

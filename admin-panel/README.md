@@ -1,7 +1,7 @@
 # bazarish-admin-panel
 
 A single web interface to monitor and manage the Bazarish fleet: `server-core`,
-`service-node`, the facade and a private gateway.
+`service-node`, its facades and private gateways.
 
 ## Authentication
 
@@ -65,7 +65,7 @@ Every service keeps the operator's endpoints on a socket of its own, the one
 its `opsListen` opens, and the panel is configured with that address rather than
 the one clients reach. Nothing an operator asks for is on a client-facing socket:
 on the facade any of it would admit a facade is there to a caller who does not
-know the secret base path, and the same reasoning holds for the rest. Because
+know the secret path, and the same reasoning holds for the rest. Because
 the link is pinned TLS in both directions, those sockets do not have to be on
 this host - a fleet can sit on several machines without a tunnel between them.
 
@@ -75,10 +75,17 @@ See `config.example.json`: the authorised admin fingerprints (one string or a
 list), the listen address, and the deployments it manages - no secrets. Each
 service is named by its operator socket and by the `pin` it presents there; an
 `http://` URL or a missing pin refuses to load, so a service cannot quietly be
-reached unauthenticated. Each deployment is a `server-core`, the `service-node`
-bound to it and its facades; several can be listed, and the account views act on
-the one chosen in the sidebar. The alias service is not here: it is one central
-service for the whole project, not part of an operator's server.
+reached unauthenticated. Each deployment is one `server-core`, the one
+`service-node` bound to it, and any number of facades and gateways; every service
+in it has a name of its own, and a configuration with two of a name, or a second
+core or node, refuses to load. Several deployments can be listed, and the account
+views act on the one chosen in the sidebar. The alias service is not here: it is
+one central service for the whole project, not part of an operator's server.
+
+The facades' addresses are not configured here or on the node: each facade mints
+its own and reports it, and the panel writes them into the server descriptor
+whenever the service list is saved or a facade is given a new address. A new
+address also rewrites any gateway's direct route to the old one.
 
 The panel makes its own certificate in `<state>` on first start and prints the
 hash of its key next to its fingerprint. Both go out to the fleet: the

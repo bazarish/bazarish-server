@@ -135,11 +135,27 @@
             : (value / kMillion).toFixed(1) + "M";
     }
 
+    function settingsHref(service) {
+        if (service.kind === "server-core") {
+            return "#/settings/server";
+        }
+        if (service.kind === "service-node") {
+            return "#/settings/addresses";
+        }
+        return "#/settings/" + (service.kind === "facade" ? "facades" : "gateways") + "/"
+            + encodeURIComponent(service.name);
+    }
+
     function serviceCard(service) {
         var card = element("div", "card");
         var head = element("div", "card-head");
         head.appendChild(element("i", "dot " + (service.up ? "is-up" : "is-down")));
-        head.appendChild(element("span", "card-name", service.name));
+        var name = element("a", "card-name item-link", service.name);
+        name.href = settingsHref(service);
+        name.addEventListener("click", function () {
+            pickFleet(service.fleet);
+        });
+        head.appendChild(name);
         head.appendChild(element("span", "tag", service.up ? "up" : "down"));
         card.appendChild(head);
 
@@ -624,7 +640,8 @@
         { id: "addresses", label: "Addresses" },
         { id: "accounts", label: "Accounts" },
         { id: "server", label: "Server" },
-        { id: "facade", label: "Facade" },
+        { id: "facades", label: "Facades" },
+        { id: "gateways", label: "Gateways" },
         { id: "panel", label: "Panel" }
     ];
     var kLogLevels = ["error", "warn", "info", "debug"];
@@ -632,6 +649,7 @@
     var kPrivacyLevels = ["minimal", "middle", "max"];
     var kRestartWaitMs = 10000;
     var settingsTab = kSettingsTabs[0].id;
+    var settingsItem = "";
 
     function fieldRow(block, label, value, spec) {
         var options = spec || {};
@@ -755,7 +773,11 @@
                 return;
             }
             save.disabled = true;
-            api(call.method, call.path, call.body).then(function () {
+            api(call.method, call.path, call.body).then(function (data) {
+                if (call.after && call.after(data, footer)) {
+                    save.disabled = false;
+                    return;
+                }
                 renderSettings();
             }).catch(function (error) {
                 save.disabled = false;
@@ -765,18 +787,24 @@
         return footer;
     }
 
-    function restartButton(footer, kind) {
-        var button = element("button", "chip", "restart " + kind);
+    function serviceQuery(target) {
+        return target.service ? "service=" + encodeURIComponent(target.service)
+            : "kind=" + encodeURIComponent(target.kind);
+    }
+
+    function restartButton(footer, target) {
+        var label = target.service || target.kind;
+        var button = element("button", "chip", "restart " + label);
         button.addEventListener("click", function () {
             button.disabled = true;
-            button.textContent = "restarting " + kind + "...";
-            api("POST", withFleet("/api/restart?kind=" + encodeURIComponent(kind)))
+            button.textContent = "restarting " + label + "...";
+            api("POST", withFleet("/api/restart?" + serviceQuery(target)))
                 .then(function () {
                     window.setTimeout(renderSettings, kRestartWaitMs);
                 })
                 .catch(function (error) {
                     button.disabled = false;
-                    button.textContent = "restart " + kind;
+                    button.textContent = "restart " + label;
                     footer.appendChild(notice(error.message, "is-error"));
                 });
         });
@@ -791,11 +819,13 @@
         return port;
     }
 
-    function renderSettings(wanted) {
+    function renderSettings(wanted, item) {
         if (wanted && kSettingsTabs.some(function (tab) { return tab.id === wanted; })) {
             settingsTab = wanted;
+            settingsItem = item || "";
         }
-        setHash("#/settings/" + settingsTab);
+        setHash("#/settings/" + settingsTab
+            + (settingsItem ? "/" + encodeURIComponent(settingsItem) : ""));
         var box = view("settings");
         var bar = element("nav", "tabs");
         kSettingsTabs.forEach(function (tab) {
@@ -823,19 +853,31 @@
             return;
         }
 
-        if (settingsTab === "server" || settingsTab === "facade") {
-            var kind = settingsTab === "server" ? "server-core" : "facade";
-            api("GET", withFleet("/api/service-settings?kind=" + kind))
-                .then(function (data) {
-                    form.innerHTML = "";
-                    if (kind === "server-core") {
-                        renderServerTab(form, data);
-                    } else {
-                        renderFacadeTab(form, data);
-                    }
-                }).catch(function (error) {
-                    form.innerHTML = "";
-                    form.appendChild(notice(error.message, "is-error"));
+        function fill(path, render) {
+            api("GET", withFleet(path)).then(function (data) {
+                form.innerHTML = "";
+                render(form, data);
+            }).catch(function (error) {
+                form.innerHTML = "";
+                form.appendChild(notice(error.message, "is-error"));
+            });
+        }
+
+        if (settingsTab === "server") {
+            fill("/api/service-settings?kind=server-core", renderServerTab);
+            return;
+        }
+        if (settingsTab === "facades" || settingsTab === "gateways") {
+            var facades = settingsTab === "facades";
+            if (!settingsItem) {
+                fill(facades ? "/api/facades" : "/api/services",
+                    facades ? renderFacadeList : renderGatewayList);
+                return;
+            }
+            var name = settingsItem;
+            fill("/api/service-settings?service=" + encodeURIComponent(name),
+                function (box, data) {
+                    (facades ? renderFacadePage : renderGatewayPage)(box, name, data);
                 });
             return;
         }
@@ -887,7 +929,7 @@
                     }
                 };
             });
-        restartButton(footer, "service-node");
+        restartButton(footer, { kind: "service-node" });
     }
 
     function renderPortalTab(form, data) {
@@ -936,21 +978,27 @@
                     }
                 };
             });
-        restartButton(footer, "service-node");
+        restartButton(footer, { kind: "service-node" });
     }
 
     function renderAddressesTab(form, data) {
         var reach = section(form, "How clients reach this server");
-        var facades = textareaBlock(reach, "Facades", (data.facades || []).join("\n"),
-            "http://<b32>.b32.i2p/<base path>",
-            "One per line, in the order a client tries them. Every one is a .b32.i2p address.",
-            true);
+        var reported = data.facades || [];
+        if (reported.length === 0) {
+            readOnlyRow(reach, "Facades", "");
+        }
+        reported.forEach(function (url, index) {
+            readOnlyRow(reach, index === 0 ? "Facades" : "", url);
+        });
+        reach.appendChild(element("p", "hint", "Each facade reports its own address, and the panel"
+            + " writes them here in the order of Settings, Panel. See the Facades tab."));
         var reseeds = textareaBlock(reach, "Reseeds", (data.reseeds || []).join("\n"),
             "https://host:port/<base path>",
             "One per line. A client with no I2P router fetches the network database here.",
             true);
         readOnlyRow(reach, "Descriptor", data.descriptor,
-            "Built from both lists. This is what a user pastes into their client.");
+            "Built from the facades and the reseeds. This is what a user pastes into their"
+            + " client.");
 
         var wiring = section(form, "This node's own wiring");
         var listen = endpointRow(wiring, "Operator API", data.listen,
@@ -965,14 +1013,6 @@
         var footer = saveFooter(form,
             "Addresses and the log level apply now; the sockets need a restart.",
             function () {
-                var facadeList = linesOf(facades);
-                if (facadeList.length === 0) {
-                    throw new Error("A server with no facade cannot be reached.");
-                }
-                var wrongFacade = facadeList.filter(function (url) { return !isI2pUrl(url); });
-                if (wrongFacade.length > 0) {
-                    throw new Error("A facade must be a .b32.i2p address: " + wrongFacade[0]);
-                }
                 var reseedList = linesOf(reseeds);
                 var wrongReseed = reseedList.filter(isI2pUrl);
                 if (wrongReseed.length > 0) {
@@ -982,7 +1022,6 @@
                 return {
                     method: "PUT", path: withFleet("/api/settings"),
                     body: {
-                        facades: facadeList,
                         reseeds: reseedList,
                         listen: {
                             host: listen.host.value.trim(),
@@ -996,7 +1035,7 @@
                     }
                 };
             });
-        restartButton(footer, "service-node");
+        restartButton(footer, { kind: "service-node" });
     }
 
     function renderAccountsTab(form, data) {
@@ -1093,26 +1132,103 @@
                     }
                 };
             });
-        restartButton(footer, "server-core");
+        restartButton(footer, { kind: "server-core" });
     }
 
-    function renderFacadeTab(form, data) {
-        var secret = section(form, "The secret prefix");
-        var basePath = fieldRow(secret, "Base path", data.basePath, {
-            placeholder: "/8f1818f3/0966179fb196", restart: true,
-            hint: "The whole facade API lives under this prefix; nothing outside it answers."
-                + " Changing it invalidates every descriptor already handed out."
+    function itemHead(form, tab, label, name) {
+        var back = element("a", "item-link item-back", label);
+        back.href = "#/settings/" + tab;
+        form.appendChild(back);
+        form.appendChild(element("h2", "item-title", name));
+    }
+
+    function itemRow(list, name, href, value, tags) {
+        var row = element("li");
+        var link = element("a", "fact-label item-link", name);
+        link.href = href;
+        row.appendChild(link);
+        var side = element("span", "fact-value");
+        side.appendChild(element("b", null, value));
+        tags.forEach(function (tag) {
+            side.appendChild(element("span", "tag" + (tag.kind ? " " + tag.kind : ""), tag.text));
         });
+        row.appendChild(side);
+        list.appendChild(row);
+    }
+
+    function renderFacadeList(form, data) {
+        if (data.descriptorError) {
+            form.appendChild(notice("The descriptor could not be read: " + data.descriptorError,
+                "is-error"));
+        }
+        if (!data.facades.length) {
+            form.appendChild(element("p", "muted", "No facades yet. Add them in Settings, Panel."));
+            return;
+        }
+        var list = element("ul", "facts");
+        data.facades.forEach(function (facade) {
+            var tags = facade.error ? [{ text: "down", kind: "is-pending" }]
+                : [facade.inDescriptor ? { text: "in the descriptor", kind: "is-approved" }
+                    : { text: "not in the descriptor", kind: "is-pending" }];
+            itemRow(list, facade.name, "#/settings/facades/" + encodeURIComponent(facade.name),
+                facade.error || facade.address, tags);
+        });
+        form.appendChild(list);
+        form.appendChild(element("p", "hint", "Each facade reports its own address. The panel"
+            + " writes them into the descriptor, in the order of Settings, Panel, whenever that"
+            + " list is saved or a facade gets a new address."));
+    }
+
+    function renderFacadePage(form, name, data) {
+        itemHead(form, "facades", "all facades", name);
+        var address = section(form, "Its address");
+        var shown = readOnlyRow(address, "Address", data.url,
+            "Its I2P destination and the secret path every request starts with, both minted at"
+            + " its first start.");
+        var said = element("div");
+        address.appendChild(said);
+        controls(address, "Replaces the key and the path at once and restarts the facade. The"
+            + " descriptor and any gateway route to the old address follow by themselves; a"
+            + " client that knows only the old address loses the server until it is given the"
+            + " new link.").appendChild(actionButton("New address", "btn-danger", function (done) {
+            if (!window.confirm("Give " + name + " a new address? Clients that know only the"
+                + " old one lose the server until they are given the new link.")) {
+                done();
+                return;
+            }
+            api("POST", withFleet("/api/facade/new-address?service=" + encodeURIComponent(name)))
+                .then(function (answer) {
+                    shown.lastChild.textContent = answer.url;
+                    said.innerHTML = "";
+                    said.appendChild(notice(answer.descriptorError
+                        ? "The descriptor was not changed: " + answer.descriptorError
+                        : "The descriptor carries the new address.",
+                        answer.descriptorError ? "is-error" : ""));
+                    answer.gateways.forEach(function (gateway) {
+                        if (gateway.error) {
+                            said.appendChild(notice("Gateway " + gateway.name + " was not"
+                                + " reached: " + gateway.error, "is-error"));
+                        } else if (gateway.changed) {
+                            said.appendChild(notice("Gateway " + gateway.name + " routes the new"
+                                + " address directly."));
+                        }
+                    });
+                    done();
+                }).catch(function (error) {
+                    said.innerHTML = "";
+                    said.appendChild(notice(error.message, "is-error"));
+                    done();
+                });
+        }));
 
         var talk = section(form, "What the facade says");
         var level = chipRow(talk, "Log level", "Applies at once.",
-            kLogLevels.map(function (name) { return { value: name, label: name }; }),
+            kLogLevels.map(function (level) { return { value: level, label: level }; }),
             data.logLevel || "info");
 
         var sockets = section(form, "Sockets");
         var listen = endpointRow(sockets, "API", data.listen,
-            "What its I2P address relays to, under the base path above. Keep it on"
-            + " loopback.", true);
+            "What its I2P address relays to, under the secret path. Keep it on loopback.", true);
         var ops = endpointRow(sockets, "Operator", data.opsListen,
             "The private socket this page is talking to: health, settings, restart. Never"
             + " published to clients.", true);
@@ -1127,7 +1243,7 @@
         var i2p = section(form, "Its I2P address");
         var privacy = chipRow(i2p, "Privacy", "Hops each tunnel takes: minimal is one, max is"
             + " three.",
-            kPrivacyLevels.map(function (name) { return { value: name, label: name }; }),
+            kPrivacyLevels.map(function (level) { return { value: level, label: level }; }),
             data.i2pPrivacy || "max", { restart: true });
         var tunnels = fieldRow(i2p, "Tunnels", data.i2pTunnelQuantity, {
             type: "number", narrow: true, min: 1, max: data.i2pTunnelQuantityMax,
@@ -1136,21 +1252,16 @@
 
         var facts = section(form, "What this facade is");
         readOnlyRow(facts, "State", data.stateDirectory,
-            "Where its destination key lives, so its address survives a restart.");
+            "Where its key and secret path live, so its address survives a restart.");
         readOnlyRow(facts, "Version", data.version);
 
         var footer = saveFooter(form,
             "The log level applies now; everything else is written for the next start.",
             function () {
-                var path = basePath.value.trim();
-                if (path.length === 0 || path.charAt(0) !== "/" || path.slice(-1) === "/") {
-                    throw new Error("A base path starts with / and does not end with one.");
-                }
                 var request = {
                     method: "PUT",
-                    path: withFleet("/api/service-settings?kind=facade"),
+                    path: withFleet("/api/service-settings?service=" + encodeURIComponent(name)),
                     body: {
-                        basePath: path,
                         logLevel: level(),
                         listen: {
                             host: listen.host.value.trim(),
@@ -1176,7 +1287,92 @@
                 }
                 return request;
             });
-        restartButton(footer, "facade");
+        restartButton(footer, { service: name });
+    }
+
+    function renderGatewayList(form, data) {
+        var mine = data.services.filter(function (service) {
+            return service.kind === "gateway" && (!fleet || service.fleet === fleet);
+        });
+        if (!mine.length) {
+            form.appendChild(element("p", "muted", "No gateways yet. Add them in Settings, Panel."));
+            return;
+        }
+        var list = element("ul", "facts");
+        mine.forEach(function (gateway) {
+            itemRow(list, gateway.name, "#/settings/gateways/" + encodeURIComponent(gateway.name),
+                gateway.up ? humanCount(gateway.sessions) + " sessions, "
+                    + humanCount(gateway.destinations) + " destinations"
+                    : (gateway.error || "no answer"),
+                [gateway.up ? { text: "up", kind: "is-approved" } : { text: "down", kind: "is-pending" }]);
+        });
+        form.appendChild(list);
+    }
+
+    function renderGatewayPage(form, name, data) {
+        itemHead(form, "gateways", "all gateways", name);
+        var tunnels = section(form, "Tunnels");
+        var privacy = chipRow(tunnels, "Privacy", "Hops each tunnel takes, for every client of"
+            + " this gateway: minimal is one, max is three. Call media is always "
+            + data.callPrivacy + ".",
+            kPrivacyLevels.map(function (level) { return { value: level, label: level }; }),
+            data.i2pPrivacy || "minimal", { restart: true });
+        var quantity = fieldRow(tunnels, "Tunnels", data.i2pTunnelQuantity, {
+            type: "number", narrow: true, min: 1, max: data.i2pTunnelQuantityMax,
+            unit: "of " + data.i2pTunnelQuantityMax, restart: true,
+            hint: "Per destination. Lower it on a thin uplink."
+        });
+
+        var pools = section(form, "Warm pools");
+        var streamPool = fieldRow(pools, "Streams", data.streamPool, {
+            type: "number", narrow: true, min: 0, max: data.poolMax,
+            unit: "of " + data.poolMax, restart: true,
+            hint: "Unpublished destinations kept built with the tunnels above: what a facade link,"
+                + " a lookup or a file takes. 0 builds each on demand."
+        });
+        var callPool = fieldRow(pools, "Calls", data.callPool, {
+            type: "number", narrow: true, min: 0, max: data.poolMax,
+            unit: "of " + data.poolMax, restart: true,
+            hint: "Destinations kept built for call media."
+        });
+
+        var routes = section(form, "Direct routes");
+        if (!data.direct.length) {
+            readOnlyRow(routes, "Routes", "");
+        }
+        data.direct.forEach(function (route, index) {
+            readOnlyRow(routes, index === 0 ? "Routes" : "",
+                route.dest + " -> " + route.host + ":" + route.port);
+        });
+        routes.appendChild(element("p", "hint", "Destinations reached without I2P. When a facade"
+            + " this panel manages gets a new address, the panel rewrites its route here."));
+
+        var facts = section(form, "What this gateway is");
+        readOnlyRow(facts, "State", data.stateDirectory);
+        readOnlyRow(facts, "Version", data.version);
+
+        function count(input, what, low, high) {
+            var value = Number(input.value);
+            if (!Number.isInteger(value) || value < low || value > high) {
+                throw new Error(what + " is a whole number from " + low + " to " + high + ".");
+            }
+            return value;
+        }
+
+        var footer = saveFooter(form, "Written for the next start: the pools are built then.",
+            function () {
+                return {
+                    method: "PUT",
+                    path: withFleet("/api/service-settings?service=" + encodeURIComponent(name)),
+                    body: {
+                        i2pPrivacy: privacy(),
+                        i2pTunnelQuantity: count(quantity, "Tunnels", 1, data.i2pTunnelQuantityMax),
+                        streamPool: count(streamPool, "The stream pool", 0, data.poolMax),
+                        callPool: count(callPool, "The call pool", 0, data.poolMax)
+                    }
+                };
+            });
+        restartButton(footer, { service: name });
     }
 
     function renderPanelTab(form, data) {
@@ -1274,7 +1470,9 @@
         });
         serviceBlock.appendChild(element("p", "hint",
             "Each service must list this panel's fingerprint as an operator. Its address is"
-            + " the operator socket its opsListen opens."));
+            + " the operator socket its opsListen opens. Names are unique in a deployment, which"
+            + " holds one server-core and one service-node; facades and gateways may be many,"
+            + " and the facades' order is the order a client tries them in."));
 
         var where = section(form, "Where the panel listens");
         var listen = endpointRow(where, "Listens on", data.listen,
@@ -1306,6 +1504,24 @@
                 if (incomplete.length > 0) {
                     throw new Error("A service needs a name, an https URL and a key.");
                 }
+                var names = {};
+                var singles = {};
+                kept.forEach(function (entry) {
+                    var named = entry.fleet + "\n" + entry.name.value.trim();
+                    if (names[named]) {
+                        throw new Error("Two services in " + entry.fleet + " are named "
+                            + entry.name.value.trim() + ".");
+                    }
+                    names[named] = true;
+                    if (entry.kind.value === "server-core" || entry.kind.value === "service-node") {
+                        var single = entry.fleet + "\n" + entry.kind.value;
+                        if (singles[single]) {
+                            throw new Error(entry.fleet + " already has a " + entry.kind.value
+                                + ": a second server is a deployment of its own.");
+                        }
+                        singles[single] = true;
+                    }
+                });
                 var byFleet = {};
                 fleets.forEach(function (entry) {
                     byFleet[entry.name || "server"] = [];
@@ -1320,6 +1536,16 @@
                 });
                 return {
                     method: "PUT", path: "/api/panel",
+                    after: function (answer, at) {
+                        if (!answer.descriptorErrors.length) {
+                            return false;
+                        }
+                        answer.descriptorErrors.forEach(function (failed) {
+                            at.appendChild(notice("Saved, but the descriptor of " + failed.fleet
+                                + " was not updated: " + failed.error, "is-error"));
+                        });
+                        return true;
+                    },
                     body: {
                         admins: list,
                         consumer: {
@@ -1365,7 +1591,19 @@
         window.location.hash = value;
     }
 
+    var fleetNames = [];
+
+    function pickFleet(name) {
+        if (!name || name === fleet) {
+            return;
+        }
+        fleet = name;
+        window.localStorage.setItem("bazarish.fleet", fleet);
+        renderFleetPicker(fleetNames);
+    }
+
     function renderFleetPicker(names) {
+        fleetNames = names || [];
         var slot = document.getElementById("fleets");
         if (!slot) {
             return;
@@ -1399,7 +1637,7 @@
         Array.prototype.forEach.call(nav.querySelectorAll("a"), function (link) {
             link.className = link.dataset.view === name ? "is-current" : "";
         });
-        views[name](parts[1]);
+        views[name](parts[1], parts[2] ? decodeURIComponent(parts[2]) : undefined);
     }
 
     api("GET", "/api/services").then(function (data) {

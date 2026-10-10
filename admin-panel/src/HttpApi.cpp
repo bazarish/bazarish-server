@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #include "HttpApi.hpp"
 
+#include "FleetSync.hpp"
 #include "ServiceClient.hpp"
 
 #include <bazarish/Address.hpp>
@@ -107,7 +108,7 @@ std::string settingsPathOf(const std::string& kind)
     if (kind == bazarish::admin::kServiceNodeKind) {
         return "/v1/account/settings";
     }
-    if (kind == bazarish::admin::kFacadeKind) {
+    if (kind == bazarish::admin::kFacadeKind || kind == bazarish::admin::kGatewayKind) {
         return "/settings";
     }
     return {};
@@ -121,7 +122,7 @@ std::string restartPathOf(const std::string& kind)
     if (kind == bazarish::admin::kServiceNodeKind) {
         return "/v1/account/restart";
     }
-    if (kind == bazarish::admin::kFacadeKind) {
+    if (kind == bazarish::admin::kFacadeKind || kind == bazarish::admin::kGatewayKind) {
         return "/restart";
     }
     return {};
@@ -160,6 +161,31 @@ HttpApi::HttpApi(std::shared_ptr<PanelSettings> settings, const Identity& identi
 }
 
 HttpApi::~HttpApi() = default;
+
+std::optional<Fleet> HttpApi::fleetNamed(const std::string& fleet) const
+{
+    for (const Fleet& candidate : settings_->get().fleets) {
+        if (fleet.empty() || candidate.name == fleet) {
+            return candidate;
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<ServiceEntry> HttpApi::serviceNamed(
+    const std::string& fleet, const std::string& name) const
+{
+    const std::optional<Fleet> found = fleetNamed(fleet);
+    if (!found.has_value()) {
+        return std::nullopt;
+    }
+    for (const ServiceEntry& service : found->services) {
+        if (service.name == name) {
+            return service;
+        }
+    }
+    return std::nullopt;
+}
 
 std::optional<ServiceEntry> HttpApi::serviceOfKind(
     const std::string& fleet, const std::string& kind) const
@@ -473,26 +499,121 @@ void HttpApi::registerRoutes()
 
     const auto toService = [this](const http::Request& request, http::Response& response,
                                const std::string& method, const bool restarting) {
+        const std::string name = request.query("service");
         const std::string kind = request.query("kind");
-        const std::string path = restarting ? restartPathOf(kind) : settingsPathOf(kind);
-        if (path.empty()) {
-            sendError(response, 400, "the panel does not know a service of kind \"" + kind + "\"");
+        std::optional<ServiceEntry> service;
+        if (!name.empty()) {
+            service = serviceNamed(request.query("fleet"), name);
+        } else if (kind == kServerCoreKind || kind == kServiceNodeKind) {
+            service = serviceOfKind(request.query("fleet"), kind);
+        } else {
+            sendError(response, 400,
+                "a deployment has one " + std::string(kServerCoreKind) + " and one "
+                    + kServiceNodeKind + "; anything else is asked for by name");
             return;
         }
-        const std::optional<ServiceEntry> service = serviceOfKind(request.query("fleet"), kind);
         if (!service.has_value()) {
-            sendError(response, 503, "this deployment has no " + kind + " the panel can reach");
+            sendError(response, 503,
+                "this deployment has no " + (name.empty() ? kind : "\"" + name + "\"")
+                    + " the panel can reach");
+            return;
+        }
+        const std::string path
+            = restarting ? restartPathOf(service->kind) : settingsPathOf(service->kind);
+        if (path.empty()) {
+            sendError(response, 400, "a " + service->kind + " has no settings of its own here");
             return;
         }
         const JsonResult result
             = callJson(*service, identity_, credential_, method, path, request.body);
         if (result.status == 0) {
-            bazarish::log::warn("{} unreachable: {}", kind, result.error);
-            sendError(response, 502, result.error.empty() ? kind + " unreachable" : result.error);
+            bazarish::log::warn("{} unreachable: {}", service->name, result.error);
+            sendError(response, 502,
+                result.error.empty() ? service->name + " unreachable" : result.error);
             return;
         }
         sendJson(response, result.body, result.status);
     };
+
+    http_->get("/api/facades", api([this](const http::Request& request,
+                                       http::Response& response) {
+        const std::optional<Fleet> fleet = fleetNamed(request.query("fleet"));
+        if (!fleet.has_value()) {
+            sendError(response, 404, "no such deployment");
+            return;
+        }
+        nlohmann::json described = nlohmann::json::array();
+        std::string describedError = "this deployment has no service node";
+        if (const std::optional<ServiceEntry> node = serviceOfKind(fleet->name, kServiceNodeKind);
+            node.has_value()) {
+            const JsonResult shown
+                = callJson(*node, identity_, credential_, "GET", "/v1/account/settings");
+            if (shown.ok) {
+                described = nlohmann::json::parse(shown.body).value(
+                    "facades", nlohmann::json::array());
+                describedError.clear();
+            } else {
+                describedError = failureText(shown);
+            }
+        }
+        const std::vector<FacadeReport> reports = facadeReports(*fleet, identity_, credential_);
+        nlohmann::json facades = nlohmann::json::array();
+        std::size_t next = 0;
+        for (const ServiceEntry& service : fleet->services) {
+            if (service.kind != kFacadeKind) {
+                continue;
+            }
+            const FacadeReport& report = reports.at(next++);
+            bool inDescriptor = false;
+            for (const nlohmann::json& url : described) {
+                inDescriptor = inDescriptor || (!report.url.empty() && url == report.url);
+            }
+            facades.push_back({
+                {"name", service.name},
+                {"ops", service.url},
+                {"address", report.url},
+                {"error", report.error},
+                {"inDescriptor", inDescriptor},
+            });
+        }
+        sendJson(response,
+            nlohmann::json{{"facades", facades}, {"descriptor", described},
+                {"descriptorError", describedError}}
+                .dump());
+    }));
+
+    http_->post("/api/facade/new-address", api([this](const http::Request& request,
+                                                  http::Response& response) {
+        const std::optional<Fleet> fleet = fleetNamed(request.query("fleet"));
+        const std::optional<ServiceEntry> facade
+            = serviceNamed(request.query("fleet"), request.query("service"));
+        if (!fleet.has_value() || !facade.has_value() || facade->kind != kFacadeKind) {
+            sendError(response, 404, "this deployment has no such facade");
+            return;
+        }
+        const JsonResult minted
+            = callJson(*facade, identity_, credential_, "POST", "/new-address");
+        if (!minted.ok) {
+            sendError(response, minted.status == 0 ? 502 : minted.status, failureText(minted));
+            return;
+        }
+        const nlohmann::json answer = nlohmann::json::parse(minted.body);
+        const std::string url = answer.at("url").get<std::string>();
+        const std::string previous = answer.at("previousUrl").get<std::string>();
+        bazarish::log::info("facade {} has a new address", facade->name);
+        const std::string descriptorError = publishFacades(
+            *fleet, identity_, credential_, {{facade->name, url}});
+        nlohmann::json gateways = nlohmann::json::array();
+        for (const GatewayRepoint& repointed : repointGateways(
+                 settings_->get().fleets, previous, url, identity_, credential_)) {
+            gateways.push_back({{"name", repointed.name}, {"changed", repointed.changed},
+                {"error", repointed.error}});
+        }
+        sendJson(response,
+            nlohmann::json{{"url", url}, {"previousUrl", previous},
+                {"descriptorError", descriptorError}, {"gateways", gateways}}
+                .dump());
+    }));
 
     http_->get("/api/service-settings", api([toService](
                                             const http::Request& request,
@@ -607,12 +728,22 @@ void HttpApi::registerRoutes()
                         }
                         fleet.services.push_back(std::move(service));
                     }
+                    requireCoherentFleet(fleet);
                     fleets.push_back(std::move(fleet));
                 }
                 panel.fleets = std::move(fleets);
             }
             settings_->set(panel);
-            sendJson(response, nlohmann::json{{"admins", panel.admins}}.dump());
+            nlohmann::json descriptors = nlohmann::json::array();
+            for (const Fleet& fleet : panel.fleets) {
+                const std::string error = publishFacades(fleet, identity_, credential_);
+                if (!error.empty()) {
+                    descriptors.push_back({{"fleet", fleet.name}, {"error", error}});
+                }
+            }
+            sendJson(response,
+                nlohmann::json{{"admins", panel.admins}, {"descriptorErrors", descriptors}}
+                    .dump());
         } catch (const std::invalid_argument& error) {
             sendError(response, 400, error.what());
         } catch (const nlohmann::json::exception& error) {

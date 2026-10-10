@@ -99,6 +99,8 @@ public:
     void close() override
     {
         boost::system::error_code ignored;
+        // A close alone does not wake a read blocked on this socket in another thread.
+        stream_.next_layer().shutdown(tcp::socket::shutdown_both, ignored);
         stream_.next_layer().close(ignored);
     }
 

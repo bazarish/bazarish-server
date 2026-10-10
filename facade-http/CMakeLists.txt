@@ -28,6 +28,7 @@ find_package(Threads REQUIRED)
 
 add_library(bazarish_facade_lib STATIC
     src/Facade.cpp
+    src/FacadeAddress.cpp
     src/FacadeSettings.cpp
     src/Load.cpp
     src/I2pFront.cpp

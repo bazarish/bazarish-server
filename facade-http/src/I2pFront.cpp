@@ -1,9 +1,7 @@
 // Bazarish project (c) 2026
 #include "I2pFront.hpp"
 
-#include <bazarish/Bytes.hpp>
 #include <bazarish/Log.hpp>
-#include <bazarish/PrivateFile.hpp>
 
 #include <stdexcept>
 
@@ -18,7 +16,6 @@
 #include <chrono>
 #include <exception>
 #include <iterator>
-#include <system_error>
 #include <utility>
 
 namespace bazarish::facade {
@@ -32,10 +29,6 @@ constexpr int kReadyPollSeconds = 1;
 constexpr int kDrainMillis = 60000;
 constexpr int kDrainPollMillis = 50;
 constexpr std::size_t kMaxRelaysInFlight = 256;
-constexpr const char* kDestinationKeyFile = "facade-dest-0.key";
-
-using bazarish::readFileText;
-using bazarish::writePrivateFile;
 
 int connectLocal(const std::string& host, const int port)
 {
@@ -107,8 +100,9 @@ void relay(std::unique_ptr<bazarish::i2p::Stream> stream, const int fd)
 
 }  // namespace
 
-I2pFront::I2pFront(Options options)
+I2pFront::I2pFront(Options options, bazarish::i2p::Keys keys)
     : options_(std::move(options))
+    , keys_(std::move(keys))
 {
 }
 
@@ -117,27 +111,16 @@ I2pFront::~I2pFront()
     stop();
 }
 
-std::string I2pFront::start()
+void I2pFront::start()
 {
     running_ = true;
-    std::error_code ec;
-    std::filesystem::create_directories(options_.stateDir, ec);
     bazarish::i2p::RouterConfig routerConfig;
     routerConfig.dataDir = options_.stateDir / "i2p";
     routerConfig.role = bazarish::i2p::Role::eServer;
     router_ = std::make_unique<bazarish::i2p::Router>(routerConfig);
 
-    const std::filesystem::path keyPath = options_.stateDir / kDestinationKeyFile;
-    const std::string raw = std::filesystem::exists(keyPath) ? readFileText(keyPath) : "";
-    const bazarish::i2p::Keys keys = raw.empty()
-        ? bazarish::i2p::Keys::generate()
-        : bazarish::i2p::Keys::fromBlob(bazarish::Bytes(raw.begin(), raw.end()));
     endpoint_ = router_->createEndpoint(
-        bazarish::i2p::EndpointConfig{keys, options_.privacy, options_.tunnelQuantity, true});
-    if (raw.empty()) {
-        const bazarish::Bytes blob = endpoint_->privateBlob();
-        writePrivateFile(keyPath, std::string(blob.begin(), blob.end()));
-    }
+        bazarish::i2p::EndpointConfig{keys_, options_.privacy, options_.tunnelQuantity, true});
     const std::string host = endpoint_->routingHost();
     readyThread_ = std::thread([this, host]() {
         for (int waited = 0; waited < kReadyWaitSeconds; waited += kReadyPollSeconds) {
@@ -152,7 +135,6 @@ std::string I2pFront::start()
         bazarish::log::warn("i2p facade not ready after {}s: {}", kReadyWaitSeconds, host);
     });
     acceptThread_ = std::thread([this]() { acceptLoop(); });
-    return host;
 }
 
 void I2pFront::stop()

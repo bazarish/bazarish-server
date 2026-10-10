@@ -22,19 +22,20 @@ public:
         int tunnelQuantity = bazarish::i2p::kDefaultTunnelQuantity;
     };
 
-    explicit I2pFront(Options options);
+    I2pFront(Options options, bazarish::i2p::Keys keys);
     ~I2pFront();
 
     I2pFront(const I2pFront&) = delete;
     I2pFront& operator=(const I2pFront&) = delete;
 
-    std::string start();
+    void start();
     void stop();
 
 private:
     void acceptLoop();
 
     const Options options_;
+    const bazarish::i2p::Keys keys_;
     std::unique_ptr<bazarish::i2p::Router> router_;
     std::shared_ptr<bazarish::i2p::Endpoint> endpoint_;
     std::thread acceptThread_;

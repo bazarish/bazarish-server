@@ -21,6 +21,7 @@ struct FacadeOptions {
     int messagingPort = 8420;
     std::string messagingPin;
     std::string basePath;
+    std::string url;
     std::shared_ptr<FacadeSettings> settings;
     std::function<void()> requestRestart;
     std::string stateDirectory;

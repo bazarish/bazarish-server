@@ -13,7 +13,6 @@ namespace {
 namespace fs = std::filesystem;
 
 const char* const kLogLevelKey = "logLevel";
-const char* const kBasePathKey = "basePath";
 const char* const kMessagingKey = "messaging";
 const char* const kListenKey = "listen";
 const char* const kOpsListenKey = "opsListen";
@@ -25,14 +24,6 @@ const char* const kI2pPrivacyKey = "privacy";
 const char* const kI2pTunnelsKey = "tunnelQuantity";
 
 }  // namespace
-
-bool isValidBasePath(const std::string& path)
-{
-    if (path.empty() || path.front() != '/' || path.back() == '/') {
-        return false;
-    }
-    return path.find_first_of("?# ") == std::string::npos;
-}
 
 FacadeSettings::FacadeSettings(fs::path configPath, Values initial)
     : configPath_(std::move(configPath))
@@ -60,7 +51,6 @@ void FacadeSettings::persist(const Values& values) const
     }
     ConfigFile file(configPath_);
     setIfChanged(file, {kLogLevelKey}, values.logLevel, values_.logLevel);
-    setIfChanged(file, {kBasePathKey}, values.basePath, values_.basePath);
     setIfChanged(file, {kMessagingKey, kHostKey}, values.messagingHost, values_.messagingHost);
     setIfChanged(file, {kMessagingKey, kPortKey}, values.messagingPort, values_.messagingPort);
     setIfChanged(file, {kListenKey, kHostKey}, values.listenHost, values_.listenHost);

@@ -1,5 +1,6 @@
 // Bazarish project (c) 2026
 #include "Facade.hpp"
+#include "FacadeAddress.hpp"
 
 #include <bazarish/Auth.hpp>
 #include <bazarish/Tunnel.hpp>
@@ -262,7 +263,7 @@ void Facade::setupOpsRoutes()
         return bazarish::http::Response{200, "application/json", {},
             nlohmann::json{
                 {"logLevel", values.logLevel},
-                {"basePath", values.basePath},
+                {"url", options_.url},
                 {"messaging", {{"host", values.messagingHost}, {"port", values.messagingPort}}},
                 {"listen", {{"host", values.listenHost}, {"port", values.listenPort}}},
                 {"opsListen", {{"host", values.opsHost}, {"port", values.opsPort}}},
@@ -288,15 +289,6 @@ void Facade::setupOpsRoutes()
                 throw std::invalid_argument("not a log level: " + level);
             }
             values.logLevel = level;
-        }
-        if (body.contains("basePath")) {
-            const std::string path = body.at("basePath").get<std::string>();
-            if (path.empty() || !isValidBasePath(path)) {
-                throw std::invalid_argument(
-                    "a base path looks like /8f1818f3/0966179fb196: one or more"
-                    " slash-separated segments of letters, digits, '-' or '_'");
-            }
-            values.basePath = path;
         }
         readEndpointInto(body, "messaging", values.messagingHost, values.messagingPort);
         readEndpointInto(body, "listen", values.listenHost, values.listenPort);
@@ -333,6 +325,20 @@ void Facade::setupOpsRoutes()
         }
         return bazarish::http::Response{200, "application/json", {},
             nlohmann::json{{"logLevel", values.logLevel}}.dump()};
+    }));
+
+    ops_->post("/new-address", operatorOnly([this](const bazarish::http::Request&) {
+        if (!options_.requestRestart) {
+            return refusal(
+                503, "this facade cannot restart itself: it was started without a supervisor");
+        }
+        const FacadeAddress minted = mintAddress(options_.stateDirectory);
+        bazarish::log::info("new address minted, restarting to publish it: {}", minted.url());
+        options_.requestRestart();
+        return bazarish::http::Response{200, "application/json", {},
+            nlohmann::json{{"url", minted.url()}, {"previousUrl", options_.url},
+                {"restarting", true}}
+                .dump()};
     }));
 
     ops_->post("/restart", operatorOnly([this](const bazarish::http::Request&) {

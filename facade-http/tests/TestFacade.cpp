@@ -1,5 +1,6 @@
 // Bazarish project (c) 2026
 #include "Facade.hpp"
+#include "FacadeAddress.hpp"
 #include "Load.hpp"
 
 #include <bazarish/HttpClient.hpp>
@@ -9,6 +10,7 @@
 #include <bazarish/Auth.hpp>
 #include <bazarish/Tls.hpp>
 
+#include <atomic>
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
@@ -120,6 +122,50 @@ void testLoadSample()
     CHECK(load.sample(kNow).inFlight == 0);
 }
 
+void testAddress()
+{
+    const std::filesystem::path state
+        = std::filesystem::temp_directory_path() / "bazarish-facade-test-address";
+    std::filesystem::remove_all(state);
+
+    const bazarish::facade::FacadeAddress first = bazarish::facade::loadAddress(state);
+    CHECK(first.url().rfind("http://", 0) == 0);
+    CHECK(first.url().find(".b32.i2p/") != std::string::npos);
+    CHECK(first.url().size() > first.basePath.size());
+    CHECK(first.url().compare(first.url().size() - first.basePath.size(), std::string::npos,
+              first.basePath)
+        == 0);
+    CHECK(bazarish::facade::loadAddress(state).url() == first.url());
+
+    const bazarish::facade::FacadeAddress minted = bazarish::facade::mintAddress(state);
+    CHECK(minted.url() != first.url());
+    CHECK(minted.basePath != first.basePath);
+    CHECK(bazarish::facade::loadAddress(state).url() == minted.url());
+
+    const std::string handed = "/a89021ebd9bdcfaf34713b73";
+    {
+        std::ofstream path(state / "facade-path", std::ios::trunc);
+        path << handed;
+    }
+    const bazarish::facade::FacadeAddress kept = bazarish::facade::loadAddress(state);
+    CHECK(kept.basePath == handed);
+    CHECK(kept.url() == minted.url().substr(0, minted.url().size() - minted.basePath.size())
+            + handed);
+
+    {
+        std::ofstream path(state / "facade-path", std::ios::trunc);
+        path << handed << "\n";
+    }
+    bool refused = false;
+    try {
+        (void)bazarish::facade::loadAddress(state);
+    } catch (const std::exception&) {
+        refused = true;
+    }
+    CHECK(refused);
+    std::filesystem::remove_all(state);
+}
+
 Headers signedHeaders(const bazarish::Identity& identity, const std::string& method,
     const std::string& path, const std::string& body)
 {
@@ -132,6 +178,7 @@ Headers signedHeaders(const bazarish::Identity& identity, const std::string& met
 int main()
 {
     testLoadSample();
+    testAddress();
     const std::filesystem::path backendState
         = std::filesystem::temp_directory_path() / "bazarish-facade-test-backend";
     const bazarish::tls::Credential backendCredential
@@ -149,15 +196,15 @@ int main()
     options.messagingPort = messagingPort;
     options.messagingPin = backendCredential.pin;
     options.basePath = "/s/secret123";
+    options.url = "http://example.b32.i2p/s/secret123";
     const std::filesystem::path configPath
         = std::filesystem::temp_directory_path() / "bazarish-facade-test.json";
     {
         std::ofstream config(configPath);
-        config << "{\n  \"basePath\": \"/s/secret123\"\n}\n";
+        config << "{\n  \"logLevel\": \"info\"\n}\n";
     }
     bazarish::facade::FacadeSettings::Values facadeValues;
     facadeValues.logLevel = "info";
-    facadeValues.basePath = options.basePath;
     facadeValues.messagingHost = "127.0.0.1";
     facadeValues.messagingPort = messagingPort;
     facadeValues.listenHost = "127.0.0.1";
@@ -175,6 +222,10 @@ int main()
     options.operatorFingerprints = {operatorIdentity.fingerprint()};
     const std::filesystem::path facadeState
         = std::filesystem::temp_directory_path() / "bazarish-facade-test-own";
+    std::filesystem::remove_all(facadeState);
+    options.stateDirectory = facadeState.string();
+    std::atomic<int> restarts{0};
+    options.requestRestart = [&restarts]() { ++restarts; };
     const bazarish::tls::Credential facadeCredential = bazarish::tls::selfSigned(facadeState);
     options.tlsCertificate = facadeCredential.certificate.string();
     options.tlsKey = facadeCredential.key.string();
@@ -295,41 +346,60 @@ int main()
             = callTls(opsPort, facadeCredential.pin, "GET", path, signedHeaders(operatorIdentity, "GET", path, {}));
         CHECK(shown.status == 200);
         const nlohmann::json values = nlohmann::json::parse(shown.body);
-        CHECK(values.at("basePath").get<std::string>() == "/s/secret123");
+        CHECK(values.at("url").get<std::string>() == options.url);
+        CHECK(!values.contains("basePath"));
         CHECK(values.at("i2pTunnelQuantity").get<int>() == 3);
         CHECK(!values.contains("i2pEnabled"));
         CHECK(!values.contains("i2pDestinations"));
         CHECK(values.at("directListen").at("port").get<int>() == kDirectPort);
 
-        const nlohmann::json wanted = {{"basePath", "/s/secret456"}, {"i2pTunnelQuantity", 8},
+        const nlohmann::json wanted = {{"i2pTunnelQuantity", 8},
             {"directListen", {{"host", "127.0.0.1"}, {"port", kMovedDirectPort}}}};
         const std::string body = wanted.dump();
         CHECK(callTls(opsPort, facadeCredential.pin, "PUT", path, signedHeaders(operatorIdentity, "PUT", path, body), body)
                   .status
             == 200);
-        CHECK(facadeSettings->get().basePath == "/s/secret456");
         CHECK(facadeSettings->get().directPort == kMovedDirectPort);
 
         std::ifstream written(configPath);
         const nlohmann::json onDisk = nlohmann::json::parse(written);
-        CHECK(onDisk.at("basePath").get<std::string>() == "/s/secret456");
+        CHECK(!onDisk.contains("basePath"));
         CHECK(onDisk.at("i2p").at("tunnelQuantity").get<int>() == 8);
         CHECK(onDisk.at("directListen").at("port").get<int>() == kMovedDirectPort);
 
-        const std::string bad = nlohmann::json{{"basePath", "secret/"}}.dump();
+        const std::string bad = nlohmann::json{{"i2pTunnelQuantity", 0}}.dump();
         CHECK(callTls(opsPort, facadeCredential.pin, "PUT", path, signedHeaders(operatorIdentity, "PUT", path, bad), bad)
                   .status
             == 400);
-        CHECK(facadeSettings->get().basePath == "/s/secret456");
+        CHECK(facadeSettings->get().i2pTunnelQuantity == 8);
 
         CHECK(call(facadePort, "GET", "/settings").status == 404);
         CHECK(call(facadePort, "GET", "/s/secret123/settings").status != 200);
 
         const std::string restart = "/restart";
+        CHECK(callTls(opsPort, facadeCredential.pin, "POST", restart).status == 403);
+        CHECK(restarts == 0);
         CHECK(callTls(opsPort, facadeCredential.pin, "POST", restart,
                   signedHeaders(operatorIdentity, "POST", restart, {}))
                   .status
-            == 503);
+            == 200);
+        CHECK(restarts == 1);
+    }
+
+    {
+        const std::string path = "/new-address";
+        CHECK(callTls(opsPort, facadeCredential.pin, "POST", path).status == 403);
+        CHECK(!std::filesystem::exists(facadeState / "facade-path"));
+        const http::ClientResponse renewed = callTls(opsPort, facadeCredential.pin, "POST", path,
+            signedHeaders(operatorIdentity, "POST", path, {}));
+        CHECK(renewed.status == 200);
+        const nlohmann::json reply = nlohmann::json::parse(renewed.body);
+        CHECK(reply.at("previousUrl").get<std::string>() == options.url);
+        const std::string url = reply.at("url").get<std::string>();
+        CHECK(url != options.url);
+        CHECK(url.find(".b32.i2p/") != std::string::npos);
+        CHECK(bazarish::facade::loadAddress(facadeState).url() == url);
+        CHECK(restarts == 2);
     }
 
     facade.stop();

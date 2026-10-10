@@ -7,13 +7,10 @@
 
 namespace bazarish::facade {
 
-bool isValidBasePath(const std::string& path);
-
 class FacadeSettings {
 public:
     struct Values {
         std::string logLevel;
-        std::string basePath;
         std::string messagingHost;
         int messagingPort = 0;
         std::string listenHost;

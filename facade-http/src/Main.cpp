@@ -1,5 +1,6 @@
 // Bazarish project (c) 2026
 #include "Facade.hpp"
+#include "FacadeAddress.hpp"
 #include "I2pFront.hpp"
 
 #include <bazarish/ConfigFile.hpp>
@@ -33,13 +34,12 @@ void printUsage()
         "and the public server card - and answers everything else with a bare 404.\n"
         "Everything it runs on is in the config file.\n"
         "\n"
-        "\"basePath\" is mandatory: it is the only thing standing between a scan of\n"
-        "the host and the API, and it reaches a client only inside the facade URL\n"
-        "of the server descriptor.\n"
         "The facade's own I2P destination is how clients reach the API, and the\n"
-        "only way: \"listen\" is the socket it relays to, kept on loopback. Its key\n"
-        "lives in \"state\" and its address is stable across restarts, because it\n"
-        "travels in the server descriptor.\n"
+        "only way: \"listen\" is the socket it relays to, kept on loopback.\n"
+        "Its address is that destination plus a secret path every request starts\n"
+        "with; both are minted at the first start and kept in \"state\", because\n"
+        "the address travels in the server descriptor. The admin panel replaces\n"
+        "both at once.\n"
         "\"opsListen\" adds a private socket serving the operator-signed health,\n"
         "settings and restart for the admin panel; it is never published to clients.\n",
         kVersion);
@@ -101,7 +101,6 @@ int main(const int argc, const char** argv)
 
     bazarish::facade::FacadeOptions options;
     options.version = kVersion;
-    options.basePath = config.text("basePath");
     options.operatorFingerprints = config.list("operators");
     if (const std::optional<bazarish::ConfigView::Endpoint> messaging
         = config.endpoint("messaging");
@@ -111,16 +110,9 @@ int main(const int argc, const char** argv)
         options.messagingPin = config.text("messaging.pin");
     }
 
-    if (options.basePath.empty()) {
-        std::fprintf(stderr,
-            "config: \"basePath\" is mandatory: the API must not be reachable without a\n"
-            "secret prefix\n");
-        return 2;
-    }
-    if (!bazarish::facade::isValidBasePath(options.basePath)) {
-        std::fprintf(stderr,
-            "config: \"basePath\" is an absolute prefix such as /h9fd/kshdcy,\n"
-            "with no trailing slash and no query\n");
+    if (config.has("basePath")) {
+        std::fprintf(stderr, "config: \"basePath\" is no longer read: the secret path lives in\n"
+                             "\"state\" beside the destination key\n");
         return 2;
     }
     if (stateDir.empty()) {
@@ -128,13 +120,21 @@ int main(const int argc, const char** argv)
                              " persist,\nits address travels in the server descriptor\n");
         return 2;
     }
+    std::optional<bazarish::facade::FacadeAddress> address;
+    try {
+        address = bazarish::facade::loadAddress(stateDir);
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "state: %s\n", error.what());
+        return 2;
+    }
+    options.basePath = address->basePath;
+    options.url = address->url();
 
     bazarish::log::setComponent("facade-http");
     bazarish::log::setLevel(logLevel);
 
     bazarish::facade::FacadeSettings::Values settingValues;
     settingValues.logLevel = config.text("logLevel").empty() ? "info" : config.text("logLevel");
-    settingValues.basePath = options.basePath;
     settingValues.messagingHost = options.messagingHost;
     settingValues.messagingPort = options.messagingPort;
     settingValues.listenHost = listen.host;
@@ -197,10 +197,10 @@ int main(const int argc, const char** argv)
     frontOptions.localPort = listen.port;
     frontOptions.privacy = privacy;
     frontOptions.tunnelQuantity = tunnelQuantity;
-    bazarish::facade::I2pFront i2pFront(frontOptions);
+    bazarish::facade::I2pFront i2pFront(frontOptions, address->keys);
     bazarish::log::info("building the I2P destination for the facade API...");
-    const std::string address = i2pFront.start();
-    std::printf("i2p facade: http://%s%s\n", address.c_str(), options.basePath.c_str());
+    i2pFront.start();
+    std::printf("i2p facade: %s\n", options.url.c_str());
     std::fflush(stdout);
 
     facade.wait();

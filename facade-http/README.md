@@ -40,16 +40,23 @@ bazarish-facade-http --config <path>
 Everything is in that file (see `config.example.json`); nothing is settable on
 the command line.
 
-`basePath` is mandatory and stripped before forwarding: what the facade serves
-is reachable only under that secret prefix, and clients learn it only from the
-facade URL in the server descriptor. The reseed archive is not here - it is
+The facade's address is its I2P destination plus a secret path. Both are minted
+at the first start and kept in `state` (`facade-dest-0.key`, `facade-path`), and
+the facade prints the whole URL; there is no `basePath` in the config, and one
+there is refused. The path is stripped before forwarding: what the facade serves
+is reachable only under it, and clients learn it only from the facade URL in the
+server descriptor. `POST /new-address` on the ops socket mints both again,
+answers with the new URL and the old one, and restarts the facade to publish it;
+a client that knows only the old URL loses the server until it is given the new
+one. The reseed archive is not here - it is
 served by the portal, which is what faces the clearnet. Anything else - an
 unknown path, the API root, `/healthz` - is the same bare 404, so a scan of the
 host learns nothing. The signed canonical request
 path is the post-strip path, so signatures verify on the backend regardless.
 
 `opsListen` opens a second, private socket carrying everything that is the
-operator's: the signed `/healthz`, `GET`/`PUT /settings` and `POST /restart`. It is
+operator's: the signed `/healthz`, `GET`/`PUT /settings` (which also reports the
+facade's URL), `POST /new-address` and `POST /restart`. It is
 never published to clients - on the public socket any of it would admit a facade
 is here to a caller who does not know the secret base path. It speaks TLS and
 answers only the key the admin panel presents, named in `opsClients`; the facade

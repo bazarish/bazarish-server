@@ -123,12 +123,6 @@ int main(const int argc, const char** argv)
     const bazarish::ConfigView::Endpoint opsListen
         = config.endpoint("opsListen").value_or(bazarish::ConfigView::Endpoint{kDefaultHost,
             kDefaultOpsPort});
-    if (!config.flag("i2p.enabled", true)) {
-        std::fprintf(stderr,
-            "I2P federation is required: \"i2p\": {\"enabled\": false} is not a server this "
-            "protocol can run (delivery is routed by I2P destination).\n");
-        return 2;
-    }
     bazarish::server::DeliveryEngineOptions engineOptions;
     const std::vector<std::string> operatorFingerprints = config.list("operators");
     const std::string serviceNodeUrl = config.text("serviceNode.url");

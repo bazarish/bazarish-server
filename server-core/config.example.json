@@ -15,7 +15,6 @@
   // The local service node, for first-contact card fetches by fingerprint.
   "serviceNode": {"url": "https://127.0.0.1:8421", "pin": ""},
   "i2p": {
-    "enabled": true,
     "privacy": "max",
     "tunnelQuantity": 5,
     "log": false

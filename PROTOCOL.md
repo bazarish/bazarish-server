@@ -511,9 +511,7 @@ A client on a gateway does not choose how its tunnels are built: how long they
 are and how many a destination keeps are the gateway's own settings,
 `i2p.privacy` and `i2p.tunnelQuantity` in its configuration, one for everyone it
 serves (minimal and 3 unless set). `endpoint-create` says what a destination is
-for and nothing about its tunnels; one that names `privacy` or `tunnels` is
-refused with `bad-frame`, not obeyed in part and not quietly ignored - a client
-that sent them would go on believing its setting was in force. The exception is
+for and nothing about its tunnels. The exception is
 fixed rather than configured: a `raw` destination carries a call's media and is
 always built with one hop each way, because a voice that waits for three hops is
 a voice that arrives late.

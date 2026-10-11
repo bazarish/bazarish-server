@@ -285,17 +285,6 @@ int main()
     Dialled twiceOver = dial(io, port, kToken, {});
     CHECK(twiceOver.socket != nullptr);
     (void)greet(*twiceOver.socket);
-    send(*twiceOver.socket,
-        encodeJson(FrameType::eEndpointCreate, 2,
-            {{"kind", "stream"}, {"privacy", "max"}, {"published", false},
-                {"realtime", false}}));
-    const Frame overruled = receive(*twiceOver.socket);
-    CHECK(overruled.type == FrameType::eError);
-    CHECK(bodyJson(overruled)["code"] == "bad-frame");
-    send(*twiceOver.socket,
-        encodeJson(FrameType::eEndpointCreate, 4,
-            {{"kind", "stream"}, {"tunnels", 2}, {"published", false}, {"realtime", false}}));
-    CHECK(receive(*twiceOver.socket).type == FrameType::eError);
 
     std::set<std::string> warm;
     for (const i2p::LocalDestination& destination : router.localDestinations()) {

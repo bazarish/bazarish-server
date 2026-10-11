@@ -761,10 +761,6 @@ void Gateway::onEndpointCreate(const std::shared_ptr<Session>& session,
         fail(socket, frame.ref, Fault::eBadFrame, "a destination is for streams or for raw");
         return;
     }
-    if (body.contains("privacy") || body.contains("tunnels")) {
-        fail(socket, frame.ref, Fault::eBadFrame, "the tunnels are this gateway's to set");
-        return;
-    }
     const i2p::EndpointConfig config = shapeOf(
         kind == "raw", body.value("published", true), body.value("realtime", false));
 

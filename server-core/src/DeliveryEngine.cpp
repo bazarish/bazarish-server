@@ -141,7 +141,7 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
     }
 
     const Storage::PutResult result = storage_.putBlob(mailbox, deliveryId, payload, deliveryClass,
-        now, storage_.userQuota(mailbox, options_.defaultQuotaBytes));
+        storage_.userQuota(mailbox, options_.defaultQuotaBytes));
     if (result == Storage::PutResult::eQuotaExceeded) {
         if (deliveryClass == kContentDeliveryClass) {
             return fail(ErrorCode::eStorageFull, "recipient storage quota is exhausted");

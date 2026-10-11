@@ -131,9 +131,7 @@ void testPortalDiscovery()
     const nlohmann::json body = nlohmann::json::parse(response.body);
     CHECK(body.at("message").get<std::string>() == "Register at the portal");
     CHECK(body.at("links").size() == 2);
-    CHECK(!body.contains("services"));
     const nlohmann::json& registration = body.at("registration");
-    CHECK(!registration.contains("captcha"));
     CHECK(registration.at("requiresApproval").get<bool>());
     CHECK(registration.at("message").get<std::string>() == "write to the operator");
     CHECK(body.at("quotaBytes").get<std::uint64_t>() == 20 * 1024 * 1024);

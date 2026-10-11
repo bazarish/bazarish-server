@@ -458,16 +458,9 @@ void PerUserDestinations::reloadPersisted(const std::int64_t now)
             }
             const std::string transientB64 = record.at("transient").get<std::string>();
             requireUsableDelegation(transientB64, expiresUnix);
-            std::string sealingKeyPem = record.value("sealingKey", std::string());
-            if (sealingKeyPem.empty()) {
-                sealingKeyPem = Key::generateSealing().privatePem();
-            }
-            std::string signingKeyPem = record.value("signingKey", std::string());
-            if (signingKeyPem.empty()) {
-                signingKeyPem = Key::generateSigning().privatePem();
-            }
-            bringUp(entry.path().filename().string(), transientB64, expiresUnix, sealingKeyPem,
-                signingKeyPem);
+            bringUp(entry.path().filename().string(), transientB64, expiresUnix,
+                record.at("sealingKey").get<std::string>(),
+                record.at("signingKey").get<std::string>());
         } catch (const std::exception& error) {
             bazarish::log::warn("destination record {} skipped at start: {}",
                 bazarish::log::redact(entry.path().filename().string()), error.what());

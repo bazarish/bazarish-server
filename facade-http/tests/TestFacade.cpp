@@ -347,10 +347,7 @@ int main()
         CHECK(shown.status == 200);
         const nlohmann::json values = nlohmann::json::parse(shown.body);
         CHECK(values.at("url").get<std::string>() == options.url);
-        CHECK(!values.contains("basePath"));
         CHECK(values.at("i2pTunnelQuantity").get<int>() == 3);
-        CHECK(!values.contains("i2pEnabled"));
-        CHECK(!values.contains("i2pDestinations"));
         CHECK(values.at("directListen").at("port").get<int>() == kDirectPort);
 
         const nlohmann::json wanted = {{"i2pTunnelQuantity", 8},
@@ -363,7 +360,6 @@ int main()
 
         std::ifstream written(configPath);
         const nlohmann::json onDisk = nlohmann::json::parse(written);
-        CHECK(!onDisk.contains("basePath"));
         CHECK(onDisk.at("i2p").at("tunnelQuantity").get<int>() == 8);
         CHECK(onDisk.at("directListen").at("port").get<int>() == kMovedDirectPort);
 

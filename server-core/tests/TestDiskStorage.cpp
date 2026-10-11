@@ -62,8 +62,8 @@ int main()
 
     CHECK_THROWS(storage.registerClient("not-a-user", "client1"));
     CHECK_THROWS(storage.registerClient(alice, "../escape"));
-    CHECK_THROWS(storage.putBlob(alice, "bad/blob", Bytes{1}, "content", kNow, kQuota));
-    CHECK_THROWS(storage.putBlob(alice, "", Bytes{1}, "content", kNow, kQuota));
+    CHECK_THROWS(storage.putBlob(alice, "bad/blob", Bytes{1}, "content", kQuota));
+    CHECK_THROWS(storage.putBlob(alice, "", Bytes{1}, "content", kQuota));
 
     CHECK(!storage.isClientRegistered(alice, "client1"));
     storage.registerClient(alice, "client1");
@@ -100,8 +100,8 @@ int main()
     CHECK(storage.hasPass(alice, handleBob));
 
     const Bytes blob(100, 0xab);
-    CHECK(storage.putBlob(alice, "msg1", blob, "content", kNow, kQuota) == Storage::PutResult::eStored);
-    CHECK(storage.putBlob(alice, "msg1", blob, "content", kNow, kQuota) == Storage::PutResult::eDuplicate);
+    CHECK(storage.putBlob(alice, "msg1", blob, "content", kQuota) == Storage::PutResult::eStored);
+    CHECK(storage.putBlob(alice, "msg1", blob, "content", kQuota) == Storage::PutResult::eDuplicate);
     CHECK(storage.usage(alice) == 100);
     CHECK(storage.hasBlob(alice, "msg1"));
     CHECK(!storage.hasBlob(alice, "nosuchblob"));
@@ -109,7 +109,7 @@ int main()
     CHECK_THROWS(storage.getBlob(alice, "nosuchblob"));
 
     const Bytes bigBlob(static_cast<std::size_t>(kQuota), 0xcd);
-    CHECK(storage.putBlob(alice, "msg2", bigBlob, "content", kNow, kQuota)
+    CHECK(storage.putBlob(alice, "msg2", bigBlob, "content", kQuota)
         == Storage::PutResult::eQuotaExceeded);
     CHECK(storage.usage(alice) == 100);
 
@@ -134,13 +134,13 @@ int main()
 
     {
         constexpr auto kStampGap = std::chrono::milliseconds(2);
-        CHECK(storage.putBlob(alice, "zzz", blob, "content", kNow, kQuota)
+        CHECK(storage.putBlob(alice, "zzz", blob, "content", kQuota)
             == Storage::PutResult::eStored);
         std::this_thread::sleep_for(kStampGap);
-        CHECK(storage.putBlob(alice, "mmm", blob, "content", kNow, kQuota)
+        CHECK(storage.putBlob(alice, "mmm", blob, "content", kQuota)
             == Storage::PutResult::eStored);
         std::this_thread::sleep_for(kStampGap);
-        CHECK(storage.putBlob(alice, "aaa", blob, "content", kNow, kQuota)
+        CHECK(storage.putBlob(alice, "aaa", blob, "content", kQuota)
             == Storage::PutResult::eStored);
         CHECK((storage.listPending(alice, "client1")
             == std::vector<Storage::PendingEntry>{
@@ -152,20 +152,20 @@ int main()
         CHECK(storage.listPending(alice, "client1").empty());
     }
 
-    CHECK(storage.putBlob(alice, "msg3", blob, "content", kNow, kQuota) == Storage::PutResult::eStored);
+    CHECK(storage.putBlob(alice, "msg3", blob, "content", kQuota) == Storage::PutResult::eStored);
     storage.ackBlob(alice, "msg3", "client1");
     CHECK(storage.usage(alice) == 100);
     storage.unregisterClient(alice, "client2");
     CHECK(storage.usage(alice) == 0);
 
     storage.unregisterClient(alice, "client1");
-    CHECK(storage.putBlob(alice, "msg4", blob, "content", kNow, kQuota) == Storage::PutResult::eStored);
+    CHECK(storage.putBlob(alice, "msg4", blob, "content", kQuota) == Storage::PutResult::eStored);
     CHECK(storage.usage(alice) == 100);
 
     const std::string bob = makeUser(0x02);
     storage.registerClient(bob, "bclient");
-    CHECK(storage.putBlob(bob, "old", blob, "content", kNow - 100, kQuota) == Storage::PutResult::eStored);
-    CHECK(storage.putBlob(bob, "fresh", blob, "contact", kNow + 100, kQuota) == Storage::PutResult::eStored);
+    CHECK(storage.putBlob(bob, "old", blob, "content", kQuota) == Storage::PutResult::eStored);
+    CHECK(storage.putBlob(bob, "fresh", blob, "contact", kQuota) == Storage::PutResult::eStored);
     storage.purgeExpired(kNow);
     CHECK(storage.listPending(bob, "bclient").size() == 2);
     CHECK(storage.usage(bob) == 200);
@@ -192,9 +192,9 @@ int main()
     storage.setUserQuota(dave, 8);
     CHECK(storage.userQuota(dave, kQuota) == 8);
     CHECK(storage.userQuota(alice, kQuota) == kQuota);
-    CHECK(storage.putBlob(dave, "tiny", Bytes{1, 2, 3}, "content", kNow, 8)
+    CHECK(storage.putBlob(dave, "tiny", Bytes{1, 2, 3}, "content", 8)
         == Storage::PutResult::eStored);
-    CHECK(storage.putBlob(dave, "over", Bytes(20, 'x'), "content", kNow,
+    CHECK(storage.putBlob(dave, "over", Bytes(20, 'x'), "content",
               storage.userQuota(dave, kQuota))
         == Storage::PutResult::eQuotaExceeded);
 

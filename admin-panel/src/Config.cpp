@@ -69,12 +69,7 @@ Config Config::fromJson(const std::string& text)
 
     Config config;
     if (json.contains("admin")) {
-        const nlohmann::json& admin = json.at("admin");
-        if (admin.is_array()) {
-            config.admins = admin.get<std::vector<std::string>>();
-        } else if (!admin.is_null()) {
-            config.admins = {admin.get<std::string>()};
-        }
+        config.admins = json.at("admin").get<std::vector<std::string>>();
     }
     for (const std::string& fingerprint : config.admins) {
         if (fingerprint.empty()) {
@@ -129,12 +124,6 @@ Config Config::fromJson(const std::string& text)
             requireCoherentFleet(fleet);
             config.fleets.push_back(std::move(fleet));
         }
-    } else if (json.contains("services")) {
-        Fleet fleet;
-        fleet.name = "server";
-        fleet.services = readServices(json.at("services"));
-        requireCoherentFleet(fleet);
-        config.fleets.push_back(std::move(fleet));
     }
 
     if (config.consumer.name.empty()) {

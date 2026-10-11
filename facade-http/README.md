@@ -42,8 +42,7 @@ the command line.
 
 The facade's address is its I2P destination plus a secret path. Both are minted
 at the first start and kept in `state` (`facade-dest-0.key`, `facade-path`), and
-the facade prints the whole URL; there is no `basePath` in the config, and one
-there is refused. The path is stripped before forwarding: what the facade serves
+the facade prints the whole URL. The path is stripped before forwarding: what the facade serves
 is reachable only under it, and clients learn it only from the facade URL in the
 server descriptor. `POST /new-address` on the ops socket mints both again,
 answers with the new URL and the old one, and restarts the facade to publish it;

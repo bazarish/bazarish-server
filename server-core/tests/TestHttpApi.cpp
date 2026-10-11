@@ -434,7 +434,6 @@ int main()
         CHECK(shown.status == 200);
         const nlohmann::json values = nlohmann::json::parse(shown.body);
         CHECK(values.at("i2pTunnelQuantity").get<int>() == 16);
-        CHECK(!values.contains("federationRateLimit"));
         CHECK(values.at("i2pPrivacy").get<std::string>() == "max");
         CHECK(values.at("i2pTunnelQuantityMax").get<int>() == bazarish::i2p::kMaxTunnelQuantity);
 

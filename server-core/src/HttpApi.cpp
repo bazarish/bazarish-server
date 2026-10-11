@@ -875,7 +875,7 @@ void HttpApi::setupRoutes()
             }
 
             const Storage::PutResult result = storage_.putBlob(user, deliveryId, payload,
-                kDeviceDeliveryClass, nowSeconds(),
+                kDeviceDeliveryClass,
                 storage_.userQuota(user, options_.defaultQuotaBytes), caller);
             if (result == Storage::PutResult::eQuotaExceeded) {
                 return errorResponse(507, ErrorCode::eStorageFull, "your storage is full");

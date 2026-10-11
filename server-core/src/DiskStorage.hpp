@@ -24,7 +24,7 @@ public:
     std::size_t revokePasses(const std::string& user, const std::vector<Bytes>& handles) override;
 
     PutResult putBlob(const std::string& user, const std::string& blobId, const Bytes& data,
-        const std::string& deliveryClass, std::int64_t receivedAt, std::uint64_t quotaBytes,
+        const std::string& deliveryClass, std::uint64_t quotaBytes,
         const std::string& alreadyAcked = {}) override;
     bool hasBlob(const std::string& user, const std::string& blobId) override;
     bool hasSeen(const std::string& user, const std::string& deliveryId) override;

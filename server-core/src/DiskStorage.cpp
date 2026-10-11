@@ -56,11 +56,7 @@ std::int64_t arrivalMillis()
 
 std::int64_t arrivalOf(const nlohmann::json& meta)
 {
-    constexpr std::int64_t kMillisPerSecond = 1000;
-    if (meta.contains("receivedAtMs")) {
-        return meta.at("receivedAtMs").get<std::int64_t>();
-    }
-    return meta.at("receivedAt").get<std::int64_t>() * kMillisPerSecond;
+    return meta.at("receivedAtMs").get<std::int64_t>();
 }
 
 std::vector<std::string> listDirectoryNames(const fs::path& dir)
@@ -190,8 +186,7 @@ std::size_t DiskStorage::revokePasses(const std::string& user, const std::vector
 }
 
 Storage::PutResult DiskStorage::putBlob(const std::string& user, const std::string& blobId,
-    const Bytes& data, const std::string& deliveryClass, const std::int64_t receivedAt,
-    const std::uint64_t quotaBytes, const std::string& alreadyAcked)
+    const Bytes& data, const std::string& deliveryClass, const std::uint64_t quotaBytes, const std::string& alreadyAcked)
 {
     requireFingerprint(user);
     requireSafeId(blobId);
@@ -214,7 +209,6 @@ Storage::PutResult DiskStorage::putBlob(const std::string& user, const std::stri
         acked.push_back(alreadyAcked);
     }
     const nlohmann::json metaBody = {
-        {"receivedAt", receivedAt},
         {"receivedAtMs", arrivalMillis()},
         {"class", deliveryClass},
         {"acked", acked},

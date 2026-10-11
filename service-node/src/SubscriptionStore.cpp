@@ -50,9 +50,9 @@ SubscriptionStore::Account accountFromJson(const nlohmann::json& body)
     account.user = body.at("user").get<std::string>();
     account.registeredAt = body.at("registeredAt").get<std::int64_t>();
     account.quotaBytes = body.at("quotaBytes").get<std::uint64_t>();
-    account.dest = body.value("dest", std::string());
-    account.delegatedAt = body.value("delegatedAt", std::int64_t{0});
-    account.card = fromBase64(body.value("card", std::string()));
+    account.dest = body.at("dest").get<std::string>();
+    account.delegatedAt = body.at("delegatedAt").get<std::int64_t>();
+    account.card = fromBase64(body.at("card").get<std::string>());
     return account;
 }
 

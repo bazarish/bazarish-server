@@ -35,12 +35,12 @@ using namespace bazarish::admin;
 int main()
 {
     const std::string text = R"({
-        "admin": "abcd1234",
+        "admin": ["abcd1234"],
         "listen": {"host": "0.0.0.0", "port": 9000},
-        "services": [
+        "fleets": [{"name": "server", "services": [
             {"name": "core", "kind": "server-core", "url": "https://127.0.0.1:8420", "pin": "a-pin"},
             {"name": "facade", "kind": "facade", "url": "https://127.0.0.1:8429", "pin": "a-pin"}
-        ]
+        ]}]
     })";
     const Config config = Config::fromJson(text);
     CHECK(config.admins.size() == 1);
@@ -55,7 +55,7 @@ int main()
     CHECK(config.fleets[0].services[0].pin == "a-pin");
     CHECK(config.fleets[0].services[1].kind == "facade");
 
-    const Config minimal = Config::fromJson(R"({"admin": "fp"})");
+    const Config minimal = Config::fromJson(R"({"admin": ["fp"]})");
     CHECK(minimal.consumer.name == "Bazarish admin panel");
     CHECK(minimal.listenHost == "127.0.0.1");
     CHECK(minimal.listenPort == 8460);
@@ -68,11 +68,10 @@ int main()
     CHECK(shared.admins.size() == 2);
     CHECK(shared.admins.at(1) == "two");
     CHECK(Config::fromJson(R"({"admin": []})").admins.empty());
-    CHECK(Config::fromJson(R"({"services": []})").admins.empty());
+    CHECK(Config::fromJson(R"({"fleets": []})").admins.empty());
     CHECK_THROWS(Config::fromJson(R"({"admin": ["one", ""]})"));
-    CHECK_THROWS(Config::fromJson(R"({"admin": ""})"));
 
-    const Config many = Config::fromJson(R"({"admin": "fp", "fleets": [
+    const Config many = Config::fromJson(R"({"admin": ["fp"], "fleets": [
         {"name": "berlin", "services": [
             {"name": "core", "kind": "server-core", "url": "https://10.0.0.1:8420", "pin": "a-pin"},
             {"name": "node", "kind": "service-node", "url": "https://10.0.0.1:8421", "pin": "a-pin"}]},
@@ -84,16 +83,16 @@ int main()
     CHECK(many.fleets[0].services.size() == 2);
     CHECK(many.fleets[1].name == "riga");
 
-    CHECK_THROWS(Config::fromJson(R"({"admin": "fp", "services": [
-        {"name": "alias", "kind": "alias-resolver", "url": "https://127.0.0.1:8432", "pin": "a-pin"}]})"));
+    CHECK_THROWS(Config::fromJson(R"({"admin": ["fp"], "fleets": [{"name": "home", "services": [
+        {"name": "alias", "kind": "alias-resolver", "url": "https://127.0.0.1:8432", "pin": "a-pin"}]}]})"));
 
-    CHECK_THROWS(Config::fromJson(R"({"admin": "fp", "services": [
-        {"name": "x", "kind": "nope", "url": "https://x", "pin": "a-pin"}]})"));
+    CHECK_THROWS(Config::fromJson(R"({"admin": ["fp"], "fleets": [{"name": "home", "services": [
+        {"name": "x", "kind": "nope", "url": "https://x", "pin": "a-pin"}]}]})"));
 
-    CHECK_THROWS(Config::fromJson(R"({"admin": "fp", "services": [
-        {"name": "x", "kind": "server-core"}]})"));
+    CHECK_THROWS(Config::fromJson(R"({"admin": ["fp"], "fleets": [{"name": "home", "services": [
+        {"name": "x", "kind": "server-core"}]}]})"));
 
-    const Config spread = Config::fromJson(R"({"admin": "fp", "fleets": [
+    const Config spread = Config::fromJson(R"({"admin": ["fp"], "fleets": [
         {"name": "home", "services": [
             {"name": "core", "kind": "server-core", "url": "https://10.0.0.1:8428", "pin": "a-pin"},
             {"name": "node", "kind": "service-node", "url": "https://10.0.0.1:8427", "pin": "a-pin"},
@@ -104,15 +103,15 @@ int main()
     ]})");
     CHECK(spread.fleets[0].services.size() == 6);
 
-    CHECK_THROWS(Config::fromJson(R"({"admin": "fp", "fleets": [{"name": "home", "services": [
+    CHECK_THROWS(Config::fromJson(R"({"admin": ["fp"], "fleets": [{"name": "home", "services": [
         {"name": "edge", "kind": "facade", "url": "https://10.0.0.1:8429", "pin": "a-pin"},
         {"name": "edge", "kind": "gateway", "url": "https://10.0.0.4:8439", "pin": "a-pin"}]}]})"));
-    CHECK_THROWS(Config::fromJson(R"({"admin": "fp", "fleets": [{"name": "home", "services": [
+    CHECK_THROWS(Config::fromJson(R"({"admin": ["fp"], "fleets": [{"name": "home", "services": [
         {"name": "core", "kind": "server-core", "url": "https://10.0.0.1:8428", "pin": "a-pin"},
         {"name": "core-2", "kind": "server-core", "url": "https://10.0.0.2:8428", "pin": "a-pin"}]}]})"));
-    CHECK_THROWS(Config::fromJson(R"({"admin": "fp", "services": [
+    CHECK_THROWS(Config::fromJson(R"({"admin": ["fp"], "fleets": [{"name": "home", "services": [
         {"name": "node", "kind": "service-node", "url": "https://10.0.0.1:8427", "pin": "a-pin"},
-        {"name": "node-2", "kind": "service-node", "url": "https://10.0.0.2:8427", "pin": "a-pin"}]})"));
+        {"name": "node-2", "kind": "service-node", "url": "https://10.0.0.2:8427", "pin": "a-pin"}]}]})"));
 
     std::printf("TestConfig: all checks passed\n");
     return 0;

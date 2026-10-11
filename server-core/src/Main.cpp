@@ -144,12 +144,6 @@ int main(const int argc, const char** argv)
             bazarish::i2p::kMaxTunnelQuantity);
         return 2;
     }
-    if (config.has("federationRateLimit")) {
-        std::fprintf(stderr,
-            "config: \"federationRateLimit\" is no longer read: mail is limited per delivery "
-            "pass, and a sending address may make one contact request a day\n");
-        return 2;
-    }
     bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
     if (const std::string level = config.text("logLevel"); !level.empty()) {
         const std::optional<bazarish::log::Level> parsed = bazarish::log::levelFromString(level);
@@ -173,15 +167,6 @@ int main(const int argc, const char** argv)
     const auto identity = std::make_shared<const bazarish::Identity>(
         loadOrCreateIdentity(stateDir));
     const auto sealing = std::make_shared<bazarish::Key>(loadOrCreateSealingKey(stateDir));
-    if (!sealing->hasKem()) {
-        std::fprintf(stderr,
-            "%s holds a sealing key with no ML-KEM half - it was made before sealing keys\n"
-            "were hybrid, and no client can open a tunnel to it. Move it aside and start\n"
-            "again: a new one is generated, and nothing is stored under the old one (the\n"
-            "mail in the mailboxes is sealed to its owners' keys, not to this).\n",
-            (stateDir / "sealing.pem").string().c_str());
-        return 1;
-    }
 
     bazarish::server::DiskStorage storage(stateDir / "storage");
     bazarish::server::EventGate eventGate;

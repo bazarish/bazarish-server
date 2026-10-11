@@ -110,11 +110,6 @@ int main(const int argc, const char** argv)
         options.messagingPin = config.text("messaging.pin");
     }
 
-    if (config.has("basePath")) {
-        std::fprintf(stderr, "config: \"basePath\" is no longer read: the secret path lives in\n"
-                             "\"state\" beside the destination key\n");
-        return 2;
-    }
     if (stateDir.empty()) {
         std::fprintf(stderr, "config: \"state\" is mandatory: the destination key must"
                              " persist,\nits address travels in the server descriptor\n");

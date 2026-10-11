@@ -1,8 +1,12 @@
 // Bazarish project (c) 2026
 #pragma once
 
+#include "ContactSources.hpp"
 #include "Storage.hpp"
 
+#include <RateLimiter.hpp>
+
+#include <bazarish/Clock.hpp>
 #include <bazarish/Crypto.hpp>
 
 #include <cstdint>
@@ -11,6 +15,9 @@
 #include <string>
 
 namespace bazarish::server {
+
+inline constexpr std::int64_t kContactSourceMemorySeconds = kSecondsPerDay;
+inline constexpr std::size_t kMailPerPassPerMinute = 120;
 
 struct DeliveryEngineOptions {
     std::uint64_t defaultQuotaBytes = 50 * 1024 * 1024;
@@ -30,7 +37,7 @@ public:
     };
 
     Outcome deliver(const Bytes& sealed, const Bytes& payload, std::int64_t now,
-        const Key& sealingKey, const std::string& owner = {});
+        const Key& sealingKey, const std::string& owner = {}, const std::string& peer = {});
 
     const std::string& serverFingerprint() const;
     const Key& sealingKey() const;
@@ -40,6 +47,8 @@ private:
     const std::string serverFingerprint_;
     const std::shared_ptr<const Key> sealingKey_;
     const DeliveryEngineOptions options_;
+    ContactSources contactSources_;
+    RateLimiter mailPerPass_;
 };
 
 }  // namespace bazarish::server

@@ -16,7 +16,6 @@ public:
         bool i2pLog = false;
         std::string i2pPrivacy;
         int i2pTunnelQuantity = 0;
-        std::size_t federationRateLimit = 0;
         std::string listenHost;
         int listenPort = 0;
         std::string serviceNodeUrl;

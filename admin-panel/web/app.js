@@ -1095,11 +1095,6 @@
             hint: "Parallel tunnels per destination. Lower it on a thin uplink."
         });
 
-        var limits = section(form, "What it accepts");
-        var rate = fieldRow(limits, "Inbound per peer", data.federationRateLimit, {
-            type: "number", narrow: true, min: 1, unit: "deliveries / minute", restart: true,
-            hint: "Per peer destination. It bounds one sender, not the server."
-        });
         var wiring = section(form, "Where it stands");
         var listen = endpointRow(wiring, "Listens on", data.listen,
             "The private channel the facade and the node reach it on. Never public.", true);
@@ -1123,7 +1118,6 @@
                         i2pLog: i2pLog(),
                         i2pPrivacy: privacy(),
                         i2pTunnelQuantity: Math.round(Number(tunnels.value) || 0),
-                        federationRateLimit: Math.round(Number(rate.value) || 0),
                         listen: {
                             host: listen.host.value.trim(),
                             port: portRead(listen.port, "The messaging server")

@@ -1,7 +1,6 @@
 // Bazarish project (c) 2026
 #include "DeliveryEngine.hpp"
 #include "DiskStorage.hpp"
-#include <RateLimiter.hpp>
 #include "EventGate.hpp"
 #include "HttpApi.hpp"
 #include "PerUserDestinations.hpp"
@@ -145,9 +144,12 @@ int main(const int argc, const char** argv)
             bazarish::i2p::kMaxTunnelQuantity);
         return 2;
     }
-    const std::size_t federationRateLimit
-        = static_cast<std::size_t>(config.number("federationRateLimit", 240));
-    constexpr std::int64_t kFederationRateWindowSeconds = bazarish::kSecondsPerMinute;
+    if (config.has("federationRateLimit")) {
+        std::fprintf(stderr,
+            "config: \"federationRateLimit\" is no longer read: mail is limited per delivery "
+            "pass, and a sending address may make one contact request a day\n");
+        return 2;
+    }
     bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
     if (const std::string level = config.text("logLevel"); !level.empty()) {
         const std::optional<bazarish::log::Level> parsed = bazarish::log::levelFromString(level);
@@ -194,7 +196,6 @@ int main(const int argc, const char** argv)
     std::fflush(stdout);
 
     std::unique_ptr<bazarish::i2p::Router> router;
-    std::unique_ptr<bazarish::RateLimiter> federationLimiter;
     std::unique_ptr<bazarish::server::PerUserDestinations> perUserDests;
     {
         bazarish::log::info("starting embedded I2P router (building tunnels)...");
@@ -202,11 +203,6 @@ int main(const int argc, const char** argv)
         routerConfig.dataDir = stateDir / "i2p";
         routerConfig.role = bazarish::i2p::Role::eServer;
         router = std::make_unique<bazarish::i2p::Router>(routerConfig);
-
-        if (federationRateLimit > 0) {
-            federationLimiter = std::make_unique<bazarish::RateLimiter>(
-                federationRateLimit, kFederationRateWindowSeconds);
-        }
 
         bazarish::server::GetCardFn getCard;
         if (!serviceNodeUrl.empty()) {
@@ -258,7 +254,7 @@ int main(const int argc, const char** argv)
         }
 
         perUserDests = std::make_unique<bazarish::server::PerUserDestinations>(
-            router.get(), engine, stateDir, privacy, tunnelQuantity, federationLimiter.get());
+            router.get(), engine, stateDir, privacy, tunnelQuantity);
         perUserDests->setGetCard(getCard);
         perUserDests->reloadPersisted(nowSeconds());
     }
@@ -322,7 +318,6 @@ int main(const int argc, const char** argv)
     settingValues.i2pLog = i2pLog;
     settingValues.i2pPrivacy = bazarish::i2p::privacyName(privacy);
     settingValues.i2pTunnelQuantity = tunnelQuantity;
-    settingValues.federationRateLimit = federationRateLimit;
     settingValues.listenHost = host;
     settingValues.listenPort = port;
     settingValues.serviceNodeUrl = serviceNodeUrl;

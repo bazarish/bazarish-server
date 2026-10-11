@@ -8,7 +8,6 @@
 #include <bazarish/FederationFrame.hpp>
 #include <bazarish/Limits.hpp>
 #include <bazarish/Log.hpp>
-#include <RateLimiter.hpp>
 #include <bazarish/Resolve.hpp>
 
 #include <algorithm>
@@ -31,20 +30,17 @@ void federationServeFrame(const std::string& headerLine,
     const std::function<Bytes(std::size_t)>& readPayload,
     const std::function<void(const std::string&)>& writeReply, DeliveryEngine& engine,
     std::int64_t now, const Key* sealingKey, const std::string& owner, const GetCardFn& getCard,
-    const SignAckFn& signAck = {});
+    const SignAckFn& signAck = {}, const std::string& peer = {});
 
 inline constexpr std::size_t kDiscardChunkBytes = 64 * 1024;
 inline constexpr std::size_t kMaxDiscardBytes = 4 * kMaxMessagePayloadBytes;
 
 template <class Stream>
 void federationServeOnce(Stream& stream, DeliveryEngine& engine, const std::int64_t now,
-    const std::string& peerDest = std::string(), RateLimiter* const limiter = nullptr,
-    const Key* const sealingKey = nullptr, const std::string& owner = std::string(),
-    const GetCardFn& getCard = {}, const SignAckFn& signAck = {})
+    const std::string& peerDest = std::string(), const Key* const sealingKey = nullptr,
+    const std::string& owner = std::string(), const GetCardFn& getCard = {},
+    const SignAckFn& signAck = {})
 {
-    if (limiter != nullptr && !limiter->allow(peerDest, now)) {
-        return;
-    }
     detail::FrameReader<Stream> reader(stream);
     try {
         const std::string headerLine = reader.line();
@@ -70,7 +66,7 @@ void federationServeOnce(Stream& stream, DeliveryEngine& engine, const std::int6
             return payload;
         },
         [&stream](const std::string& line) { detail::writeFederationHeaderLine(stream, line); },
-            engine, now, sealingKey, owner, getCard, signAck);
+            engine, now, sealingKey, owner, getCard, signAck, peerDest);
     } catch (const std::exception& error) {
         bazarish::log::warn("serving a federation frame failed: {}", error.what());
         detail::writeFederationHeaderLine(stream,

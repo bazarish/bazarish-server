@@ -27,6 +27,8 @@ DeliveryEngine::DeliveryEngine(Storage& storage, std::string serverFingerprint,
     , serverFingerprint_(std::move(serverFingerprint))
     , sealingKey_(std::move(sealingKey))
     , options_(options)
+    , contactSources_(kContactSourceMemorySeconds)
+    , mailPerPass_(kMailPerPassPerMinute, kSecondsPerMinute)
 {
 }
 
@@ -42,7 +44,7 @@ const Key& DeliveryEngine::sealingKey() const
 
 DeliveryEngine::Outcome DeliveryEngine::deliver(
     const Bytes& sealed, const Bytes& payload, const std::int64_t now, const Key& sealingKey,
-    const std::string& owner)
+    const std::string& owner, const std::string& peer)
 {
     Outcome outcome;
     const auto fail = [&outcome](const ErrorCode code, const std::string& message) {
@@ -124,6 +126,18 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
     if (payload.size() > kMaxMessagePayloadBytes) {
         return fail(ErrorCode::eMessageTooLarge,
             "a message may carry at most " + std::to_string(kMaxMessagePayloadBytes) + " bytes");
+    }
+
+    if (deliveryClass == kContactDeliveryClass && !contactSources_.admit(peer, now)) {
+        return fail(ErrorCode::eContactRateLimited,
+            "this address has already sent a contact request; a request comes from an address "
+            "of its own");
+    }
+
+    if (deliveryClass == kContentDeliveryClass && !mailPerPass_.allow(toHex(sha256(pass)), now)) {
+        return fail(ErrorCode::eContactRateLimited,
+            "this correspondent is sending more than " + std::to_string(kMailPerPassPerMinute)
+                + " messages a minute - try again shortly");
     }
 
     const Storage::PutResult result = storage_.putBlob(mailbox, deliveryId, payload, deliveryClass,

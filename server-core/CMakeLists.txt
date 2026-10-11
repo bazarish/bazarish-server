@@ -28,6 +28,7 @@ find_package(Threads REQUIRED)
 
 add_library(bazarish_server_lib STATIC
     src/DiskStorage.cpp
+    src/ContactSources.cpp
     src/DeliveryEngine.cpp
     src/Federation.cpp
     src/PerUserDestinations.cpp

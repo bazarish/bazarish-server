@@ -118,7 +118,6 @@ int main()
     initialSettings.logLevel = "info";
     initialSettings.i2pPrivacy = "max";
     initialSettings.i2pTunnelQuantity = 16;
-    initialSettings.federationRateLimit = 240;
     initialSettings.listenHost = "127.0.0.1";
     initialSettings.listenPort = 8420;
     initialSettings.serviceNodeUrl = "http://127.0.0.1:8421";
@@ -434,24 +433,25 @@ int main()
             = call(opsPort, "GET", path, makeHeaders(operatorIdentity, "GET", path, {}, {}));
         CHECK(shown.status == 200);
         const nlohmann::json values = nlohmann::json::parse(shown.body);
-        CHECK(values.at("federationRateLimit").get<int>() == 240);
+        CHECK(values.at("i2pTunnelQuantity").get<int>() == 16);
+        CHECK(!values.contains("federationRateLimit"));
         CHECK(values.at("i2pPrivacy").get<std::string>() == "max");
         CHECK(values.at("i2pTunnelQuantityMax").get<int>() == bazarish::i2p::kMaxTunnelQuantity);
 
         const std::string body = nlohmann::json{{"logLevel", "debug"},
-            {"i2pPrivacy", "middle"}, {"federationRateLimit", 60}}
+            {"i2pPrivacy", "middle"}, {"i2pTunnelQuantity", 8}}
                                      .dump();
         CHECK(call(opsPort, "PUT", path, makeHeaders(operatorIdentity, "PUT", path, body, {}), body)
                   .status
             == 200);
         CHECK(bazarish::log::level() == bazarish::log::Level::eDebug);
-        CHECK(serverSettings->get().federationRateLimit == 60);
+        CHECK(serverSettings->get().i2pTunnelQuantity == 8);
 
         std::ifstream written(configPath);
         const nlohmann::json onDisk = nlohmann::json::parse(written);
         CHECK(onDisk.at("logLevel").get<std::string>() == "debug");
         CHECK(onDisk.at("i2p").at("privacy").get<std::string>() == "middle");
-        CHECK(onDisk.at("federationRateLimit").get<int>() == 60);
+        CHECK(onDisk.at("i2p").at("tunnelQuantity").get<int>() == 8);
         CHECK(onDisk.at("state").get<std::string>() == "/var/lib/bazarish/server-core");
 
         const std::string nonsense = nlohmann::json{{"i2pPrivacy", "invisible"}}.dump();

@@ -15,7 +15,10 @@ sealed to the server's sealing key.
 
 - **Delivery engine** - unseal the envelope, dedup by deliveryId, spend the
   delivery pass it presents (or admit a contact request, which presents none and
-  is rate-limited for it), enforce size and quota, store. It admits on the
+  is rate-limited for it), enforce size and quota, store. Mail is limited per
+  pass, 120 a minute. A contact request is admitted once per sending address:
+  the server keeps a hash of that address for a day and refuses the next request
+  from it, since a client sends every request from an address of its own. It admits on the
   envelope alone, whoever dialled.
 - **Storage** - per-user client registry, the passes an account has issued, and
   pending blobs. Content is deleted as soon as every registered client has acked

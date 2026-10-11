@@ -458,7 +458,6 @@ void HttpApi::setupOpsRoutes()
                 {"i2pPrivacy", values.i2pPrivacy},
                 {"i2pTunnelQuantity", values.i2pTunnelQuantity},
                 {"i2pTunnelQuantityMax", bazarish::i2p::kMaxTunnelQuantity},
-                {"federationRateLimit", values.federationRateLimit},
                 {"listen", {{"host", values.listenHost}, {"port", values.listenPort}}},
                 {"serviceNode", values.serviceNodeUrl},
                 {"stateDirectory", options_.stateDirectory},
@@ -500,15 +499,6 @@ void HttpApi::setupOpsRoutes()
                             + std::to_string(bazarish::i2p::kMaxTunnelQuantity) + " tunnels");
                     }
                     values.i2pTunnelQuantity = quantity;
-                }
-                if (body.contains("federationRateLimit")) {
-                    const std::int64_t limit
-                        = body.at("federationRateLimit").get<std::int64_t>();
-                    if (limit < 1) {
-                        throw std::invalid_argument(
-                            "a rate limit of zero accepts nothing from anyone");
-                    }
-                    values.federationRateLimit = static_cast<std::size_t>(limit);
                 }
                 readEndpointInto(body, "listen", values.listenHost, values.listenPort);
                 if (body.contains("serviceNode")) {

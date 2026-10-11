@@ -4,6 +4,7 @@
 #include "DeliveryEngine.hpp"
 #include "DiskStorage.hpp"
 
+#include <bazarish/Clock.hpp>
 #include <bazarish/Hybrid.hpp>
 #include <bazarish/Limits.hpp>
 #include <bazarish/Resolve.hpp>
@@ -100,14 +101,14 @@ Bytes makeSealed(const Key& sealingPublic, const std::string& kind,
 
 FederationDeliverResult roundTrip(DeliveryEngine& engine, const Bytes& sealed, const Bytes& payload,
     const Key* const servingKey = nullptr, const std::string& owner = std::string(),
-    const Key* const ackSigningKey = nullptr)
+    const Key* const ackSigningKey = nullptr, const std::string& peer = std::string())
 {
     int fds[2];
     CHECK(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0);
     SocketStream serverStream(fds[0]);
     SocketStream clientStream(fds[1]);
 
-    std::thread serverThread([&engine, &serverStream, servingKey, owner, ackSigningKey]() {
+    std::thread serverThread([&engine, &serverStream, servingKey, owner, ackSigningKey, peer]() {
         SignAckFn signAck;
         if (ackSigningKey != nullptr) {
             signAck = [ackSigningKey](const std::string& deliveryId, Bytes& outPub, Bytes& outSig) {
@@ -115,8 +116,7 @@ FederationDeliverResult roundTrip(DeliveryEngine& engine, const Bytes& sealed, c
                 outPub = ackSigningKey->publicDer();
             };
         }
-        federationServeOnce(serverStream, engine, kNow, std::string(), nullptr, servingKey, owner,
-            GetCardFn{}, signAck);
+        federationServeOnce(serverStream, engine, kNow, peer, servingKey, owner, GetCardFn{}, signAck);
     });
     const FederationDeliverResult result
         = federationSendDeliver(clientStream, sealed, payload);
@@ -134,7 +134,7 @@ FederationFetchResult roundTripCard(DeliveryEngine& engine, const CardFetchQuery
 
     std::thread serverThread([&engine, &serverStream, &getCard, &owner]() {
         federationServeOnce(
-            serverStream, engine, kNow, std::string(), nullptr, nullptr, owner, getCard);
+            serverStream, engine, kNow, std::string(), nullptr, owner, getCard);
     });
     const std::string queryText = toJson(query).dump();
     const FederationFetchResult result = federationSendFetch(
@@ -301,6 +301,61 @@ int main()
             payload, nullptr, stranger);
         CHECK(!refusedOther.delivered);
         CHECK(refusedOther.errorCode == refused.errorCode);
+    }
+
+    {
+        const Bytes payload(64, 0x41);
+        const std::string source = "requester.b32.i2p";
+        const auto request = [&](const unsigned char to, const std::string& id) {
+            return makeSealed(sealingPublic, "contact", toBase32(Bytes(32, to)), id, {});
+        };
+        const Bytes first = request(0x80, "source-first");
+        CHECK(roundTrip(engine, first, payload, nullptr, std::string(), nullptr, source).delivered);
+        CHECK(roundTrip(engine, first, payload, nullptr, std::string(), nullptr, source).delivered);
+
+        const Bytes second = request(0x81, "source-second");
+        const FederationDeliverResult refused
+            = roundTrip(engine, second, payload, nullptr, std::string(), nullptr, source);
+        CHECK(!refused.delivered);
+        CHECK(refused.errorCode == "CONTACT_RATE_LIMITED");
+        CHECK(roundTrip(engine, second, payload, nullptr, std::string(), nullptr,
+            "another.b32.i2p")
+                  .delivered);
+
+        const Bytes third = request(0x82, "source-third");
+        CHECK(!engine
+                   .deliver(third, payload, kNow + kContactSourceMemorySeconds - 1,
+                       engine.sealingKey(), {}, source)
+                   .delivered);
+        CHECK(engine
+                  .deliver(third, payload, kNow + kContactSourceMemorySeconds,
+                      engine.sealingKey(), {}, source)
+                  .delivered);
+        CHECK(roundTrip(engine, makeSealed(sealingPublic, "content", alice, "source-mail", pass),
+            payload, nullptr, std::string(), nullptr, source)
+                  .delivered);
+    }
+
+    {
+        const std::int64_t later = kNow + kSecondsPerHour;
+        const Bytes busySecret = randomBytes(kDeliverySecretSize);
+        const Bytes busy = deliveryPass(busySecret, std::string(52, 'c'));
+        const Bytes quiet = deliveryPass(randomBytes(kDeliverySecretSize), std::string(52, 'd'));
+        storage.registerPasses(alice, {deliveryPassHandle(busy), deliveryPassHandle(quiet)});
+        const Bytes payload(16, 0x42);
+        const auto mail = [&](const Bytes& with, const std::string& id, const std::int64_t at) {
+            return engine.deliver(makeSealed(sealingPublic, "content", alice, id, with), payload,
+                at, engine.sealingKey(), {}, "bot.b32.i2p");
+        };
+        for (std::size_t i = 0; i < kMailPerPassPerMinute; ++i) {
+            CHECK(mail(busy, "busy-" + std::to_string(i), later).delivered);
+        }
+        const DeliveryEngine::Outcome refused = mail(busy, "busy-over", later);
+        CHECK(!refused.delivered);
+        CHECK(refused.errorCode == "CONTACT_RATE_LIMITED");
+        CHECK(mail(busy, "busy-0", later).delivered);
+        CHECK(mail(quiet, "quiet-0", later).delivered);
+        CHECK(mail(busy, "busy-over", later + kSecondsPerMinute).delivered);
     }
 
     {

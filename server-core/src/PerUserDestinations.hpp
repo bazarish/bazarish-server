@@ -25,8 +25,7 @@ class PerUserDestinations {
 public:
     PerUserDestinations(bazarish::i2p::Router* router, DeliveryEngine& engine,
         std::filesystem::path stateDir, bazarish::i2p::Privacy privacy,
-        int tunnelQuantity = bazarish::i2p::kDefaultTunnelQuantity,
-        RateLimiter* limiter = nullptr);
+        int tunnelQuantity = bazarish::i2p::kDefaultTunnelQuantity);
     ~PerUserDestinations();
 
     PerUserDestinations(const PerUserDestinations&) = delete;
@@ -87,7 +86,6 @@ private:
     const std::filesystem::path stateDir_;
     const bazarish::i2p::Privacy privacy_;
     const int tunnelQuantity_;
-    RateLimiter* const limiter_;
     GetCardFn getCard_;
     mutable std::mutex mutex_;
     std::map<std::string, std::unique_ptr<Destination>> dests_;

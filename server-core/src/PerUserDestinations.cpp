@@ -82,13 +82,12 @@ void requireUsableDelegation(const std::string& transientB64, const std::int64_t
 
 PerUserDestinations::PerUserDestinations(bazarish::i2p::Router* const router,
     DeliveryEngine& engine, std::filesystem::path stateDir, const bazarish::i2p::Privacy privacy,
-    const int tunnelQuantity, RateLimiter* const limiter)
+    const int tunnelQuantity)
     : router_(router)
     , engine_(engine)
     , stateDir_(std::move(stateDir))
     , privacy_(privacy)
     , tunnelQuantity_(tunnelQuantity)
-    , limiter_(limiter)
 {
 }
 
@@ -273,7 +272,7 @@ void PerUserDestinations::serveLoop(Destination* const raw, const std::string& u
                 signingKey = raw->signingKey;
             }
             watchStream(stream);
-            federationServeOnce(*stream, engine_, nowSeconds(), peer, limiter_, serving.get(),
+            federationServeOnce(*stream, engine_, nowSeconds(), peer, serving.get(),
                 userFp, getCard_,
                 [signingKey](const std::string& deliveryId, Bytes& outSignerPublicDer,
                     Bytes& outSignature) {

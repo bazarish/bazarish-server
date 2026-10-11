@@ -19,7 +19,5 @@
     "tunnelQuantity": 5,
     "log": false
   },
-  // Inbound deliveries per peer destination per 60s (0 disables).
-  "federationRateLimit": 240,
   "logLevel": "info"
 }

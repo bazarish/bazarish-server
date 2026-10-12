@@ -13,6 +13,9 @@ implement is specified in the `docs-main` repository; the desktop client
 | `admin-panel` | `bazarish-admin-panel` | operator UI, authenticated by identity signature |
 | `common` | - | submodule of `common-cpp`: crypto, I2P transport, embedded i2pd |
 
+A deployment may add a gateway (`bazarish-gateway`, its own repository) for
+clients that do not run an I2P router. It is optional: nothing here depends on it.
+
 The components stay separate processes and separate deployment units - a facade
 compromise still must not reach the server. They reach each other over TLS,
 pinned by the key each one prints when it starts, so a fleet can be spread over

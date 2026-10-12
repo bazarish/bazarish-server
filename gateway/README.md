@@ -14,14 +14,14 @@ file alone. The admin panel only watches and tunes it, over `opsListen`.
 
 ## Building
 
-```
-git submodule update --init --recursive
-cmake -S . -B build
-cmake --build build -j4
-ctest --test-dir build
-```
+It builds with the rest of the server fleet (the repository's own README), or on
+its own:
 
-CMake >= 3.20, C++20, OpenSSL >= 3.5.
+```
+cmake -S gateway -B build-gateway
+cmake --build build-gateway -j4
+ctest --test-dir build-gateway
+```
 
 ## Configuring
 

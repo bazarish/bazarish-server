@@ -2,6 +2,8 @@
 #include "Gateway.hpp"
 #include "Settings.hpp"
 
+#include <Restart.hpp>
+
 #include <bazarish/ConfigFile.hpp>
 #include <bazarish/I2p.hpp>
 #include <bazarish/Log.hpp>
@@ -17,8 +19,6 @@
 namespace {
 
 constexpr std::chrono::seconds kRouterWarmup{120};
-// The fleet's restart code: a unit with Restart=on-failure brings the process back.
-constexpr int kRestartExitCode = 90;
 constexpr std::chrono::milliseconds kRestartAnswerGrace{300};
 
 volatile std::sig_atomic_t g_stop = 0;
@@ -112,5 +112,5 @@ int main(const int argc, const char** argv)
     bazarish::log::info("gateway: stopping");
     gateway.stop();
     router.stop();
-    return restartWanted ? kRestartExitCode : 0;
+    return restartWanted ? bazarish::kRestartExitCode : 0;
 }

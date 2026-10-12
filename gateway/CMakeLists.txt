@@ -7,25 +7,27 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # The common library is this repository's own submodule, named and not searched
-# for: a checkout beside the repository must not be able to take its place.
-set(BAZARISH_COMMON_DIR "${CMAKE_CURRENT_SOURCE_DIR}/common" CACHE PATH
+# for: a directory beside a component must not be able to take its place.
+get_filename_component(BAZARISH_SERVER_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
+set(BAZARISH_COMMON_DIR "${BAZARISH_SERVER_ROOT}/common" CACHE PATH
     "Path to the bazarish common library repository")
 if(NOT EXISTS "${BAZARISH_COMMON_DIR}/CMakeLists.txt")
     message(FATAL_ERROR "no common library at ${BAZARISH_COMMON_DIR}"
         " - run: git submodule update --init --recursive")
 endif()
 if(NOT TARGET bazarish_common)
-    # A gateway runs a router and serves clients; it is not a client itself, so
-    # the client core in common stays out of this build.
     set(BAZARISH_WITH_CLIENT OFF CACHE BOOL "Build the client core library" FORCE)
     add_subdirectory(${BAZARISH_COMMON_DIR} bazarish-common)
+endif()
+
+if(NOT TARGET bazarish_server_shared)
+    add_subdirectory(${BAZARISH_SERVER_ROOT}/shared bazarish-server-shared)
 endif()
 
 find_package(Threads REQUIRED)
 find_package(OpenSSL 3.5 REQUIRED)
 
 add_library(bazarish_gateway_lib STATIC
-    src/Health.cpp
     src/Conduit.cpp
     src/DestinationPool.cpp
     src/Gateway.cpp
@@ -33,7 +35,7 @@ add_library(bazarish_gateway_lib STATIC
     src/Sessions.cpp
 )
 target_include_directories(bazarish_gateway_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(bazarish_gateway_lib PUBLIC Bazarish::Common Threads::Threads)
+target_link_libraries(bazarish_gateway_lib PUBLIC Bazarish::Common Threads::Threads bazarish_server_shared)
 target_compile_options(bazarish_gateway_lib PRIVATE -Wall -Wextra -Werror)
 
 add_executable(bazarish-gateway src/Main.cpp)
@@ -59,7 +61,6 @@ function(bazarish_gateway_add_test name)
     add_test(NAME ${name} COMMAND ${name})
 endfunction()
 
-bazarish_gateway_add_test(TestHealth)
 bazarish_gateway_add_test(TestControlChurn)
 bazarish_gateway_add_test(TestGateway)
 bazarish_gateway_add_test(TestGatewayClient)

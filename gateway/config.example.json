@@ -1,0 +1,25 @@
+{
+    "listen": { "host": "127.0.0.1", "port": 8431 },
+
+    "basePath": "/CHANGE-ME-to-something-nobody-guesses",
+    "token": "CHANGE-ME-to-a-long-random-string",
+
+    "state": "/var/lib/bazarish-gateway",
+
+    "reseed": [],
+
+    "decoy": { "minBytes": 1024, "maxBytes": 262144 },
+
+    "direct": [],
+
+    "opsListen": { "host": "127.0.0.1", "port": 8439 },
+    "opsClients": [],
+
+    "sessionTtlSeconds": 300,
+
+    "i2p": { "privacy": "minimal", "tunnelQuantity": 3 },
+    "pools": { "stream": 4, "call": 2 },
+
+    "serverName": "nginx",
+    "notFound": ""
+}

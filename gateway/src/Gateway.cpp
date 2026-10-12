@@ -1,0 +1,1457 @@
+// Bazarish project (c) 2026
+#include "Gateway.hpp"
+
+#include <bazarish/Auth.hpp>
+#include <bazarish/Clock.hpp>
+#include <Health.hpp>
+#include <bazarish/Hmac.hpp>
+#include <bazarish/Log.hpp>
+#include <bazarish/Tls.hpp>
+
+#include <algorithm>
+#include <optional>
+#include <set>
+#include <stdexcept>
+#include <string>
+#include <thread>
+#include <utility>
+#include <vector>
+
+namespace bazarish::gateway {
+
+namespace {
+
+constexpr std::size_t kDecoyPageBytes = 32 * 1024;
+
+constexpr std::size_t kSocketMessageBytes = kMaxFrameBytes;
+
+constexpr std::chrono::seconds kReplayGrace{5};
+
+constexpr i2p::Privacy kCallPrivacy = i2p::Privacy::eMinimal;
+
+http::Response opsRefusal(const int status, const std::string& message)
+{
+    return {status, "application/json", {}, nlohmann::json{{"error", {{"message", message}}}}.dump()};
+}
+
+Settings writtenSettings(const std::filesystem::path& configPath)
+{
+    return Settings::from(ConfigView(ConfigFile(configPath).read()));
+}
+
+nlohmann::json editable(const Settings& written)
+{
+    nlohmann::json direct = nlohmann::json::array();
+    for (const DirectRoute& route : written.direct) {
+        direct.push_back(
+            {{"dest", route.dest}, {"host", route.host}, {"port", route.port}, {"pin", route.pin}});
+    }
+    return {
+        {"i2pPrivacy", std::string(i2p::privacyName(written.tunnelPrivacy))},
+        {"i2pTunnelQuantity", written.tunnelQuantity},
+        {"i2pTunnelQuantityMax", i2p::kMaxTunnelQuantity},
+        {"callPrivacy", std::string(i2p::privacyName(kCallPrivacy))},
+        {"streamPool", written.streamPool},
+        {"callPool", written.callPool},
+        {"poolMax", kMaxPoolDepth},
+        {"direct", direct},
+        {"stateDirectory", written.stateDir.string()},
+        {"version", kVersion},
+    };
+}
+
+std::size_t drawBetween(const std::size_t low, const std::size_t high)
+{
+    if (high <= low) {
+        return low;
+    }
+    const Bytes draw = randomBytes(sizeof(std::uint64_t));
+    std::uint64_t value = 0;
+    for (const unsigned char byte : draw) {
+        value = (value << 8) | byte;
+    }
+    return low + static_cast<std::size_t>(value % (high - low + 1));
+}
+
+}  // namespace
+
+Gateway::Gateway(Settings settings, i2p::Router& router, OpsControl control)
+    : settings_(std::move(settings))
+    , control_(std::move(control))
+    , router_(router)
+    , server_([&]() {
+        http::Server::Options options;
+        options.host = settings_.listenHost;
+        options.port = settings_.listenPort;
+        return options;
+    }())
+    , sessions_(settings_.sessionTtlSeconds)
+    , direct_(settings_.direct)
+    , startedAt_(nowSeconds())
+{
+}
+
+Gateway::~Gateway()
+{
+    stop();
+}
+
+std::size_t Gateway::sockets() const
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    return connections_.size();
+}
+
+http::Response Gateway::notFound() const
+{
+    http::Response response;
+    response.status = 404;
+    response.contentType = "text/html";
+    response.headers["Server"] = settings_.serverName;
+    response.body = settings_.notFoundBody;
+    return response;
+}
+
+bool Gateway::admitted(const http::Request& request) const
+{
+    if (request.path != settings_.basePath) {
+        return false;
+    }
+    return service::constantTimeEqual(request.header(kTokenHeader), settings_.token);
+}
+
+std::optional<http::Response> Gateway::operatorRefusal(const http::Request& request) const
+{
+    try {
+        auth::authorizeRequest(http::collectAuthHeaders(request), nowSeconds(), request.method,
+            request.path, Bytes(request.body.begin(), request.body.end()), settings_.operators,
+            operatorReplays_);
+    } catch (const std::exception& error) {
+        bazarish::log::debug("gateway: {} {} refused: {}", request.method, request.path,
+            error.what());
+        return http::Response{403, "application/json", {},
+            R"({"error":{"message":"operator authentication required"}})"};
+    }
+    return std::nullopt;
+}
+
+http::Response Gateway::health(const http::Request& request) const
+{
+    if (const std::optional<http::Response> refused = operatorRefusal(request);
+        refused.has_value()) {
+        return *refused;
+    }
+    std::size_t sessions = 0;
+    std::size_t endpoints = 0;
+    std::size_t streams = 0;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        std::set<const Session*> seen;
+        for (const auto& [socket, connection] : connections_) {
+            (void)socket;
+            if (!seen.insert(connection.session.get()).second) {
+                continue;
+            }
+            ++sessions;
+            endpoints += connection.session->endpoints.size();
+            streams += connection.session->streams.size();
+        }
+    }
+    const nlohmann::json extras = {
+        {"sessions", sessions},
+        {"destinations", endpoints},
+        {"streams", streams},
+        {"sockets", sockets()},
+        {"rejoins", rejoins()},
+        {"refused", refusals()},
+        {"dials", dials()},
+        {"i2pd", i2p::routerVersion()},
+    };
+    return {200, "application/json", {},
+        health::reportJson("gateway", kVersion, startedAt_, nowSeconds(), extras.dump())};
+}
+
+http::Response Gateway::settingsShown(const http::Request& request) const
+{
+    if (const std::optional<http::Response> refused = operatorRefusal(request);
+        refused.has_value()) {
+        return *refused;
+    }
+    if (control_.configPath.empty()) {
+        return opsRefusal(503, "this gateway was started without a config file to write to");
+    }
+    return {200, "application/json", {}, editable(writtenSettings(control_.configPath)).dump()};
+}
+
+http::Response Gateway::settingsChanged(const http::Request& request)
+{
+    if (const std::optional<http::Response> refused = operatorRefusal(request);
+        refused.has_value()) {
+        return *refused;
+    }
+    if (control_.configPath.empty()) {
+        return opsRefusal(503, "this gateway was started without a config file to write to");
+    }
+    std::vector<std::pair<std::vector<std::string>, nlohmann::json>> writes;
+    std::optional<std::vector<DirectRoute>> direct;
+    try {
+        const nlohmann::json body = nlohmann::json::parse(request.body);
+        if (body.contains("i2pPrivacy")) {
+            const std::string named = body.at("i2pPrivacy").get<std::string>();
+            if (!i2p::privacyFromString(named).has_value()) {
+                throw std::invalid_argument("not a privacy level: " + named);
+            }
+            writes.push_back({{"i2p", "privacy"}, named});
+        }
+        if (body.contains("i2pTunnelQuantity")) {
+            const int quantity = body.at("i2pTunnelQuantity").get<int>();
+            if (quantity < 1 || quantity > i2p::kMaxTunnelQuantity) {
+                throw std::invalid_argument("a destination carries between 1 and "
+                    + std::to_string(i2p::kMaxTunnelQuantity) + " tunnels");
+            }
+            writes.push_back({{"i2p", "tunnelQuantity"}, quantity});
+        }
+        for (const char* const pool : {"stream", "call"}) {
+            const std::string key = std::string(pool) + "Pool";
+            if (!body.contains(key)) {
+                continue;
+            }
+            const int depth = body.at(key).get<int>();
+            if (depth < 0 || depth > static_cast<int>(kMaxPoolDepth)) {
+                throw std::invalid_argument(
+                    "a pool holds between 0 and " + std::to_string(kMaxPoolDepth) + " destinations");
+            }
+            writes.push_back({{"pools", pool}, depth});
+        }
+        if (body.contains("direct")) {
+            direct = directRoutesFrom(body.at("direct"));
+            writes.push_back({{"direct"}, body.at("direct")});
+        }
+    } catch (const std::exception& error) {
+        return opsRefusal(400, error.what());
+    }
+
+    ConfigFile file(control_.configPath);
+    for (const auto& [keys, value] : writes) {
+        file.set(keys, value);
+    }
+    if (direct.has_value()) {
+        const std::lock_guard<std::mutex> lock(directMutex_);
+        direct_ = std::move(*direct);
+        bazarish::log::info("gateway: {} direct route(s) now", direct_.size());
+    }
+    return {200, "application/json", {}, editable(writtenSettings(control_.configPath)).dump()};
+}
+
+http::Response Gateway::restart(const http::Request& request)
+{
+    if (const std::optional<http::Response> refused = operatorRefusal(request);
+        refused.has_value()) {
+        return *refused;
+    }
+    if (!control_.requestRestart) {
+        return opsRefusal(503, "this gateway cannot restart itself: it was started without a"
+                               " supervisor");
+    }
+    bazarish::log::info("gateway: restarting at the operator's request");
+    control_.requestRestart();
+    return {200, "application/json", {}, R"({"restarting":true})"};
+}
+
+http::Response Gateway::decoy() const
+{
+    const std::size_t size = drawBetween(settings_.decoyMinBytes, settings_.decoyMaxBytes);
+    const Bytes noise = randomBytes(size);
+    http::Response response;
+    response.status = 200;
+    response.contentType = size < kDecoyPageBytes ? "text/html" : "image/jpeg";
+    response.headers["Server"] = settings_.serverName;
+    response.body.assign(noise.begin(), noise.end());
+    return response;
+}
+
+int Gateway::start()
+{
+    http::SocketRoutes routes;
+    routes.subprotocol = kSubprotocol;
+    routes.maxMessageBytes = kSocketMessageBytes;
+    routes.idleTimeout = kKeepalive + kPongTimeout;
+    routes.admit = [this](const http::Request& request) -> std::optional<http::Response> {
+        if (!admitted(request)) {
+            return notFound();
+        }
+        return std::nullopt;
+    };
+    routes.opened
+        = [this](const http::SocketPtr& socket, const http::Request& request) {
+              socketOpened(socket, request);
+          };
+    routes.message = [this](const http::SocketPtr& socket,
+                         const std::vector<unsigned char>& message) {
+        socketMessage(socket, message);
+    };
+    routes.closed = [this](const http::SocketPtr& socket) { socketClosed(socket); };
+    server_.upgrade(settings_.basePath, std::move(routes));
+
+    const http::Handler answer = [this](const http::Request& request) {
+        if (!admitted(request)) {
+            return notFound();
+        }
+        return decoy();
+    };
+    for (const char* method : {"GET", "POST", "PUT", "DELETE", "HEAD"}) {
+        server_.route(method, "(.*)", answer);
+    }
+    streamPool_ = std::make_unique<DestinationPool>(
+        router_, shapeOf(false, false, false), settings_.streamPool);
+    callPool_ = std::make_unique<DestinationPool>(
+        router_, shapeOf(true, true, true), settings_.callPool);
+    bindOps();
+    const int bound = server_.start();
+    running_.store(true);
+    status_ = std::thread([this]() { statusLoop(); });
+    return bound;
+}
+
+void Gateway::bindOps()
+{
+    if (settings_.opsPort == 0) {
+        return;
+    }
+    const tls::Credential credential = tls::selfSigned(settings_.stateDir);
+    http::Server::Options options;
+    options.host = settings_.opsHost;
+    options.port = settings_.opsPort;
+    options.threads = 1;
+    options.certificate = credential.certificate.string();
+    options.key = credential.key.string();
+    options.clientPins = settings_.opsClients;
+    ops_ = std::make_unique<http::Server>(options);
+    ops_->get("/healthz", [this](const http::Request& request) { return health(request); });
+    ops_->get("/settings",
+        [this](const http::Request& request) { return settingsShown(request); });
+    ops_->put("/settings",
+        [this](const http::Request& request) { return settingsChanged(request); });
+    ops_->post("/restart", [this](const http::Request& request) { return restart(request); });
+    ops_->start();
+    bazarish::log::info("ops listening on {}:{}, key {}", settings_.opsHost, settings_.opsPort,
+        credential.pin);
+}
+
+void Gateway::stop()
+{
+    if (running_.exchange(false) && status_.joinable()) {
+        status_.join();
+    }
+    std::vector<std::shared_ptr<Session>> held;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        held = sessions_.drain();
+    }
+    for (const std::shared_ptr<Session>& session : held) {
+        retire(session);
+    }
+    if (streamPool_) {
+        streamPool_->stop();
+    }
+    if (callPool_) {
+        callPool_->stop();
+    }
+    server_.stop();
+    if (ops_) {
+        ops_->stop();
+    }
+}
+
+int Gateway::port() const
+{
+    return server_.port();
+}
+
+std::size_t Gateway::pooled() const
+{
+    return (streamPool_ ? streamPool_->held() : 0) + (callPool_ ? callPool_->held() : 0);
+}
+
+i2p::EndpointConfig Gateway::shapeOf(const bool raw, const bool published, const bool realtime) const
+{
+    i2p::EndpointConfig config;
+    config.traffic = raw ? i2p::Traffic::eRaw : i2p::Traffic::eStream;
+    config.privacy = raw ? kCallPrivacy : settings_.tunnelPrivacy;
+    config.tunnelQuantity = raw ? i2p::kDefaultTunnelQuantity : settings_.tunnelQuantity;
+    config.published = published;
+    config.realtime = realtime;
+    config.label = raw ? "raw" : "stream";
+    return config;
+}
+
+std::shared_ptr<i2p::Endpoint> Gateway::endpointFor(const i2p::EndpointConfig& config)
+{
+    if (streamPool_->fits(config)) {
+        return streamPool_->take();
+    }
+    if (callPool_->fits(config)) {
+        return callPool_->take();
+    }
+    return router_.createEndpoint(config);
+}
+
+void Gateway::socketOpened(const http::SocketPtr& socket, const http::Request& request)
+{
+    const std::int64_t now = nowSeconds();
+    const std::string cookie = request.header(kSessionHeader);
+    bool full = false;
+    std::vector<std::shared_ptr<Session>> swept;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        swept = sessions_.sweep(now);
+        Connection connection;
+        if (!cookie.empty()) {
+            connection.session = sessions_.find(cookie, now);
+            connection.resumed = connection.session != nullptr;
+        }
+        if (connection.session == nullptr) {
+            connection.session = sessions_.open(now);
+        }
+        if (connection.resumed) {
+            ++rejoins_;
+        }
+        if (connection.session->full()) {
+            full = true;
+        } else {
+            connection.session->addSocket();
+            connections_.emplace(socket.get(), connection);
+        }
+    }
+    for (const std::shared_ptr<Session>& gone : swept) {
+        retire(gone);
+    }
+    if (full) {
+        fail(socket, 0, Fault::eRefused, "this session holds as many sockets as it may");
+        socket->close();
+    }
+}
+
+void Gateway::retire(const std::shared_ptr<Session>& session)
+{
+    std::vector<std::shared_ptr<EndpointEntry>> endpoints;
+    std::vector<std::shared_ptr<StreamEntry>> streams;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto& [id, endpoint] : session->endpoints) {
+            (void)id;
+            published_.erase(endpoint->host);
+            endpoint->running.store(false);
+            endpoints.push_back(endpoint);
+        }
+        for (const auto& [id, stream] : session->streams) {
+            (void)id;
+            streams.push_back(stream);
+        }
+        session->endpoints.clear();
+        session->streams.clear();
+    }
+    for (const std::shared_ptr<StreamEntry>& stream : streams) {
+        orphan(stream);
+        stream->running.store(false);
+        if (stream->stream) {
+            stream->stream->close();
+        }
+        if (stream->reader.joinable()) {
+            stream->reader.join();
+        }
+    }
+    for (const std::shared_ptr<EndpointEntry>& endpoint : endpoints) {
+        if (endpoint->endpoint) {
+            endpoint->endpoint->stop();
+        }
+        if (endpoint->worker.joinable()) {
+            endpoint->worker.join();
+        }
+    }
+}
+
+void Gateway::socketClosed(const http::SocketPtr& socket)
+{
+    const std::int64_t now = nowSeconds();
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const auto found = connections_.find(socket.get());
+    if (found == connections_.end()) {
+        return;
+    }
+    const std::shared_ptr<Session> session = found->second.session;
+    if (session->control == socket) {
+        session->control.reset();
+    }
+    for (auto& [id, endpoint] : session->endpoints) {
+        (void)id;
+        if (endpoint->socket == socket) {
+            endpoint->socket.reset();
+        }
+    }
+    for (auto& [id, stream] : session->streams) {
+        (void)id;
+        if (stream->socket == socket) {
+            stream->socket.reset();
+        }
+    }
+    session->removeSocket(now);
+    connections_.erase(found);
+}
+
+void Gateway::fail(const http::SocketPtr& socket, const std::uint32_t ref, const Fault fault,
+    const std::string& why)
+{
+    ++refused_;
+    const nlohmann::json body = {{"code", faultName(fault)}, {"message", why}};
+    socket->send(encodeJson(FrameType::eError, ref, body));
+}
+
+void Gateway::socketMessage(
+    const http::SocketPtr& socket, const std::vector<unsigned char>& message)
+{
+    try {
+        onFrame(socket, decode(message.data(), message.size()));
+    } catch (const ProtocolError& error) {
+        fail(socket, 0, error.fault(), error.what());
+        socket->close();
+    } catch (const std::exception& error) {
+        bazarish::log::warn("gateway: a frame ended badly: {}", error.what());
+        fail(socket, 0, Fault::eInternal, "the gateway failed at this");
+        socket->close();
+    }
+}
+
+std::shared_ptr<Session> Gateway::sessionFor(const http::Socket* const socket) const
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const auto found = connections_.find(socket);
+    return found == connections_.end() ? nullptr : found->second.session;
+}
+
+http::SocketPtr Gateway::outletFor(const Session& session, const StreamEntry& stream)
+{
+    if (stream.socket) {
+        return stream.socket;
+    }
+    const auto found = session.endpoints.find(stream.endpoint);
+    if (found != session.endpoints.end() && found->second->socket) {
+        return found->second->socket;
+    }
+    if (session.replayDue > std::chrono::steady_clock::now()) {
+        return nullptr;
+    }
+    return session.control;
+}
+
+http::SocketPtr Gateway::answerOn(const Session& session, const http::SocketPtr& asked)
+{
+    if (asked != nullptr && asked->open()) {
+        return asked;
+    }
+    return session.control;
+}
+
+void Gateway::replayDone(const std::shared_ptr<Session>& session)
+{
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        if (session->replayDue == std::chrono::steady_clock::time_point{}) {
+            return;
+        }
+        session->replayDue = {};
+    }
+    afterReplay(session);
+}
+
+void Gateway::afterReplay(const std::shared_ptr<Session>& session)
+{
+    std::vector<std::shared_ptr<StreamEntry>> held;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto& [id, entry] : session->streams) {
+            (void)id;
+            held.push_back(entry);
+        }
+    }
+    for (const std::shared_ptr<StreamEntry>& entry : held) {
+        pump(session, entry);
+        const std::lock_guard<std::mutex> lock(mutex_);
+        if (const http::SocketPtr out = outletFor(*session, *entry)) {
+            out->send(encodeCredit(entry->id, entry->book.consumedTotal()));
+        }
+    }
+}
+
+void Gateway::onFrame(const http::SocketPtr& socket, const Frame& frame)
+{
+    if (frame.type == FrameType::eHello) {
+        onHello(socket, frame);
+        return;
+    }
+    const std::shared_ptr<Session> session = sessionFor(socket.get());
+    if (session == nullptr) {
+        fail(socket, frame.ref, Fault::eUnknownId, "this socket belongs to no session");
+        socket->close();
+        return;
+    }
+    if (frame.type == FrameType::eEndpointCreate || frame.type == FrameType::eStreamOpen) {
+        if (const Bytes* const already = session->answered(frame.ref); already != nullptr) {
+            socket->send(*already);
+            return;
+        }
+    }
+    if (const http::SocketPtr lane = laneFor(*session, frame);
+        lane != nullptr && lane != socket) {
+        fail(socket, frame.ref, Fault::eWrongLane, "that flow does not ride this socket");
+        return;
+    }
+    if (frame.type != FrameType::eResume) {
+        replayDone(session);
+    }
+    switch (frame.type) {
+        case FrameType::eAttach: onAttach(socket, frame); return;
+        case FrameType::eResume: onResume(session, socket, frame); return;
+        case FrameType::eEndpointCreate: onEndpointCreate(session, socket, frame); return;
+        case FrameType::eEndpointStop: onEndpointStop(session, socket, frame); return;
+        case FrameType::eStreamOpen: onStreamOpen(session, socket, frame); return;
+        case FrameType::eStreamData: onStreamData(session, socket, frame); return;
+        case FrameType::eStreamCredit: onStreamCredit(session, socket, frame); return;
+        case FrameType::eStreamClose:
+        case FrameType::eStreamReset: onStreamEnd(session, frame); return;
+        case FrameType::eRawSend: onRawSend(session, socket, frame); return;
+        default: break;
+    }
+    fail(socket, frame.ref, Fault::eBadFrame,
+        std::string(frameTypeName(frame.type)) + " is not a frame a client sends");
+}
+
+void Gateway::onHello(const http::SocketPtr& socket, const Frame& frame)
+{
+    const nlohmann::json body = bodyJson(frame);
+    const int version = body.value("version", 0);
+    if (version != kProtocolVersion) {
+        fail(socket, frame.ref, Fault::eVersion, "this gateway speaks version 1");
+        socket->close();
+        return;
+    }
+
+    Connection connection;
+    http::SocketPtr replaced;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        const auto found = connections_.find(socket.get());
+        if (found == connections_.end()) {
+            return;
+        }
+        if (found->second.greeted) {
+            fail(socket, frame.ref, Fault::eBadFrame, "this socket has already said hello");
+            socket->close();
+            return;
+        }
+        found->second.greeted = true;
+        connection = found->second;
+        replaced = connection.session->control;
+        connection.session->control = socket;
+        connection.session->replayDue = connection.session->streams.empty()
+            ? std::chrono::steady_clock::time_point{}
+            : std::chrono::steady_clock::now() + kReplayGrace;
+    }
+
+    nlohmann::json endpoints = nlohmann::json::array();
+    nlohmann::json streams = nlohmann::json::array();
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto& [id, endpoint] : connection.session->endpoints) {
+            endpoints.push_back({{"id", id}, {"kind", endpoint->raw ? "raw" : "stream"},
+                {"ready", endpoint->ready}, {"host", endpoint->host},
+                {"tunnelsIn", endpoint->inboundTunnels},
+                {"tunnelsOut", endpoint->outboundTunnels}, {"leaseSets", endpoint->leaseSets},
+                {"localRoute", endpoint->localRoute.load()}});
+        }
+        for (const auto& [id, stream] : connection.session->streams) {
+            streams.push_back({{"id", id}, {"endpoint", stream->endpoint},
+                {"received", stream->book.received()},
+                {"finished", stream->book.finishedSending()}});
+        }
+    }
+
+    if (replaced && replaced != socket) {
+        replaced->close();
+    }
+
+    const nlohmann::json ready = {
+        {"version", kProtocolVersion},
+        {"i2pd", i2p::routerVersion()},
+        {"capabilities",
+            {{"routerCounters", false}, {"destinationCounters", true}, {"netDbSample", false},
+                {"proxy", false}, {"offlineKeys", false}, {"warmPool", true}}},
+        {"session", connection.session->cookie()},
+        {"resumed", connection.resumed},
+        {"endpoints", endpoints},
+        {"streams", streams},
+    };
+    socket->send(encodeJson(FrameType::eReady, frame.ref, ready));
+}
+
+namespace {
+
+constexpr std::chrono::seconds kAcceptWait{1};
+constexpr std::chrono::milliseconds kDatagramWait{200};
+constexpr std::chrono::milliseconds kWindowWait{10};
+
+std::shared_ptr<EndpointEntry> endpointOf(const Session& session, const std::uint32_t id)
+{
+    const auto found = session.endpoints.find(id);
+    if (found == session.endpoints.end() || found->second->endpoint == nullptr) {
+        return nullptr;
+    }
+    return found->second;
+}
+
+std::shared_ptr<StreamEntry> streamOf(const Session& session, const std::uint32_t id)
+{
+    const auto found = session.streams.find(id);
+    return found == session.streams.end() ? nullptr : found->second;
+}
+
+}  // namespace
+
+http::SocketPtr Gateway::laneFor(const Session& session, const Frame& frame) const
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    switch (frame.type) {
+        case FrameType::eStreamData:
+        case FrameType::eStreamCredit:
+        case FrameType::eStreamClose:
+        case FrameType::eStreamReset: {
+            const std::shared_ptr<StreamEntry> entry = streamOf(session, frame.ref);
+            return entry == nullptr ? nullptr : outletFor(session, *entry);
+        }
+        case FrameType::eRawSend: {
+            const std::shared_ptr<EndpointEntry> entry = endpointOf(session, frame.ref);
+            return entry == nullptr ? nullptr : entry->socket;
+        }
+        default:
+            return nullptr;
+    }
+}
+
+std::shared_ptr<EndpointEntry> Gateway::localFor(
+    const std::string& host, std::shared_ptr<Session>& owner) const
+{
+    const auto found = published_.find(host);
+    if (found == published_.end()) {
+        return nullptr;
+    }
+    owner = found->second.session.lock();
+    const std::shared_ptr<EndpointEntry> entry = found->second.endpoint.lock();
+    if (owner == nullptr || entry == nullptr) {
+        return nullptr;
+    }
+    return entry;
+}
+
+void Gateway::onEndpointCreate(const std::shared_ptr<Session>& session,
+    const http::SocketPtr& socket, const Frame& frame)
+{
+    const nlohmann::json body = bodyJson(frame);
+    const std::string kind = body.value("kind", std::string());
+    if (kind != "stream" && kind != "raw") {
+        fail(socket, frame.ref, Fault::eBadFrame, "a destination is for streams or for raw");
+        return;
+    }
+    const i2p::EndpointConfig config = shapeOf(
+        kind == "raw", body.value("published", true), body.value("realtime", false));
+
+    std::shared_ptr<EndpointEntry> entry;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        if (session->endpoints.count(frame.ref) > 0) {
+            return;
+        }
+        entry = std::make_shared<EndpointEntry>();
+        entry->id = frame.ref;
+        entry->raw = kind == "raw";
+        entry->published = config.published;
+        entry->realtime = config.realtime;
+        session->endpoints.emplace(entry->id, entry);
+    }
+    entry->endpoint = endpointFor(config);
+    entry->host = entry->endpoint->routingHost();
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        if (entry->published) {
+            published_[entry->host] = Local{session, entry};
+        }
+        const Bytes answer
+            = encodeJson(FrameType::eOk, frame.ref, {{"host", entry->host}, {"kind", kind}});
+        session->remember(frame.ref, answer);
+        if (const http::SocketPtr out = answerOn(*session, socket)) {
+            out->send(answer);
+        }
+    }
+
+    if (entry->raw) {
+        entry->worker = std::thread([this, session, entry]() { datagramLoop(session, entry); });
+    } else if (entry->published) {
+        entry->worker = std::thread([this, session, entry]() { acceptLoop(session, entry); });
+    }
+}
+
+void Gateway::onEndpointStop(const std::shared_ptr<Session>& session,
+    const http::SocketPtr& socket, const Frame& frame)
+{
+    std::shared_ptr<EndpointEntry> entry;
+    std::vector<std::shared_ptr<StreamEntry>> orphans;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        entry = endpointOf(*session, frame.ref);
+        if (entry == nullptr) {
+            fail(socket, frame.ref, Fault::eNoEndpoint, "no such destination on this session");
+            return;
+        }
+        entry->running.store(false);
+        session->endpoints.erase(frame.ref);
+        published_.erase(entry->host);
+        for (auto at = session->streams.begin(); at != session->streams.end();) {
+            if (at->second->endpoint == frame.ref) {
+                orphans.push_back(at->second);
+                at = session->streams.erase(at);
+            } else {
+                ++at;
+            }
+        }
+    }
+    entry->endpoint->stop();
+    for (const std::shared_ptr<StreamEntry>& stranded : orphans) {
+        orphan(stranded);
+        stranded->running.store(false);
+        if (stranded->stream) {
+            stranded->stream->close();
+        }
+        if (stranded->reader.joinable()) {
+            stranded->reader.join();
+        }
+    }
+    if (entry->worker.joinable()) {
+        entry->worker.join();
+    }
+    socket->send(encode(FrameType::eOk, frame.ref));
+}
+
+void Gateway::onRawSend(const std::shared_ptr<Session>& session, const http::SocketPtr& socket,
+    const Frame& frame)
+{
+    const RawSend sent = decodeRawSend(frame);
+    std::shared_ptr<EndpointEntry> from;
+    std::shared_ptr<Session> peerSession;
+    std::shared_ptr<EndpointEntry> peer;
+    http::SocketPtr peerLane;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        from = endpointOf(*session, frame.ref);
+        if (from == nullptr) {
+            fail(socket, frame.ref, Fault::eNoEndpoint, "no such destination on this session");
+            return;
+        }
+        if (!from->raw) {
+            fail(socket, frame.ref, Fault::eUnsupported, "that destination carries streams");
+            return;
+        }
+        peer = localFor(sent.host, peerSession);
+        if (peer != nullptr && !peer->raw) {
+            peer = nullptr;
+        }
+        if (peer != nullptr) {
+            peerLane = peer->socket;
+        }
+    }
+    if (peer != nullptr) {
+        from->localRoute.store(true);
+        peer->localRoute.store(true);
+        if (peerLane) {
+            peerLane->send(encode(FrameType::eRawRecv, peer->id, sent.payload));
+        }
+        return;
+    }
+    from->endpoint->sendRawDatagram(sent.host, sent.payload.data(), sent.payload.size());
+}
+
+void Gateway::datagramLoop(
+    const std::shared_ptr<Session>& session, const std::shared_ptr<EndpointEntry>& entry)
+{
+    while (entry->running.load()) {
+        std::vector<std::uint8_t> payload;
+        try {
+            payload = entry->endpoint->receiveRawDatagram(kDatagramWait);
+        } catch (const std::exception&) {
+            break;
+        }
+        if (payload.empty()) {
+            continue;
+        }
+        if (payload.size() > kMaxBodyBytes) {
+            continue;
+        }
+        http::SocketPtr out;
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            out = entry->socket;
+        }
+        if (!out) {
+            continue;
+        }
+        out->send(encode(FrameType::eRawRecv, entry->id, Bytes(payload.begin(), payload.end())));
+    }
+    (void)session;
+}
+
+void Gateway::onStreamOpen(const std::shared_ptr<Session>& session,
+    const http::SocketPtr& socket, const Frame& frame)
+{
+    const nlohmann::json body = bodyJson(frame);
+    const std::uint32_t endpointId = body.value("endpoint", 0U);
+    const std::string host = body.value("host", std::string());
+    const std::chrono::seconds deadline(body.value("deadline", 0));
+    if (host.empty() || deadline.count() <= 0) {
+        fail(socket, frame.ref, Fault::eBadFrame, "a dial names a host and a deadline");
+        return;
+    }
+    std::shared_ptr<EndpointEntry> from;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        from = endpointOf(*session, endpointId);
+        if (from == nullptr) {
+            fail(socket, frame.ref, Fault::eNoEndpoint, "no such destination on this session");
+            return;
+        }
+        if (from->raw) {
+            fail(socket, frame.ref, Fault::eUnsupported, "that destination carries datagrams");
+            return;
+        }
+        if (streamOf(*session, frame.ref) != nullptr) {
+            fail(socket, frame.ref, Fault::eBadFrame, "that identifier is already a stream");
+            return;
+        }
+        if (session->dialling.count(frame.ref) > 0) {
+            return;
+        }
+        session->dialling.insert(frame.ref);
+    }
+    std::shared_ptr<Session> owner;
+    std::shared_ptr<EndpointEntry> to;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        to = localFor(host, owner);
+        if (to != nullptr && to->raw) {
+            to = nullptr;
+        }
+    }
+    if (to != nullptr && meetLocally(session, from, frame.ref, owner, to, socket)) {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        session->dialling.erase(frame.ref);
+        return;
+    }
+
+    ++dials_;
+    std::thread([this, session, from, ref = frame.ref, host, deadline, socket]() {
+        dial(session, from, ref, host, deadline, socket);
+    }).detach();
+}
+
+std::optional<DirectRoute> Gateway::directFor(const std::string& host) const
+{
+    const std::lock_guard<std::mutex> lock(directMutex_);
+    for (const DirectRoute& route : direct_) {
+        if (route.dest == host) {
+            return route;
+        }
+    }
+    return std::nullopt;
+}
+
+void Gateway::dial(const std::shared_ptr<Session>& session,
+    const std::shared_ptr<EndpointEntry>& from, const std::uint32_t stream, std::string host,
+    const std::chrono::seconds deadline, const http::SocketPtr& answerTo)
+{
+    const auto until = std::chrono::steady_clock::now() + deadline;
+    const std::optional<DirectRoute> route = directFor(host);
+    std::unique_ptr<Conduit> opened;
+    while (std::chrono::steady_clock::now() < until && from->running.load()) {
+        const auto left = std::max(std::chrono::duration_cast<std::chrono::seconds>(
+                                       until - std::chrono::steady_clock::now()),
+            std::chrono::seconds(1));
+        try {
+            opened = route.has_value() ? overTls(*route, left)
+                                       : overI2p(from->endpoint->connect(host, left));
+        } catch (const std::exception&) {
+            opened.reset();
+        }
+        if (opened != nullptr) {
+            break;
+        }
+        std::this_thread::sleep_for(kDialRetryDelay);
+    }
+    if (opened == nullptr) {
+        const Bytes answer = encodeJson(
+            FrameType::eStreamReset, stream, {{"code", faultName(Fault::eUnreachable)}});
+        http::SocketPtr out;
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            session->dialling.erase(stream);
+            session->remember(stream, answer);
+            out = answerOn(*session, answerTo);
+        }
+        if (out) {
+            out->send(answer);
+        }
+        return;
+    }
+
+    if (route.has_value()) {
+        from->localRoute.store(true);
+    }
+    std::shared_ptr<StreamEntry> entry = std::make_shared<StreamEntry>();
+    entry->id = stream;
+    entry->endpoint = from->id;
+    entry->stream = std::move(opened);
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        session->dialling.erase(stream);
+        session->streams.emplace(stream, entry);
+        const Bytes answer = encode(FrameType::eStreamOpened, stream);
+        session->remember(stream, answer);
+        if (const http::SocketPtr out = answerOn(*session, answerTo)) {
+            out->send(answer);
+        }
+    }
+    entry->reader = std::thread([this, session, entry]() { readLoop(session, entry); });
+}
+
+bool Gateway::meetLocally(const std::shared_ptr<Session>& session,
+    const std::shared_ptr<EndpointEntry>& from, const std::uint32_t stream,
+    const std::shared_ptr<Session>& owner, const std::shared_ptr<EndpointEntry>& to,
+    const http::SocketPtr& answerTo)
+{
+    auto here = std::make_shared<StreamEntry>();
+    auto there = std::make_shared<StreamEntry>();
+    here->id = stream;
+    here->endpoint = from->id;
+    there->endpoint = to->id;
+    here->peer = there;
+    here->peerSession = owner;
+    there->peer = here;
+    there->peerSession = session;
+
+    http::SocketPtr control;
+    http::SocketPtr back;
+    Bytes answer;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        control = owner->control;
+        if (!control) {
+            return false;
+        }
+        there->id = owner->ids().next();
+        session->streams.emplace(here->id, here);
+        owner->streams.emplace(there->id, there);
+        answer = encode(FrameType::eStreamOpened, stream);
+        session->remember(stream, answer);
+        back = answerOn(*session, answerTo);
+    }
+    from->localRoute.store(true);
+    to->localRoute.store(true);
+    if (back) {
+        back->send(answer);
+    }
+    control->send(encodeJson(FrameType::eStreamInbound, there->id,
+        {{"endpoint", to->id}, {"peer", from->endpoint->publicBase64()}}));
+    return true;
+}
+
+void Gateway::pump(
+    const std::shared_ptr<Session>& session, const std::shared_ptr<StreamEntry>& entry)
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const http::SocketPtr out = outletFor(*session, *entry);
+    if (!out) {
+        return;
+    }
+    std::size_t moved = 0;
+    while (!entry->waiting.empty()) {
+        const std::size_t piece
+            = std::min({entry->book.room(), kMaxBodyBytes, entry->waiting.size()});
+        if (piece == 0) {
+            break;
+        }
+        entry->book.wrote(entry->waiting.data(), piece);
+        out->send(encode(FrameType::eStreamData, entry->id, entry->waiting.data(), piece));
+        entry->waiting.erase(
+            entry->waiting.begin(), entry->waiting.begin() + static_cast<std::ptrdiff_t>(piece));
+        moved += piece;
+    }
+    if (entry->waiting.empty() && entry->endAfterDrain) {
+        entry->endAfterDrain = false;
+        entry->book.finishSending();
+        out->send(encode(FrameType::eStreamClose, entry->id));
+    }
+    const std::shared_ptr<StreamEntry> other = entry->peer.lock();
+    const std::shared_ptr<Session> theirs = entry->peerSession.lock();
+    if (moved > 0 && other != nullptr && theirs != nullptr) {
+        other->book.consumed(moved);
+        const http::SocketPtr back = outletFor(*theirs, *other);
+        if (back) {
+            back->send(encodeCredit(other->id, other->book.consumedTotal()));
+        }
+    }
+}
+
+void Gateway::acceptLoop(
+    const std::shared_ptr<Session>& session, const std::shared_ptr<EndpointEntry>& entry)
+{
+    while (entry->running.load()) {
+        std::string peer;
+        std::unique_ptr<i2p::Stream> caller;
+        try {
+            caller = entry->endpoint->accept(peer, kAcceptWait);
+        } catch (const std::exception&) {
+            break;
+        }
+        if (caller == nullptr) {
+            continue;
+        }
+        std::shared_ptr<StreamEntry> inbound = std::make_shared<StreamEntry>();
+        inbound->endpoint = entry->id;
+        inbound->stream = overI2p(std::move(caller));
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            if (!entry->running.load()) {
+                break;
+            }
+            inbound->id = session->ids().next();
+            session->streams.emplace(inbound->id, inbound);
+        }
+        http::SocketPtr control;
+        while (entry->running.load()) {
+            {
+                const std::lock_guard<std::mutex> lock(mutex_);
+                control = session->control;
+            }
+            if (control) {
+                break;
+            }
+            std::this_thread::sleep_for(kWindowWait);
+        }
+        if (!control) {
+            {
+                const std::lock_guard<std::mutex> lock(mutex_);
+                session->streams.erase(inbound->id);
+            }
+            inbound->stream->close();
+            break;
+        }
+        control->send(encodeJson(FrameType::eStreamInbound, inbound->id,
+            {{"endpoint", entry->id}, {"peer", peer}}));
+        inbound->reader = std::thread([this, session, inbound]() { readLoop(session, inbound); });
+    }
+}
+
+void Gateway::readLoop(
+    const std::shared_ptr<Session>& session, const std::shared_ptr<StreamEntry>& entry)
+{
+    std::vector<unsigned char> buffer(kMaxBodyBytes);
+    while (entry->running.load()) {
+        const std::size_t room = std::min(entry->book.room(), buffer.size());
+        if (room == 0) {
+            std::this_thread::sleep_for(kWindowWait);
+            continue;
+        }
+        std::size_t got = 0;
+        try {
+            got = entry->stream->readSome(buffer.data(), room);
+        } catch (const std::exception&) {
+            break;
+        }
+        if (got == 0) {
+            break;
+        }
+        const http::SocketPtr out = outletFor(*session, *entry);
+        if (!out) {
+            std::this_thread::sleep_for(kWindowWait);
+            continue;
+        }
+        entry->book.wrote(buffer.data(), got);
+        out->send(encode(FrameType::eStreamData, entry->id, buffer.data(), got));
+    }
+    if (entry->running.load()) {
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            entry->endAfterDrain = true;
+        }
+        pump(session, entry);
+    }
+}
+
+void Gateway::onStreamData(const std::shared_ptr<Session>& session,
+    const http::SocketPtr& socket, const Frame& frame)
+{
+    std::shared_ptr<StreamEntry> entry;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        entry = streamOf(*session, frame.ref);
+    }
+    if (entry == nullptr) {
+        fail(socket, frame.ref, Fault::eUnknownId, "no such stream on this session");
+        return;
+    }
+    entry->book.tookIn(frame.body.size());
+
+    const std::shared_ptr<StreamEntry> peer = entry->peer.lock();
+    const std::shared_ptr<Session> theirs = entry->peerSession.lock();
+    if (peer != nullptr && theirs != nullptr) {
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            peer->waiting.insert(peer->waiting.end(), frame.body.begin(), frame.body.end());
+        }
+        pump(theirs, peer);
+        return;
+    }
+
+    if (!entry->stream) {
+        fail(socket, frame.ref, Fault::eClosed, "that stream's far side has gone");
+        return;
+    }
+    entry->stream->writeAll(frame.body.data(), frame.body.size());
+    entry->book.consumed(frame.body.size());
+    const http::SocketPtr out = outletFor(*session, *entry);
+    if (out) {
+        out->send(encodeCredit(entry->id, entry->book.consumedTotal()));
+    }
+}
+
+void Gateway::onStreamCredit(const std::shared_ptr<Session>& session,
+    const http::SocketPtr& socket, const Frame& frame)
+{
+    std::shared_ptr<StreamEntry> entry;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        entry = streamOf(*session, frame.ref);
+    }
+    if (entry == nullptr) {
+        fail(socket, frame.ref, Fault::eUnknownId, "no such stream on this session");
+        return;
+    }
+    entry->book.peerCredited(decodeCredit(frame));
+    if (!entry->peer.expired()) {
+        pump(session, entry);
+    }
+}
+
+void Gateway::onStreamEnd(const std::shared_ptr<Session>& session, const Frame& frame)
+{
+    std::shared_ptr<StreamEntry> entry;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        entry = streamOf(*session, frame.ref);
+        if (entry != nullptr) {
+            session->streams.erase(frame.ref);
+        }
+    }
+    if (entry == nullptr) {
+        return;
+    }
+    entry->book.peerFinished();
+
+    const std::shared_ptr<StreamEntry> peer = entry->peer.lock();
+    const std::shared_ptr<Session> theirs = entry->peerSession.lock();
+    if (peer != nullptr && theirs != nullptr) {
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            peer->endAfterDrain = true;
+            peer->peer.reset();
+        }
+        pump(theirs, peer);
+        return;
+    }
+    teardown(session, entry, Fault::eClosed);
+}
+
+void Gateway::orphan(const std::shared_ptr<StreamEntry>& entry)
+{
+    const std::shared_ptr<StreamEntry> peer = entry->peer.lock();
+    const std::shared_ptr<Session> theirs = entry->peerSession.lock();
+    if (peer == nullptr || theirs == nullptr) {
+        return;
+    }
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        peer->endAfterDrain = true;
+        peer->peer.reset();
+    }
+    pump(theirs, peer);
+}
+
+void Gateway::teardown(const std::shared_ptr<Session>&,
+    const std::shared_ptr<StreamEntry>& entry, const Fault)
+{
+    entry->running.store(false);
+    if (entry->stream) {
+        entry->stream->close();
+    }
+    if (entry->reader.joinable()) {
+        entry->reader.join();
+    }
+}
+
+void Gateway::onResume(const std::shared_ptr<Session>& session,
+    const http::SocketPtr& socket, const Frame& frame)
+{
+    const nlohmann::json body = bodyJson(frame);
+    const auto found = body.find("streams");
+    if (found == body.end() || !found->is_array()) {
+        fail(socket, frame.ref, Fault::eBadFrame, "a resume names the streams it is resuming");
+        return;
+    }
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        session->replayDue = {};
+    }
+    for (const nlohmann::json& said : *found) {
+        const std::uint32_t id = said.value("id", 0U);
+        std::shared_ptr<StreamEntry> entry;
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            entry = streamOf(*session, id);
+        }
+        if (entry == nullptr) {
+            continue;
+        }
+        const Bytes again = entry->book.replay(said.value("received", std::uint64_t{0}));
+        const std::lock_guard<std::mutex> lock(mutex_);
+        const http::SocketPtr out = outletFor(*session, *entry);
+        if (!out) {
+            continue;
+        }
+        for (std::size_t at = 0; at < again.size(); at += kMaxBodyBytes) {
+            const std::size_t piece = std::min(kMaxBodyBytes, again.size() - at);
+            out->send(encode(FrameType::eStreamData, id, again.data() + at, piece));
+        }
+    }
+    afterReplay(session);
+}
+
+void Gateway::onAttach(const http::SocketPtr& socket, const Frame& frame)
+{
+    const nlohmann::json body = bodyJson(frame);
+    const std::shared_ptr<Session> session = sessionFor(socket.get());
+    if (session == nullptr) {
+        fail(socket, frame.ref, Fault::eUnknownId, "this socket belongs to no session");
+        socket->close();
+        return;
+    }
+    const std::uint64_t received = body.value("received", std::uint64_t{0});
+
+    std::shared_ptr<EndpointEntry> endpoint;
+    std::shared_ptr<StreamEntry> stream;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        connections_[socket.get()].flow = frame.ref;
+        endpoint = endpointOf(*session, frame.ref);
+        stream = streamOf(*session, frame.ref);
+        if (endpoint != nullptr) {
+            endpoint->socket = socket;
+        } else if (stream != nullptr) {
+            stream->socket = socket;
+        }
+    }
+    if (endpoint != nullptr) {
+        socket->send(encodeJson(FrameType::eOk, frame.ref, nlohmann::json::object()));
+        return;
+    }
+    if (stream == nullptr) {
+        fail(socket, frame.ref, Fault::eUnknownId, "no such flow on this session");
+        return;
+    }
+    socket->send(encodeJson(FrameType::eOk, frame.ref,
+        {{"received", stream->book.received()}, {"finished", stream->book.finishedSending()}}));
+    const Bytes again = stream->book.replay(received);
+    for (std::size_t at = 0; at < again.size(); at += kMaxBodyBytes) {
+        const std::size_t piece = std::min(kMaxBodyBytes, again.size() - at);
+        socket->send(encode(FrameType::eStreamData, stream->id, again.data() + at, piece));
+    }
+}
+
+void Gateway::statusLoop()
+{
+    while (running_.load()) {
+        std::this_thread::sleep_for(kStatusPeriod);
+        if (!running_.load()) {
+            break;
+        }
+        std::vector<std::shared_ptr<Session>> swept;
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            swept = sessions_.sweep(nowSeconds());
+        }
+        for (const std::shared_ptr<Session>& gone : swept) {
+            retire(gone);
+        }
+
+        std::vector<i2p::LocalDestination> local;
+        try {
+            local = router_.localDestinations();
+        } catch (const std::exception&) {
+            continue;
+        }
+
+        std::vector<std::pair<http::SocketPtr, Bytes>> outgoing;
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            std::set<const Session*> seen;
+            for (const auto& [socket, connection] : connections_) {
+                (void)socket;
+                const std::shared_ptr<Session>& session = connection.session;
+                if (!session->control || !seen.insert(session.get()).second) {
+                    continue;
+                }
+                for (const auto& [id, entry] : session->endpoints) {
+                    bool ready = false;
+                    int in = 0;
+                    int out = 0;
+                    int leases = 0;
+                    for (const i2p::LocalDestination& destination : local) {
+                        if (destination.host == entry->host) {
+                            ready = destination.ready;
+                            in = destination.inboundTunnels;
+                            out = destination.outboundTunnels;
+                            leases = destination.remoteLeaseSets;
+                            break;
+                        }
+                    }
+                    const bool localRoute = entry->localRoute.load();
+                    if (ready == entry->ready && in == entry->inboundTunnels
+                        && out == entry->outboundTunnels && leases == entry->leaseSets
+                        && localRoute == entry->reportedLocalRoute) {
+                        continue;
+                    }
+                    entry->ready = ready;
+                    entry->inboundTunnels = in;
+                    entry->outboundTunnels = out;
+                    entry->leaseSets = leases;
+                    entry->reportedLocalRoute = localRoute;
+                    outgoing.emplace_back(session->control,
+                        encodeJson(FrameType::eEndpointStatus, id,
+                            {{"ready", ready}, {"host", entry->host}, {"tunnelsIn", in},
+                                {"tunnelsOut", out}, {"leaseSets", leases},
+                                {"localRoute", localRoute}}));
+                }
+            }
+        }
+        for (const auto& [socket, frame] : outgoing) {
+            socket->send(frame);
+        }
+    }
+}
+
+}  // namespace bazarish::gateway

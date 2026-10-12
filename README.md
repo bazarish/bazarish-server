@@ -8,6 +8,10 @@ The operator sees every destination its clients dial and holds the keys of the
 destinations it mints for them. `PROTOCOL.md` is the authority for the wire and
 for what that trust covers.
 
+A gateway is an optional part of a server deployment. Nothing in the deployment
+depends on it, and it needs nothing from the deployment: it runs from its own
+file alone. The admin panel only watches and tunes it, over `opsListen`.
+
 ## Building
 
 ```
@@ -35,7 +39,7 @@ One file, given with `--config`. `config.example.json` is a starting point.
 | `i2p.privacy`, `i2p.tunnelQuantity` | How long the tunnels of every client's destinations are and how many each keeps: one setting for everyone, since a client on a gateway sets none. `minimal` and 3 unless given; call media is always one hop |
 | `pools.stream`, `pools.call` | How many destinations are kept built ahead of asking: unpublished stream destinations with the tunnels above, and call-media destinations. 4 and 2 unless given, at most 16; 0 builds every one on demand |
 | `direct` | Destinations this gateway reaches without I2P: `dest`, the `host` and `port` serving it, and the `pin` that address presents |
-| `opsListen` | A TLS socket for the admin panel, answering only the keys in `opsClients`: health, settings and restart |
+| `opsListen` | A TLS socket for the admin panel, answering only the keys in `opsClients`: health, settings and restart. Left out, there is no such socket, and the file is edited by hand |
 | `opsClients` | The keys allowed to open that socket: the panel prints its own |
 | `operators` | Fingerprints allowed to use that socket |
 | `serverName` | The `Server` header on the 404 |
@@ -98,7 +102,8 @@ The client takes it in its settings and checks it before keeping it.
 sessions, destinations, streams, sockets, rejoins and refusals. That socket
 admits only the keys in `opsClients`, which is how the admin panel reaches it.
 The public listener has no health path: `<basePath>/healthz` is the same 404 as
-anything else, so a scan learns nothing from it.
+anything else, so a scan learns nothing from it. Without `opsListen` there is no
+health report; the log says when the router has its tunnels.
 
 ## Settings and restart
 

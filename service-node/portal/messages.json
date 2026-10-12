@@ -73,11 +73,11 @@
       "ar": "الدخول بمفتاحك"
     },
     "signin.note": {
-      "en": "Sign the challenge in Bazarish App under Signature and paste the result back.",
-      "ru": "Подпишите строку запроса в приложении Bazarish в разделе «Подпись» и вставьте результат сюда.",
-      "es": "Firma el desafío en la app de Bazarish, en «Firma», y pega el resultado aquí.",
-      "zh": "请在 Bazarish 应用的「签名」中签署下面的字符串，再把结果粘贴回来。",
-      "ar": "وقّع النص أدناه في تطبيق Bazarish من قسم «التوقيع»، ثم ألصق الناتج هنا."
+      "en": "Sign this challenge with your account's key in Bazarish App and paste the signature back.",
+      "ru": "Подпишите эту строку запроса ключом своего аккаунта в приложении Bazarish и вставьте подпись сюда.",
+      "es": "Firma este desafío con la clave de tu cuenta en la app de Bazarish y pega aquí la firma.",
+      "zh": "请在 Bazarish 应用中用你的账户密钥签署下面的字符串，再把签名粘贴回来。",
+      "ar": "وقّع هذا النص بمفتاح حسابك في تطبيق Bazarish، ثم ألصق التوقيع هنا."
     },
     "signin.challenge": {
       "en": "Challenge",

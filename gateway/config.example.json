@@ -4,7 +4,7 @@
     "basePath": "/CHANGE-ME-to-something-nobody-guesses",
     "token": "CHANGE-ME-to-a-long-random-string",
 
-    "state": "/var/lib/bazarish-gateway",
+    "state": "/var/lib/bazarish/gateway",
 
     "reseed": [],
 

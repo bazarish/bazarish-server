@@ -1,4 +1,4 @@
-# bazarish-gateway
+# Bazarish - gateway
 
 A host that runs the I2P router for a Bazarish client, so the client does not.
 The client switches its own router off and reaches this over one pinned-TLS

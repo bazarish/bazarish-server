@@ -52,6 +52,7 @@ public:
     std::size_t size() const;
 
     Assignment assignmentFor(const std::string& userFp, std::int64_t now) const;
+    std::int64_t heldUntil(const std::string& userFp) const;
 
 
 private:

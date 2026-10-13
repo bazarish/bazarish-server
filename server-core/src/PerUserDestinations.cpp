@@ -505,6 +505,13 @@ PerUserDestinations::Assignment PerUserDestinations::assignmentFor(
     return assignedLocked(*found->second, now);
 }
 
+std::int64_t PerUserDestinations::heldUntil(const std::string& userFp) const
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const auto found = dests_.find(userFp);
+    return found == dests_.end() ? 0 : found->second->expiresUnix;
+}
+
 PerUserDestinations::Assignment PerUserDestinations::assignedLocked(
     const Destination& destination, const std::int64_t now)
 {

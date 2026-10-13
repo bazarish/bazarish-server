@@ -338,12 +338,19 @@ bazarish::http::Response HttpApi::forwardToNode(
     }
     const bazarish::http::Url node = bazarish::http::parseUrl(options_.serviceNodeUrl);
     bazarish::http::ClientOptions clientOptions;
+    clientOptions.tls = node.tls;
+    clientOptions.pin = options_.serviceNodePin;
     clientOptions.connectTimeout = std::chrono::seconds(kNodeTimeoutSeconds);
     clientOptions.readTimeout = std::chrono::seconds(kNodeTimeoutSeconds);
     clientOptions.writeTimeout = std::chrono::seconds(kNodeTimeoutSeconds);
     try {
         const bazarish::http::ClientResponse answered
             = bazarish::http::request(node.host, node.port, forwarded, clientOptions);
+        if (answered.status == 0) {
+            bazarish::log::warn("the service node did not answer: {}", answered.error);
+            return errorResponse(
+                502, ErrorCode::eDeliveryRejected, "the service node did not answer");
+        }
         bazarish::http::Response response;
         response.status = answered.status;
         response.contentType = "application/json";

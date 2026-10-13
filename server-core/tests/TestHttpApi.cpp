@@ -12,6 +12,8 @@
 #include <bazarish/Pass.hpp>
 
 #include <bazarish/HttpClient.hpp>
+#include <bazarish/HttpServer.hpp>
+#include <bazarish/Tls.hpp>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -140,6 +142,23 @@ int main()
     };
     httpOptions.revokeI2pDest = [&](const std::string& user) { revokedUser = user; };
 
+    const tls::Credential nodeKey = tls::selfSigned(root / "node");
+    http::Server::Options nodeOptions;
+    nodeOptions.host = "127.0.0.1";
+    nodeOptions.port = 0;
+    nodeOptions.certificate = nodeKey.certificate.string();
+    nodeOptions.key = nodeKey.key.string();
+    http::Server node(nodeOptions);
+    node.get("(.*)", [](const http::Request&) {
+        return http::Response{200, "application/json", {}, R"({"portal":"from the node"})"};
+    });
+    const int nodePort = node.start();
+    CHECK(nodePort > 0);
+    httpOptions.serviceNodeUrl = "https://127.0.0.1:" + std::to_string(nodePort);
+    httpOptions.serviceNodePin = nodeKey.pin;
+    httpOptions.identity
+        = std::make_shared<const Identity>(Identity::fromPrivatePem(serverIdentity.privatePem()));
+
     HttpApi api(storage, httpOptions);
 
     const int port = api.bind("127.0.0.1", 0);
@@ -163,6 +182,13 @@ int main()
         const http::ClientResponse result = call(port, "POST", "/v1/messaging/clients",
             makeHeaders(identity, "POST", "/v1/messaging/clients", body, ""), body);
         CHECK(result.status == 200);
+    }
+
+    {
+        const http::ClientResponse result = call(port, "GET", "/v1/account/portal",
+            makeHeaders(alice, "GET", "/v1/account/portal", "", "alicedev"));
+        CHECK(result.status == 200);
+        CHECK(nlohmann::json::parse(result.body).at("portal") == "from the node");
     }
 
     const Bytes aliceSecret = randomBytes(kDeliverySecretSize);
@@ -477,6 +503,7 @@ int main()
 
     api.stop();
     serverThread.join();
+    node.stop();
     std::filesystem::remove_all(root);
     return 0;
 }

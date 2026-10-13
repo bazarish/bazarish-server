@@ -1162,8 +1162,16 @@ void Gateway::readLoop(
 {
     std::vector<unsigned char> buffer(kMaxBodyBytes);
     while (entry->running.load()) {
-        const std::size_t room = std::min(entry->book.room(), buffer.size());
+        std::size_t room = 0;
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            const std::size_t open = entry->book.room();
+            room = open > entry->waiting.size()
+                ? std::min(open - entry->waiting.size(), buffer.size())
+                : 0;
+        }
         if (room == 0) {
+            pump(session, entry);
             std::this_thread::sleep_for(kWindowWait);
             continue;
         }
@@ -1176,13 +1184,13 @@ void Gateway::readLoop(
         if (got == 0) {
             break;
         }
-        const http::SocketPtr out = outletFor(*session, *entry);
-        if (!out) {
-            std::this_thread::sleep_for(kWindowWait);
-            continue;
+        // Between two of the client's sockets there is no outlet: the bytes wait, they are not lost.
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            entry->waiting.insert(entry->waiting.end(), buffer.begin(),
+                buffer.begin() + static_cast<std::ptrdiff_t>(got));
         }
-        entry->book.wrote(buffer.data(), got);
-        out->send(encode(FrameType::eStreamData, entry->id, buffer.data(), got));
+        pump(session, entry);
     }
     if (entry->running.load()) {
         {

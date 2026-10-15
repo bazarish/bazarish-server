@@ -297,6 +297,9 @@ void testWebFlow()
     CHECK(done.status == 200);
     CHECK(done.body.find("registered") != std::string::npos);
     CHECK(done.body.find(htmlEscape(descriptor)) != std::string::npos);
+    CHECK(done.body.find("href=\"#descriptor-qr\"") != std::string::npos);
+    CHECK(done.body.find("id=\"descriptor-qr\"") != std::string::npos);
+    CHECK(done.body.find("<path fill=\"#000\" d=\"M") != std::string::npos);
     CHECK(done.body.find("1.0 KiB of 20 MiB") != std::string::npos);
     CHECK(done.body.find("<span>Devices</span>2") != std::string::npos);
 

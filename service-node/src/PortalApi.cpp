@@ -10,6 +10,7 @@
 
 #include <functional>
 #include <nlohmann/json.hpp>
+#include <qrencode.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -19,18 +20,58 @@
 #include <filesystem>
 #include <iterator>
 #include <map>
+#include <memory>
 #include <optional>
+#include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace {
 
 constexpr std::int64_t kReseedHoldSeconds = 300;
+// ISO/IEC 18004: four light modules around the symbol; bit 0 of a module is dark.
+constexpr int kQrQuietModules = 4;
+constexpr unsigned char kQrDark = 1;
 
 namespace http = bazarish::http;
 
 using bazarish::nowSeconds;
 using bazarish::htmlEscape;
 using bazarish::http::filled;
+
+std::string qrSvg(const std::string& text)
+{
+    const std::unique_ptr<QRcode, decltype(&QRcode_free)> code(
+        QRcode_encodeString8bit(text.c_str(), 0, QR_ECLEVEL_M), &QRcode_free);
+    if (!code) {
+        throw std::runtime_error("the server descriptor does not fit a QR code");
+    }
+    const int width = code->width;
+    const auto dark = [&code, width](const int x, const int y) {
+        return (code->data[y * width + x] & kQrDark) != 0;
+    };
+    std::string path;
+    for (int y = 0; y < width; ++y) {
+        for (int x = 0; x < width;) {
+            if (!dark(x, y)) {
+                ++x;
+                continue;
+            }
+            const int from = x;
+            while (x < width && dark(x, y)) {
+                ++x;
+            }
+            const std::string run = std::to_string(x - from);
+            path += "M" + std::to_string(from + kQrQuietModules) + " "
+                + std::to_string(y + kQrQuietModules) + "h" + run + "v1h-" + run + "z";
+        }
+    }
+    const std::string side = std::to_string(width + 2 * kQrQuietModules);
+    return "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 " + side + " " + side
+        + "\" shape-rendering=\"crispEdges\" aria-hidden=\"true\"><rect width=\"" + side
+        + "\" height=\"" + side + "\" fill=\"#fff\"/><path fill=\"#000\" d=\"" + path
+        + "\"/></svg>";
+}
 
 void respondJson(http::Response& response, const nlohmann::json& body)
 {
@@ -382,11 +423,13 @@ std::map<std::string, std::string> PortalApi::accountValues(
         }
     }
 
+    const std::string descriptor
+        = encodeServerDescriptor({options_.serverFingerprint, values.facades, values.reseeds});
     return {
         {"quota", htmlEscape(bytesHuman(granted))},
         {"descriptor",
-            htmlEscape(encodeServerDescriptor(
-                {options_.serverFingerprint, values.facades, values.reseeds}))},
+            assets_.render(
+                "descriptor.html", {{"text", htmlEscape(descriptor)}, {"qr", qrSvg(descriptor)}})},
         {"message", notice(note, "is-waiting")},
         {"mailbox", htmlEscape(mailbox)},
         {"devices", htmlEscape(devices)},

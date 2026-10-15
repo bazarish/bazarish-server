@@ -184,6 +184,20 @@
       "zh": "把它粘贴到 Bazarish 应用里，就能把这个账号连接到本服务器。",
       "ar": "ألصقه في تطبيق Bazarish لربط هذا الحساب بهذا الخادم."
     },
+    "qr.show": {
+      "en": "Show as a QR code",
+      "ru": "Показать QR-код",
+      "es": "Mostrar como código QR",
+      "zh": "显示二维码",
+      "ar": "عرض كرمز QR"
+    },
+    "qr.close": {
+      "en": "Close",
+      "ru": "Закрыть",
+      "es": "Cerrar",
+      "zh": "关闭",
+      "ar": "إغلاق"
+    },
     "delete.title": {
       "en": "delete this account",
       "ru": "удаление аккаунта",

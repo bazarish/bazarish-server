@@ -329,6 +329,61 @@ a.btn {
     font-size: 0.68rem;
 }
 
+.copy-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+}
+
+.copy-row .copy {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.btn-qr {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0;
+    padding: 0.55rem;
+    line-height: 0;
+}
+
+.qr-pop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    align-items: center;
+    justify-content: center;
+    background: rgb(0 0 0 / 0.82);
+}
+
+.qr-pop:target,
+.qr-pop.is-open {
+    display: flex;
+}
+
+.qr-close {
+    position: absolute;
+    inset: 0;
+    cursor: zoom-out;
+}
+
+.qr-code {
+    position: relative;
+    width: min(88vw, 88vh, 30rem);
+    pointer-events: none;
+}
+
+.qr-code svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: var(--bz-radius-sm);
+}
+
 .as-link {
     padding: 0;
     background: transparent;

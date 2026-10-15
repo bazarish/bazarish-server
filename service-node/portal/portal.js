@@ -37,11 +37,42 @@
                 }, kFeedbackMs);
             });
         });
-        block.parentNode.insertBefore(button, block.nextSibling);
+        var after = block.closest(".copy-row") || block;
+        after.parentNode.insertBefore(button, after.nextSibling);
     }
 
     var blocks = document.querySelectorAll("pre.copy");
     for (var i = 0; i < blocks.length; ++i) {
         addButton(blocks[i]);
+    }
+
+    function addPopup(opener) {
+        var popup = document.getElementById(opener.hash.slice(1));
+        if (!popup) {
+            return;
+        }
+        function close() {
+            popup.classList.remove("is-open");
+            document.removeEventListener("keydown", onKey);
+        }
+        function onKey(event) {
+            if (event.key === "Escape") {
+                close();
+            }
+        }
+        opener.addEventListener("click", function (event) {
+            event.preventDefault();
+            popup.classList.add("is-open");
+            document.addEventListener("keydown", onKey);
+        });
+        popup.addEventListener("click", function (event) {
+            event.preventDefault();
+            close();
+        });
+    }
+
+    var openers = document.querySelectorAll("a.btn-qr");
+    for (var j = 0; j < openers.length; ++j) {
+        addPopup(openers[j]);
     }
 })();

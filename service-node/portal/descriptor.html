@@ -1,0 +1,13 @@
+    <p class="field-label">{{t.descriptor.label}}</p>
+    <div class="copy-row" id="descriptor">
+      <pre class="copy">{{text}}</pre>
+      <a class="btn btn-quiet btn-qr" href="#descriptor-qr" title="{{t.qr.show}}"
+        aria-label="{{t.qr.show}}"><svg viewBox="0 0 24 24" width="18" height="18"
+        aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8"
+        stroke-linecap="round" stroke-linejoin="round" d="M4 4H9.5V9.5H4ZM14.5 4H20V9.5H14.5ZM4 14.5H9.5V20H4ZM14.5 14.5V14.6M20 14.5V14.6M17.2 17.2V17.3M14.5 20V20.1M20 20V20.1"/></svg></a>
+    </div>
+    <p class="panel-note">{{t.descriptor.paste}}</p>
+    <div class="qr-pop" id="descriptor-qr">
+      <a class="qr-close" href="#descriptor" aria-label="{{t.qr.close}}"></a>
+      <div class="qr-code">{{qr}}</div>
+    </div>

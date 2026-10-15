@@ -42,7 +42,7 @@ is a service of its own and is not reached through here.
 
 ## Build
 
-Requires CMake >= 3.20, C++20, OpenSSL >= 3.5. `common` is a submodule.
+Requires CMake >= 3.20, C++20, OpenSSL >= 3.5 and libqrencode (`libqrencode-dev`). `common` is a submodule.
 
 ```bash
 git clone --recurse-submodules https://github.com/bazarish/bazarish-server

@@ -43,6 +43,11 @@ target_compile_options(bazarish_service_lib PRIVATE -Wall -Wextra -Werror)
 # library; OpenSSL::Crypto already comes transitively via common.
 find_package(OpenSSL 3.5 REQUIRED)
 target_link_libraries(bazarish_service_lib PUBLIC OpenSSL::SSL)
+# The portal draws the server descriptor as a QR code for the app's camera.
+find_library(QRENCODE_LIBRARY NAMES qrencode REQUIRED)
+find_path(QRENCODE_INCLUDE_DIR NAMES qrencode.h REQUIRED)
+target_include_directories(bazarish_service_lib PRIVATE ${QRENCODE_INCLUDE_DIR})
+target_link_libraries(bazarish_service_lib PRIVATE ${QRENCODE_LIBRARY})
 
 add_executable(bazarish-service-node src/Main.cpp)
 target_link_libraries(bazarish-service-node PRIVATE bazarish_service_lib)

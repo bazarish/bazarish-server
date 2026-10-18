@@ -378,7 +378,7 @@ i2p::EndpointConfig Gateway::shapeOf(const bool raw, const bool published, const
     i2p::EndpointConfig config;
     config.traffic = raw ? i2p::Traffic::eRaw : i2p::Traffic::eStream;
     config.privacy = raw ? kCallPrivacy : settings_.tunnelPrivacy;
-    config.tunnelQuantity = raw ? i2p::kDefaultTunnelQuantity : settings_.tunnelQuantity;
+    config.tunnelQuantity = raw ? i2p::kCallTunnelQuantity : settings_.tunnelQuantity;
     config.published = published;
     config.realtime = realtime;
     config.label = raw ? "raw" : "stream";

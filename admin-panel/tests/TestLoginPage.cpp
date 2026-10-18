@@ -2,11 +2,11 @@
 #include "HttpApi.hpp"
 #include "PanelSettings.hpp"
 
-#include <bazarish/Bytes.hpp>
 #include <bazarish/Crypto.hpp>
 #include <bazarish/Tls.hpp>
 #include <bazarish/HttpClient.hpp>
 #include <bazarish/Log.hpp>
+#include <bazarish/Portal.hpp>
 
 #include <cstdio>
 #include <cstdlib>
@@ -80,7 +80,7 @@ int main()
     std::thread serverThread([&api]() { api.wait(); });
 
     const std::string payload = R"("<script>alert(document.domain)</script>)";
-    const std::string challenge = toBase64(Bytes(payload.begin(), payload.end()));
+    const std::string challenge = service::encodeLoginChallenge(payload);
     http::ClientRequest request;
     request.method = "POST";
     request.target = "/login";

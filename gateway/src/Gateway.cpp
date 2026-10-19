@@ -1619,6 +1619,7 @@ void Gateway::dropUnrouted()
 
 void Gateway::linkLoop()
 {
+    std::string lastFailure;
     while (running_.load()) {
         ServerLink link;
         tls::Credential own;
@@ -1648,6 +1649,7 @@ void Gateway::linkLoop()
             const std::string ask = nlohmann::json({{"watch", true}}).dump() + "\n";
             pipe->writeAll(ask.data(), ask.size());
             bazarish::log::info("gateway: linked to the server at {}:{}", link.host, link.port);
+            lastFailure.clear();
             for (;;) {
                 const nlohmann::json listed
                     = nlohmann::json::parse(pipe->readLine(kMaxServedListBytes));
@@ -1664,8 +1666,9 @@ void Gateway::linkLoop()
                 dropUnrouted();
             }
         } catch (const std::exception& error) {
-            if (running_.load()) {
-                bazarish::log::warn("gateway: the server link: {}", error.what());
+            if (running_.load() && lastFailure != error.what()) {
+                lastFailure = error.what();
+                bazarish::log::warn("gateway: the server link: {}", lastFailure);
             }
         }
         {

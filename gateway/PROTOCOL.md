@@ -691,8 +691,7 @@ The rules are narrow:
 
 What this reveals, stated plainly: two peers can tell from the timing that they
 are on the same gateway. That is new information about each other, not about the
-operator, who already sees both of them and every address either one dials. An
-operator whose users should not learn this can switch the shortcut off.
+operator, who already sees both of them and every address either one dials.
 
 The servers refuse exactly this shortcut and must keep refusing it: mail
 federates over I2P even between two accounts on one host, because a bypass there

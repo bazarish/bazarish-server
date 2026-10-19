@@ -799,9 +799,9 @@ gateway backend keeps the same registry:
 So a call's media destination reads "Call media" and a destination still
 building its tunnels reads "building" - the same words, from the same place, as
 on a desktop running its own engine. A destination with `localRoute` reads
-"gateway routing" where a LeaseSet count would be: a link the gateway carried
-itself looked nothing up, and "0 LeaseSets" beside a link that works says it
-does not.
+"gateway routing" and nothing else: a link the gateway carried itself used no
+tunnel and looked nothing up, and a destination minted for a local target has
+neither.
 
 `localDestinations()` returns this session's endpoints and nothing else. A
 gateway serves several clients and each one sees its own, which is not a filter

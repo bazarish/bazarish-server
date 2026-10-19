@@ -467,6 +467,11 @@ void HttpApi::setupOpsRoutes()
                 {"i2pTunnelQuantityMax", bazarish::i2p::kMaxTunnelQuantity},
                 {"listen", {{"host", values.listenHost}, {"port", values.listenPort}}},
                 {"serviceNode", values.serviceNodeUrl},
+                {"gatewayListen", values.gatewayListenHost.empty()
+                        ? nlohmann::json(nullptr)
+                        : nlohmann::json{{"host", values.gatewayListenHost},
+                            {"port", values.gatewayListenPort}}},
+                {"gateways", values.gateways},
                 {"stateDirectory", options_.stateDirectory},
                 {"fingerprint", options_.fingerprint},
                 {"version", options_.version},
@@ -511,6 +516,11 @@ void HttpApi::setupOpsRoutes()
                 if (body.contains("serviceNode")) {
                     values.serviceNodeUrl = body.at("serviceNode").get<std::string>();
                 }
+                readEndpointInto(
+                    body, "gatewayListen", values.gatewayListenHost, values.gatewayListenPort);
+                if (body.contains("gateways")) {
+                    values.gateways = body.at("gateways").get<std::vector<std::string>>();
+                }
             }
 
             const ServerSettings::Values before = options_.settings->get();
@@ -528,6 +538,9 @@ void HttpApi::setupOpsRoutes()
             }
             if (values.i2pLog != before.i2pLog) {
                 bazarish::i2p::setI2pLogging(values.i2pLog);
+            }
+            if (values.gateways != before.gateways && options_.gatewaysChanged) {
+                options_.gatewaysChanged(values.gateways);
             }
             return jsonResponse({{"logLevel", values.logLevel}, {"i2pLog", values.i2pLog}});
         }));

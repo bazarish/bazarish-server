@@ -2,6 +2,7 @@
 #include "DeliveryEngine.hpp"
 #include "DiskStorage.hpp"
 #include "EventGate.hpp"
+#include "GatewayLink.hpp"
 #include "HttpApi.hpp"
 #include "PerUserDestinations.hpp"
 
@@ -127,6 +128,9 @@ int main(const int argc, const char** argv)
     const std::string serviceNodeUrl = config.text("serviceNode.url");
     const std::string serviceNodePin = config.text("serviceNode.pin");
     const std::vector<std::string> opsClientPins = config.list("opsClients");
+    const std::optional<bazarish::ConfigView::Endpoint> gatewayListen
+        = config.endpoint("gatewayListen");
+    const std::vector<std::string> gatewayPins = config.list("gateways");
     bazarish::i2p::Privacy privacy = bazarish::i2p::Privacy::eMax;
     if (const std::string named = config.text("i2p.privacy"); !named.empty()) {
         const std::optional<bazarish::i2p::Privacy> parsed
@@ -182,6 +186,15 @@ int main(const int argc, const char** argv)
 
     std::unique_ptr<bazarish::i2p::Router> router;
     std::unique_ptr<bazarish::server::PerUserDestinations> perUserDests;
+    std::unique_ptr<bazarish::server::GatewayLink> gatewayLink;
+    if (gatewayListen.has_value()) {
+        gatewayLink = std::make_unique<bazarish::server::GatewayLink>(credential, gatewayPins,
+            [&perUserDests]() { return perUserDests->served(); },
+            [&perUserDests](const std::string& to, const std::string& from,
+                bazarish::server::TlsPipe& pipe) {
+                return perUserDests->serveDirect(to, from, pipe);
+            });
+    }
     {
         bazarish::log::info("starting embedded I2P router (building tunnels)...");
         bazarish::i2p::RouterConfig routerConfig;
@@ -241,6 +254,10 @@ int main(const int argc, const char** argv)
         perUserDests = std::make_unique<bazarish::server::PerUserDestinations>(
             router.get(), engine, stateDir, privacy, tunnelQuantity);
         perUserDests->setGetCard(getCard);
+        if (gatewayLink) {
+            perUserDests->setServedChanged(
+                [link = gatewayLink.get()]() { link->servedChanged(); });
+        }
         perUserDests->reloadPersisted(nowSeconds());
     }
 
@@ -306,6 +323,9 @@ int main(const int argc, const char** argv)
     settingValues.listenHost = host;
     settingValues.listenPort = port;
     settingValues.serviceNodeUrl = serviceNodeUrl;
+    settingValues.gatewayListenHost = gatewayListen.has_value() ? gatewayListen->host : "";
+    settingValues.gatewayListenPort = gatewayListen.has_value() ? gatewayListen->port : 0;
+    settingValues.gateways = gatewayPins;
     httpOptions.settings = std::make_shared<bazarish::server::ServerSettings>(
         fs::path(argv[2]), settingValues);
     httpOptions.stateDirectory = stateDir.string();
@@ -318,6 +338,12 @@ int main(const int argc, const char** argv)
     httpOptions.tlsCertificate = credential.certificate.string();
     httpOptions.tlsKey = credential.key.string();
     httpOptions.opsClientPins = opsClientPins;
+    httpOptions.gatewaysChanged = [link = gatewayLink.get()](
+                                      const std::vector<std::string>& gateways) {
+        if (link != nullptr) {
+            link->setGateways(gateways);
+        }
+    };
     const auto restartHook = std::make_shared<std::function<void()>>();
     httpOptions.requestRestart = [restartHook]() {
         if (*restartHook) {
@@ -331,6 +357,17 @@ int main(const int argc, const char** argv)
     *restartHook = [&restart]() { restart.request(); };
 
     bazarish::log::info("listening on {}:{} (private channel for facades)", host, port);
+    if (gatewayLink) {
+        try {
+            gatewayLink->start(gatewayListen->host, gatewayListen->port);
+        } catch (const std::exception& error) {
+            bazarish::log::error("failed to listen on {}:{} for gateways: {}",
+                gatewayListen->host, gatewayListen->port, error.what());
+            return 1;
+        }
+        bazarish::log::info("gateways reach this server on {}:{}", gatewayListen->host,
+            gatewayListen->port);
+    }
 
     if (api.bindOps(opsListen.host, opsListen.port) <= 0) {
         if (restart.requested()) {

@@ -67,5 +67,10 @@ admin panel's and the service node's. The node beside it is named the same way,
 `"serviceNode": {"url": "https://...", "pin": "..."}`, and the pin is not
 optional: without one the dial is refused rather than trusted.
 
+`gatewayListen` is optional and serves the gateways of the same operator, each
+admitted by the key listed for it in `gateways`. A gateway learns there every
+destination this server serves and carries its users' streams to them without
+I2P (`gateway/PROTOCOL.md`, The server link). The admin panel writes both.
+
 The I2P router is **in this process**: `common` carries the engine, so there is
 no daemon to install and no SAM bridge to run beside it.

@@ -7,11 +7,13 @@
 #include <bazarish/Bytes.hpp>
 #include <bazarish/I2p.hpp>
 #include <Restart.hpp>
+#include <TlsPipe.hpp>
 
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -47,6 +49,9 @@ public:
     std::size_t sweepExpired(std::int64_t now);
 
     void setGetCard(GetCardFn getCard);
+    void setServedChanged(std::function<void()> changed);
+    std::vector<std::string> served() const;
+    bool serveDirect(const std::string& to, const std::string& from, TlsPipe& pipe);
     std::shared_ptr<bazarish::i2p::Endpoint> endpointForDest(const std::string& dest) const;
 
     std::size_t size() const;
@@ -74,6 +79,8 @@ private:
     void teardownLocked(const std::string& userFp);
     void reapRetired();
     static Assignment assignedLocked(const Destination& destination, std::int64_t now);
+    void announceServed() const;
+    void reloadLocked(std::int64_t now);
     void serveLoop(Destination* destination, const std::string& userFp);
     void startWatchdog();
     void watchStream(const std::shared_ptr<bazarish::i2p::Stream>& stream);
@@ -88,6 +95,7 @@ private:
     const bazarish::i2p::Privacy privacy_;
     const int tunnelQuantity_;
     GetCardFn getCard_;
+    std::function<void()> servedChanged_;
     mutable std::mutex mutex_;
     std::map<std::string, std::unique_ptr<Destination>> dests_;
     std::thread sweeper_;

@@ -5,6 +5,7 @@ add_library(bazarish_server_shared STATIC
     Health.cpp
     RateLimiter.cpp
     Restart.cpp
+    TlsPipe.cpp
 )
 target_include_directories(bazarish_server_shared PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(bazarish_server_shared PUBLIC bazarish_common)
@@ -24,3 +25,8 @@ add_executable(TestRateLimiter TestRateLimiter.cpp)
 target_link_libraries(TestRateLimiter PRIVATE bazarish_server_shared)
 target_compile_options(TestRateLimiter PRIVATE -Wall -Wextra -Werror)
 add_test(NAME TestRateLimiter COMMAND TestRateLimiter)
+
+add_executable(TestTlsPipe TestTlsPipe.cpp)
+target_link_libraries(TestTlsPipe PRIVATE bazarish_server_shared)
+target_compile_options(TestTlsPipe PRIVATE -Wall -Wextra -Werror)
+add_test(NAME TestTlsPipe COMMAND TestTlsPipe)

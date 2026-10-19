@@ -58,6 +58,7 @@ struct HttpApiOptions {
     std::string tlsCertificate;
     std::string tlsKey;
     std::vector<std::string> opsClientPins;
+    std::function<void(const std::vector<std::string>& gateways)> gatewaysChanged;
 };
 
 class HttpApi {

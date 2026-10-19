@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <mutex>
 #include <string>
+#include <vector>
 
 namespace bazarish::server {
 
@@ -19,6 +20,9 @@ public:
         std::string listenHost;
         int listenPort = 0;
         std::string serviceNodeUrl;
+        std::string gatewayListenHost;
+        int gatewayListenPort = 0;
+        std::vector<std::string> gateways;
     };
 
     ServerSettings(std::filesystem::path configPath, Values initial);

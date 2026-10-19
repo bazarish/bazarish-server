@@ -32,6 +32,7 @@ add_library(bazarish_server_lib STATIC
     src/DeliveryEngine.cpp
     src/Federation.cpp
     src/PerUserDestinations.cpp
+    src/GatewayLink.cpp
     src/EventGate.cpp
     src/HttpApi.cpp
     src/ServerSettings.cpp
@@ -58,6 +59,7 @@ bazarish_server_add_test(TestDiskStorage)
 bazarish_server_add_test(TestEventGate)
 bazarish_server_add_test(TestHttpApi)
 bazarish_server_add_test(TestFederation)
+bazarish_server_add_test(TestGatewayLink)
 bazarish_server_add_test(TestPerUserDestinations)
 bazarish_server_add_test(TestSessionStore)
 bazarish_server_add_test(TestTunnelFace)

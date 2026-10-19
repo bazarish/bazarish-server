@@ -78,6 +78,19 @@ void requireUsableDelegation(const std::string& transientB64, const std::int64_t
     }
 }
 
+SignAckFn signAckWith(std::shared_ptr<Key> signingKey)
+{
+    return [signingKey = std::move(signingKey)](const std::string& deliveryId,
+               Bytes& outSignerPublicDer, Bytes& outSignature) {
+        if (!signingKey) {
+            return;
+        }
+        const Bytes signedBytes(deliveryId.begin(), deliveryId.end());
+        outSignature = bazarish::sign(*signingKey, signedBytes);
+        outSignerPublicDer = signingKey->publicDer();
+    };
+}
+
 }  // namespace
 
 PerUserDestinations::PerUserDestinations(bazarish::i2p::Router* const router,
@@ -272,17 +285,8 @@ void PerUserDestinations::serveLoop(Destination* const raw, const std::string& u
                 signingKey = raw->signingKey;
             }
             watchStream(stream);
-            federationServeOnce(*stream, engine_, nowSeconds(), peer, serving.get(),
-                userFp, getCard_,
-                [signingKey](const std::string& deliveryId, Bytes& outSignerPublicDer,
-                    Bytes& outSignature) {
-                    if (!signingKey) {
-                        return;
-                    }
-                    const Bytes signedBytes(deliveryId.begin(), deliveryId.end());
-                    outSignature = bazarish::sign(*signingKey, signedBytes);
-                    outSignerPublicDer = signingKey->publicDer();
-                });
+            federationServeOnce(*stream, engine_, nowSeconds(), peer, serving.get(), userFp,
+                getCard_, signAckWith(signingKey));
             unwatchStream(stream.get());
         } catch (const std::exception& error) {
             unwatchStream(stream.get());
@@ -371,6 +375,7 @@ PerUserDestinations::Assignment PerUserDestinations::provision(const std::string
         served = assignedLocked(*dests_.at(userFp), nowSeconds());
     }
     reapRetired();
+    announceServed();
     return served;
 }
 
@@ -395,6 +400,9 @@ std::size_t PerUserDestinations::sweepExpired(const std::int64_t now)
             bazarish::log::info("delegation for {} ran out: destination taken down",
                 bazarish::log::redact(userFp));
         }
+    }
+    if (!lapsed.empty()) {
+        announceServed();
     }
     return lapsed.size();
 }
@@ -430,11 +438,18 @@ void PerUserDestinations::revoke(const std::string& userFp)
         teardownLocked(userFp);
     }
     reapRetired();
+    announceServed();
 }
 
 void PerUserDestinations::reloadPersisted(const std::int64_t now)
 {
     startSweeper();
+    reloadLocked(now);
+    announceServed();
+}
+
+void PerUserDestinations::reloadLocked(const std::int64_t now)
+{
     const std::lock_guard<std::mutex> lock(mutex_);
     std::error_code ec;
     if (!std::filesystem::exists(destsDir(), ec)) {
@@ -471,6 +486,57 @@ void PerUserDestinations::reloadPersisted(const std::int64_t now)
 void PerUserDestinations::setGetCard(GetCardFn getCard)
 {
     getCard_ = std::move(getCard);
+}
+
+void PerUserDestinations::setServedChanged(std::function<void()> changed)
+{
+    servedChanged_ = std::move(changed);
+}
+
+void PerUserDestinations::announceServed() const
+{
+    if (servedChanged_) {
+        servedChanged_();
+    }
+}
+
+std::vector<std::string> PerUserDestinations::served() const
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<std::string> hosts;
+    for (const auto& [userFp, destination] : dests_) {
+        (void)userFp;
+        if (!destination->dest.empty()) {
+            hosts.push_back(destination->dest);
+        }
+    }
+    return hosts;
+}
+
+bool PerUserDestinations::serveDirect(
+    const std::string& to, const std::string& from, TlsPipe& pipe)
+{
+    std::string owner;
+    std::shared_ptr<Key> sealing;
+    std::shared_ptr<Key> signing;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto& [userFp, destination] : dests_) {
+            if (destination->dest == to) {
+                owner = userFp;
+                sealing = destination->sealingKey;
+                signing = destination->signingKey;
+                break;
+            }
+        }
+    }
+    if (owner.empty()) {
+        return false;
+    }
+    pipe.closeAfter(std::chrono::seconds(kServeDeadlineSeconds));
+    federationServeOnce(pipe, engine_, nowSeconds(), from, sealing.get(), owner, getCard_,
+        signAckWith(std::move(signing)));
+    return true;
 }
 
 std::shared_ptr<bazarish::i2p::Endpoint> PerUserDestinations::endpointForDest(

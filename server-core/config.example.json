@@ -12,6 +12,10 @@
   // The keys allowed to open the operator's socket, printed by the panel and by
   // the node when they start.
   "opsClients": [],
+  // Optional: the gateways of the same operator, each admitted by its key. The
+  // admin panel writes both.
+  // "gatewayListen": {"host": "127.0.0.1", "port": 8424},
+  // "gateways": [],
   // The local service node, for first-contact card fetches by fingerprint.
   "serviceNode": {"url": "https://127.0.0.1:8421", "pin": ""},
   "i2p": {

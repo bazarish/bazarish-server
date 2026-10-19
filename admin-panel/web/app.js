@@ -787,6 +787,14 @@
         return footer;
     }
 
+    function linkNotices(errors, at) {
+        (errors || []).forEach(function (failed) {
+            at.appendChild(notice("Saved, but the gateways were not linked: "
+                + (failed.error || failed), "is-error"));
+        });
+        return Boolean(errors && errors.length);
+    }
+
     function serviceQuery(target) {
         return target.service ? "service=" + encodeURIComponent(target.service)
             : "kind=" + encodeURIComponent(target.kind);
@@ -1098,6 +1106,9 @@
         var wiring = section(form, "Where it stands");
         var listen = endpointRow(wiring, "Listens on", data.listen,
             "The private channel the facade and the node reach it on. Never public.", true);
+        var gatewaysAt = endpointRow(wiring, "Gateways reach it on", data.gatewayListen,
+            "This deployment's gateways carry their users' streams to the server here, without"
+                + " I2P. Never public.", true);
         var node = fieldRow(wiring, "Service node", data.serviceNode, {
             placeholder: "http://127.0.0.1:8421", restart: true,
             hint: "The node this server reports to."
@@ -1110,20 +1121,28 @@
         var footer = saveFooter(form,
             "The log levels apply now; everything else is written for the next start.",
             function () {
+                var body = {
+                    logLevel: level(),
+                    i2pLog: i2pLog(),
+                    i2pPrivacy: privacy(),
+                    i2pTunnelQuantity: Math.round(Number(tunnels.value) || 0),
+                    listen: {
+                        host: listen.host.value.trim(),
+                        port: portRead(listen.port, "The messaging server")
+                    },
+                    serviceNode: node.value.trim()
+                };
+                if (gatewaysAt.host.value.trim() !== "" || gatewaysAt.port.value !== "") {
+                    body.gatewayListen = {
+                        host: gatewaysAt.host.value.trim(),
+                        port: portRead(gatewaysAt.port, "The gateways' socket")
+                    };
+                }
                 return {
                     method: "PUT",
                     path: withFleet("/api/service-settings?kind=server-core"),
-                    body: {
-                        logLevel: level(),
-                        i2pLog: i2pLog(),
-                        i2pPrivacy: privacy(),
-                        i2pTunnelQuantity: Math.round(Number(tunnels.value) || 0),
-                        listen: {
-                            host: listen.host.value.trim(),
-                            port: portRead(listen.port, "The messaging server")
-                        },
-                        serviceNode: node.value.trim()
-                    }
+                    body: body,
+                    after: function (answer, at) { return linkNotices(answer.gatewayLinkErrors, at); }
                 };
             });
         restartButton(footer, { kind: "server-core" });
@@ -1255,6 +1274,7 @@
                 var request = {
                     method: "PUT",
                     path: withFleet("/api/service-settings?service=" + encodeURIComponent(name)),
+                    after: function (answer, at) { return linkNotices(answer.gatewayLinkErrors, at); },
                     body: {
                         logLevel: level(),
                         listen: {
@@ -1330,16 +1350,17 @@
             hint: "Destinations kept built for call media."
         });
 
-        var routes = section(form, "Direct routes");
+        var routes = section(form, "Without I2P");
+        readOnlyRow(routes, "Server", data.server ? data.server.host + ":" + data.server.port : "");
         if (!data.direct.length) {
-            readOnlyRow(routes, "Routes", "");
+            readOnlyRow(routes, "Facades", "");
         }
         data.direct.forEach(function (route, index) {
-            readOnlyRow(routes, index === 0 ? "Routes" : "",
+            readOnlyRow(routes, index === 0 ? "Facades" : "",
                 route.dest + " -> " + route.host + ":" + route.port);
         });
-        routes.appendChild(element("p", "hint", "Destinations reached without I2P. When a facade"
-            + " this panel manages gets a new address, the panel rewrites its route here."));
+        routes.appendChild(element("p", "hint", "Written by the panel from this deployment's"
+            + " server and facades."));
 
         var facts = section(form, "What this gateway is");
         readOnlyRow(facts, "State", data.stateDirectory);
@@ -1531,14 +1552,12 @@
                 return {
                     method: "PUT", path: "/api/panel",
                     after: function (answer, at) {
-                        if (!answer.descriptorErrors.length) {
-                            return false;
-                        }
                         answer.descriptorErrors.forEach(function (failed) {
                             at.appendChild(notice("Saved, but the descriptor of " + failed.fleet
                                 + " was not updated: " + failed.error, "is-error"));
                         });
-                        return true;
+                        return linkNotices(answer.gatewayLinkErrors, at)
+                            || answer.descriptorErrors.length > 0;
                     },
                     body: {
                         admins: list,

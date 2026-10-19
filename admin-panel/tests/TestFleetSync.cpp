@@ -179,11 +179,83 @@ int main()
     CHECK(written[0].at("host") == "10.0.0.2");
     CHECK(written[1].at("dest") == "other.b32.i2p");
 
+    nlohmann::json coreSettings = {{"gatewayListen", {{"host", "0.0.0.0"}, {"port", 8424}}},
+        {"gateways", nlohmann::json::array()}};
+    int coreWrites = 0;
+    const auto core = serving(services);
+    core->get("/v1/messaging/settings", [&](const http::Request&) {
+        const std::lock_guard<std::mutex> lock(guard);
+        return json(coreSettings);
+    });
+    core->put("/v1/messaging/settings", [&](const http::Request& request) {
+        const std::lock_guard<std::mutex> lock(guard);
+        ++coreWrites;
+        coreSettings.update(nlohmann::json::parse(request.body));
+        return json(coreSettings);
+    });
+    const int corePort = core->start();
+
+    const auto directFacade = serving(services);
+    directFacade->get("/settings", [&](const http::Request&) {
+        return json({{"url", kFacadeA}, {"directListen", {{"host", "10.0.0.7"}, {"port", 8418}}}});
+    });
+    const int directFacadePort = directFacade->start();
+
+    nlohmann::json linkedSettings = {{"server", nullptr}, {"direct", nlohmann::json::array()}};
+    int linkedWrites = 0;
+    const auto linked = serving(services);
+    linked->get("/settings", [&](const http::Request&) {
+        const std::lock_guard<std::mutex> lock(guard);
+        return json(linkedSettings);
+    });
+    linked->put("/settings", [&](const http::Request& request) {
+        const std::lock_guard<std::mutex> lock(guard);
+        ++linkedWrites;
+        linkedSettings.update(nlohmann::json::parse(request.body));
+        return json(linkedSettings);
+    });
+    const int linkedPort = linked->start();
+
+    ServiceEntry linkedEntry = entry("home-gateway", kGatewayKind, linkedPort, pin);
+    const Fleet family{"family",
+        {entry("server-core", kServerCoreKind, corePort, pin),
+            entry("with-direct", kFacadeKind, directFacadePort, pin),
+            entry("without-direct", kFacadeKind, facadeBPort, pin), linkedEntry}};
+    const GatewayLinking first = linkGateways(family, panel, panelKeys);
+    CHECK(first.error.empty());
+    CHECK(first.gateways.size() == 1);
+    CHECK(first.gateways[0].changed);
+    CHECK(coreWrites == 1);
+    CHECK(coreSettings.at("gateways") == nlohmann::json::array({pin}));
+    CHECK(linkedWrites == 1);
+    CHECK(linkedSettings.at("server")
+        == nlohmann::json({{"host", "127.0.0.1"}, {"port", 8424}, {"pin", pin}}));
+    CHECK(linkedSettings.at("direct")
+        == nlohmann::json::array({{{"dest", "aaaa.b32.i2p"}, {"host", "10.0.0.7"},
+            {"port", 8418}, {"pin", pin}}}));
+
+    const GatewayLinking again = linkGateways(family, panel, panelKeys);
+    CHECK(again.error.empty());
+    CHECK(!again.gateways[0].changed);
+    CHECK(coreWrites == 1);
+    CHECK(linkedWrites == 1);
+
+    {
+        const std::lock_guard<std::mutex> lock(guard);
+        coreSettings["gatewayListen"] = nullptr;
+    }
+    CHECK(linkGateways(family, panel, panelKeys).gateways[0].changed);
+    CHECK(linkedSettings.at("server").is_null());
+    CHECK(linkedSettings.at("direct").size() == 1);
+
     node->stop();
     facadeA->stop();
     facadeB->stop();
     gateway->stop();
     idle->stop();
+    core->stop();
+    directFacade->stop();
+    linked->stop();
     std::filesystem::remove_all(root);
     std::printf("TestFleetSync: all checks passed\n");
     return 0;

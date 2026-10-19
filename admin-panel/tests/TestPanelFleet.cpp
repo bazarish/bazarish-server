@@ -156,7 +156,7 @@ int main()
     const auto facade = serving(services);
     facade->get("/settings", [&](const http::Request&) {
         const std::lock_guard<std::mutex> lock(guard);
-        return json({{"url", facadeUrl}});
+        return json({{"url", facadeUrl}, {"directListen", {{"host", "0.0.0.0"}, {"port", 8418}}}});
     });
     facade->post("/new-address", [&](const http::Request&) {
         const std::lock_guard<std::mutex> lock(guard);
@@ -241,6 +241,9 @@ int main()
         const nlohmann::json listed
             = nlohmann::json::parse(panel.ask("GET", "/api/facades?fleet=home").body);
         CHECK(listed.at("facades")[0].at("inDescriptor") == true);
+        const std::lock_guard<std::mutex> lock(guard);
+        CHECK(routes == nlohmann::json::array({{{"dest", "aaaa.b32.i2p"}, {"host", "127.0.0.1"},
+                            {"port", 8418}, {"pin", services.pin}}}));
     }
 
     CHECK(panel.ask("GET", "/api/service-settings?fleet=home&kind=facade").status == 400);

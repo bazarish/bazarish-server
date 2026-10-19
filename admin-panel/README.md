@@ -87,6 +87,11 @@ its own and reports it, and the panel writes them into the server descriptor
 whenever the service list is saved or a facade is given a new address. A new
 address also rewrites any gateway's direct route to the old one.
 
+The gateways of a deployment are linked to its server-core and facades the same
+way: whenever the service list or the settings of server-core or a facade are
+saved, the panel writes each gateway's `server` and `direct` and server-core's
+`gateways`. The traffic then goes between them directly.
+
 The panel makes its own certificate in `<state>` on first start and prints the
 hash of its key next to its fingerprint. Both go out to the fleet: the
 fingerprint into each service's `"operators"`, the key hash into its

@@ -18,6 +18,7 @@ namespace {
 constexpr const char* kFacadeSettingsPath = "/settings";
 constexpr const char* kGatewaySettingsPath = "/settings";
 constexpr const char* kNodeSettingsPath = "/v1/account/settings";
+constexpr const char* kServerSettingsPath = "/v1/messaging/settings";
 constexpr const char* kSchemeMark = "://";
 
 FacadeReport reportOf(const ServiceEntry& facade, const Identity& identity,
@@ -40,6 +41,24 @@ FacadeReport reportOf(const ServiceEntry& facade, const Identity& identity,
         report.error = "it reports no address: it is older than this panel";
     }
     return report;
+}
+
+bool everyInterface(const std::string& host)
+{
+    return host.empty() || host == "0.0.0.0" || host == "::" || host == "[::]";
+}
+
+// A listener on every interface is dialled where the panel reaches the same service.
+nlohmann::json dialledAt(const nlohmann::json& listen, const ServiceEntry& service)
+{
+    const std::string host = listen.value("host", std::string());
+    return {{"host", everyInterface(host) ? hostOf(service.url) : host},
+        {"port", listen.value("port", 0)}, {"pin", service.pin}};
+}
+
+bool listening(const nlohmann::json& listen)
+{
+    return listen.is_object() && listen.value("port", 0) > 0;
 }
 
 }  // namespace
@@ -116,6 +135,88 @@ std::string publishFacades(const Fleet& fleet, const Identity& identity,
         return "the service node did not take the addresses: " + failureText(written);
     }
     return {};
+}
+
+GatewayLinking linkGateways(
+    const Fleet& fleet, const Identity& identity, const tls::Credential& credential)
+{
+    GatewayLinking linking;
+    nlohmann::json pins = nlohmann::json::array();
+    for (const ServiceEntry& service : fleet.services) {
+        if (service.kind == kGatewayKind) {
+            pins.push_back(service.pin);
+        }
+    }
+    nlohmann::json server = nullptr;
+    for (const ServiceEntry& service : fleet.services) {
+        if (service.kind != kServerCoreKind) {
+            continue;
+        }
+        const JsonResult shown = callJson(service, identity, credential, "GET", kServerSettingsPath);
+        if (!shown.ok) {
+            linking.error = "server-core did not show its settings: " + failureText(shown);
+            return linking;
+        }
+        const nlohmann::json settings = nlohmann::json::parse(shown.body);
+        if (settings.value("gateways", nlohmann::json::array()) != pins) {
+            const JsonResult written = callJson(service, identity, credential, "PUT",
+                kServerSettingsPath, nlohmann::json{{"gateways", pins}}.dump());
+            if (!written.ok) {
+                linking.error = "server-core did not take the gateways: " + failureText(written);
+                return linking;
+            }
+        }
+        const nlohmann::json listen = settings.value("gatewayListen", nlohmann::json());
+        if (listening(listen)) {
+            server = dialledAt(listen, service);
+        }
+    }
+    nlohmann::json direct = nlohmann::json::array();
+    for (const ServiceEntry& service : fleet.services) {
+        if (service.kind != kFacadeKind) {
+            continue;
+        }
+        const JsonResult shown = callJson(service, identity, credential, "GET", kFacadeSettingsPath);
+        if (!shown.ok) {
+            linking.error = "facade \"" + service.name + "\" did not show its settings ("
+                + failureText(shown) + "), so the gateways were left as they were";
+            return linking;
+        }
+        const nlohmann::json settings = nlohmann::json::parse(shown.body);
+        const nlohmann::json listen = settings.value("directListen", nlohmann::json());
+        const std::string url = settings.value("url", std::string());
+        if (!listening(listen) || url.empty()) {
+            continue;
+        }
+        nlohmann::json route = dialledAt(listen, service);
+        route["dest"] = hostOf(url);
+        direct.push_back(std::move(route));
+    }
+    for (const ServiceEntry& service : fleet.services) {
+        if (service.kind != kGatewayKind) {
+            continue;
+        }
+        GatewayRepoint result;
+        result.name = service.name;
+        const JsonResult shown = callJson(service, identity, credential, "GET", kGatewaySettingsPath);
+        if (!shown.ok) {
+            result.error = failureText(shown);
+            linking.gateways.push_back(std::move(result));
+            continue;
+        }
+        const nlohmann::json settings = nlohmann::json::parse(shown.body);
+        if (settings.value("server", nlohmann::json()) != server
+            || settings.value("direct", nlohmann::json::array()) != direct) {
+            const JsonResult written = callJson(service, identity, credential, "PUT",
+                kGatewaySettingsPath, nlohmann::json{{"server", server}, {"direct", direct}}.dump());
+            result.changed = written.ok;
+            if (!written.ok) {
+                result.error = failureText(written);
+            }
+        }
+        linking.gateways.push_back(std::move(result));
+    }
+    return linking;
 }
 
 std::vector<GatewayRepoint> repointGateways(const std::vector<Fleet>& fleets,

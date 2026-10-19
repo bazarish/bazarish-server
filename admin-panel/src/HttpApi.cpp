@@ -100,6 +100,20 @@ std::string urlEncoded(const std::string& text)
     return out;
 }
 
+nlohmann::json linkErrorsOf(const bazarish::admin::GatewayLinking& linking)
+{
+    nlohmann::json errors = nlohmann::json::array();
+    if (!linking.error.empty()) {
+        errors.push_back(linking.error);
+    }
+    for (const bazarish::admin::GatewayRepoint& gateway : linking.gateways) {
+        if (!gateway.error.empty()) {
+            errors.push_back("gateway \"" + gateway.name + "\": " + gateway.error);
+        }
+    }
+    return errors;
+}
+
 std::string settingsPathOf(const std::string& kind)
 {
     if (kind == bazarish::admin::kServerCoreKind) {
@@ -532,7 +546,15 @@ void HttpApi::registerRoutes()
                 result.error.empty() ? service->name + " unreachable" : result.error);
             return;
         }
-        sendJson(response, result.body, result.status);
+        const bool linksGateways = service->kind == kServerCoreKind || service->kind == kFacadeKind;
+        const std::optional<Fleet> fleet = fleetNamed(request.query("fleet"));
+        if (method != "PUT" || restarting || !result.ok || !linksGateways || !fleet.has_value()) {
+            sendJson(response, result.body, result.status);
+            return;
+        }
+        nlohmann::json answer = nlohmann::json::parse(result.body);
+        answer["gatewayLinkErrors"] = linkErrorsOf(linkGateways(*fleet, identity_, credential_));
+        sendJson(response, answer.dump(), result.status);
     };
 
     http_->get("/api/facades", api([this](const http::Request& request,
@@ -735,14 +757,20 @@ void HttpApi::registerRoutes()
             }
             settings_->set(panel);
             nlohmann::json descriptors = nlohmann::json::array();
+            nlohmann::json links = nlohmann::json::array();
             for (const Fleet& fleet : panel.fleets) {
                 const std::string error = publishFacades(fleet, identity_, credential_);
                 if (!error.empty()) {
                     descriptors.push_back({{"fleet", fleet.name}, {"error", error}});
                 }
+                for (const nlohmann::json& linkError :
+                    linkErrorsOf(linkGateways(fleet, identity_, credential_))) {
+                    links.push_back({{"fleet", fleet.name}, {"error", linkError}});
+                }
             }
             sendJson(response,
-                nlohmann::json{{"admins", panel.admins}, {"descriptorErrors", descriptors}}
+                nlohmann::json{{"admins", panel.admins}, {"descriptorErrors", descriptors},
+                    {"gatewayLinkErrors", links}}
                     .dump());
         } catch (const std::invalid_argument& error) {
             sendError(response, 400, error.what());

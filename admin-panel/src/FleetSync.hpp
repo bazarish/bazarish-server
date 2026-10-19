@@ -39,6 +39,14 @@ std::vector<GatewayRepoint> repointGateways(const std::vector<Fleet>& fleets,
     const std::string& fromUrl, const std::string& toUrl, const Identity& identity,
     const tls::Credential& credential);
 
+struct GatewayLinking {
+    std::string error;
+    std::vector<GatewayRepoint> gateways;
+};
+
+GatewayLinking linkGateways(
+    const Fleet& fleet, const Identity& identity, const tls::Credential& credential);
+
 std::string hostOf(const std::string& url);
 
 }  // namespace bazarish::admin

@@ -17,6 +17,18 @@ namespace {
 constexpr std::chrono::seconds kReadyWait{180};
 constexpr std::chrono::seconds kStatusWait{2};
 constexpr std::chrono::milliseconds kStatusPoll{100};
+constexpr std::chrono::seconds kDialWait{60};
+constexpr std::chrono::seconds kLeaseSetWait{10};
+
+int leaseSetsOf(const i2p::Router& router, const i2p::Endpoint& endpoint)
+{
+    for (const i2p::LocalDestination& destination : router.localDestinations()) {
+        if (destination.host == endpoint.routingHost()) {
+            return destination.remoteLeaseSets;
+        }
+    }
+    return -1;
+}
 
 bool routedByGateway(const i2p::Router& router, const i2p::Endpoint& endpoint)
 {
@@ -36,8 +48,8 @@ bool routedByGateway(const i2p::Router& router, const i2p::Endpoint& endpoint)
 
 int main(const int argc, const char** argv)
 {
-    if (argc != 2) {
-        std::printf("usage: gateway_smoke https://host[:port]/<path>#<token>\n");
+    if (argc != 2 && argc != 3) {
+        std::printf("usage: gateway_smoke https://host[:port]/<path>#<token> [host to dial]\n");
         return 2;
     }
     const std::optional<client::GatewayAddress> address
@@ -90,6 +102,17 @@ int main(const int argc, const char** argv)
         std::chrono::steady_clock::now() - askedAt);
     std::printf("[smoke] an unpublished stream destination %s after %lld ms\n",
         warm ? "had tunnels" : "still had none", static_cast<long long>(waited.count()));
+    if (argc == 3) {
+        const std::unique_ptr<i2p::Stream> dialled = lookup->connect(argv[2], kDialWait);
+        std::printf("[smoke] dialled %s: %s\n", argv[2], dialled ? "connected" : "no answer");
+        int held = leaseSetsOf(router, *lookup);
+        const auto until = std::chrono::steady_clock::now() + kLeaseSetWait;
+        while (held <= 0 && std::chrono::steady_clock::now() < until) {
+            std::this_thread::sleep_for(kStatusPoll);
+            held = leaseSetsOf(router, *lookup);
+        }
+        std::printf("[smoke] the dialling destination reports %d leasesets\n", held);
+    }
     lookup->stop();
 
     const auto media = [&router]() {

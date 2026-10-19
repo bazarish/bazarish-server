@@ -112,7 +112,23 @@ int main(const int argc, const char** argv)
             std::this_thread::sleep_for(kStatusPoll);
             held = leaseSetsOf(router, *lookup);
         }
-        std::printf("[smoke] the dialling destination reports %d leasesets\n", held);
+        std::printf("[smoke] the dialling destination reports %d leasesets, routed by the gateway: %s\n",
+            held, routedByGateway(router, *lookup) ? "yes" : "no");
+
+        i2p::EndpointConfig namedConfig;
+        namedConfig.published = false;
+        namedConfig.target = argv[2];
+        const auto namedAt = std::chrono::steady_clock::now();
+        const std::shared_ptr<i2p::Endpoint> named = router.createEndpoint(namedConfig);
+        const bool namedReady = named->waitReady(kReadyWait);
+        const auto namedWaited = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - namedAt);
+        const std::unique_ptr<i2p::Stream> namedStream = named->connect(argv[2], kDialWait);
+        std::printf("[smoke] a destination named for that host: %s after %lld ms, routed by the"
+                    " gateway: %s, dial %s\n",
+            namedReady ? "ready" : "not ready", static_cast<long long>(namedWaited.count()),
+            routedByGateway(router, *named) ? "yes" : "no", namedStream ? "connected" : "failed");
+        named->stop();
         if (dialled) {
             dialled->close();
         }

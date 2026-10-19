@@ -19,6 +19,7 @@ constexpr std::chrono::seconds kStatusWait{2};
 constexpr std::chrono::milliseconds kStatusPoll{100};
 constexpr std::chrono::seconds kDialWait{60};
 constexpr std::chrono::seconds kLeaseSetWait{10};
+constexpr std::chrono::seconds kAfterClose[] = {std::chrono::seconds(5), std::chrono::seconds(55)};
 
 int leaseSetsOf(const i2p::Router& router, const i2p::Endpoint& endpoint)
 {
@@ -112,6 +113,16 @@ int main(const int argc, const char** argv)
             held = leaseSetsOf(router, *lookup);
         }
         std::printf("[smoke] the dialling destination reports %d leasesets\n", held);
+        if (dialled) {
+            dialled->close();
+        }
+        int waited = 0;
+        for (const std::chrono::seconds wait : kAfterClose) {
+            std::this_thread::sleep_for(wait);
+            waited += static_cast<int>(wait.count());
+            std::printf("[smoke] %d s after the stream closed: %d leasesets\n", waited,
+                leaseSetsOf(router, *lookup));
+        }
     }
     lookup->stop();
 

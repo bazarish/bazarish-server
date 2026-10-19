@@ -59,6 +59,7 @@ public:
 
     std::vector<std::shared_ptr<Session>> sweep(std::int64_t now);
     std::vector<std::shared_ptr<Session>> drain();
+    std::vector<std::shared_ptr<Session>> all() const;
 
     std::size_t size() const { return sessions_.size(); }
 

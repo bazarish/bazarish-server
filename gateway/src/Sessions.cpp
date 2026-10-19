@@ -103,6 +103,16 @@ std::vector<std::shared_ptr<Session>> SessionStore::drain()
     return gone;
 }
 
+std::vector<std::shared_ptr<Session>> SessionStore::all() const
+{
+    std::vector<std::shared_ptr<Session>> open;
+    for (const auto& [cookie, session] : sessions_) {
+        (void)cookie;
+        open.push_back(session);
+    }
+    return open;
+}
+
 std::vector<std::shared_ptr<Session>> SessionStore::sweep(const std::int64_t now)
 {
     std::vector<std::shared_ptr<Session>> gone;

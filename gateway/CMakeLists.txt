@@ -77,3 +77,9 @@ bazarish_gateway_add_test(TestStopWhileWriting)
 bazarish_gateway_add_test(TestChurnDirect)
 bazarish_gateway_add_test(TestDropAfterAnswer)
 bazarish_gateway_add_test(TestSilentGateway)
+
+# The other end of the server link is server-core's own, so it runs only beside it.
+if(TARGET bazarish_server_lib)
+    bazarish_gateway_add_test(TestServerLink)
+    target_link_libraries(TestServerLink PRIVATE bazarish_server_lib)
+endif()

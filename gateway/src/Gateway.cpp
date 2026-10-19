@@ -29,6 +29,10 @@ constexpr std::chrono::seconds kReplayGrace{5};
 
 constexpr i2p::Privacy kCallPrivacy = i2p::Privacy::eMinimal;
 
+constexpr std::chrono::seconds kServerHandshake{10};
+// Every address server-core serves, in one line: room for a few hundred thousand.
+constexpr std::size_t kMaxServedListBytes = 16 * 1024 * 1024;
+
 http::Response opsRefusal(const int status, const std::string& message)
 {
     return {status, "application/json", {}, nlohmann::json{{"error", {{"message", message}}}}.dump()};
@@ -55,6 +59,10 @@ nlohmann::json editable(const Settings& written)
         {"callPool", written.callPool},
         {"poolMax", kMaxPoolDepth},
         {"direct", direct},
+        {"server", written.server.has_value()
+                ? nlohmann::json{{"host", written.server->host}, {"port", written.server->port},
+                    {"pin", written.server->pin}}
+                : nlohmann::json(nullptr)},
         {"stateDirectory", written.stateDir.string()},
         {"version", kVersion},
     };
@@ -87,6 +95,7 @@ Gateway::Gateway(Settings settings, i2p::Router& router, OpsControl control)
     }())
     , sessions_(settings_.sessionTtlSeconds)
     , direct_(settings_.direct)
+    , serverLink_(settings_.server)
     , startedAt_(nowSeconds())
 {
 }
@@ -194,6 +203,7 @@ http::Response Gateway::settingsChanged(const http::Request& request)
     }
     std::vector<std::pair<std::vector<std::string>, nlohmann::json>> writes;
     std::optional<std::vector<DirectRoute>> direct;
+    std::optional<std::optional<ServerLink>> link;
     try {
         const nlohmann::json body = nlohmann::json::parse(request.body);
         if (body.contains("i2pPrivacy")) {
@@ -227,6 +237,10 @@ http::Response Gateway::settingsChanged(const http::Request& request)
             direct = directRoutesFrom(body.at("direct"));
             writes.push_back({{"direct"}, body.at("direct")});
         }
+        if (body.contains("server")) {
+            link = serverLinkFrom(body.at("server"));
+            writes.push_back({{"server"}, body.at("server")});
+        }
     } catch (const std::exception& error) {
         return opsRefusal(400, error.what());
     }
@@ -236,9 +250,15 @@ http::Response Gateway::settingsChanged(const http::Request& request)
         file.set(keys, value);
     }
     if (direct.has_value()) {
-        const std::lock_guard<std::mutex> lock(directMutex_);
-        direct_ = std::move(*direct);
-        bazarish::log::info("gateway: {} direct route(s) now", direct_.size());
+        {
+            const std::lock_guard<std::mutex> lock(directMutex_);
+            direct_ = std::move(*direct);
+            bazarish::log::info("gateway: {} direct route(s) now", direct_.size());
+        }
+        dropUnrouted();
+    }
+    if (link.has_value()) {
+        setServerLink(std::move(*link));
     }
     return {200, "application/json", {}, editable(writtenSettings(control_.configPath)).dump()};
 }
@@ -310,6 +330,7 @@ int Gateway::start()
     const int bound = server_.start();
     running_.store(true);
     status_ = std::thread([this]() { statusLoop(); });
+    link_ = std::thread([this]() { linkLoop(); });
     return bound;
 }
 
@@ -342,6 +363,16 @@ void Gateway::stop()
 {
     if (running_.exchange(false) && status_.joinable()) {
         status_.join();
+    }
+    {
+        const std::lock_guard<std::mutex> lock(linkMutex_);
+        if (watch_) {
+            watch_->close();
+        }
+    }
+    linkChanged_.notify_all();
+    if (link_.joinable()) {
+        link_.join();
     }
     std::vector<std::shared_ptr<Session>> held;
     {
@@ -436,10 +467,12 @@ void Gateway::retire(const std::shared_ptr<Session>& session)
 {
     std::vector<std::shared_ptr<EndpointEntry>> endpoints;
     std::vector<std::shared_ptr<StreamEntry>> streams;
+    bool publishedGone = false;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
         for (const auto& [id, endpoint] : session->endpoints) {
             (void)id;
+            publishedGone = publishedGone || endpoint->published;
             published_.erase(endpoint->host);
             endpoint->running.store(false);
             endpoints.push_back(endpoint);
@@ -468,6 +501,9 @@ void Gateway::retire(const std::shared_ptr<Session>& session)
         if (endpoint->worker.joinable()) {
             endpoint->worker.join();
         }
+    }
+    if (publishedGone) {
+        dropUnrouted();
     }
 }
 
@@ -703,7 +739,7 @@ constexpr std::chrono::milliseconds kWindowWait{10};
 std::shared_ptr<EndpointEntry> endpointOf(const Session& session, const std::uint32_t id)
 {
     const auto found = session.endpoints.find(id);
-    if (found == session.endpoints.end() || found->second->endpoint == nullptr) {
+    if (found == session.endpoints.end() || !found->second->made) {
         return nullptr;
     }
     return found->second;
@@ -763,8 +799,10 @@ void Gateway::onEndpointCreate(const std::shared_ptr<Session>& session,
     }
     const i2p::EndpointConfig config = shapeOf(
         kind == "raw", body.value("published", true), body.value("realtime", false));
+    const std::string target = body.value("target", std::string());
 
     std::shared_ptr<EndpointEntry> entry;
+    bool local = false;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
         if (session->endpoints.count(frame.ref) > 0) {
@@ -775,12 +813,28 @@ void Gateway::onEndpointCreate(const std::shared_ptr<Session>& session,
         entry->raw = kind == "raw";
         entry->published = config.published;
         entry->realtime = config.realtime;
+        local = !entry->raw && !entry->published && !target.empty()
+            && reachesLocallyLocked(target);
         session->endpoints.emplace(entry->id, entry);
     }
-    entry->endpoint = endpointFor(config);
-    entry->host = entry->endpoint->routingHost();
+    std::shared_ptr<i2p::Endpoint> endpoint;
+    std::string publicBase64;
+    if (local) {
+        publicBase64 = i2p::Keys::generate().publicBase64();
+    } else {
+        endpoint = endpointFor(config);
+        publicBase64 = endpoint->publicBase64();
+    }
     {
         const std::lock_guard<std::mutex> lock(mutex_);
+        entry->endpoint = endpoint;
+        entry->publicBase64 = publicBase64;
+        entry->host = endpoint ? endpoint->routingHost() : i2p::routingHost(publicBase64);
+        if (local) {
+            entry->target = target;
+            entry->localRoute.store(true);
+        }
+        entry->made = true;
         if (entry->published) {
             published_[entry->host] = Local{session, entry};
         }
@@ -802,20 +856,33 @@ void Gateway::onEndpointCreate(const std::shared_ptr<Session>& session,
 void Gateway::onEndpointStop(const std::shared_ptr<Session>& session,
     const http::SocketPtr& socket, const Frame& frame)
 {
+    const std::shared_ptr<EndpointEntry> entry = stopEndpoint(session, frame.ref);
+    if (entry == nullptr) {
+        fail(socket, frame.ref, Fault::eNoEndpoint, "no such destination on this session");
+        return;
+    }
+    socket->send(encode(FrameType::eOk, frame.ref));
+    if (entry->published) {
+        dropUnrouted();
+    }
+}
+
+std::shared_ptr<EndpointEntry> Gateway::stopEndpoint(
+    const std::shared_ptr<Session>& session, const std::uint32_t id)
+{
     std::shared_ptr<EndpointEntry> entry;
     std::vector<std::shared_ptr<StreamEntry>> orphans;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
-        entry = endpointOf(*session, frame.ref);
+        entry = endpointOf(*session, id);
         if (entry == nullptr) {
-            fail(socket, frame.ref, Fault::eNoEndpoint, "no such destination on this session");
-            return;
+            return nullptr;
         }
         entry->running.store(false);
-        session->endpoints.erase(frame.ref);
+        session->endpoints.erase(id);
         published_.erase(entry->host);
         for (auto at = session->streams.begin(); at != session->streams.end();) {
-            if (at->second->endpoint == frame.ref) {
+            if (at->second->endpoint == id) {
                 orphans.push_back(at->second);
                 at = session->streams.erase(at);
             } else {
@@ -823,7 +890,9 @@ void Gateway::onEndpointStop(const std::shared_ptr<Session>& session,
             }
         }
     }
-    entry->endpoint->stop();
+    if (entry->endpoint) {
+        entry->endpoint->stop();
+    }
     for (const std::shared_ptr<StreamEntry>& stranded : orphans) {
         orphan(stranded);
         stranded->running.store(false);
@@ -837,7 +906,7 @@ void Gateway::onEndpointStop(const std::shared_ptr<Session>& session,
     if (entry->worker.joinable()) {
         entry->worker.join();
     }
-    socket->send(encode(FrameType::eOk, frame.ref));
+    return entry;
 }
 
 void Gateway::onRawSend(const std::shared_ptr<Session>& session, const http::SocketPtr& socket,
@@ -930,6 +999,10 @@ void Gateway::onStreamOpen(const std::shared_ptr<Session>& session,
             fail(socket, frame.ref, Fault::eUnsupported, "that destination carries datagrams");
             return;
         }
+        if (!from->target.empty() && host != from->target) {
+            fail(socket, frame.ref, Fault::eRefused, "this destination dials only its target");
+            return;
+        }
         if (streamOf(*session, frame.ref) != nullptr) {
             fail(socket, frame.ref, Fault::eBadFrame, "that identifier is already a stream");
             return;
@@ -977,14 +1050,24 @@ void Gateway::dial(const std::shared_ptr<Session>& session,
 {
     const auto until = std::chrono::steady_clock::now() + deadline;
     const std::optional<DirectRoute> route = directFor(host);
+    const std::optional<std::pair<ServerLink, tls::Credential>> server
+        = route.has_value() ? std::nullopt : serverFor(host);
+    const bool bypass = route.has_value() || server.has_value();
     std::unique_ptr<Conduit> opened;
-    while (std::chrono::steady_clock::now() < until && from->running.load()) {
+    while (std::chrono::steady_clock::now() < until && from->running.load()
+        && (bypass || from->endpoint != nullptr)) {
         const auto left = std::max(std::chrono::duration_cast<std::chrono::seconds>(
                                        until - std::chrono::steady_clock::now()),
             std::chrono::seconds(1));
         try {
-            opened = route.has_value() ? overTls(*route, left)
-                                       : overI2p(from->endpoint->connect(host, left));
+            if (route.has_value()) {
+                opened = overTls(*route, left);
+            } else if (server.has_value()) {
+                opened
+                    = overServer(server->first, server->second, host, from->publicBase64, left);
+            } else {
+                opened = overI2p(from->endpoint->connect(host, left));
+            }
         } catch (const std::exception&) {
             opened.reset();
         }
@@ -1009,7 +1092,7 @@ void Gateway::dial(const std::shared_ptr<Session>& session,
         return;
     }
 
-    if (route.has_value()) {
+    if (bypass) {
         from->localRoute.store(true);
     }
     std::shared_ptr<StreamEntry> entry = std::make_shared<StreamEntry>();
@@ -1066,7 +1149,7 @@ bool Gateway::meetLocally(const std::shared_ptr<Session>& session,
         back->send(answer);
     }
     control->send(encodeJson(FrameType::eStreamInbound, there->id,
-        {{"endpoint", to->id}, {"peer", from->endpoint->publicBase64()}}));
+        {{"endpoint", to->id}, {"peer", from->publicBase64}}));
     return true;
 }
 
@@ -1428,8 +1511,11 @@ void Gateway::statusLoop()
                     int in = 0;
                     int out = 0;
                     int leases = 0;
+                    if (entry->endpoint == nullptr) {
+                        ready = entry->made;
+                    }
                     for (const i2p::LocalDestination& destination : local) {
-                        if (destination.host == entry->host) {
+                        if (entry->endpoint != nullptr && destination.host == entry->host) {
                             ready = destination.ready;
                             in = destination.inboundTunnels;
                             out = destination.outboundTunnels;
@@ -1459,6 +1545,137 @@ void Gateway::statusLoop()
         for (const auto& [socket, frame] : outgoing) {
             socket->send(frame);
         }
+    }
+}
+
+void Gateway::setServerLink(std::optional<ServerLink> link)
+{
+    std::shared_ptr<server::TlsPipe> watching;
+    {
+        const std::lock_guard<std::mutex> lock(linkMutex_);
+        serverLink_ = std::move(link);
+        watching = watch_;
+    }
+    if (watching) {
+        watching->close();
+    }
+    linkChanged_.notify_all();
+}
+
+std::optional<std::pair<ServerLink, tls::Credential>> Gateway::serverFor(
+    const std::string& host) const
+{
+    const std::lock_guard<std::mutex> lock(linkMutex_);
+    if (!serverLink_.has_value() || !own_.has_value() || served_.count(host) == 0) {
+        return std::nullopt;
+    }
+    return std::make_pair(*serverLink_, *own_);
+}
+
+bool Gateway::reachesLocallyLocked(const std::string& host) const
+{
+    const auto found = published_.find(host);
+    if (found != published_.end()) {
+        const std::shared_ptr<EndpointEntry> entry = found->second.endpoint.lock();
+        if (entry != nullptr && !entry->raw) {
+            return true;
+        }
+    }
+    if (directFor(host).has_value()) {
+        return true;
+    }
+    const std::lock_guard<std::mutex> lock(linkMutex_);
+    return served_.count(host) > 0;
+}
+
+void Gateway::dropUnrouted()
+{
+    std::vector<std::pair<std::shared_ptr<Session>, std::uint32_t>> stranded;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        for (const std::shared_ptr<Session>& session : sessions_.all()) {
+            for (const auto& [id, entry] : session->endpoints) {
+                if (!entry->target.empty() && !reachesLocallyLocked(entry->target)) {
+                    stranded.emplace_back(session, id);
+                }
+            }
+        }
+    }
+    for (const auto& [session, id] : stranded) {
+        if (stopEndpoint(session, id) == nullptr) {
+            continue;
+        }
+        http::SocketPtr control;
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            control = session->control;
+        }
+        if (control) {
+            control->send(encodeJson(FrameType::eEndpointLost, id, nlohmann::json::object()));
+        }
+        bazarish::log::info("gateway: a destination lost its route and was stopped");
+    }
+}
+
+void Gateway::linkLoop()
+{
+    while (running_.load()) {
+        ServerLink link;
+        tls::Credential own;
+        {
+            std::unique_lock<std::mutex> lock(linkMutex_);
+            linkChanged_.wait(
+                lock, [this]() { return !running_.load() || serverLink_.has_value(); });
+            if (!running_.load()) {
+                return;
+            }
+            if (!own_.has_value()) {
+                own_ = tls::selfSigned(settings_.stateDir);
+            }
+            link = *serverLink_;
+            own = *own_;
+        }
+        try {
+            const std::shared_ptr<server::TlsPipe> pipe
+                = server::TlsPipe::dial(link.host, link.port, link.pin, kServerHandshake, &own);
+            {
+                const std::lock_guard<std::mutex> lock(linkMutex_);
+                watch_ = pipe;
+                if (!running_.load() || serverLink_ != link) {
+                    pipe->close();
+                }
+            }
+            const std::string ask = nlohmann::json({{"watch", true}}).dump() + "\n";
+            pipe->writeAll(ask.data(), ask.size());
+            bazarish::log::info("gateway: linked to the server at {}:{}", link.host, link.port);
+            for (;;) {
+                const nlohmann::json listed
+                    = nlohmann::json::parse(pipe->readLine(kMaxServedListBytes));
+                std::set<std::string> served;
+                for (const nlohmann::json& dest : listed.at("dests")) {
+                    served.insert(dest.get<std::string>());
+                }
+                const std::size_t count = served.size();
+                {
+                    const std::lock_guard<std::mutex> lock(linkMutex_);
+                    served_ = std::move(served);
+                }
+                bazarish::log::info("gateway: the server serves {} destination(s)", count);
+                dropUnrouted();
+            }
+        } catch (const std::exception& error) {
+            if (running_.load()) {
+                bazarish::log::warn("gateway: the server link: {}", error.what());
+            }
+        }
+        {
+            const std::lock_guard<std::mutex> lock(linkMutex_);
+            served_.clear();
+            watch_.reset();
+        }
+        dropUnrouted();
+        std::unique_lock<std::mutex> lock(linkMutex_);
+        linkChanged_.wait_for(lock, kDialRetryDelay, [this]() { return !running_.load(); });
     }
 }
 

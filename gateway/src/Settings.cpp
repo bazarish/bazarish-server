@@ -63,6 +63,21 @@ std::vector<DirectRoute> directRoutesFrom(const nlohmann::json& list)
     return routes;
 }
 
+std::optional<ServerLink> serverLinkFrom(const nlohmann::json& link)
+{
+    if (link.is_null()) {
+        return std::nullopt;
+    }
+    ServerLink server;
+    server.host = link.value("host", std::string());
+    server.port = link.value("port", 0);
+    server.pin = link.value("pin", std::string());
+    if (server.host.empty() || server.port <= 0 || server.pin.empty()) {
+        throw std::runtime_error("\"server\" names an address and the key it presents");
+    }
+    return server;
+}
+
 Settings Settings::from(const ConfigView& config)
 {
     Settings settings;
@@ -116,6 +131,9 @@ Settings Settings::from(const ConfigView& config)
     const nlohmann::json& document = config.document();
     if (document.contains("direct")) {
         settings.direct = directRoutesFrom(document.at("direct"));
+    }
+    if (document.contains("server")) {
+        settings.server = serverLinkFrom(document.at("server"));
     }
 
     if (const std::string named = config.text("i2p.privacy"); !named.empty()) {

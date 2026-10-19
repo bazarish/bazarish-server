@@ -16,8 +16,9 @@ draws on screen.
 ## What the gateway is
 
 A gateway is a host with an I2P router that a client borrows over the network.
-It is a **client-side abstraction**: it is bound to no Bazarish server, it
-carries no account, and it keeps nothing once a session has expired. The case it
+It is a **client-side abstraction**: it carries no account and keeps nothing
+once a session has expired. A server its operator also runs may be linked to it
+(The server link, below), and nothing else ties it to one. The case it
 exists for is a self-hoster running one for himself and the people who already
 trust him, and the platform it matters on is mobile, where a full router costs
 battery, netDb and tunnels the device would rather not pay for.
@@ -35,14 +36,14 @@ The operator of a gateway sees:
 - the timing and the volume of all of the client's I2P traffic,
 - the client's IP address.
 
-An operator who runs a Bazarish server as well can give the gateway a direct
-route to it: a destination named in `direct` is dialled over TLS to the address
-serving it, pinned by the key that address presents, and that flow does not
-enter I2P at all. The server then sees the gateway's address where it would have
-seen a destination, and the client learns only that its destination was routed
-by the gateway (`localRoute`, below), not where to. It is a route between two
-things one operator owns; a gateway somebody else runs
-carries the flow over I2P because it has no such route to give.
+An operator who runs a Bazarish server as well links the gateway to it, and
+then nothing between the two enters I2P: a dial to the server's facade or to
+any destination its server-core serves goes over pinned TLS to that service
+(The server link, below). The server sees the gateway where it would have seen a
+tunnel, and the client learns that its destination was routed by the gateway
+(`localRoute`, below). It is a route between two things one operator owns; a
+gateway somebody else runs carries the flow over I2P because it has no such
+route to give.
 
 The operator does not see: the account identity keys, the profile database, the
 message content (end to end encrypted above this layer), or the master key of
@@ -349,9 +350,10 @@ it answers.
 | 0x04 | `error` | gateway | echo | `{"code": "...", "message": "..."}` |
 | 0x05 | `resume` | client | echo | `{"streams": [{"id": n, "received": n}]}` |
 | 0x06 | `attach` | client | flow | `{"received": n}`, on a flow socket's first frame |
-| 0x10 | `endpoint-create` | client | endpoint | `{"kind": "stream\|raw", "published": true, "realtime": false}` |
+| 0x10 | `endpoint-create` | client | endpoint | `{"kind": "stream\|raw", "published": true, "realtime": false, "target": "<host>"}`, `target` optional |
 | 0x11 | `endpoint-stop` | client | endpoint | `{}` |
 | 0x12 | `endpoint-status` | gateway | endpoint | `{"ready": true, "host": "<b33>.b32.i2p", "tunnelsIn": 3, "tunnelsOut": 3, "leaseSets": 2, "localRoute": false}` |
+| 0x13 | `endpoint-lost` | gateway | endpoint | `{}`: the gateway stopped it |
 | 0x20 | `stream-open` | client | stream | `{"endpoint": n, "host": "...", "deadline": 60}` |
 | 0x21 | `stream-opened` | gateway | stream | `{}` |
 | 0x22 | `stream-inbound` | gateway | stream | `{"endpoint": n, "peer": "<base64>"}` |
@@ -539,6 +541,27 @@ out of what it was last told. `retagEndpoint` is local to the client and sends n
 refuses to start anything new; the gateway resets every stream on it. A stopped
 endpoint is finished with, and its identifier is not reused.
 
+### A destination for one host
+
+An unpublished `stream` destination that will only ever dial one host names it
+in `target`: the outbound lease to one recipient, a card or alias lookup, a
+download and the facade link do. A target this gateway reaches without I2P - a
+published destination of one of its sessions, a facade, or a destination
+server-core serves - gets no I2P destination at all. The gateway mints the keys,
+builds nothing, answers `ok` with the address those keys give, and the first
+`endpoint-status` says `ready` and `localRoute`. Any other target, and no target,
+is served from the pool as before.
+
+Such a destination dials its target and nothing else; another host is
+`refused`. When the route goes - the published destination stops, server-core
+withdraws the address, the server link drops - the gateway stops the destination
+and sends `endpoint-lost`, and the client takes a new one, which is then built.
+A destination never changes how it is carried while it lives.
+
+`target` tells the gateway nothing a dial would not, since the host is in the
+`stream-open` that follows. A published destination waits for callers it cannot
+name and is always built, and for `raw` the field means nothing.
+
 ### What this costs the client's seam
 
 `EndpointConfig::keys` is optional and absent means "the transport mints this".
@@ -564,10 +587,11 @@ only a failure that is not "unreachable" is terminal. This is the SAM backend's
 lesson, learned against a live router and not against a fake: a LeaseSet that is
 not in the netDb yet is a reason to try again, not a reason to fail.
 
-A destination with a direct route skips the router: the gateway opens a pinned
-TLS socket to the configured address and splices the stream into it, and a
-handshake whose key is not the pinned one fails the dial like any other
-unreachable destination. Everything above the transport is unchanged, because
+A host the server link covers skips the router: the gateway opens a pinned TLS
+socket to the service that serves it - a facade's `directListen`, or
+server-core's gateway listener with the host and the dialling destination named
+first - and splices the stream into it. A handshake whose key is not the pinned
+one fails the dial like any other unreachable destination. Everything above the transport is unchanged, because
 the bytes are the same ones the destination would have carried.
 
 The dial ends in `stream-opened`, or in `stream-reset` with `unreachable`,
@@ -685,20 +709,61 @@ The rules are narrow:
   behaves differently depending on who is listening is one with two behaviours
   to test instead of one. The users of one gateway learn from it that they share
   that gateway; they already share its operator, who sees all of it.
-- The destination is still built and still published. The gateway cannot know
-  who will dial an address before the address exists, so the shortcut saves the
-  transit, not the setup.
+- A published destination is still built and still published. The gateway
+  cannot know who will dial an address before the address exists, so the
+  shortcut saves the transit, not the setup. An unpublished one named for a
+  local `target` is not built at all (A destination for one host).
 
 What this reveals, stated plainly: two peers can tell from the timing that they
 are on the same gateway. That is new information about each other, not about the
 operator, who already sees both of them and every address either one dials.
 
-The servers refuse exactly this shortcut and must keep refusing it: mail
-federates over I2P even between two accounts on one host, because a bypass there
-would tell a server operator's users which of them share a server, and a server
-is not a node its users picked. A gateway is. The two decisions look opposite
-and rest on the same question, which is whether the node in the middle was
-chosen.
+The servers refuse this shortcut among themselves and must keep refusing it:
+mail federates over I2P even between two accounts on one host, because a bypass
+there would tell a server operator's users which of them share a server, and a
+server is not a node its users picked. A gateway is, and so the users of a
+gateway reach the server its operator linked to it without I2P (The server
+link). The two decisions look opposite and rest on the same question, which is
+whether the node in the middle was chosen.
+
+## The server link
+
+A gateway and a server-core of one operator are linked by settings the admin
+panel writes into both: the gateway's `server` names server-core's
+`gatewayListen` and the key it presents, and server-core's `gateways` lists the
+keys of the gateways it admits. The panel also writes the gateway's `direct`
+routes, one for every facade of the deployment that has a `directListen`.
+Nothing passes through the panel after that.
+
+The link is TLS 1.3 with a key on each side: the gateway pins server-core's and
+presents the one its operator socket presents, and server-core admits only a key
+in `gateways`. Each connection opens with one JSON line and is then one of two
+things.
+
+`{"watch": true}` stays open while both sides run. server-core answers at once
+with a line naming every destination it serves, and with another after every
+change - an address published, withdrawn, swept or replaced:
+
+```
+{"dests": ["<b33>.b32.i2p", ...]}
+```
+
+Each line is the whole list, so one missed cannot leave the gateway wrong. The
+gateway routes exactly what the last line names. When the watch drops it routes
+none of them, stops every destination it minted for one of them
+(`endpoint-lost`), and connects again after `kDialRetryDelay`.
+
+`{"to": "<b33>.b32.i2p", "from": "<base64>"}` carries one stream. `to` is the
+destination dialled and `from` the public destination that dialled it, which the
+gateway knows because it minted it. server-core answers `{"ok": true}` and
+serves the stream exactly as one accepted on `to` from `from`, so admission and
+the daily limit on contact requests see the sender they would see over I2P. A
+`to` it does not serve is answered `{"ok": false}`, and the dial fails as
+unreachable.
+
+What server-core learns from the link is what its own destinations would have
+told it. What the gateway learns is every address server-core serves, which the
+operator of both already had.
 
 ## What the gateway can answer
 
@@ -838,18 +903,22 @@ Both sides agree, so there is nothing to refuse.
    stays empty and the transport mints. `privateBlob()` and `publicBase64()`
    throw rather than answer with something empty, which is where an assumption
    that the address came from a key of the caller's is caught.
-3. `common/src/I2pGateway.cpp`: `RouterBackend`, `EndpointBackend` and
+3. `EndpointConfig::target`, the one host an unpublished destination will dial,
+   travels in `endpoint-create`; `endpoint-lost` makes `lost()` true.
+4. `common/src/I2pGateway.cpp`: `RouterBackend`, `EndpointBackend` and
    `StreamBackend` over the session's sockets, built by `makeGatewayRouter`. It
    attaches a socket to every realtime endpoint and every file transfer, reuses
    TLS tickets, and sends control before unattached stream data on the main one.
-4. `setSocksProxy` is called unconditionally when the client builds its router;
+5. `setSocksProxy` is called unconditionally when the client builds its router;
    it has to ask `capabilities().proxy` first.
-5. A decoy timer, and a control socket the client replaces on purpose. Both are
+6. A decoy timer, and a control socket the client replaces on purpose. Both are
    the client's own business: the gateway only answers.
-6. The status view distinguishes two backends today and will have to
+7. The status view distinguishes two backends today and will have to
    distinguish three: it names the gateway beside the router numbers, drops the
    proxy row, and stops reading the on-disk netDb count, which means nothing
    when there is no local netDb.
+8. One global setting switches the router off. The library stays linked, because
+   the account's own destination is still minted on the device.
 
 ## What is not built yet
 
@@ -860,5 +929,3 @@ Written down rather than discovered later.
   minted and named, two of its own clients meeting inside it, and a transfer
   carried across nine replacements of the socket under it. What is untested is a
   tunnel actually carrying something.
-7. One global setting switches the router off. The library stays linked, because
-   the account's own destination is still minted on the device.

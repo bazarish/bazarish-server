@@ -22,6 +22,9 @@ class Session;
 struct EndpointEntry {
     std::uint32_t id = 0;
     std::shared_ptr<i2p::Endpoint> endpoint;
+    bool made = false;
+    std::string target;
+    std::string publicBase64;
     bool raw = false;
     bool published = false;
     bool realtime = false;

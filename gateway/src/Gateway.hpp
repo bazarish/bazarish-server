@@ -11,15 +11,21 @@
 #include <bazarish/I2p.hpp>
 #include <bazarish/WebSocket.hpp>
 
+#include <TlsPipe.hpp>
+
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <set>
 #include <thread>
 #include <string>
+#include <utility>
 
 namespace bazarish::gateway {
 
@@ -107,6 +113,13 @@ private:
         const std::shared_ptr<EndpointEntry>& from, std::uint32_t stream, std::string host,
         std::chrono::seconds deadline, const http::SocketPtr& answerTo);
     void statusLoop();
+    void linkLoop();
+    void setServerLink(std::optional<ServerLink> link);
+    std::optional<std::pair<ServerLink, tls::Credential>> serverFor(const std::string& host) const;
+    bool reachesLocallyLocked(const std::string& host) const;
+    void dropUnrouted();
+    std::shared_ptr<EndpointEntry> stopEndpoint(
+        const std::shared_ptr<Session>& session, std::uint32_t id);
     void teardown(const std::shared_ptr<Session>& session,
         const std::shared_ptr<StreamEntry>& entry, Fault fault);
     void orphan(const std::shared_ptr<StreamEntry>& entry);
@@ -140,6 +153,13 @@ private:
     std::map<std::string, Local> published_;
     mutable std::mutex directMutex_;
     std::vector<DirectRoute> direct_;
+    mutable std::mutex linkMutex_;
+    std::condition_variable linkChanged_;
+    std::optional<ServerLink> serverLink_;
+    std::optional<tls::Credential> own_;
+    std::set<std::string> served_;
+    std::shared_ptr<server::TlsPipe> watch_;
+    std::thread link_;
     std::thread status_;
     std::atomic<std::size_t> rejoins_{0};
     std::atomic<std::size_t> refused_{0};

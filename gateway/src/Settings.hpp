@@ -10,6 +10,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -33,6 +34,7 @@ struct Settings {
     std::string serverName = "nginx";
     std::vector<std::string> operators;
     std::vector<DirectRoute> direct;
+    std::optional<ServerLink> server;
     std::string opsHost;
     int opsPort = 0;
     std::vector<std::string> opsClients;
@@ -46,5 +48,6 @@ struct Settings {
 };
 
 std::vector<DirectRoute> directRoutesFrom(const nlohmann::json& list);
+std::optional<ServerLink> serverLinkFrom(const nlohmann::json& link);
 
 }  // namespace bazarish::gateway

@@ -374,7 +374,7 @@ The client sends `hello` as its first frame. The gateway answers `ready`:
 ```json
 {
   "version": 1,
-  "i2pd": "2.61.0",
+  "i2pd": "3.0.0",
   "capabilities": { "routerCounters": false, "destinationCounters": true,
                     "netDbSample": false, "proxy": false, "offlineKeys": false,
                     "warmPool": true },

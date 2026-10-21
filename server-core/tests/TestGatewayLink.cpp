@@ -179,7 +179,7 @@ int main()
     std::vector<std::string> both{aliceServed.dest, bobServed.dest};
     std::sort(both.begin(), both.end());
     CHECK(listed(*watch) == both);
-    dests.revoke(bob);
+    dests.takeOffline(bob);
     CHECK(listed(*watch) == std::vector<std::string>{aliceServed.dest});
 
     {

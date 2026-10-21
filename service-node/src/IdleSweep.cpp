@@ -51,6 +51,10 @@ void sweepIdleAccounts(SubscriptionStore& store, GrantStore& grants, const Opera
             log::warn("destination of swept account {} not revoked on the messaging server",
                 log::redact(user));
         }
+        if (!push.forgetMailbox(user)) {
+            log::warn("mailbox of swept account {} not dropped on the messaging server",
+                log::redact(user));
+        }
         grants.erase(user);
         store.deleteAccount(user);
         log::info("swept idle account {}", log::redact(user));

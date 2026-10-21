@@ -43,7 +43,8 @@ struct HttpApiOptions {
     std::function<DestinationAssignment(const std::string& user,
         const std::string& transientB64, std::int64_t expiresUnix)>
         provisionI2pDest;
-    std::function<void(const std::string& user)> revokeI2pDest;
+    std::function<void(const std::string& user)> takeI2pDestOffline;
+    std::function<void(const std::string& user)> forgetI2pDest;
     AssignDestinationFn assignDestination;
 
     std::function<std::vector<Bytes>(std::size_t count)> reseedSample;

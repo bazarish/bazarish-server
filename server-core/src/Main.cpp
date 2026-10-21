@@ -311,8 +311,11 @@ int main(const int argc, const char** argv)
                 = perUserDests->provision(user, transientB64, expiresUnix);
             return {served.dest, served.sealingKey, served.state};
         };
-        httpOptions.revokeI2pDest = [&perUserDests](const std::string& user) {
-            perUserDests->revoke(user);
+        httpOptions.takeI2pDestOffline = [&perUserDests](const std::string& user) {
+            perUserDests->takeOffline(user);
+        };
+        httpOptions.forgetI2pDest = [&perUserDests](const std::string& user) {
+            perUserDests->forget(user);
         };
     }
     bazarish::server::ServerSettings::Values settingValues;

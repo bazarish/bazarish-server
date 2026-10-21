@@ -343,7 +343,14 @@ int main(const int argc, const char** argv)
         };
         portalOptions.deleteAccount = [&store, &grants, &operatorPush](const std::string& user) {
             store.deleteAccount(user);
-            operatorPush.publish(user, std::string(), 0);
+            if (!operatorPush.publish(user, std::string(), 0)) {
+                bazarish::log::warn("destination of {} was not taken down: the messaging server "
+                    "refused it", bazarish::log::redact(user));
+            }
+            if (!operatorPush.forgetMailbox(user)) {
+                bazarish::log::warn("mailbox of {} was not dropped: the messaging server refused it",
+                    bazarish::log::redact(user));
+            }
             grants.erase(user);
             bazarish::log::info("account deleted by its owner: {}", bazarish::log::redact(user));
         };

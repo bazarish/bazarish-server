@@ -78,6 +78,19 @@ void requireUsableDelegation(const std::string& transientB64, const std::int64_t
     }
 }
 
+// An address no longer served keeps its keys: published again it comes back with them.
+void keepKeysOnly(const std::filesystem::path& path)
+{
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec)) {
+        return;
+    }
+    nlohmann::json record = readRecord(path);
+    record.erase("transient");
+    record.erase("expiresUnix");
+    writePrivateFile(path, record.dump());
+}
+
 SignAckFn signAckWith(std::shared_ptr<Key> signingKey)
 {
     return [signingKey = std::move(signingKey)](const std::string& deliveryId,
@@ -390,11 +403,11 @@ std::size_t PerUserDestinations::sweepExpired(const std::int64_t now)
             }
         }
         for (const std::string& userFp : lapsed) {
-            std::error_code ec;
-            std::filesystem::remove(pathFor(userFp), ec);
-            if (ec) {
-                bazarish::log::warn("lapsed destination record for {} not removed: {}",
-                    bazarish::log::redact(userFp), ec.message());
+            try {
+                keepKeysOnly(pathFor(userFp));
+            } catch (const std::exception& error) {
+                bazarish::log::warn("lapsed destination record for {} not rewritten: {}",
+                    bazarish::log::redact(userFp), error.what());
             }
             teardownLocked(userFp);
             bazarish::log::info("delegation for {} ran out: destination taken down",
@@ -425,15 +438,26 @@ void PerUserDestinations::startSweeper()
     });
 }
 
-void PerUserDestinations::revoke(const std::string& userFp)
+void PerUserDestinations::takeOffline(const std::string& userFp)
+{
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        keepKeysOnly(pathFor(userFp));
+        teardownLocked(userFp);
+    }
+    reapRetired();
+    announceServed();
+}
+
+void PerUserDestinations::forget(const std::string& userFp)
 {
     {
         const std::lock_guard<std::mutex> lock(mutex_);
         std::error_code ec;
         std::filesystem::remove(pathFor(userFp), ec);
         if (ec) {
-            bazarish::log::warn("revoked destination record for {} not removed: {}",
-                bazarish::log::redact(userFp), ec.message());
+            throw std::runtime_error("the destination record of " + bazarish::log::redact(userFp)
+                + " cannot be removed: " + ec.message());
         }
         teardownLocked(userFp);
     }
@@ -467,6 +491,9 @@ void PerUserDestinations::reloadLocked(const std::int64_t now)
         }
         try {
             const nlohmann::json record = readRecord(entry.path());
+            if (!record.contains("transient")) {
+                continue;
+            }
             const std::int64_t expiresUnix = record.at("expiresUnix").get<std::int64_t>();
             if (expiresUnix <= now) {
                 continue;

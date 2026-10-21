@@ -441,12 +441,15 @@ void HttpApi::setupOpsRoutes()
         }));
 
     ops_->del("/v1/messaging/account",
-        operatorOnly([&store](const bazarish::http::Request& request) {
+        operatorOnly([this, &store](const bazarish::http::Request& request) {
             const std::string user = request.query("user");
             if (user.empty()) {
                 return errorResponse(400, ErrorCode::eDeliveryRejected, "no user named");
             }
             store.forgetUser(user);
+            if (options_.forgetI2pDest) {
+                options_.forgetI2pDest(user);
+            }
             bazarish::log::info("mailbox of {} dropped: the account was deleted",
                 bazarish::log::redact(user));
             return jsonResponse({{"ok", true}});
@@ -583,7 +586,7 @@ void HttpApi::setupOpsRoutes()
 
     ops_->put("/v1/messaging/i2p-dest",
         operatorOnly([this](const bazarish::http::Request& request) {
-            if (!options_.provisionI2pDest || !options_.revokeI2pDest) {
+            if (!options_.provisionI2pDest || !options_.takeI2pDestOffline) {
                 return errorResponse(
                     503, ErrorCode::eDeliveryRejected, "per-user destinations not available");
             }
@@ -591,7 +594,7 @@ void HttpApi::setupOpsRoutes()
             const std::string user = body.at("user").get<std::string>();
             const std::string transient = body.value("transient", std::string());
             if (transient.empty()) {
-                options_.revokeI2pDest(user);
+                options_.takeI2pDestOffline(user);
                 return jsonResponse({{"dest", ""}, {"servingKey", ""}});
             }
             const DestinationAssignment served = options_.provisionI2pDest(

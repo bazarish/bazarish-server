@@ -42,7 +42,10 @@ public:
     Assignment provision(const std::string& userFp, const std::string& transientB64,
         std::int64_t expiresUnix);
 
-    void revoke(const std::string& userFp);
+    // Stops serving the address and keeps its keys, which change only with the address.
+    void takeOffline(const std::string& userFp);
+    // The account is gone: its address record and keys go with it.
+    void forget(const std::string& userFp);
 
     void reloadPersisted(std::int64_t now);
 

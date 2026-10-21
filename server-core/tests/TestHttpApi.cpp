@@ -131,7 +131,8 @@ int main()
     std::string provisionedUser;
     std::string provisionedTransient;
     std::int64_t provisionedExpires = 0;
-    std::string revokedUser;
+    std::string offlineUser;
+    std::string forgottenUser;
     httpOptions.provisionI2pDest = [&](const std::string& user, const std::string& transientB64,
                                        const std::int64_t expiresUnix)
         -> bazarish::server::DestinationAssignment {
@@ -140,7 +141,8 @@ int main()
         provisionedExpires = expiresUnix;
         return {serverDest, serverServingKey, "building"};
     };
-    httpOptions.revokeI2pDest = [&](const std::string& user) { revokedUser = user; };
+    httpOptions.takeI2pDestOffline = [&](const std::string& user) { offlineUser = user; };
+    httpOptions.forgetI2pDest = [&](const std::string& user) { forgottenUser = user; };
 
     const tls::Credential nodeKey = tls::selfSigned(root / "node");
     http::Server::Options nodeOptions;
@@ -393,12 +395,13 @@ int main()
             CHECK(served.at("servingKey").get<std::string>()
                 == toBase64(serverServingKey->publicDer()));
         }
-        const std::string revokeBody = nlohmann::json{{"user", "alicefp"}}.dump();
-        const http::ClientResponse revoked = call(opsPort, "PUT", "/v1/messaging/i2p-dest",
-            makeHeaders(operatorIdentity, "PUT", "/v1/messaging/i2p-dest", revokeBody, ""),
-            revokeBody);
-        CHECK(revoked.status == 200);
-        CHECK(revokedUser == "alicefp");
+        const std::string offlineBody = nlohmann::json{{"user", "alicefp"}}.dump();
+        const http::ClientResponse offline = call(opsPort, "PUT", "/v1/messaging/i2p-dest",
+            makeHeaders(operatorIdentity, "PUT", "/v1/messaging/i2p-dest", offlineBody, ""),
+            offlineBody);
+        CHECK(offline.status == 200);
+        CHECK(offlineUser == "alicefp");
+        CHECK(forgottenUser.empty());
     }
 
     {
@@ -442,6 +445,7 @@ int main()
         const http::ClientResponse deleted = call(opsPort, "DELETE", path,
             makeHeaders(operatorIdentity, "DELETE", "/v1/messaging/account", "", ""));
         CHECK(deleted.status == 200);
+        CHECK(forgottenUser == alice.fingerprint());
         CHECK(storage.usage(alice.fingerprint()) == 0);
         CHECK(storage.listClients(alice.fingerprint()).empty());
         CHECK(storage.passCount(alice.fingerprint()) == 0);

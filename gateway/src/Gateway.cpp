@@ -802,7 +802,9 @@ void Gateway::onEndpointCreate(const std::shared_ptr<Session>& session,
     const std::string target = body.value("target", std::string());
 
     std::shared_ptr<EndpointEntry> entry;
+    bool routable = false;
     bool local = false;
+    std::size_t servedHere = 0;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
         if (session->endpoints.count(frame.ref) > 0) {
@@ -813,9 +815,18 @@ void Gateway::onEndpointCreate(const std::shared_ptr<Session>& session,
         entry->raw = kind == "raw";
         entry->published = config.published;
         entry->realtime = config.realtime;
-        local = !entry->raw && !entry->published && !target.empty()
-            && reachesLocallyLocked(target);
+        routable = !entry->raw && !entry->published && !target.empty();
+        local = routable && reachesLocallyLocked(target);
+        if (routable && !local) {
+            const std::lock_guard<std::mutex> listed(linkMutex_);
+            servedHere = served_.size();
+        }
         session->endpoints.emplace(entry->id, entry);
+    }
+    if (routable && !local) {
+        bazarish::log::info(
+            "gateway: a destination for {} goes into I2P, not routed here; the server lists {}",
+            target, servedHere);
     }
     std::shared_ptr<i2p::Endpoint> endpoint;
     std::string publicBase64;

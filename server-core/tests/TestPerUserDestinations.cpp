@@ -169,7 +169,7 @@ int main()
     }
     {
         PerUserDestinations reloaded(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
-        reloaded.reloadPersisted(shortExpiry + 1);
+        reloaded.reloadPersisted(shortExpiry - kLapseLeadSeconds);
         CHECK(reloaded.size() == 1);
         CHECK(reloaded.assignmentFor(alice, shortExpiry - 1).sealingKey->publicDer()
             == aliceServing);
@@ -182,9 +182,13 @@ int main()
         dests.provision(alice, transientA, shortExpiry);
         servingBeforeLapse = dests.assignmentFor(alice, shortExpiry - 1).sealingKey->publicDer();
         CHECK(dests.size() == 1);
-        CHECK(dests.sweepExpired(shortExpiry - 1) == 0);
+        const std::int64_t goesDownAt = shortExpiry - kLapseLeadSeconds;
+        constexpr std::int64_t kAhead = 30;
+        CHECK(dests.nextSweepIn(goesDownAt - kAhead) == std::chrono::seconds(kAhead));
+        CHECK(dests.nextSweepIn(goesDownAt) == std::chrono::seconds(0));
+        CHECK(dests.sweepExpired(goesDownAt - 1) == 0);
         CHECK(dests.size() == 1);
-        CHECK(dests.sweepExpired(shortExpiry + 1) == 1);
+        CHECK(dests.sweepExpired(goesDownAt) == 1);
         CHECK(dests.size() == 0);
         CHECK(std::filesystem::exists(aliceFile));
         CHECK(readFile(aliceFile).find(transientA) == std::string::npos);

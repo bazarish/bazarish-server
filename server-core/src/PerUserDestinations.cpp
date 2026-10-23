@@ -11,6 +11,7 @@
 #include <bazarish/PrivateFile.hpp>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <exception>
 #include <fstream>
@@ -60,6 +61,11 @@ std::string recordedAddress(const std::filesystem::path& path)
     } catch (const std::exception&) {
         return {};
     }
+}
+
+bool lapsedAt(const std::int64_t expiresUnix, const std::int64_t now)
+{
+    return expiresUnix > 0 && now + kLapseLeadSeconds >= expiresUnix;
 }
 
 void requireUsableDelegation(const std::string& transientB64, const std::int64_t expiresUnix)
@@ -120,6 +126,10 @@ PerUserDestinations::PerUserDestinations(bazarish::i2p::Router* const router,
 PerUserDestinations::~PerUserDestinations()
 {
     stopGate_.stop();
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        sweepDue_.notify_all();
+    }
     if (sweeper_.joinable()) {
         sweeper_.join();
     }
@@ -217,6 +227,7 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
     dest->sealingKey = std::make_shared<Key>(Key::fromPrivatePem(sealingKeyPem));
     dest->signingKey = std::make_shared<Key>(Key::fromPrivatePem(signingKeyPem));
     dest->dest = addressOfTransient(transientB64);
+    sweepDue_.notify_all();
     Destination* const raw = dest.get();
     if (router_ != nullptr) {
         for (std::size_t i = 1; i < kServeWorkers; ++i) {
@@ -398,7 +409,7 @@ std::size_t PerUserDestinations::sweepExpired(const std::int64_t now)
     {
         const std::lock_guard<std::mutex> lock(mutex_);
         for (const auto& [userFp, dest] : dests_) {
-            if (dest->expiresUnix > 0 && dest->expiresUnix <= now) {
+            if (lapsedAt(dest->expiresUnix, now)) {
                 lapsed.push_back(userFp);
             }
         }
@@ -427,7 +438,17 @@ void PerUserDestinations::startSweeper()
     }
     startWatchdog();
     sweeper_ = std::thread([this]() {
-        while (!stopGate_.waitFor(kExpirySweepInterval)) {
+        for (;;) {
+            {
+                std::unique_lock<std::mutex> lock(mutex_);
+                if (stopGate_.stopped()) {
+                    return;
+                }
+                sweepDue_.wait_for(lock, nextSweepInLocked(nowSeconds()));
+                if (stopGate_.stopped()) {
+                    return;
+                }
+            }
             reapRetired();
             try {
                 sweepExpired(nowSeconds());
@@ -495,7 +516,7 @@ void PerUserDestinations::reloadLocked(const std::int64_t now)
                 continue;
             }
             const std::int64_t expiresUnix = record.at("expiresUnix").get<std::int64_t>();
-            if (expiresUnix <= now) {
+            if (lapsedAt(expiresUnix, now)) {
                 continue;
             }
             const std::string transientB64 = record.at("transient").get<std::string>();
@@ -596,6 +617,25 @@ PerUserDestinations::Assignment PerUserDestinations::assignmentFor(
         return {};
     }
     return assignedLocked(*found->second, now);
+}
+
+std::chrono::seconds PerUserDestinations::nextSweepIn(const std::int64_t now) const
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    return nextSweepInLocked(now);
+}
+
+std::chrono::seconds PerUserDestinations::nextSweepInLocked(const std::int64_t now) const
+{
+    std::chrono::seconds due = kExpirySweepInterval;
+    for (const auto& [userFp, dest] : dests_) {
+        (void)userFp;
+        if (dest->expiresUnix > 0) {
+            due = std::min(due, std::chrono::seconds(std::max<std::int64_t>(
+                                    0, dest->expiresUnix - kLapseLeadSeconds - now)));
+        }
+    }
+    return due;
 }
 
 std::int64_t PerUserDestinations::heldUntil(const std::string& userFp) const

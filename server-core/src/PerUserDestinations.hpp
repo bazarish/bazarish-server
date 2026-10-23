@@ -11,6 +11,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -22,6 +23,10 @@
 #include <vector>
 
 namespace bazarish::server {
+
+// A destination goes down this long before its delegation ends: from the first second of the day
+// it has no key for, the lease set its router builds cannot be signed and brings the router down.
+inline constexpr std::int64_t kLapseLeadSeconds = 60;
 
 class PerUserDestinations {
 public:
@@ -50,6 +55,7 @@ public:
     void reloadPersisted(std::int64_t now);
 
     std::size_t sweepExpired(std::int64_t now);
+    std::chrono::seconds nextSweepIn(std::int64_t now) const;
 
     void setGetCard(GetCardFn getCard);
     void setServedChanged(std::function<void()> changed);
@@ -89,6 +95,7 @@ private:
     void watchStream(const std::shared_ptr<bazarish::i2p::Stream>& stream);
     void unwatchStream(const bazarish::i2p::Stream* stream);
     void startSweeper();
+    std::chrono::seconds nextSweepInLocked(std::int64_t now) const;
     std::filesystem::path pathFor(const std::string& userFp) const;
     std::filesystem::path destsDir() const;
 
@@ -102,6 +109,7 @@ private:
     mutable std::mutex mutex_;
     std::map<std::string, std::unique_ptr<Destination>> dests_;
     std::thread sweeper_;
+    std::condition_variable sweepDue_;
     std::thread watchdog_;
     std::mutex retiringMutex_;
     std::vector<std::unique_ptr<Destination>> retiring_;

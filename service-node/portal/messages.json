@@ -101,11 +101,11 @@
       "ar": "تسجيل الدخول"
     },
     "signin.failed": {
-      "en": "The signature did not verify, or the challenge had expired. Here is a fresh one.",
-      "ru": "Подпись не прошла проверку или строка для подписи устарела. Вот новая.",
-      "es": "La firma no se verificó o el desafío había caducado. Aquí tienes uno nuevo.",
-      "zh": "签名未通过验证，或待签名的字符串已过期。这是新的一条。",
-      "ar": "لم يُتحقق من التوقيع، أو انتهت صلاحية النص. وهذا نص جديد."
+      "en": "The signature did not verify, or the challenge had expired. Try again.",
+      "ru": "Подпись не прошла проверку или строка для подписи устарела. Попробуйте ещё раз.",
+      "es": "La firma no se verificó o el desafío había caducado. Inténtalo de nuevo.",
+      "zh": "签名未通过验证，或待签名的字符串已过期。请重试。",
+      "ar": "لم يُتحقق من التوقيع، أو انتهت صلاحية النص. حاول مرة أخرى."
     },
     "session.signout": {
       "en": "Sign out",

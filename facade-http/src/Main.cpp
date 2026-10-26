@@ -36,10 +36,9 @@ void printUsage()
         "\n"
         "The facade's own I2P destination is how clients reach the API, and the\n"
         "only way: \"listen\" is the socket it relays to, kept on loopback.\n"
-        "Its address is that destination plus a secret path every request starts\n"
-        "with; both are minted at the first start and kept in \"state\", because\n"
-        "the address travels in the server descriptor. The admin panel replaces\n"
-        "both at once.\n"
+        "Its address is that destination, answered at /; the key is minted at the\n"
+        "first start and kept in \"state\", because the address travels in the\n"
+        "server descriptor. The admin panel can replace it.\n"
         "\"opsListen\" adds a private socket serving the operator-signed health,\n"
         "settings and restart for the admin panel; it is never published to clients.\n",
         kVersion);
@@ -122,8 +121,7 @@ int main(const int argc, const char** argv)
         std::fprintf(stderr, "state: %s\n", error.what());
         return 2;
     }
-    options.basePath = address->basePath;
-    options.url = address->url();
+    options.address = address->address();
 
     bazarish::log::setComponent("facade-http");
     bazarish::log::setLevel(logLevel);
@@ -180,7 +178,7 @@ int main(const int argc, const char** argv)
         bazarish::log::info("direct listening on {}:{}", direct->host, direct->port);
     }
 
-    bazarish::log::info("listening on {}:{}{}", listen.host, listen.port, options.basePath);
+    bazarish::log::info("listening on {}:{}", listen.host, listen.port);
     if (facade.bind(listen.host, listen.port) <= 0) {
         bazarish::log::error("failed to listen on {}:{}", listen.host, listen.port);
         return 1;
@@ -195,7 +193,7 @@ int main(const int argc, const char** argv)
     bazarish::facade::I2pFront i2pFront(frontOptions, address->keys);
     bazarish::log::info("building the I2P destination for the facade API...");
     i2pFront.start();
-    std::printf("i2p facade: %s\n", options.url.c_str());
+    std::printf("i2p facade: %s\n", options.address.c_str());
     std::fflush(stdout);
 
     facade.wait();

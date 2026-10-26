@@ -19,7 +19,7 @@ namespace bazarish::admin {
 
 struct FacadeReport {
     std::string name;
-    std::string url;
+    std::string address;
     std::string error;
 };
 
@@ -36,7 +36,7 @@ struct GatewayRepoint {
 };
 
 std::vector<GatewayRepoint> repointGateways(const std::vector<Fleet>& fleets,
-    const std::string& fromUrl, const std::string& toUrl, const Identity& identity,
+    const std::string& fromAddress, const std::string& toAddress, const Identity& identity,
     const tls::Credential& credential);
 
 struct GatewayLinking {

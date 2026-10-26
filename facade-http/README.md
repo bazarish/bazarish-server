@@ -19,7 +19,7 @@ stores nothing identifying. Compromising it must not damage the server
 infrastructure - it knows only the private-channel address of its backend and
 the (end-to-end encrypted) traffic passing through. Clients reach it through
 its own I2P destination, and through nothing else: it relays to the `listen`
-socket on loopback, under a secret prefix known only to them.
+socket on loopback.
 
 ## Build
 
@@ -40,24 +40,21 @@ bazarish-facade-http --config <path>
 Everything is in that file (see `config.example.json`); nothing is settable on
 the command line.
 
-The facade's address is its I2P destination plus a secret path. Both are minted
-at the first start and kept in `state` (`facade-dest-0.key`, `facade-path`), and
-the facade prints the whole URL. The path is stripped before forwarding: what the facade serves
-is reachable only under it, and clients learn it only from the facade URL in the
-server descriptor. `POST /new-address` on the ops socket mints both again,
-answers with the new URL and the old one, and restarts the facade to publish it;
-a client that knows only the old URL loses the server until it is given the new
-one. The reseed archive is not here - it is
-served by the portal, which is what faces the clearnet. Anything else - an
-unknown path, the API root, `/healthz` - is the same bare 404, so a scan of the
-host learns nothing. The signed canonical request
-path is the post-strip path, so signatures verify on the backend regardless.
+The facade's address is its I2P destination, published blinded (b33): the network
+database does not give it away, so clients learn it only from the server
+descriptor. It answers at `/`. The key is minted at the first start and kept in
+`state` (`facade-dest-0.key`), and the facade prints the address.
+`POST /new-address` on the ops socket mints a new key, answers with the new
+address and the old one, and restarts the facade to publish it; a client that
+knows only the old address loses the server until it is given the new one. The
+reseed archive is not here - it is served by the portal, which is what faces the
+clearnet. Anything else - an unknown path, `/healthz` - is the same bare 404.
 
 `opsListen` opens a second, private socket carrying everything that is the
 operator's: the signed `/healthz`, `GET`/`PUT /settings` (which also reports the
-facade's URL), `POST /new-address` and `POST /restart`. It is
-never published to clients - on the public socket any of it would admit a facade
-is here to a caller who does not know the secret base path. It speaks TLS and
+facade's address), `POST /new-address` and `POST /restart`. It is
+never published to clients - on the public socket anyone holding the address
+could reach it. It speaks TLS and
 answers only the key the admin panel presents, named in `opsClients`; the facade
 makes its own certificate in `state` on first start and prints the hash of its
 key, which is what the panel is configured with.

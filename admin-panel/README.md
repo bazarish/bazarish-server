@@ -64,8 +64,8 @@ repository) - edit them to restyle the panel, then restart it.
 Every service keeps the operator's endpoints on a socket of its own, the one
 its `opsListen` opens, and the panel is configured with that address rather than
 the one clients reach. Nothing an operator asks for is on a client-facing socket:
-on the facade any of it would admit a facade is there to a caller who does not
-know the secret path, and the same reasoning holds for the rest. Because
+on the facade anyone holding its address could reach it, and the same reasoning
+holds for the rest. Because
 the link is pinned TLS in both directions, those sockets do not have to be on
 this host - a fleet can sit on several machines without a tunnel between them.
 

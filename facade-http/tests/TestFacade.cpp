@@ -129,40 +129,13 @@ void testAddress()
     std::filesystem::remove_all(state);
 
     const bazarish::facade::FacadeAddress first = bazarish::facade::loadAddress(state);
-    CHECK(first.url().rfind("http://", 0) == 0);
-    CHECK(first.url().find(".b32.i2p/") != std::string::npos);
-    CHECK(first.url().size() > first.basePath.size());
-    CHECK(first.url().compare(first.url().size() - first.basePath.size(), std::string::npos,
-              first.basePath)
-        == 0);
-    CHECK(bazarish::facade::loadAddress(state).url() == first.url());
+    CHECK(first.address().find(".b32.i2p") != std::string::npos);
+    CHECK(first.address().find('/') == std::string::npos);
+    CHECK(bazarish::facade::loadAddress(state).address() == first.address());
 
     const bazarish::facade::FacadeAddress minted = bazarish::facade::mintAddress(state);
-    CHECK(minted.url() != first.url());
-    CHECK(minted.basePath != first.basePath);
-    CHECK(bazarish::facade::loadAddress(state).url() == minted.url());
-
-    const std::string handed = "/a89021ebd9bdcfaf34713b73";
-    {
-        std::ofstream path(state / "facade-path", std::ios::trunc);
-        path << handed;
-    }
-    const bazarish::facade::FacadeAddress kept = bazarish::facade::loadAddress(state);
-    CHECK(kept.basePath == handed);
-    CHECK(kept.url() == minted.url().substr(0, minted.url().size() - minted.basePath.size())
-            + handed);
-
-    {
-        std::ofstream path(state / "facade-path", std::ios::trunc);
-        path << handed << "\n";
-    }
-    bool refused = false;
-    try {
-        (void)bazarish::facade::loadAddress(state);
-    } catch (const std::exception&) {
-        refused = true;
-    }
-    CHECK(refused);
+    CHECK(minted.address() != first.address());
+    CHECK(bazarish::facade::loadAddress(state).address() == minted.address());
     std::filesystem::remove_all(state);
 }
 
@@ -195,8 +168,7 @@ int main()
     options.messagingHost = "127.0.0.1";
     options.messagingPort = messagingPort;
     options.messagingPin = backendCredential.pin;
-    options.basePath = "/s/secret123";
-    options.url = "http://example.b32.i2p/s/secret123";
+    options.address = "example.b32.i2p";
     const std::filesystem::path configPath
         = std::filesystem::temp_directory_path() / "bazarish-facade-test.json";
     {
@@ -240,18 +212,18 @@ int main()
     {
         const std::string sealed = "opaque-frame-bytes";
         const http::ClientResponse direct
-            = callTls(directPort, facadeCredential.pin, "POST", "/s/secret123/t", {}, sealed);
+            = callTls(directPort, facadeCredential.pin, "POST", "/t", {}, sealed);
         CHECK(direct.status == 200);
         CHECK(nlohmann::json::parse(direct.body).at("backend") == "messaging");
-        CHECK(callTls(directPort, facadeCredential.pin, "GET", "/s/secret123/nowhere").status
+        CHECK(callTls(directPort, facadeCredential.pin, "GET", "/nowhere").status
             == 404);
-        CHECK(call(directPort, "POST", "/s/secret123/t", {}, sealed).status == 0);
+        CHECK(call(directPort, "POST", "/t", {}, sealed).status == 0);
     }
 
     {
         const std::string sealed = "opaque-frame-bytes";
         const http::ClientResponse result
-            = call(facadePort, "POST", "/s/secret123/t", {}, sealed);
+            = call(facadePort, "POST", "/t", {}, sealed);
         CHECK(result.status == 200);
         const nlohmann::json reply = nlohmann::json::parse(result.body);
         CHECK(reply.at("backend") == "messaging");
@@ -261,15 +233,15 @@ int main()
         CHECK(reply.at("clientHeader") == "");
     }
 
-    for (const char* const gone : {"/s/secret123/v1/messaging/self",
-             "/s/secret123/v1/messaging/pending", "/s/secret123/v1/account/registration",
-             "/s/secret123/v1/auth/session"}) {
+    for (const char* const gone : {"/v1/messaging/self",
+             "/v1/messaging/pending", "/v1/account/registration",
+             "/v1/auth/session"}) {
         CHECK(call(facadePort, "POST", gone, {}, "{}").status == 404);
         CHECK(call(facadePort, "GET", gone).status == 404);
     }
 
     {
-        const http::ClientResponse result = call(facadePort, "GET", "/s/secret123/v1/server/card");
+        const http::ClientResponse result = call(facadePort, "GET", "/v1/server/card");
         CHECK(result.status == 200);
         const nlohmann::json reply = nlohmann::json::parse(result.body);
         CHECK(reply.at("backend") == "messaging");
@@ -277,42 +249,42 @@ int main()
     }
 
     {
-        const http::ClientResponse result = call(facadePort, "GET", "/s/wrong/v1/account/resolve?alias=alice");
+        const http::ClientResponse result = call(facadePort, "POST", "/s/9f3c/t", {}, "frame");
         CHECK(result.status == 404);
     }
 
     {
-        const http::ClientResponse result = call(facadePort, "GET", "/s/secret123/v1/other/thing");
+        const http::ClientResponse result = call(facadePort, "GET", "/v1/other/thing");
         CHECK(result.status == 404);
     }
 
     {
         const http::ClientResponse result
-            = call(facadePort, "PUT", "/s/secret123/v1/storage/blob", {}, "ciphertext-bytes");
+            = call(facadePort, "PUT", "/v1/storage/blob", {}, "ciphertext-bytes");
         CHECK(result.status == 404);
     }
 
     {
         const http::ClientResponse lookup = call(facadePort, "GET",
-            "/s/secret123/v1/account/card?user=alice&key=AAAA");
+            "/v1/account/card?user=alice&key=AAAA");
         CHECK(lookup.status == 404);
         const http::ClientResponse publish = call(facadePort, "POST",
-            "/s/secret123/v1/account/card", {}, R"({"card":"AAAA"})");
+            "/v1/account/card", {}, R"({"card":"AAAA"})");
         CHECK(publish.status == 404);
         const http::ClientResponse unknown
-            = call(facadePort, "GET", "/s/secret123/v1/other/thing");
+            = call(facadePort, "GET", "/v1/other/thing");
         CHECK(lookup.body == unknown.body);
         CHECK(publish.body == unknown.body);
     }
 
     {
         const http::ClientResponse result
-            = call(facadePort, "PUT", "/s/secret123/v1/storage/quota", {}, "{}");
+            = call(facadePort, "PUT", "/v1/storage/quota", {}, "{}");
         CHECK(result.status == 404);
     }
 
     {
-        const http::ClientResponse result = call(facadePort, "GET", "/s/secret123/b/somecapability");
+        const http::ClientResponse result = call(facadePort, "GET", "/b/somecapability");
         CHECK(result.status == 404);
     }
 
@@ -327,14 +299,14 @@ int main()
 
     {
         const http::ClientResponse result
-            = call(facadePort, "GET", "/s/secret123/v1/messaging/reseed");
+            = call(facadePort, "GET", "/v1/messaging/reseed");
         CHECK(result.status == 404);
     }
 
     {
         const http::ClientResponse unauthenticated = callTls(opsPort, facadeCredential.pin, "GET", "/healthz");
         CHECK(unauthenticated.status == 403);
-        const http::ClientResponse proxied = callTls(opsPort, facadeCredential.pin, "GET", "/s/secret123/v1/messaging/self");
+        const http::ClientResponse proxied = callTls(opsPort, facadeCredential.pin, "GET", "/v1/messaging/self");
         CHECK(proxied.status == 404);
     }
 
@@ -346,7 +318,8 @@ int main()
             = callTls(opsPort, facadeCredential.pin, "GET", path, signedHeaders(operatorIdentity, "GET", path, {}));
         CHECK(shown.status == 200);
         const nlohmann::json values = nlohmann::json::parse(shown.body);
-        CHECK(values.at("url").get<std::string>() == options.url);
+        CHECK(values.at("address").get<std::string>() == options.address);
+        CHECK(!values.contains("url"));
         CHECK(values.at("i2pTunnelQuantity").get<int>() == 3);
         CHECK(values.at("directListen").at("port").get<int>() == kDirectPort);
 
@@ -370,7 +343,7 @@ int main()
         CHECK(facadeSettings->get().i2pTunnelQuantity == 8);
 
         CHECK(call(facadePort, "GET", "/settings").status == 404);
-        CHECK(call(facadePort, "GET", "/s/secret123/settings").status != 200);
+        CHECK(call(facadePort, "GET", "/settings").status != 200);
 
         const std::string restart = "/restart";
         CHECK(callTls(opsPort, facadeCredential.pin, "POST", restart).status == 403);
@@ -385,16 +358,16 @@ int main()
     {
         const std::string path = "/new-address";
         CHECK(callTls(opsPort, facadeCredential.pin, "POST", path).status == 403);
-        CHECK(!std::filesystem::exists(facadeState / "facade-path"));
         const http::ClientResponse renewed = callTls(opsPort, facadeCredential.pin, "POST", path,
             signedHeaders(operatorIdentity, "POST", path, {}));
         CHECK(renewed.status == 200);
         const nlohmann::json reply = nlohmann::json::parse(renewed.body);
-        CHECK(reply.at("previousUrl").get<std::string>() == options.url);
-        const std::string url = reply.at("url").get<std::string>();
-        CHECK(url != options.url);
-        CHECK(url.find(".b32.i2p/") != std::string::npos);
-        CHECK(bazarish::facade::loadAddress(facadeState).url() == url);
+        CHECK(reply.at("previousAddress").get<std::string>() == options.address);
+        const std::string address = reply.at("address").get<std::string>();
+        CHECK(address != options.address);
+        CHECK(address.find(".b32.i2p") != std::string::npos);
+        CHECK(address.find('/') == std::string::npos);
+        CHECK(bazarish::facade::loadAddress(facadeState).address() == address);
         CHECK(restarts == 2);
     }
 

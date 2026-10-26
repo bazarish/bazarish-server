@@ -10,9 +10,8 @@ namespace bazarish::facade {
 
 struct FacadeAddress {
     bazarish::i2p::Keys keys;
-    std::string basePath;
 
-    std::string url() const;
+    std::string address() const;
 };
 
 FacadeAddress loadAddress(const std::filesystem::path& stateDir);

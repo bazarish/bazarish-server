@@ -14,8 +14,7 @@
   "operators": [],
   // The keys allowed to open the ops socket (the panel's).
   "opsClients": [],
-  // Its destination key and the secret path every request starts with, both
-  // minted at the first start: together they are the facade's address.
+  // Its destination key, minted at the first start: the facade's address.
   "state": "/var/lib/bazarish/facade",
   "i2p": {"privacy": "minimal", "tunnelQuantity": 16},
   "logLevel": "info"

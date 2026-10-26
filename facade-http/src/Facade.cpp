@@ -43,11 +43,6 @@ namespace {
 constexpr int kUpstreamTimeoutSeconds = 60;
 constexpr int kFrontReadSlackSeconds = 30;
 
-bool startsWith(const std::string& text, const std::string& prefix)
-{
-    return text.size() >= prefix.size() && text.compare(0, prefix.size(), prefix) == 0;
-}
-
 using bazarish::nowSeconds;
 
 std::string pathOf(const std::string& target)
@@ -61,17 +56,12 @@ bool isForwarded(const std::string& method, const std::string& path)
         || (method == "GET" && path == bazarish::tunnel::kServerCardPath);
 }
 
-std::optional<std::string> forwardedTarget(
-    const bazarish::facade::FacadeOptions& options, const bazarish::http::Request& request)
+std::optional<std::string> forwardedTarget(const bazarish::http::Request& request)
 {
-    if (!startsWith(request.target, options.basePath)) {
+    if (!isForwarded(request.method, pathOf(request.target))) {
         return std::nullopt;
     }
-    const std::string target = request.target.substr(options.basePath.size());
-    if (!isForwarded(request.method, pathOf(target))) {
-        return std::nullopt;
-    }
-    return target;
+    return request.target;
 }
 
 bazarish::http::Response notFound()
@@ -182,7 +172,7 @@ void Facade::setupRoutes(bazarish::http::Server& server)
                              bazarish::http::Responder respond)
         -> std::optional<bazarish::http::Response> {
         load_.record(nowSeconds());
-        const std::optional<std::string> target = forwardedTarget(options_, request);
+        const std::optional<std::string> target = forwardedTarget(request);
         if (!target.has_value()) {
             return notFound();
         }
@@ -263,7 +253,7 @@ void Facade::setupOpsRoutes()
         return bazarish::http::Response{200, "application/json", {},
             nlohmann::json{
                 {"logLevel", values.logLevel},
-                {"url", options_.url},
+                {"address", options_.address},
                 {"messaging", {{"host", values.messagingHost}, {"port", values.messagingPort}}},
                 {"listen", {{"host", values.listenHost}, {"port", values.listenPort}}},
                 {"opsListen", {{"host", values.opsHost}, {"port", values.opsPort}}},
@@ -333,10 +323,11 @@ void Facade::setupOpsRoutes()
                 503, "this facade cannot restart itself: it was started without a supervisor");
         }
         const FacadeAddress minted = mintAddress(options_.stateDirectory);
-        bazarish::log::info("new address minted, restarting to publish it: {}", minted.url());
+        bazarish::log::info(
+            "new address minted, restarting to publish it: {}", minted.address());
         options_.requestRestart();
         return bazarish::http::Response{200, "application/json", {},
-            nlohmann::json{{"url", minted.url()}, {"previousUrl", options_.url},
+            nlohmann::json{{"address", minted.address()}, {"previousAddress", options_.address},
                 {"restarting", true}}
                 .dump()};
     }));

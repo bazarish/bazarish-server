@@ -31,9 +31,9 @@ namespace {
 
 namespace http = bazarish::http;
 
-constexpr const char* kFacadeA = "http://aaaa.b32.i2p/1111";
-constexpr const char* kFacadeB = "http://bbbb.b32.i2p/2222";
-constexpr const char* kFacadeBRenewed = "http://cccc.b32.i2p/3333";
+constexpr const char* kFacadeA = "aaaa.b32.i2p";
+constexpr const char* kFacadeB = "bbbb.b32.i2p";
+constexpr const char* kFacadeBRenewed = "cccc.b32.i2p";
 
 std::unique_ptr<http::Server> serving(const tls::Credential& credential)
 {
@@ -85,7 +85,7 @@ int main()
     const auto facadeA = serving(services);
     facadeA->get("/settings", [&](const http::Request&) {
         ++askedA;
-        return json({{"url", kFacadeA}, {"logLevel", "info"}});
+        return json({{"address", kFacadeA}, {"logLevel", "info"}});
     });
     const int facadeAPort = facadeA->start();
 
@@ -93,7 +93,7 @@ int main()
     const auto facadeB = serving(services);
     facadeB->get("/settings", [&](const http::Request&) {
         ++askedB;
-        return json({{"url", kFacadeB}});
+        return json({{"address", kFacadeB}});
     });
     const int facadeBPort = facadeB->start();
 
@@ -137,8 +137,8 @@ int main()
     const std::vector<FacadeReport> reports = facadeReports(home, panel, panelKeys);
     CHECK(reports.size() == 2);
     CHECK(reports[0].name == "second");
-    CHECK(reports[0].url == kFacadeB);
-    CHECK(reports[1].url == kFacadeA);
+    CHECK(reports[0].address == kFacadeB);
+    CHECK(reports[1].address == kFacadeA);
 
     const int askedBBefore = askedB.load();
     CHECK(publishFacades(home, panel, panelKeys, {{"second", kFacadeBRenewed}}).empty());
@@ -197,7 +197,8 @@ int main()
 
     const auto directFacade = serving(services);
     directFacade->get("/settings", [&](const http::Request&) {
-        return json({{"url", kFacadeA}, {"directListen", {{"host", "10.0.0.7"}, {"port", 8418}}}});
+        return json(
+            {{"address", kFacadeA}, {"directListen", {{"host", "10.0.0.7"}, {"port", 8418}}}});
     });
     const int directFacadePort = directFacade->start();
 

@@ -587,13 +587,14 @@ void HttpApi::registerRoutes()
             }
             const FacadeReport& report = reports.at(next++);
             bool inDescriptor = false;
-            for (const nlohmann::json& url : described) {
-                inDescriptor = inDescriptor || (!report.url.empty() && url == report.url);
+            for (const nlohmann::json& address : described) {
+                inDescriptor
+                    = inDescriptor || (!report.address.empty() && address == report.address);
             }
             facades.push_back({
                 {"name", service.name},
                 {"ops", service.url},
-                {"address", report.url},
+                {"address", report.address},
                 {"error", report.error},
                 {"inDescriptor", inDescriptor},
             });
@@ -620,19 +621,19 @@ void HttpApi::registerRoutes()
             return;
         }
         const nlohmann::json answer = nlohmann::json::parse(minted.body);
-        const std::string url = answer.at("url").get<std::string>();
-        const std::string previous = answer.at("previousUrl").get<std::string>();
+        const std::string address = answer.at("address").get<std::string>();
+        const std::string previous = answer.at("previousAddress").get<std::string>();
         bazarish::log::info("facade {} has a new address", facade->name);
         const std::string descriptorError = publishFacades(
-            *fleet, identity_, credential_, {{facade->name, url}});
+            *fleet, identity_, credential_, {{facade->name, address}});
         nlohmann::json gateways = nlohmann::json::array();
         for (const GatewayRepoint& repointed : repointGateways(
-                 settings_->get().fleets, previous, url, identity_, credential_)) {
+                 settings_->get().fleets, previous, address, identity_, credential_)) {
             gateways.push_back({{"name", repointed.name}, {"changed", repointed.changed},
                 {"error", repointed.error}});
         }
         sendJson(response,
-            nlohmann::json{{"url", url}, {"previousUrl", previous},
+            nlohmann::json{{"address", address}, {"previousAddress", previous},
                 {"descriptorError", descriptorError}, {"gateways", gateways}}
                 .dump());
     }));

@@ -450,16 +450,20 @@ void AccountApi::setupOpsRoutes()
             if (body.contains("facades")) {
                 std::vector<std::string> facades;
                 for (const nlohmann::json& entry : body.at("facades")) {
-                    std::string url = entry.get<std::string>();
-                    if (url.empty()) {
+                    std::string address = entry.get<std::string>();
+                    if (address.empty()) {
                         continue;
                     }
-                    if (!bazarish::isI2pFacadeUrl(url)
+                    if (address.find('/') != std::string::npos) {
+                        throw std::invalid_argument(
+                            "a facade is an address, with no scheme and no path");
+                    }
+                    if (!bazarish::isI2pFacadeAddress(address)
                         && !bazarish::allowFacadeWithoutI2pForDevPurposes()) {
                         throw std::invalid_argument(
-                            "a facade must be a .b32.i2p address: " + url);
+                            "a facade must be a .b32.i2p address: " + address);
                     }
-                    facades.push_back(std::move(url));
+                    facades.push_back(std::move(address));
                 }
                 if (facades.empty()) {
                     throw std::invalid_argument("a server with no facade cannot be reached");
@@ -476,8 +480,7 @@ void AccountApi::setupOpsRoutes()
                     if (!bazarish::i2p::isReseedUrl(url)) {
                         throw std::invalid_argument("a reseed is an https URL: " + url);
                     }
-                    if (bazarish::isI2pFacadeUrl(url)
-                        && !bazarish::allowFacadeWithoutI2pForDevPurposes()) {
+                    if (bazarish::isI2pUrl(url) && !bazarish::allowFacadeWithoutI2pForDevPurposes()) {
                         throw std::invalid_argument(
                             "a reseed must not be a .b32.i2p address: " + url);
                     }

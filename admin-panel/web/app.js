@@ -995,8 +995,8 @@
         if (reported.length === 0) {
             readOnlyRow(reach, "Facades", "");
         }
-        reported.forEach(function (url, index) {
-            readOnlyRow(reach, index === 0 ? "Facades" : "", url);
+        reported.forEach(function (address, index) {
+            readOnlyRow(reach, index === 0 ? "Facades" : "", address);
         });
         reach.appendChild(element("p", "hint", "Each facade reports its own address, and the panel"
             + " writes them here in the order of Settings, Panel. See the Facades tab."));
@@ -1195,12 +1195,11 @@
     function renderFacadePage(form, name, data) {
         itemHead(form, "facades", "all facades", name);
         var address = section(form, "Its address");
-        var shown = readOnlyRow(address, "Address", data.url,
-            "Its I2P destination and the secret path every request starts with, both minted at"
-            + " its first start.");
+        var shown = readOnlyRow(address, "Address", data.address,
+            "Its I2P destination, minted at its first start.");
         var said = element("div");
         address.appendChild(said);
-        controls(address, "Replaces the key and the path at once and restarts the facade. The"
+        controls(address, "Replaces the key and restarts the facade. The"
             + " descriptor and any gateway route to the old address follow by themselves; a"
             + " client that knows only the old address loses the server until it is given the"
             + " new link.").appendChild(actionButton("New address", "btn-danger", function (done) {
@@ -1211,7 +1210,7 @@
             }
             api("POST", withFleet("/api/facade/new-address?service=" + encodeURIComponent(name)))
                 .then(function (answer) {
-                    shown.lastChild.textContent = answer.url;
+                    shown.lastChild.textContent = answer.address;
                     said.innerHTML = "";
                     said.appendChild(notice(answer.descriptorError
                         ? "The descriptor was not changed: " + answer.descriptorError

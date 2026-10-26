@@ -39,8 +39,8 @@ namespace {
 
 namespace http = bazarish::http;
 
-constexpr const char* kOldUrl = "http://aaaa.b32.i2p/1111";
-constexpr const char* kNewUrl = "http://cccc.b32.i2p/3333";
+constexpr const char* kOldAddress = "aaaa.b32.i2p";
+constexpr const char* kNewAddress = "cccc.b32.i2p";
 constexpr const char* kChallengeField = "name=\"challenge\" value=\"";
 
 std::string formEncoded(const std::string& text)
@@ -152,17 +152,18 @@ int main()
     });
     const int nodePort = node->start();
 
-    std::string facadeUrl = kOldUrl;
+    std::string facadeAddress = kOldAddress;
     const auto facade = serving(services);
     facade->get("/settings", [&](const http::Request&) {
         const std::lock_guard<std::mutex> lock(guard);
-        return json({{"url", facadeUrl}, {"directListen", {{"host", "0.0.0.0"}, {"port", 8418}}}});
+        return json(
+            {{"address", facadeAddress}, {"directListen", {{"host", "0.0.0.0"}, {"port", 8418}}}});
     });
     facade->post("/new-address", [&](const http::Request&) {
         const std::lock_guard<std::mutex> lock(guard);
-        const std::string previous = facadeUrl;
-        facadeUrl = kNewUrl;
-        return json({{"url", kNewUrl}, {"previousUrl", previous}, {"restarting", true}});
+        const std::string previous = facadeAddress;
+        facadeAddress = kNewAddress;
+        return json({{"address", kNewAddress}, {"previousAddress", previous}, {"restarting", true}});
     });
     const int facadePort = facade->start();
 
@@ -218,7 +219,7 @@ int main()
         CHECK(listed.status == 200);
         const nlohmann::json body = nlohmann::json::parse(listed.body);
         CHECK(body.at("facades").size() == 1);
-        CHECK(body.at("facades")[0].at("address") == kOldUrl);
+        CHECK(body.at("facades")[0].at("address") == kOldAddress);
         CHECK(body.at("facades")[0].at("inDescriptor") == false);
     }
 
@@ -237,7 +238,7 @@ int main()
             = panel.ask("PUT", "/api/panel", {{"fleets", twice.at("fleets")}});
         CHECK(saved.status == 200);
         CHECK(nlohmann::json::parse(saved.body).at("descriptorErrors").empty());
-        CHECK(described == nlohmann::json::array({kOldUrl}));
+        CHECK(described == nlohmann::json::array({kOldAddress}));
         const nlohmann::json listed
             = nlohmann::json::parse(panel.ask("GET", "/api/facades?fleet=home").body);
         CHECK(listed.at("facades")[0].at("inDescriptor") == true);
@@ -260,12 +261,13 @@ int main()
             = panel.ask("POST", "/api/facade/new-address?fleet=home&service=front");
         CHECK(renewed.status == 200);
         const nlohmann::json body = nlohmann::json::parse(renewed.body);
-        CHECK(body.at("url") == kNewUrl);
-        CHECK(body.at("previousUrl") == kOldUrl);
+        CHECK(body.at("address") == kNewAddress);
+        CHECK(body.at("previousAddress") == kOldAddress);
+        CHECK(!body.contains("url"));
         CHECK(body.at("descriptorError") == "");
         CHECK(body.at("gateways").size() == 1);
         CHECK(body.at("gateways")[0].at("changed") == true);
-        CHECK(described == nlohmann::json::array({kNewUrl}));
+        CHECK(described == nlohmann::json::array({kNewAddress}));
         CHECK(routes[0].at("dest") == "cccc.b32.i2p");
         CHECK(panel.ask("POST", "/api/facade/new-address?fleet=home&service=edge").status
             == 404);

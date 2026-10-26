@@ -32,12 +32,12 @@ FacadeReport reportOf(const ServiceEntry& facade, const Identity& identity,
         return report;
     }
     try {
-        report.url = nlohmann::json::parse(shown.body).value("url", std::string());
+        report.address = nlohmann::json::parse(shown.body).value("address", std::string());
     } catch (const std::exception& error) {
         report.error = error.what();
         return report;
     }
-    if (report.url.empty()) {
+    if (report.address.empty()) {
         report.error = "it reports no address: it is older than this panel";
     }
     return report;
@@ -111,19 +111,19 @@ std::string publishFacades(const Fleet& fleet, const Identity& identity,
             unknown.services.push_back(service);
         }
     }
-    std::map<std::string, std::string> urls = known;
+    std::map<std::string, std::string> addresses = known;
     for (const FacadeReport& report : facadeReports(unknown, identity, credential)) {
         if (!report.error.empty()) {
             return "facade \"" + report.name + "\" did not give its address (" + report.error
                 + "), so the descriptor was left as it was";
         }
-        urls[report.name] = report.url;
+        addresses[report.name] = report.address;
     }
 
     nlohmann::json ordered = nlohmann::json::array();
     for (const ServiceEntry& service : fleet.services) {
         if (service.kind == kFacadeKind) {
-            ordered.push_back(urls.at(service.name));
+            ordered.push_back(addresses.at(service.name));
         }
     }
     if (ordered.empty()) {
@@ -184,12 +184,12 @@ GatewayLinking linkGateways(
         }
         const nlohmann::json settings = nlohmann::json::parse(shown.body);
         const nlohmann::json listen = settings.value("directListen", nlohmann::json());
-        const std::string url = settings.value("url", std::string());
-        if (!listening(listen) || url.empty()) {
+        const std::string address = settings.value("address", std::string());
+        if (!listening(listen) || address.empty()) {
             continue;
         }
         nlohmann::json route = dialledAt(listen, service);
-        route["dest"] = hostOf(url);
+        route["dest"] = address;
         direct.push_back(std::move(route));
     }
     for (const ServiceEntry& service : fleet.services) {
@@ -220,11 +220,9 @@ GatewayLinking linkGateways(
 }
 
 std::vector<GatewayRepoint> repointGateways(const std::vector<Fleet>& fleets,
-    const std::string& fromUrl, const std::string& toUrl, const Identity& identity,
+    const std::string& from, const std::string& to, const Identity& identity,
     const tls::Credential& credential)
 {
-    const std::string from = hostOf(fromUrl);
-    const std::string to = hostOf(toUrl);
     std::vector<GatewayRepoint> results;
     for (const Fleet& fleet : fleets) {
         for (const ServiceEntry& service : fleet.services) {

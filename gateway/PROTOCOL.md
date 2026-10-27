@@ -33,6 +33,8 @@ The operator of a gateway sees:
 - every destination the client dials, and every address the client publishes,
 - which of its own users are talking to each other, since it connects them,
 - the keys of every destination the gateway operates, because it mints them,
+- the account's two presence keys and the presence keys of up to 99 contacts,
+  once the client shows or watches presence through it (Presence, below),
 - the timing and the volume of all of the client's I2P traffic,
 - the client's IP address.
 
@@ -52,14 +54,32 @@ the account's serving destination.
 Turning the gateway on is therefore an explicit, informed choice, and the one
 invariant the protocol keeps is narrow and exact:
 
-> **No key the client owns is ever sent to the gateway, and every destination
-> the gateway mints is one-time.**
+> **No key the client owns is ever sent to the gateway, except the account's
+> two presence keys, and every destination the gateway mints is one-time.**
 
 The client's durable key material is the account identity and the master of its
 serving destination. Neither is ever operated locally, so neither has any reason
 to travel. Everything the client does operate is minted for a single use and
 discarded with it: the facade link, a lookup, an outbound lease, a file
 transfer and the media destination of a call.
+
+The presence keys are the exception, and they travel because presence cannot
+work without them: the account's presence address is in its contact card, so it
+is the same address every time, and a lease set readable only by named contacts
+is read by the router that looks it up, which here is the gateway's. What the
+operator holds with them is bounded and lasting:
+
+- With the presence destination's keys it can run the account's presence
+  address, and so keep it silent: contacts then see the account offline. It
+  cannot answer for the account, since every answer is sealed under a key agreed
+  inside a request sealed to the account's sealing key, which never travels.
+- With the reader list it learns the presence keys of up to 99 contacts. A
+  presence key is in each contact's card, so this names them to an operator that
+  holds those cards.
+- With the account's presence secret it can read the lease set of every contact
+  who lets this account see their presence, and so see when each of them is
+  online, for as long as that secret stands. Leaving the gateway does not take
+  this back; the secret is permanent by design and a new one means a new card.
 
 ## Transport
 
@@ -350,7 +370,7 @@ it answers.
 | 0x04 | `error` | gateway | echo | `{"code": "...", "message": "..."}` |
 | 0x05 | `resume` | client | echo | `{"streams": [{"id": n, "received": n}]}` |
 | 0x06 | `attach` | client | flow | `{"received": n}`, on a flow socket's first frame |
-| 0x10 | `endpoint-create` | client | endpoint | `{"kind": "stream\|raw", "published": true, "realtime": false, "target": "<host>"}`, `target` optional |
+| 0x10 | `endpoint-create` | client | endpoint | `{"kind": "stream\|raw", "published": true, "realtime": false, "target": "<host>", "keys": "<i2p base64>", "readers": ["<i2p base64>"], "readerKey": "<i2p base64>"}`, `target`, `keys` with `readers`, and `readerKey` optional |
 | 0x11 | `endpoint-stop` | client | endpoint | `{}` |
 | 0x12 | `endpoint-status` | gateway | endpoint | `{"ready": true, "host": "<b33>.b32.i2p", "tunnelsIn": 3, "tunnelsOut": 3, "leaseSets": 2, "localRoute": false}` |
 | 0x13 | `endpoint-lost` | gateway | endpoint | `{}`: the gateway stopped it |
@@ -469,9 +489,10 @@ a log.
 
 ## Destinations
 
-**The gateway mints the keys.** `endpoint-create` carries no key material at
-all: it says what the destination is for and how it should be built, and the
-gateway answers `ok` with the address it created.
+**The gateway mints the keys.** `endpoint-create` carries no key material,
+except for presence (Presence, below): it says what the destination is for and
+how it should be built, and the gateway answers `ok` with the address it
+created.
 
 ```
 client -> endpoint-create  ref=2  {"kind": "raw", "published": true,
@@ -488,7 +509,7 @@ destination's base64, only the host it gives a peer.
 | `kind` | What it is | Who uses it |
 |---|---|---|
 | `stream` | TCP-like streams, dialled and accepted | The facade link, a lookup, an outbound lease, both ends of a file transfer |
-| `raw` | Raw, non-repliable datagrams, no per-packet sender identity | A call's media, and nothing else |
+| `raw` | Raw, non-repliable datagrams, no per-packet sender identity | A call's media, and presence |
 
 Repliable datagrams are not in version 1. Nothing in the client sends or
 receives one, and a kind that no caller has is a kind that cannot be tested.
@@ -514,9 +535,10 @@ are and how many a destination keeps are the gateway's own settings,
 `i2p.privacy` and `i2p.tunnelQuantity` in its configuration, one for everyone it
 serves (minimal and 3 unless set). `endpoint-create` says what a destination is
 for and nothing about its tunnels. The exception is
-fixed rather than configured: a `raw` destination carries a call's media and is
-always built with one hop each way, because a voice that waits for three hops is
-a voice that arrives late.
+fixed rather than configured: a realtime `raw` destination carries a call's media
+and is always built with one hop each way, because a voice that waits for three
+hops is a voice that arrives late. Presence is `raw` and not realtime, and is
+built on the gateway's settings.
 
 ### Warm pools
 
@@ -562,14 +584,41 @@ A destination never changes how it is carried while it lives.
 `stream-open` that follows. A published destination waits for callers it cannot
 name and is always built, and for `raw` the field means nothing.
 
+### Presence
+
+Presence is the one place a client hands the gateway keys of its own, in two
+shapes:
+
+- **The presence address**, a published `raw` destination built from the
+  account's presence keys: `keys` is the I2P base64 of the destination's private
+  keys, and `readers` the I2P base64 of the 32-byte X25519 public key of each
+  reader, the account's own first. Its lease set is encrypted, and only a router
+  holding one of those readers' secrets can read it (I2P proposal 123, DH client
+  authorisation). The answer names the address those keys give, which is the
+  one in the account's card.
+- **A watching address**, a published `raw` destination the gateway mints as
+  usual, with `readerKey`: the I2P base64 of the account's 32-byte X25519
+  presence secret, which lets it read the lease sets that list the account.
+
+The gateway refuses with `bad-frame` a request whose `keys` comes without
+`readers`, whose `readers` come without `keys`, that names more than
+`kMaxLeaseSetReaders` readers, whose reader keys or secret are not 32 bytes, or whose
+destination is unpublished. Neither shape is ever served from a pool, since a
+pooled destination has neither the keys nor the secret. A destination with
+readers is never met inside the gateway (Meeting on the gateway): its reader
+list is the whole point, and a local shortcut would let any session past it.
+
+A new reader list is a new destination: the client stops the old one and
+creates the address again with the new list.
+
 ### What this costs the client's seam
 
 `EndpointConfig::keys` is optional and absent means "the transport mints this".
-A client leaves it empty everywhere: every destination it raises is one-time and
-none of them looks at the key afterwards. Under a gateway there is no other
-choice, and a key handed to this backend is **refused** rather than ignored - one
-that travelled would break the only rule the trust model has, and one quietly
-ignored would leave the caller believing an address is its key's.
+A client leaves it empty everywhere but the presence address: every other
+destination it raises is one-time and none of them looks at the key afterwards.
+Under a gateway a key handed to this backend without readers is **refused**
+rather than ignored - one that travelled would widen the exception above, and
+one quietly ignored would leave the caller believing an address is its key's.
 
 There is no `Router::generateKeys()`. A caller that wants a key of its own - the
 account's own destination, which belongs to the user and is never operated here -
@@ -698,7 +747,8 @@ The rules are narrow:
 - **Only published endpoints match.** An unpublished destination is unreachable
   by design and dialling one fails everywhere else; a gateway that made it
   reachable would be a gateway on which the same client code behaves
-  differently.
+  differently. For the same reason a presence address, readable only by the
+  readers it names, does not match either.
 - A directly connected stream reaches the other session as any other inbound
   stream, with `peer` set to the caller's public destination, which the gateway
   knows because it minted it.
@@ -893,16 +943,18 @@ Both sides agree, so there is nothing to refuse.
 | `kDatagramQueue` | 64 | Received datagrams held per endpoint, at either end |
 | `kKeepalive` | 30 s | How often the gateway pings |
 | `kPongTimeout` | 15 s | A silent peer after a ping is a dead socket |
+| `kMaxLeaseSetReaders` | 100 | Readers one presence address names: the account itself and 99 contacts, the oldest dialogs dropped first |
 | `kStatusPeriod` | 250 ms | How often a destination's status is looked at, and pushed when it changed. A fraction of a second because a caller waits for a destination to be ready before it dials, so this is added to every destination that is created |
 
 ## What this asks of the client
 
 1. `Backend::eGateway` beside `eEmbedded` and `eSam`, and `RouterConfig` gains
    the gateway's secret URL, its SPKI pin, its SNI and its token.
-2. Nothing client-side mints a key for a destination: `EndpointConfig::keys`
-   stays empty and the transport mints. `privateBlob()` and `publicBase64()`
-   throw rather than answer with something empty, which is where an assumption
-   that the address came from a key of the caller's is caught.
+2. Nothing client-side mints a key for a destination but the presence address:
+   elsewhere `EndpointConfig::keys` stays empty and the transport mints.
+   `privateBlob()` and `publicBase64()` throw rather than answer with something
+   empty, which is where an assumption that the address came from a key of the
+   caller's is caught.
 3. `EndpointConfig::target`, the one host an unpublished destination will dial,
    travels in `endpoint-create`; `endpoint-lost` makes `lost()` true.
 4. `common/src/I2pGateway.cpp`: `RouterBackend`, `EndpointBackend` and

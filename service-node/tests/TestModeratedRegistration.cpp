@@ -58,6 +58,18 @@ Headers makeHeaders(const Identity& identity, const std::string& method,
     return Headers(signed_.begin(), signed_.end());
 }
 
+Bytes botCard(const Identity& owner, const std::int64_t issuedAt, const std::string& dest = {},
+    const Bytes& sealingDer = {}, const Bytes& servingDer = {})
+{
+    ContactCard card;
+    card.kind = AccountKind::eBot;
+    card.issuedAt = issuedAt;
+    card.dest = dest;
+    card.sealingPublicKeyDer = sealingDer;
+    card.servingSealingKeyDer = servingDer;
+    return card.issue(owner);
+}
+
 }  // namespace
 
 int main()
@@ -108,7 +120,7 @@ int main()
     {
         grants.grantSubscription(
             alice.fingerprint(), kQuota, now);
-        const Bytes card = ContactCard::issue(alice, now);
+        const Bytes card = botCard(alice, now);
         const std::string body = nlohmann::json{{"card", toBase64(card)}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
             makeHeaders(alice, "POST", "/v1/account/card", body), body);

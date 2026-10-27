@@ -5,6 +5,7 @@
 #include <bazarish/Clock.hpp>
 #include <Health.hpp>
 #include <bazarish/Hmac.hpp>
+#include <bazarish/I2pAddress.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/Tls.hpp>
 
@@ -66,6 +67,48 @@ nlohmann::json editable(const Settings& written)
         {"stateDirectory", written.stateDir.string()},
         {"version", kVersion},
     };
+}
+
+constexpr std::size_t kLeaseSetKeyBytes = 32;
+
+Bytes fromI2pBase64(const std::string& text)
+{
+    return fromBase64(i2pToStandardBase64(text));
+}
+
+Bytes leaseSetKey(const nlohmann::json& text)
+{
+    Bytes raw = fromI2pBase64(text.get<std::string>());
+    if (raw.size() != kLeaseSetKeyBytes) {
+        throw std::invalid_argument("a lease-set key is 32 bytes");
+    }
+    return raw;
+}
+
+void readLeaseSetAuth(const nlohmann::json& body, i2p::EndpointConfig& config)
+{
+    if (body.contains("keys")) {
+        const nlohmann::json& readers = body.at("readers");
+        if (!readers.is_array() || readers.empty()) {
+            throw std::invalid_argument("a destination of a key of its own names its readers");
+        }
+        if (readers.size() > i2p::kMaxLeaseSetReaders) {
+            throw std::invalid_argument("a lease set names at most "
+                + std::to_string(i2p::kMaxLeaseSetReaders) + " readers");
+        }
+        if (!config.published) {
+            throw std::invalid_argument("a destination of a key of its own is published");
+        }
+        config.keys = i2p::Keys::fromBlob(fromI2pBase64(body.at("keys").get<std::string>()));
+        for (const nlohmann::json& reader : readers) {
+            config.leaseSetReaders.push_back(leaseSetKey(reader));
+        }
+    } else if (body.contains("readers")) {
+        throw std::invalid_argument("readers belong to a destination of a key of its own");
+    }
+    if (body.contains("readerKey")) {
+        config.leaseSetReaderKey = leaseSetKey(body.at("readerKey"));
+    }
 }
 
 std::size_t drawBetween(const std::size_t low, const std::size_t high)
@@ -407,9 +450,10 @@ std::size_t Gateway::pooled() const
 i2p::EndpointConfig Gateway::shapeOf(const bool raw, const bool published, const bool realtime) const
 {
     i2p::EndpointConfig config;
+    const bool call = raw && realtime;
     config.traffic = raw ? i2p::Traffic::eRaw : i2p::Traffic::eStream;
-    config.privacy = raw ? kCallPrivacy : settings_.tunnelPrivacy;
-    config.tunnelQuantity = raw ? i2p::kCallTunnelQuantity : settings_.tunnelQuantity;
+    config.privacy = call ? kCallPrivacy : settings_.tunnelPrivacy;
+    config.tunnelQuantity = call ? i2p::kCallTunnelQuantity : settings_.tunnelQuantity;
     config.published = published;
     config.realtime = realtime;
     config.label = raw ? "raw" : "stream";
@@ -797,8 +841,14 @@ void Gateway::onEndpointCreate(const std::shared_ptr<Session>& session,
         fail(socket, frame.ref, Fault::eBadFrame, "a destination is for streams or for raw");
         return;
     }
-    const i2p::EndpointConfig config = shapeOf(
+    i2p::EndpointConfig config = shapeOf(
         kind == "raw", body.value("published", true), body.value("realtime", false));
+    try {
+        readLeaseSetAuth(body, config);
+    } catch (const std::exception& error) {
+        fail(socket, frame.ref, Fault::eBadFrame, error.what());
+        return;
+    }
     const std::string target = body.value("target", std::string());
 
     std::shared_ptr<EndpointEntry> entry;
@@ -815,6 +865,7 @@ void Gateway::onEndpointCreate(const std::shared_ptr<Session>& session,
         entry->raw = kind == "raw";
         entry->published = config.published;
         entry->realtime = config.realtime;
+        entry->readersOnly = !config.leaseSetReaders.empty();
         routable = !entry->raw && !entry->published && !target.empty();
         local = routable && reachesLocallyLocked(target);
         if (routable && !local) {
@@ -846,7 +897,7 @@ void Gateway::onEndpointCreate(const std::shared_ptr<Session>& session,
             entry->localRoute.store(true);
         }
         entry->made = true;
-        if (entry->published) {
+        if (entry->published && !entry->readersOnly) {
             published_[entry->host] = Local{session, entry};
         }
         const Bytes answer

@@ -28,6 +28,7 @@ struct EndpointEntry {
     bool raw = false;
     bool published = false;
     bool realtime = false;
+    bool readersOnly = false;
     std::string host;
     http::SocketPtr socket;
     std::thread worker;

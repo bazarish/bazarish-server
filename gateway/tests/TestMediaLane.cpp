@@ -5,6 +5,7 @@
 #include "TestRouter.hpp"
 #include "TestUtil.hpp"
 
+#include <bazarish/Crypto.hpp>
 #include <bazarish/I2p.hpp>
 
 #include <atomic>
@@ -26,6 +27,7 @@ constexpr const char* kPath = "/5c3f9a12e8d7";
 constexpr const char* kToken = "a-fifth-static-token";
 constexpr int kWaitSeconds = 30;
 constexpr std::size_t kOversizeBytes = 20000;
+constexpr std::chrono::milliseconds kNothingArrives{1500};
 
 i2p::RouterConfig borrowedFrom(const int port)
 {
@@ -153,6 +155,28 @@ int main()
     const std::shared_ptr<i2p::Endpoint> aside = bob.createEndpoint(quiet);
     CHECK(mediaFlows(*aside, *hers));
     aside->stop();
+
+    const i2p::Keys own = i2p::Keys::generate();
+    i2p::EndpointConfig guarded;
+    guarded.published = true;
+    guarded.traffic = i2p::Traffic::eRaw;
+    guarded.keys = own;
+    guarded.leaseSetReaders = {Key::generateX25519().rawPublic()};
+    const std::shared_ptr<i2p::Endpoint> presence = alice.createEndpoint(guarded);
+    CHECK(presence->routingHost() == i2p::routingHost(own.publicBase64()));
+    const std::string knock = "here";
+    his->sendRawDatagram(presence->routingHost(), knock.data(), knock.size());
+    CHECK(presence->receiveRawDatagram(kNothingArrives).empty());
+    CHECK(!routedLocally(alice, presence->routingHost()));
+    presence->stop();
+
+    i2p::EndpointConfig watching;
+    watching.published = true;
+    watching.traffic = i2p::Traffic::eRaw;
+    watching.leaseSetReaderKey = Key::generateX25519().rawPrivate();
+    const std::shared_ptr<i2p::Endpoint> watcher = bob.createEndpoint(watching);
+    CHECK(mediaFlows(*watcher, *hers));
+    watcher->stop();
 
     CHECK(gateway.refusals() == 0);
 

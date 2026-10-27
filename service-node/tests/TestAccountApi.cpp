@@ -63,6 +63,18 @@ Headers makeHeaders(const Identity& identity, const std::string& method,
     return Headers(signed_.begin(), signed_.end());
 }
 
+Bytes botCard(const Identity& owner, const std::int64_t issuedAt, const std::string& dest = {},
+    const Bytes& sealingDer = {}, const Bytes& servingDer = {})
+{
+    ContactCard card;
+    card.kind = AccountKind::eBot;
+    card.issuedAt = issuedAt;
+    card.dest = dest;
+    card.sealingPublicKeyDer = sealingDer;
+    card.servingSealingKeyDer = servingDer;
+    return card.issue(owner);
+}
+
 }  // namespace
 
 int main()
@@ -128,7 +140,7 @@ int main()
 
     {
         grants.grantSubscription(alice.fingerprint(), kQuota, now);
-        const Bytes card = ContactCard::issue(alice, now);
+        const Bytes card = botCard(alice, now);
         const std::string body = nlohmann::json{{"card", toBase64(card)}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
             makeHeaders(alice, "POST", "/v1/account/card", body), body);
@@ -152,7 +164,7 @@ int main()
     }
 
     {
-        const Bytes card = ContactCard::issue(mallory, now);
+        const Bytes card = botCard(mallory, now);
         const std::string body = nlohmann::json{{"card", toBase64(card)}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
             makeHeaders(mallory, "POST", "/v1/account/card", body), body);
@@ -166,7 +178,7 @@ int main()
         const Bytes servingKey = Key::generateSealing().publicDer();
         CHECK(!grants.peekSubscription(alice.fingerprint()).has_value());
         const Bytes card
-            = ContactCard::issue(alice, now + 1, dest, sealing.publicDer(), servingKey);
+            = botCard(alice, now + 1, dest, sealing.publicDer(), servingKey);
         const std::string body = nlohmann::json{{"card", toBase64(card)}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
             makeHeaders(alice, "POST", "/v1/account/card", body), body);
@@ -185,14 +197,14 @@ int main()
         {
             const std::string oldDest
                 = "elkbeyqjykssca6o7qlbwgq4fr2hry7kw2ursn2sh3lt3acox6gq.b32.i2p";
-            const Bytes stale = ContactCard::issue(
+            const Bytes stale = botCard(
                 alice, now, oldDest, sealing.publicDer(), servingKey);
             const std::string staleBody = nlohmann::json{{"card", toBase64(stale)}}.dump();
             CHECK(call(port, "POST", "/v1/account/card",
                       makeHeaders(alice, "POST", "/v1/account/card", staleBody), staleBody)
                       .status
                 == 409);
-            const Bytes sameAge = ContactCard::issue(
+            const Bytes sameAge = botCard(
                 alice, now + 1, oldDest, sealing.publicDer(), servingKey);
             const std::string sameBody = nlohmann::json{{"card", toBase64(sameAge)}}.dump();
             CHECK(call(port, "POST", "/v1/account/card",
@@ -207,7 +219,7 @@ int main()
                       .dest
                 == dest);
 
-            const Bytes future = ContactCard::issue(alice, now + 4000, oldDest,
+            const Bytes future = botCard(alice, now + 4000, oldDest,
                 sealing.publicDer(), servingKey);
             const std::string futureBody = nlohmann::json{{"card", toBase64(future)}}.dump();
             CHECK(call(port, "POST", "/v1/account/card",

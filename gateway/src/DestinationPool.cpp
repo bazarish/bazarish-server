@@ -24,7 +24,8 @@ bool DestinationPool::fits(const i2p::EndpointConfig& wanted) const
 {
     return wanted.traffic == shape_.traffic && wanted.published == shape_.published
         && wanted.realtime == shape_.realtime && wanted.privacy == shape_.privacy
-        && wanted.tunnelQuantity == shape_.tunnelQuantity;
+        && wanted.tunnelQuantity == shape_.tunnelQuantity && !wanted.keys.has_value()
+        && wanted.leaseSetReaders.empty() && wanted.leaseSetReaderKey.empty();
 }
 
 std::shared_ptr<i2p::Endpoint> DestinationPool::take()

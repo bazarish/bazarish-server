@@ -2,6 +2,8 @@
 #include "Gateway.hpp"
 
 #include <bazarish/Clock.hpp>
+#include <bazarish/Crypto.hpp>
+#include <bazarish/I2pAddress.hpp>
 #include <bazarish/HttpClient.hpp>
 #include <bazarish/Tls.hpp>
 
@@ -323,6 +325,23 @@ int main()
     CHECK(dialled.ref == 10);
     CHECK(gateway.dials() == 1);
     CHECK(gateway.refusals() == refusedBefore);
+    {
+        const i2p::Keys presence = i2p::Keys::generate();
+        const nlohmann::json readers = nlohmann::json::array(
+            {standardToI2pBase64(toBase64(Key::generateX25519().rawPublic()))});
+        const nlohmann::json withMaster = {{"kind", "raw"}, {"published", true},
+            {"keys", presence.privateBase64()}, {"readers", readers}};
+        send(*asking.socket, encodeJson(FrameType::eEndpointCreate, 12, withMaster));
+        const Frame refused = receive(*asking.socket);
+        CHECK(refused.type == FrameType::eError);
+        CHECK(bodyJson(refused)["code"] == "bad-frame");
+        const nlohmann::json withDelegation = {{"kind", "raw"}, {"published", true},
+            {"keys", presence.issueTransient(1).privateBase64()}, {"readers", readers}};
+        send(*asking.socket, encodeJson(FrameType::eEndpointCreate, 14, withDelegation));
+        const Frame made = receive(*asking.socket);
+        CHECK(made.type == FrameType::eOk);
+        CHECK(bodyJson(made)["host"] == i2p::routingHost(presence.publicBase64()));
+    }
     asking.socket->close(websocket::close_code::normal, ignored);
     asking.socket.reset();
 

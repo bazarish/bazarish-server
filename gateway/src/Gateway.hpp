@@ -50,6 +50,8 @@ public:
     std::size_t refusals() const { return refused_.load(); }
     std::size_t dials() const { return dials_.load(); }
     std::size_t pooled() const;
+    // Asks for a fresh presence delegation near its end and stops an address that outlives one.
+    void lapseDelegations(std::int64_t now);
 
 private:
     http::Response notFound() const;
@@ -75,6 +77,8 @@ private:
         const http::SocketPtr& socket, const Frame& frame);
     i2p::EndpointConfig shapeOf(bool raw, bool published, bool realtime) const;
     std::shared_ptr<i2p::Endpoint> endpointFor(const i2p::EndpointConfig& config);
+    void onEndpointDelegate(const std::shared_ptr<Session>& session,
+        const http::SocketPtr& socket, const Frame& frame);
     void onEndpointStop(const std::shared_ptr<Session>& session, const http::SocketPtr& socket,
         const Frame& frame);
     void onStreamOpen(const std::shared_ptr<Session>& session, const http::SocketPtr& socket,

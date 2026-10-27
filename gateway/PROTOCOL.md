@@ -33,8 +33,9 @@ The operator of a gateway sees:
 - every destination the client dials, and every address the client publishes,
 - which of its own users are talking to each other, since it connects them,
 - the keys of every destination the gateway operates, because it mints them,
-- the account's two presence keys and the presence keys of up to 99 contacts,
-  once the client shows or watches presence through it (Presence, below),
+- the account's presence secret, a one-day delegation of its presence address
+  and the presence keys of up to 99 contacts, once the client shows or watches
+  presence through it (Presence, below),
 - the timing and the volume of all of the client's I2P traffic,
 - the client's IP address.
 
@@ -55,7 +56,8 @@ Turning the gateway on is therefore an explicit, informed choice, and the one
 invariant the protocol keeps is narrow and exact:
 
 > **No key the client owns is ever sent to the gateway, except the account's
-> two presence keys, and every destination the gateway mints is one-time.**
+> presence secret and a one-day delegation of its presence address, and every
+> destination the gateway mints is one-time.**
 
 The client's durable key material is the account identity and the master of its
 serving destination. Neither is ever operated locally, so neither has any reason
@@ -63,16 +65,20 @@ to travel. Everything the client does operate is minted for a single use and
 discarded with it: the facade link, a lookup, an outbound lease, a file
 transfer and the media destination of a call.
 
-The presence keys are the exception, and they travel because presence cannot
-work without them: the account's presence address is in its contact card, so it
-is the same address every time, and a lease set readable only by named contacts
-is read by the router that looks it up, which here is the gateway's. What the
-operator holds with them is bounded and lasting:
+Presence is the exception, and it travels because presence cannot work without
+it: the account's presence address is in its contact card, so it is the same
+address every time, and a lease set readable only by named contacts is read by
+the router that looks it up, which here is the gateway's. The master key of that
+address never travels; the gateway is given a delegation that ends with the UTC
+day and asks the client for the next one itself. What the operator holds is
+bounded, and only the secret is lasting:
 
-- With the presence destination's keys it can run the account's presence
-  address, and so keep it silent: contacts then see the account offline. It
-  cannot answer for the account, since every answer is sealed under a key agreed
-  inside a request sealed to the account's sealing key, which never travels.
+- With the delegation it can run the account's presence address until the
+  delegation ends, and so keep it silent: contacts then see the account offline.
+  Once the client stops renewing it, the gateway cannot raise the address again.
+  It cannot answer for the account either, since every answer is sealed under a
+  key agreed inside a request sealed to the account's sealing key, which never
+  travels.
 - With the reader list it learns the presence keys of up to 99 contacts. A
   presence key is in each contact's card, so this names them to an operator that
   holds those cards.
@@ -374,6 +380,8 @@ it answers.
 | 0x11 | `endpoint-stop` | client | endpoint | `{}` |
 | 0x12 | `endpoint-status` | gateway | endpoint | `{"ready": true, "host": "<b33>.b32.i2p", "tunnelsIn": 3, "tunnelsOut": 3, "leaseSets": 2, "localRoute": false}` |
 | 0x13 | `endpoint-lost` | gateway | endpoint | `{}`: the gateway stopped it |
+| 0x14 | `endpoint-renew` | gateway | endpoint | `{"expires": n}`: a presence delegation ends at n, send the next one |
+| 0x15 | `endpoint-delegate` | client | endpoint | `{"keys": "<i2p base64>"}`: the next delegation of a presence address |
 | 0x20 | `stream-open` | client | stream | `{"endpoint": n, "host": "...", "deadline": 60}` |
 | 0x21 | `stream-opened` | gateway | stream | `{}` |
 | 0x22 | `stream-inbound` | gateway | stream | `{"endpoint": n, "peer": "<base64>"}` |
@@ -589,13 +597,14 @@ name and is always built, and for `raw` the field means nothing.
 Presence is the one place a client hands the gateway keys of its own, in two
 shapes:
 
-- **The presence address**, a published `raw` destination built from the
-  account's presence keys: `keys` is the I2P base64 of the destination's private
-  keys, and `readers` the I2P base64 of the 32-byte X25519 public key of each
-  reader, the account's own first. Its lease set is encrypted, and only a router
-  holding one of those readers' secrets can read it (I2P proposal 123, DH client
-  authorisation). The answer names the address those keys give, which is the
-  one in the account's card.
+- **The presence address**, a published `raw` destination built from a
+  delegation of the account's presence address: `keys` is the I2P base64 of an
+  offline transient that ends with the current UTC day, with the day's b33
+  blinding key, and `readers` the I2P base64 of the 32-byte X25519 public key of
+  each reader, the account's own first. Its lease set is encrypted, and only a
+  router holding one of those readers' secrets can read it (I2P proposal 123, DH
+  client authorisation). The answer names the address the delegation gives,
+  which is the one in the account's card. A master key is refused.
 - **A watching address**, a published `raw` destination the gateway mints as
   usual, with `readerKey`: the I2P base64 of the account's 32-byte X25519
   presence secret, which lets it read the lease sets that list the account.
@@ -610,6 +619,18 @@ list is the whole point, and a local shortcut would let any session past it.
 
 A new reader list is a new destination: the client stops the old one and
 creates the address again with the new list.
+
+**Renewal is the gateway's to ask for.** `kDelegationAskLead` before a
+delegation ends, the gateway sends `endpoint-renew` with its end in Unix seconds,
+and repeats it every `kDelegationAskEvery` while there is no new one. The client
+answers `endpoint-delegate` with a delegation that reaches the end of the next
+UTC day; the gateway swaps it into the running destination - same address, same
+tunnels - and answers `ok`. It refuses with `bad-frame` a delegation of another
+address, or one that ends no later than the one it holds. A destination never
+outlives its delegation: `kDelegationLapseLead` before the end, with no new one,
+the gateway stops it and sends `endpoint-lost`, and the client raises the
+address again with a fresh delegation when it next wants it. The client keeps
+no clock for any of this.
 
 ### What this costs the client's seam
 
@@ -943,6 +964,9 @@ Both sides agree, so there is nothing to refuse.
 | `kDatagramQueue` | 64 | Received datagrams held per endpoint, at either end |
 | `kKeepalive` | 30 s | How often the gateway pings |
 | `kPongTimeout` | 15 s | A silent peer after a ping is a dead socket |
+| `kDelegationAskLead` | 600 s | How long before a presence delegation ends the gateway asks for the next; ten minutes leave room for a client that is between sockets |
+| `kDelegationAskEvery` | 60 s | How often the ask is repeated while no new delegation has come |
+| `kDelegationLapseLead` | 60 s | How long before its delegation ends a presence address is stopped, as server-core does with its own delegated destinations |
 | `kMaxLeaseSetReaders` | 100 | Readers one presence address names: the account itself and 99 contacts, the oldest dialogs dropped first |
 | `kStatusPeriod` | 250 ms | How often a destination's status is looked at, and pushed when it changed. A fraction of a second because a caller waits for a destination to be ready before it dials, so this is added to every destination that is created |
 

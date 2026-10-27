@@ -28,6 +28,9 @@ constexpr const char* kToken = "a-fifth-static-token";
 constexpr int kWaitSeconds = 30;
 constexpr std::size_t kOversizeBytes = 20000;
 constexpr std::chrono::milliseconds kNothingArrives{1500};
+constexpr std::int64_t kAskedBeforeEnd = 300;
+constexpr std::int64_t kPastLapse = 30;
+constexpr std::chrono::milliseconds kRenewalRoundTrip{1000};
 
 i2p::RouterConfig borrowedFrom(const int port)
 {
@@ -168,6 +171,12 @@ int main()
     his->sendRawDatagram(presence->routingHost(), knock.data(), knock.size());
     CHECK(presence->receiveRawDatagram(kNothingArrives).empty());
     CHECK(!routedLocally(alice, presence->routingHost()));
+    const std::int64_t endOfToday = own.issueTransient(1).transientExpires();
+    gateway.lapseDelegations(endOfToday - kAskedBeforeEnd);
+    std::this_thread::sleep_for(kRenewalRoundTrip);
+    gateway.lapseDelegations(endOfToday - kPastLapse);
+    std::this_thread::sleep_for(kRenewalRoundTrip);
+    CHECK(!presence->lost());
     presence->stop();
 
     i2p::EndpointConfig watching;

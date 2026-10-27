@@ -70,10 +70,23 @@ nlohmann::json editable(const Settings& written)
 }
 
 constexpr std::size_t kLeaseSetKeyBytes = 32;
+constexpr std::int64_t kDelegationAskLeadSeconds = 600;
+constexpr std::int64_t kDelegationAskEverySeconds = 60;
+// As server-core: a destination never outlives its delegation and goes down a minute before.
+constexpr std::int64_t kDelegationLapseLeadSeconds = 60;
 
 Bytes fromI2pBase64(const std::string& text)
 {
     return fromBase64(i2pToStandardBase64(text));
+}
+
+i2p::Keys delegationIn(const nlohmann::json& text)
+{
+    i2p::Keys keys = i2p::Keys::fromBlob(fromI2pBase64(text.get<std::string>()));
+    if (!keys.isOffline() || keys.b33OfflineKeyDays() < 1) {
+        throw std::invalid_argument("a presence address comes as a delegation for today, never its master key");
+    }
+    return keys;
 }
 
 Bytes leaseSetKey(const nlohmann::json& text)
@@ -99,7 +112,7 @@ void readLeaseSetAuth(const nlohmann::json& body, i2p::EndpointConfig& config)
         if (!config.published) {
             throw std::invalid_argument("a destination of a key of its own is published");
         }
-        config.keys = i2p::Keys::fromBlob(fromI2pBase64(body.at("keys").get<std::string>()));
+        config.keys = delegationIn(body.at("keys"));
         for (const nlohmann::json& reader : readers) {
             config.leaseSetReaders.push_back(leaseSetKey(reader));
         }
@@ -694,6 +707,7 @@ void Gateway::onFrame(const http::SocketPtr& socket, const Frame& frame)
         case FrameType::eResume: onResume(session, socket, frame); return;
         case FrameType::eEndpointCreate: onEndpointCreate(session, socket, frame); return;
         case FrameType::eEndpointStop: onEndpointStop(session, socket, frame); return;
+        case FrameType::eEndpointDelegate: onEndpointDelegate(session, socket, frame); return;
         case FrameType::eStreamOpen: onStreamOpen(session, socket, frame); return;
         case FrameType::eStreamData: onStreamData(session, socket, frame); return;
         case FrameType::eStreamCredit: onStreamCredit(session, socket, frame); return;
@@ -866,6 +880,10 @@ void Gateway::onEndpointCreate(const std::shared_ptr<Session>& session,
         entry->published = config.published;
         entry->realtime = config.realtime;
         entry->readersOnly = !config.leaseSetReaders.empty();
+        if (config.keys.has_value()) {
+            entry->identity = config.keys->publicBase64();
+            entry->delegationExpires = config.keys->transientExpires();
+        }
         routable = !entry->raw && !entry->published && !target.empty();
         local = routable && reachesLocallyLocked(target);
         if (routable && !local) {
@@ -912,6 +930,90 @@ void Gateway::onEndpointCreate(const std::shared_ptr<Session>& session,
         entry->worker = std::thread([this, session, entry]() { datagramLoop(session, entry); });
     } else if (entry->published) {
         entry->worker = std::thread([this, session, entry]() { acceptLoop(session, entry); });
+    }
+}
+
+void Gateway::onEndpointDelegate(const std::shared_ptr<Session>& session,
+    const http::SocketPtr& socket, const Frame& frame)
+{
+    std::optional<i2p::Keys> keys;
+    try {
+        keys = delegationIn(bodyJson(frame).at("keys"));
+    } catch (const std::exception& error) {
+        fail(socket, frame.ref, Fault::eBadFrame, error.what());
+        return;
+    }
+    std::shared_ptr<EndpointEntry> entry;
+    std::shared_ptr<i2p::Endpoint> endpoint;
+    std::int64_t held = 0;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        entry = endpointOf(*session, frame.ref);
+        if (entry != nullptr) {
+            held = entry->delegationExpires;
+            endpoint = entry->endpoint;
+        }
+    }
+    if (entry == nullptr || held == 0 || endpoint == nullptr) {
+        fail(socket, frame.ref, Fault::eNoEndpoint, "no presence address by that id on this session");
+        return;
+    }
+    if (keys->publicBase64() != entry->identity) {
+        fail(socket, frame.ref, Fault::eBadFrame, "a delegation for another address");
+        return;
+    }
+    if (keys->transientExpires() <= held) {
+        fail(socket, frame.ref, Fault::eBadFrame, "a delegation that ends no later than the one held");
+        return;
+    }
+    endpoint->refreshOfflineSignature(*keys);
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        entry->delegationExpires = keys->transientExpires();
+        entry->delegationAskedAt = 0;
+    }
+    socket->send(encode(FrameType::eOk, frame.ref));
+}
+
+void Gateway::lapseDelegations(const std::int64_t now)
+{
+    std::vector<std::pair<std::shared_ptr<Session>, std::uint32_t>> lapsed;
+    std::vector<std::pair<http::SocketPtr, Bytes>> asks;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        for (const std::shared_ptr<Session>& session : sessions_.all()) {
+            for (const auto& [id, entry] : session->endpoints) {
+                const std::int64_t expires = entry->delegationExpires;
+                if (expires == 0) {
+                    continue;
+                }
+                if (now >= expires - kDelegationLapseLeadSeconds) {
+                    lapsed.emplace_back(session, id);
+                } else if (now >= expires - kDelegationAskLeadSeconds && session->control
+                    && now - entry->delegationAskedAt >= kDelegationAskEverySeconds) {
+                    entry->delegationAskedAt = now;
+                    asks.emplace_back(session->control,
+                        encodeJson(FrameType::eEndpointRenew, id, {{"expires", expires}}));
+                }
+            }
+        }
+    }
+    for (const auto& [socket, frame] : asks) {
+        socket->send(frame);
+    }
+    for (const auto& [session, id] : lapsed) {
+        if (stopEndpoint(session, id) == nullptr) {
+            continue;
+        }
+        http::SocketPtr control;
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            control = session->control;
+        }
+        if (control) {
+            control->send(encodeJson(FrameType::eEndpointLost, id, nlohmann::json::object()));
+        }
+        bazarish::log::info("gateway: a presence address outlived its delegation and was stopped");
     }
 }
 
@@ -1550,6 +1652,7 @@ void Gateway::statusLoop()
         for (const std::shared_ptr<Session>& gone : swept) {
             retire(gone);
         }
+        lapseDelegations(nowSeconds());
 
         std::vector<i2p::LocalDestination> local;
         try {

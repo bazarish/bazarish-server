@@ -136,6 +136,7 @@ private:
     std::optional<DirectRoute> directFor(const std::string& host) const;
     std::shared_ptr<EndpointEntry> localFor(
         const std::string& host, std::shared_ptr<Session>& owner) const;
+    static bool readsLeaseSetOf(const EndpointEntry& from, const EndpointEntry& to);
     bool meetLocally(const std::shared_ptr<Session>& session,
         const std::shared_ptr<EndpointEntry>& from, std::uint32_t stream,
         const std::shared_ptr<Session>& owner, const std::shared_ptr<EndpointEntry>& to,

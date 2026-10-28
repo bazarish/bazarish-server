@@ -160,17 +160,34 @@ int main()
     aside->stop();
 
     const i2p::Keys own = i2p::Keys::generate();
+    const Key reader = Key::generateX25519();
     i2p::EndpointConfig guarded;
     guarded.published = true;
     guarded.traffic = i2p::Traffic::eRaw;
     guarded.keys = own;
-    guarded.leaseSetReaders = {Key::generateX25519().rawPublic()};
+    guarded.leaseSetReaders = {reader.rawPublic()};
     const std::shared_ptr<i2p::Endpoint> presence = alice.createEndpoint(guarded);
     CHECK(presence->routingHost() == i2p::routingHost(own.publicBase64()));
     const std::string knock = "here";
     his->sendRawDatagram(presence->routingHost(), knock.data(), knock.size());
     CHECK(presence->receiveRawDatagram(kNothingArrives).empty());
     CHECK(!routedLocally(alice, presence->routingHost()));
+    const auto watcherWith = [&bob](const Bytes& secret) {
+        i2p::EndpointConfig config;
+        config.published = true;
+        config.traffic = i2p::Traffic::eRaw;
+        config.leaseSetReaderKey = secret;
+        return bob.createEndpoint(config);
+    };
+    const std::shared_ptr<i2p::Endpoint> reading = watcherWith(reader.rawPrivate());
+    CHECK(mediaFlows(*reading, *presence));
+    CHECK(waitFor([&]() { return routedLocally(alice, presence->routingHost()); }));
+    CHECK(mediaFlows(*presence, *reading));
+    const std::shared_ptr<i2p::Endpoint> stranger = watcherWith(Key::generateX25519().rawPrivate());
+    stranger->sendRawDatagram(presence->routingHost(), knock.data(), knock.size());
+    CHECK(presence->receiveRawDatagram(kNothingArrives).empty());
+    reading->stop();
+    stranger->stop();
     const std::int64_t endOfToday = own.issueTransient(1).transientExpires();
     gateway.lapseDelegations(endOfToday - kAskedBeforeEnd);
     std::this_thread::sleep_for(kRenewalRoundTrip);

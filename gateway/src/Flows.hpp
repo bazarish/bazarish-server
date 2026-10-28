@@ -14,6 +14,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace bazarish::gateway {
 
@@ -29,6 +30,8 @@ struct EndpointEntry {
     bool published = false;
     bool realtime = false;
     bool readersOnly = false;
+    std::vector<Bytes> readers;
+    Bytes readerPublic;
     std::string identity;
     std::int64_t delegationExpires = 0;
     std::int64_t delegationAskedAt = 0;

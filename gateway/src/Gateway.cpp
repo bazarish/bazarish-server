@@ -3,6 +3,7 @@
 
 #include <bazarish/Auth.hpp>
 #include <bazarish/Clock.hpp>
+#include <bazarish/Crypto.hpp>
 #include <Health.hpp>
 #include <bazarish/Hmac.hpp>
 #include <bazarish/I2pAddress.hpp>
@@ -886,6 +887,10 @@ void Gateway::onEndpointCreate(const std::shared_ptr<Session>& session,
         entry->published = config.published;
         entry->realtime = config.realtime;
         entry->readersOnly = !config.leaseSetReaders.empty();
+        entry->readers = config.leaseSetReaders;
+        if (!config.leaseSetReaderKey.empty()) {
+            entry->readerPublic = Key::fromRawX25519Private(config.leaseSetReaderKey).rawPublic();
+        }
         if (config.keys.has_value()) {
             entry->identity = config.keys->publicBase64();
             entry->delegationExpires = config.keys->transientExpires();
@@ -921,7 +926,7 @@ void Gateway::onEndpointCreate(const std::shared_ptr<Session>& session,
             entry->localRoute.store(true);
         }
         entry->made = true;
-        if (entry->published && !entry->readersOnly) {
+        if (entry->published) {
             published_[entry->host] = Local{session, entry};
         }
         const Bytes answer
@@ -1099,7 +1104,7 @@ void Gateway::onRawSend(const std::shared_ptr<Session>& session, const http::Soc
             return;
         }
         peer = localFor(sent.host, peerSession);
-        if (peer != nullptr && !peer->raw) {
+        if (peer != nullptr && (!peer->raw || !readsLeaseSetOf(*from, *peer))) {
             peer = nullptr;
         }
         if (peer != nullptr) {
@@ -1280,6 +1285,13 @@ void Gateway::dial(const std::shared_ptr<Session>& session,
         }
     }
     entry->reader = std::thread([this, session, entry]() { readLoop(session, entry); });
+}
+
+// The check an encrypted lease set makes in I2P: only a holder of a reader's secret gets in.
+bool Gateway::readsLeaseSetOf(const EndpointEntry& from, const EndpointEntry& to)
+{
+    const auto reader = std::find(to.readers.begin(), to.readers.end(), from.readerPublic);
+    return !to.readersOnly || (!from.readerPublic.empty() && reader != to.readers.end());
 }
 
 bool Gateway::meetLocally(const std::shared_ptr<Session>& session,

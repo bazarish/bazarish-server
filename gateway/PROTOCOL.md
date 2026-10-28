@@ -619,8 +619,9 @@ The gateway refuses with `bad-frame` a request whose `keys` comes without
 destination is unpublished. The presence address is never served from a pool,
 since a pooled destination does not have the account's keys; a watching address
 is, and is given the secret as it is taken (Warm pools). A destination with
-readers is never met inside the gateway (Meeting on the gateway): its reader
-list is the whole point, and a local shortcut would let any session past it.
+readers is met inside the gateway only by a watching address whose secret
+belongs to one of those readers (Meeting on the gateway), the check its
+encrypted lease set makes in I2P.
 
 A new reader list is a new destination: the client stops the old one and
 creates the address again with the new list.
@@ -774,7 +775,10 @@ The rules are narrow:
   by design and dialling one fails everywhere else; a gateway that made it
   reachable would be a gateway on which the same client code behaves
   differently. For the same reason a presence address, readable only by the
-  readers it names, does not match either.
+  readers it names, matches only a datagram from a watching address whose
+  `readerKey` is the secret of one of them: the one sender that could have
+  found it in I2P. Two users of one gateway then see each other's status
+  before either address has its tunnels.
 - A directly connected stream reaches the other session as any other inbound
   stream, with `peer` set to the caller's public destination, which the gateway
   knows because it minted it.

@@ -150,6 +150,7 @@ private:
     std::unique_ptr<http::Server> ops_;
     std::unique_ptr<DestinationPool> streamPool_;
     std::unique_ptr<DestinationPool> callPool_;
+    std::unique_ptr<DestinationPool> watchPool_;
     SessionStore sessions_;
     mutable std::mutex mutex_;
     mutable auth::ReplayCache operatorReplays_;

@@ -18,7 +18,7 @@
     "sessionTtlSeconds": 300,
 
     "i2p": { "privacy": "minimal", "tunnelQuantity": 3 },
-    "pools": { "stream": 4, "call": 2 },
+    "pools": { "stream": 4, "call": 2, "watch": 2 },
 
     "serverName": "nginx",
     "notFound": ""

@@ -152,6 +152,7 @@ Settings Settings::from(const ConfigView& config)
 
     settings.streamPool = poolDepth(config, "pools.stream", kDefaultStreamPool);
     settings.callPool = poolDepth(config, "pools.call", kDefaultCallPool);
+    settings.watchPool = poolDepth(config, "pools.watch", kDefaultWatchPool);
 
     settings.sessionTtlSeconds
         = config.number("sessionTtlSeconds", kSessionTtl.count());

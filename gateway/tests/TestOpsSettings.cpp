@@ -33,9 +33,11 @@ constexpr const char* kToken = "a-fourth-static-token";
 constexpr int kWaitSeconds = 20;
 constexpr std::size_t kStreamPool = 1;
 constexpr std::size_t kCallPool = 0;
+constexpr std::size_t kWatchPool = 1;
 constexpr int kWantedQuantity = 5;
 constexpr int kWantedStreamPool = 3;
 constexpr int kWantedCallPool = 2;
+constexpr int kWantedWatchPool = 4;
 constexpr const char* kServerDest = "fkc4nkqn6k2bwrqsgbabnkyx4g5s2cp3nvnrdnkqxz4bzcbzrfaa.b32.i2p";
 
 int unusedPort()
@@ -117,7 +119,7 @@ int main()
             {"token", kToken},
             {"state", (root / "state").string()},
             {"i2p", {{"privacy", "minimal"}, {"tunnelQuantity", i2p::kDefaultTunnelQuantity}}},
-            {"pools", {{"stream", kStreamPool}, {"call", kCallPool}}},
+            {"pools", {{"stream", kStreamPool}, {"call", kCallPool}, {"watch", kWatchPool}}},
         }.dump(2);
     }
     Settings settings = Settings::from(ConfigView(ConfigFile(configPath).read()));
@@ -147,7 +149,7 @@ int main()
     Gateway gateway(settings, engine, OpsControl{configPath, [&restarts]() { ++restarts; }});
     const int port = gateway.start();
     CHECK(port > 0);
-    CHECK(gateway.pooled() == kStreamPool + kCallPool);
+    CHECK(gateway.pooled() == kStreamPool + kCallPool + kWatchPool);
 
     const std::string pin = tls::selfSigned(settings.stateDir).pin;
     const Identity stranger = Identity::generate();
@@ -164,11 +166,13 @@ int main()
     CHECK(before.at("callPrivacy") == "minimal");
     CHECK(before.at("streamPool") == kStreamPool);
     CHECK(before.at("callPool") == kCallPool);
+    CHECK(before.at("watchPool") == kWatchPool);
     CHECK(before.at("direct").empty());
 
     for (const nlohmann::json& wrong : {nlohmann::json{{"i2pTunnelQuantity", 0}},
              nlohmann::json{{"streamPool", kMaxPoolDepth + 1}},
-             nlohmann::json{{"callPool", -1}}, nlohmann::json{{"i2pPrivacy", "short"}},
+             nlohmann::json{{"callPool", -1}}, nlohmann::json{{"watchPool", -1}},
+             nlohmann::json{{"i2pPrivacy", "short"}},
              nlohmann::json{{"i2pPrivacy", "max"},
                  {"direct", {{{"dest", kServerDest}, {"host", "127.0.0.1"}, {"port", 1}}}}}}) {
         CHECK(askOps(settings.opsPort, pin, "PUT", "/settings", &operatorIdentity, wrong.dump())
@@ -183,6 +187,7 @@ int main()
         {"i2pTunnelQuantity", kWantedQuantity},
         {"streamPool", kWantedStreamPool},
         {"callPool", kWantedCallPool},
+        {"watchPool", kWantedWatchPool},
         {"direct",
             {{{"dest", kServerDest}, {"host", "127.0.0.1"}, {"port", listenerPort},
                 {"pin", server.pin}}}},
@@ -199,11 +204,12 @@ int main()
     CHECK(written.tunnelQuantity == kWantedQuantity);
     CHECK(written.streamPool == static_cast<std::size_t>(kWantedStreamPool));
     CHECK(written.callPool == static_cast<std::size_t>(kWantedCallPool));
+    CHECK(written.watchPool == static_cast<std::size_t>(kWantedWatchPool));
     CHECK(written.direct.size() == 1);
     CHECK(written.direct.front().dest == kServerDest);
     CHECK(written.token == kToken);
     CHECK(written.basePath == kPath);
-    CHECK(gateway.pooled() == kStreamPool + kCallPool);
+    CHECK(gateway.pooled() == kStreamPool + kCallPool + kWatchPool);
 
     i2p::Router bob(borrowedFrom(port));
     bob.start();

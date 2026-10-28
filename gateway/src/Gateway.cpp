@@ -58,6 +58,7 @@ nlohmann::json editable(const Settings& written)
         {"callPrivacy", std::string(i2p::privacyName(kCallPrivacy))},
         {"streamPool", written.streamPool},
         {"callPool", written.callPool},
+        {"watchPool", written.watchPool},
         {"poolMax", kMaxPoolDepth},
         {"direct", direct},
         {"server", written.server.has_value()
@@ -277,7 +278,7 @@ http::Response Gateway::settingsChanged(const http::Request& request)
             }
             writes.push_back({{"i2p", "tunnelQuantity"}, quantity});
         }
-        for (const char* const pool : {"stream", "call"}) {
+        for (const char* const pool : {"stream", "call", "watch"}) {
             const std::string key = std::string(pool) + "Pool";
             if (!body.contains(key)) {
                 continue;
@@ -382,6 +383,8 @@ int Gateway::start()
         router_, shapeOf(false, false, false), settings_.streamPool);
     callPool_ = std::make_unique<DestinationPool>(
         router_, shapeOf(true, true, true), settings_.callPool);
+    watchPool_ = std::make_unique<DestinationPool>(router_, shapeOf(true, true, false),
+        settings_.watchPool, DestinationPool::Use::eWatching);
     bindOps();
     const int bound = server_.start();
     running_.store(true);
@@ -441,6 +444,9 @@ void Gateway::stop()
     if (streamPool_) {
         streamPool_->stop();
     }
+    if (watchPool_) {
+        watchPool_->stop();
+    }
     if (callPool_) {
         callPool_->stop();
     }
@@ -457,7 +463,8 @@ int Gateway::port() const
 
 std::size_t Gateway::pooled() const
 {
-    return (streamPool_ ? streamPool_->held() : 0) + (callPool_ ? callPool_->held() : 0);
+    return (streamPool_ ? streamPool_->held() : 0) + (callPool_ ? callPool_->held() : 0)
+        + (watchPool_ ? watchPool_->held() : 0);
 }
 
 i2p::EndpointConfig Gateway::shapeOf(const bool raw, const bool published, const bool realtime) const
@@ -475,11 +482,10 @@ i2p::EndpointConfig Gateway::shapeOf(const bool raw, const bool published, const
 
 std::shared_ptr<i2p::Endpoint> Gateway::endpointFor(const i2p::EndpointConfig& config)
 {
-    if (streamPool_->fits(config)) {
-        return streamPool_->take();
-    }
-    if (callPool_->fits(config)) {
-        return callPool_->take();
+    for (const std::unique_ptr<DestinationPool>* pool : {&streamPool_, &callPool_, &watchPool_}) {
+        if ((*pool)->fits(config)) {
+            return (*pool)->take(config);
+        }
     }
     return router_.createEndpoint(config);
 }

@@ -304,6 +304,14 @@ int main()
     const Frame repeat = receive(*twiceOver.socket);
     CHECK(repeat.type == FrameType::eOk);
     CHECK(bodyJson(repeat)["host"] == bodyJson(once)["host"]);
+    const std::size_t pooledBefore = gateway.pooled();
+    const nlohmann::json watching = {{"kind", "raw"}, {"published", true}, {"realtime", false},
+        {"readerKey", standardToI2pBase64(toBase64(Key::generateX25519().rawPrivate()))}};
+    send(*twiceOver.socket, encodeJson(FrameType::eEndpointCreate, 16, watching));
+    const Frame watcher = receive(*twiceOver.socket);
+    CHECK(watcher.type == FrameType::eOk);
+    CHECK(warm.count(bodyJson(watcher)["host"].get<std::string>()) == 1);
+    CHECK(gateway.pooled() == pooledBefore);
     twiceOver.socket->close(websocket::close_code::normal, ignored);
     twiceOver.socket.reset();
 

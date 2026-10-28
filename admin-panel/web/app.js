@@ -1348,6 +1348,11 @@
             unit: "of " + data.poolMax, restart: true,
             hint: "Destinations kept built for call media."
         });
+        var watchPool = fieldRow(pools, "Watching", data.watchPool, {
+            type: "number", narrow: true, min: 0, max: data.poolMax,
+            unit: "of " + data.poolMax, restart: true,
+            hint: "Destinations kept built for watching presence."
+        });
 
         var routes = section(form, "Without I2P");
         readOnlyRow(routes, "Server", data.server ? data.server.host + ":" + data.server.port : "");
@@ -1382,7 +1387,8 @@
                         i2pPrivacy: privacy(),
                         i2pTunnelQuantity: count(quantity, "Tunnels", 1, data.i2pTunnelQuantityMax),
                         streamPool: count(streamPool, "The stream pool", 0, data.poolMax),
-                        callPool: count(callPool, "The call pool", 0, data.poolMax)
+                        callPool: count(callPool, "The call pool", 0, data.poolMax),
+                        watchPool: count(watchPool, "The watch pool", 0, data.poolMax)
                     }
                 };
             });

@@ -34,7 +34,7 @@ The operator of a gateway sees:
 - which of its own users are talking to each other, since it connects them,
 - the keys of every destination the gateway operates, because it mints them,
 - the account's presence secret, a one-day delegation of its presence address
-  and the presence keys of up to 99 contacts, once the client shows or watches
+  and the presence keys of up to 100 contacts, once the client shows or watches
   presence through it (Presence, below),
 - the timing and the volume of all of the client's I2P traffic,
 - the client's IP address.
@@ -79,7 +79,7 @@ bounded, and only the secret is lasting:
   It cannot answer for the account either, since every answer is sealed under a
   key agreed inside a request sealed to the account's sealing key, which never
   travels.
-- With the reader list it learns the presence keys of up to 99 contacts. A
+- With the reader list it learns the presence keys of up to 100 contacts. A
   presence key is in each contact's card, so this names them to an operator that
   holds those cards.
 - With the account's presence secret it can read the lease set of every contact
@@ -551,17 +551,21 @@ built on the gateway's settings.
 ### Warm pools
 
 Because the tunnels are the same for everyone, a destination built ahead of time
-fits whoever asks next. The gateway keeps two pools of them, built at start and
+fits whoever asks next. The gateway keeps three pools of them, built at start and
 refilled the moment one is taken: one of unpublished `stream` destinations on
 its own settings - the shape of the facade link, a lookup, an outbound lease and
-a download - and one of published, realtime `raw` destinations for call media.
-A request of either shape is answered with the oldest destination its pool holds,
+a download - one of published, realtime `raw` destinations for call media, and
+one of published `raw` destinations on its own settings for watching presence.
+A watching request is the one that brings a `readerKey`; the destination taken
+for it is given that key as it is handed out, which libi2pd takes from a running
+destination only with this project's patch (`i2pd-patches/0004`).
+A request of each shape is answered with the oldest destination its pool holds,
 which has usually long had its tunnels; any other shape is built on demand. A
 pooled destination goes to one session, once, and is stopped when that session
 is done with it, exactly like one built for the request: it was minted by the
 gateway either way, and nobody knew its address before it was handed out. The
 client therefore keeps no warm reserve of its own here (`capabilities.warmPool`).
-This gateway keeps four of the first and two of the second.
+This gateway keeps four of the first and two of each of the others.
 
 The gateway pushes `endpoint-status` whenever readiness, the tunnel counts, the
 held LeaseSets or `localRoute` change, and the client answers `ready()` and `waitReady()`
@@ -612,8 +616,9 @@ shapes:
 The gateway refuses with `bad-frame` a request whose `keys` comes without
 `readers`, whose `readers` come without `keys`, that names more than
 `kMaxLeaseSetReaders` readers, whose reader keys or secret are not 32 bytes, or whose
-destination is unpublished. Neither shape is ever served from a pool, since a
-pooled destination has neither the keys nor the secret. A destination with
+destination is unpublished. The presence address is never served from a pool,
+since a pooled destination does not have the account's keys; a watching address
+is, and is given the secret as it is taken (Warm pools). A destination with
 readers is never met inside the gateway (Meeting on the gateway): its reader
 list is the whole point, and a local shortcut would let any session past it.
 
@@ -967,7 +972,7 @@ Both sides agree, so there is nothing to refuse.
 | `kDelegationAskLead` | 600 s | How long before a presence delegation ends the gateway asks for the next; ten minutes leave room for a client that is between sockets |
 | `kDelegationAskEvery` | 60 s | How often the ask is repeated while no new delegation has come |
 | `kDelegationLapseLead` | 60 s | How long before its delegation ends a presence address is stopped, as server-core does with its own delegated destinations |
-| `kMaxLeaseSetReaders` | 100 | Readers one presence address names: the account itself and 99 contacts, the oldest dialogs dropped first |
+| `kMaxLeaseSetReaders` | 100 | Readers one presence address names: 100 contacts, the oldest dialogs dropped first |
 | `kStatusPeriod` | 250 ms | How often a destination's status is looked at, and pushed when it changed. A fraction of a second because a caller waits for a destination to be ready before it dials, so this is added to every destination that is created |
 
 ## What this asks of the client

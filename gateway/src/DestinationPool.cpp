@@ -6,9 +6,10 @@
 namespace bazarish::gateway {
 
 DestinationPool::DestinationPool(
-    i2p::Router& router, i2p::EndpointConfig shape, const std::size_t depth)
+    i2p::Router& router, i2p::EndpointConfig shape, const std::size_t depth, const Use use)
     : router_(router)
     , shape_(std::move(shape))
+    , use_(use)
 {
     for (std::size_t made = 0; made < depth; ++made) {
         held_.push_back(router_.createEndpoint(shape_));
@@ -25,16 +26,23 @@ bool DestinationPool::fits(const i2p::EndpointConfig& wanted) const
     return wanted.traffic == shape_.traffic && wanted.published == shape_.published
         && wanted.realtime == shape_.realtime && wanted.privacy == shape_.privacy
         && wanted.tunnelQuantity == shape_.tunnelQuantity && !wanted.keys.has_value()
-        && wanted.leaseSetReaders.empty() && wanted.leaseSetReaderKey.empty();
+        && wanted.leaseSetReaders.empty()
+        && wanted.leaseSetReaderKey.empty() == (use_ == Use::eGeneral);
 }
 
-std::shared_ptr<i2p::Endpoint> DestinationPool::take()
+std::shared_ptr<i2p::Endpoint> DestinationPool::take(const i2p::EndpointConfig& wanted)
 {
     std::shared_ptr<i2p::Endpoint> replacement = router_.createEndpoint(shape_);
-    const std::lock_guard<std::mutex> lock(mutex_);
-    held_.push_back(std::move(replacement));
-    std::shared_ptr<i2p::Endpoint> oldest = std::move(held_.front());
-    held_.pop_front();
+    std::shared_ptr<i2p::Endpoint> oldest;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        held_.push_back(std::move(replacement));
+        oldest = std::move(held_.front());
+        held_.pop_front();
+    }
+    if (use_ == Use::eWatching) {
+        oldest->setLeaseSetReaderKey(wanted.leaseSetReaderKey);
+    }
     return oldest;
 }
 

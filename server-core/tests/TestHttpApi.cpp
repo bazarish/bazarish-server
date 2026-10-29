@@ -14,6 +14,7 @@
 #include <bazarish/HttpClient.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <bazarish/Tls.hpp>
+#include <bazarish/Tunnel.hpp>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -28,6 +29,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <vector>
 
 #define CHECK(condition)                                                            \
     do {                                                                            \
@@ -106,6 +108,7 @@ int main()
     HttpApiOptions httpOptions;
     const auto serverServingKey
         = std::make_shared<Key>(Key::fromPrivatePem(serverSealing.privatePem()));
+    httpOptions.sealingKey = serverServingKey;
     httpOptions.assignDestination = [serverDest, serverServingKey](const std::string&) {
         return DestinationAssignment{serverDest, serverServingKey, "home"};
     };
@@ -237,6 +240,24 @@ int main()
         CHECK(storage.passCount(alice.fingerprint()) == 1);
     }
     {
+        std::vector<Bytes> filler;
+        for (std::size_t i = storage.passCount(alice.fingerprint()); i < kMaxPassesPerMailbox;
+             ++i) {
+            filler.push_back(randomBytes(kDeliveryPassSize));
+        }
+        storage.registerPasses(alice.fingerprint(), filler);
+        CHECK(storage.passCount(alice.fingerprint()) == kMaxPassesPerMailbox);
+        const auto registerPasses = [port, &alice](const nlohmann::json& passes) {
+            const std::string body = nlohmann::json{{"passes", passes}}.dump();
+            return call(port, "POST", "/v1/messaging/passes",
+                makeHeaders(alice, "POST", "/v1/messaging/passes", body, "alicedev"), body);
+        };
+        CHECK(registerPasses({toBase64(handleForBob), toBase64(filler.front())}).status == 200);
+        CHECK(registerPasses({toBase64(randomBytes(kDeliveryPassSize))}).status == 400);
+        CHECK(storage.revokePasses(alice.fingerprint(), filler) == filler.size());
+        CHECK(storage.passCount(alice.fingerprint()) == 1);
+    }
+    {
         const Bytes handleForCarol
             = deliveryPassHandle(deliveryPass(aliceSecret, std::string(52, 'c')));
         storage.registerPasses(alice.fingerprint(), {handleForCarol});
@@ -330,7 +351,7 @@ int main()
 
     {
         storage.registerClient(alice.fingerprint(), "alicephone");
-        CHECK(storage.putBlob(alice.fingerprint(), "seen-here", payload, "content", 1024 * 1024)
+        CHECK(storage.putBlob(alice.fingerprint(), "seen-here", payload, "content", 1024 * 1024, kNow)
             == Storage::PutResult::eStored);
         storage.ackBlob(alice.fingerprint(), "seen-here", "alicedev");
         CHECK(storage.hasBlob(alice.fingerprint(), "seen-here"));
@@ -348,7 +369,7 @@ int main()
         const std::uint64_t quotaBytes = storage.userQuota(alice.fingerprint(), 1024);
         storage.setUserQuota(alice.fingerprint(), half.size() * 2);
         for (const char* const id : {"big-a", "big-b"}) {
-            CHECK(storage.putBlob(alice.fingerprint(), id, half, "content", half.size() * 2)
+            CHECK(storage.putBlob(alice.fingerprint(), id, half, "content", half.size() * 2, kNow)
                 == Storage::PutResult::eStored);
         }
         const auto fetch = [port, &alice](const nlohmann::json& ids) {
@@ -379,19 +400,22 @@ int main()
     {
         const Bytes secret = randomBytes(32);
         const Key replyKey = Key::generateSealing();
-        const std::string inner = nlohmann::json{{"secret", toBase64(secret)},
-            {"replyKey", toBase64(replyKey.publicDer())}}.dump();
-        const std::string openBody = nlohmann::json{{"sealed",
-            toBase64(hybrid::seal(Bytes(inner.begin(), inner.end()), sealingPublic))}}.dump();
-
-        const http::ClientResponse opened = call(port, "POST", "/v1/auth/session",
-            makeHeaders(alice, "POST", "/v1/auth/session", openBody, "alicedev"), openBody);
+        tunnel::Hello hello;
+        hello.secret = secret;
+        hello.replyKeyDer = replyKey.publicDer();
+        hello.signature = auth::signRequest(alice, static_cast<std::int64_t>(std::time(nullptr)),
+            tunnel::kHelloMethod, tunnel::kHelloPath, secret);
+        const Bytes frame = tunnel::sealHello(hello, sealingPublic);
+        http::ClientRequest open;
+        open.method = "POST";
+        open.target = tunnel::kTunnelPath;
+        open.contentType = "application/octet-stream";
+        open.body = std::string(frame.begin(), frame.end());
+        const http::ClientResponse opened = http::request("127.0.0.1", port, open, {});
         CHECK(opened.status == 200);
-        const Bytes answer = hybrid::unseal(
-            fromBase64(nlohmann::json::parse(opened.body).at("sealed").get<std::string>()),
-            replyKey);
-        const nlohmann::json term = nlohmann::json::parse(answer.begin(), answer.end());
-        CHECK(term.at("expiresUnix").get<std::int64_t>() > 0);
+        CHECK(tunnel::openWelcome(Bytes(opened.body.begin(), opened.body.end()), replyKey)
+                  .expiresUnix
+            > 0);
 
         const std::string sessionId = toHex(sha256(secret)).substr(0, 32);
         const Bytes sessionKey = auth::deriveSessionKey(secret, sessionId);
@@ -414,11 +438,6 @@ int main()
             swapped["X-Bazarish-Client"] = "bobdev";
             CHECK(call(port, "GET", "/v1/messaging/storage-usage", swapped).status == 401);
         }
-
-        const http::ClientResponse chained = call(port, "POST", "/v1/auth/session",
-            maced(3, "POST", "/v1/auth/session", openBody, "alicedev"), openBody);
-        CHECK(chained.status == 401);
-        CHECK(nlohmann::json::parse(chained.body).at("error").at("code") == "SESSION_INVALID");
     }
 
     {

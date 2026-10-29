@@ -62,8 +62,8 @@ int main()
 
     CHECK_THROWS(storage.registerClient("not-a-user", "client1"));
     CHECK_THROWS(storage.registerClient(alice, "../escape"));
-    CHECK_THROWS(storage.putBlob(alice, "bad/blob", Bytes{1}, "content", kQuota));
-    CHECK_THROWS(storage.putBlob(alice, "", Bytes{1}, "content", kQuota));
+    CHECK_THROWS(storage.putBlob(alice, "bad/blob", Bytes{1}, "content", kQuota, kNow));
+    CHECK_THROWS(storage.putBlob(alice, "", Bytes{1}, "content", kQuota, kNow));
 
     CHECK(!storage.isClientRegistered(alice, "client1"));
     storage.registerClient(alice, "client1");
@@ -100,8 +100,8 @@ int main()
     CHECK(storage.hasPass(alice, handleBob));
 
     const Bytes blob(100, 0xab);
-    CHECK(storage.putBlob(alice, "msg1", blob, "content", kQuota) == Storage::PutResult::eStored);
-    CHECK(storage.putBlob(alice, "msg1", blob, "content", kQuota) == Storage::PutResult::eDuplicate);
+    CHECK(storage.putBlob(alice, "msg1", blob, "content", kQuota, kNow) == Storage::PutResult::eStored);
+    CHECK(storage.putBlob(alice, "msg1", blob, "content", kQuota, kNow) == Storage::PutResult::eDuplicate);
     CHECK(storage.usage(alice) == 100);
     CHECK(storage.hasBlob(alice, "msg1"));
     CHECK(!storage.hasBlob(alice, "nosuchblob"));
@@ -109,7 +109,7 @@ int main()
     CHECK_THROWS(storage.getBlob(alice, "nosuchblob"));
 
     const Bytes bigBlob(static_cast<std::size_t>(kQuota), 0xcd);
-    CHECK(storage.putBlob(alice, "msg2", bigBlob, "content", kQuota)
+    CHECK(storage.putBlob(alice, "msg2", bigBlob, "content", kQuota, kNow)
         == Storage::PutResult::eQuotaExceeded);
     CHECK(storage.usage(alice) == 100);
 
@@ -121,6 +121,12 @@ int main()
     }
     CHECK((storage.listPending(alice, "client1")
         == std::vector<Storage::PendingEntry>{{"msg1", "content", blob.size()}}));
+    {
+        std::ofstream stray(root / "users" / alice / "blobs" / "msg8.tmp");
+        stray << std::string(kQuota, 'x');
+    }
+    CHECK(storage.usage(alice) == blob.size());
+    std::filesystem::remove(root / "users" / alice / "blobs" / "msg8.tmp");
     std::filesystem::remove(root / "users" / alice / "blobs" / "msg9.tmp");
     CHECK(storage.isPendingFor(alice, "msg1", "client1"));
     storage.ackBlob(alice, "msg1", "client1");
@@ -138,13 +144,13 @@ int main()
 
     {
         constexpr auto kStampGap = std::chrono::milliseconds(2);
-        CHECK(storage.putBlob(alice, "zzz", blob, "content", kQuota)
+        CHECK(storage.putBlob(alice, "zzz", blob, "content", kQuota, kNow)
             == Storage::PutResult::eStored);
         std::this_thread::sleep_for(kStampGap);
-        CHECK(storage.putBlob(alice, "mmm", blob, "content", kQuota)
+        CHECK(storage.putBlob(alice, "mmm", blob, "content", kQuota, kNow)
             == Storage::PutResult::eStored);
         std::this_thread::sleep_for(kStampGap);
-        CHECK(storage.putBlob(alice, "aaa", blob, "content", kQuota)
+        CHECK(storage.putBlob(alice, "aaa", blob, "content", kQuota, kNow)
             == Storage::PutResult::eStored);
         CHECK((storage.listPending(alice, "client1")
             == std::vector<Storage::PendingEntry>{
@@ -157,33 +163,40 @@ int main()
         CHECK(storage.listPending(alice, "client1").empty());
     }
 
-    CHECK(storage.putBlob(alice, "msg3", blob, "content", kQuota) == Storage::PutResult::eStored);
+    CHECK(storage.putBlob(alice, "msg3", blob, "content", kQuota, kNow) == Storage::PutResult::eStored);
     storage.ackBlob(alice, "msg3", "client1");
     CHECK(storage.usage(alice) == 100);
     storage.unregisterClient(alice, "client2");
     CHECK(storage.usage(alice) == 0);
 
     storage.unregisterClient(alice, "client1");
-    CHECK(storage.putBlob(alice, "msg4", blob, "content", kQuota) == Storage::PutResult::eStored);
+    CHECK(storage.putBlob(alice, "msg4", blob, "content", kQuota, kNow) == Storage::PutResult::eStored);
     CHECK(storage.usage(alice) == 100);
 
     const std::string bob = makeUser(0x02);
     storage.registerClient(bob, "bclient");
-    CHECK(storage.putBlob(bob, "old", blob, "content", kQuota) == Storage::PutResult::eStored);
-    CHECK(storage.putBlob(bob, "fresh", blob, "contact", kQuota) == Storage::PutResult::eStored);
+    CHECK(storage.putBlob(bob, "old", blob, "content", kQuota, kNow) == Storage::PutResult::eStored);
+    CHECK(storage.putBlob(bob, "fresh", blob, "contact", kQuota, kNow) == Storage::PutResult::eStored);
     storage.purgeExpired(kNow);
     CHECK(storage.listPending(bob, "bclient").size() == 2);
     CHECK(storage.usage(bob) == 200);
     CHECK(storage.usage(alice) == 100);
 
     CHECK(!storage.hasSeen(bob, "nonce-fresh"));
-    storage.markSeen(bob, "nonce-fresh", kNow + 100);
-    storage.markSeen(bob, "nonce-stale", kNow - 100);
+    CHECK(storage.putBlob(bob, "nonce-fresh", blob, "content", kQuota, kNow + 100)
+        == Storage::PutResult::eStored);
+    CHECK(storage.putBlob(bob, "nonce-stale", blob, "content", kQuota, kNow - 100)
+        == Storage::PutResult::eStored);
     CHECK(storage.hasSeen(bob, "nonce-fresh"));
     CHECK(storage.hasSeen(bob, "nonce-stale"));
     storage.purgeExpired(kNow);
     CHECK(storage.hasSeen(bob, "nonce-fresh"));
     CHECK(!storage.hasSeen(bob, "nonce-stale"));
+
+    storage.ackBlob(bob, "nonce-fresh", "bclient");
+    CHECK(!storage.hasBlob(bob, "nonce-fresh"));
+    CHECK(storage.hasSeen(bob, "nonce-fresh"));
+    CHECK(!std::filesystem::exists(root / "users" / bob / "meta" / "nonce-fresh.json"));
 
     storage.forgetUser(bob);
     CHECK(storage.usage(bob) == 0);
@@ -197,10 +210,10 @@ int main()
     storage.setUserQuota(dave, 8);
     CHECK(storage.userQuota(dave, kQuota) == 8);
     CHECK(storage.userQuota(alice, kQuota) == kQuota);
-    CHECK(storage.putBlob(dave, "tiny", Bytes{1, 2, 3}, "content", 8)
+    CHECK(storage.putBlob(dave, "tiny", Bytes{1, 2, 3}, "content", 8, kNow)
         == Storage::PutResult::eStored);
     CHECK(storage.putBlob(dave, "over", Bytes(20, 'x'), "content",
-              storage.userQuota(dave, kQuota))
+              storage.userQuota(dave, kQuota), kNow)
         == Storage::PutResult::eQuotaExceeded);
 
     DiskStorage reopened(root);

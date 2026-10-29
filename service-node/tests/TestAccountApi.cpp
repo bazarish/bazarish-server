@@ -171,7 +171,8 @@ int main()
         const std::string body = nlohmann::json{{"card", toBase64(card)}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
             makeHeaders(mallory, "POST", "/v1/account/card", body), body);
-        CHECK(result.status == 403);
+        CHECK(result.status == 404);
+        CHECK(nlohmann::json::parse(result.body).at("error").at("code") == "ACCOUNT_UNKNOWN");
     }
 
     {
@@ -248,7 +249,8 @@ int main()
                                      .dump();
         const http::ClientResponse stranger = call(port, "POST", "/v1/account/i2p-dest",
             makeHeaders(mallory, "POST", "/v1/account/i2p-dest", body), body);
-        CHECK(stranger.status == 403);
+        CHECK(stranger.status == 404);
+        CHECK(nlohmann::json::parse(stranger.body).at("error").at("code") == "ACCOUNT_UNKNOWN");
         CHECK(pubCalls == 0);
         const http::ClientResponse withoutKeys = call(port, "POST", "/v1/account/i2p-dest",
             makeHeaders(alice, "POST", "/v1/account/i2p-dest", keyless), keyless);
@@ -313,7 +315,7 @@ int main()
             = nlohmann::json{{"transient", "after-closing"}, {"expiresUnix", now + 3600}}.dump();
         const http::ClientResponse orphan = call(port, "POST", "/v1/account/i2p-dest",
             makeHeaders(alice, "POST", "/v1/account/i2p-dest", body), body);
-        CHECK(orphan.status == 403);
+        CHECK(orphan.status == 404);
         CHECK(pubCalls == 4);
     }
 

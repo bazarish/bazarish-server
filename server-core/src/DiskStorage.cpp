@@ -81,6 +81,37 @@ bool ackedBy(const nlohmann::json& meta, const std::string& clientId)
     return false;
 }
 
+bool ackedByAll(const nlohmann::json& meta, const std::vector<std::string>& clients)
+{
+    if (clients.empty()) {
+        return false;
+    }
+    for (const std::string& clientId : clients) {
+        if (!ackedBy(meta, clientId)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void createDirectoryDurably(const fs::path& directory)
+{
+    if (fs::exists(directory)) {
+        return;
+    }
+    createDirectoryDurably(directory.parent_path());
+    fs::create_directory(directory);
+    bazarish::syncDirectory(directory.parent_path());
+}
+
+void writeMarker(const fs::path& path)
+{
+    std::ofstream marker(path, std::ios::binary | std::ios::trunc);
+    if (!marker) {
+        throw std::runtime_error("failed to create " + path.string());
+    }
+}
+
 }  // namespace
 
 namespace bazarish::server {
@@ -102,7 +133,7 @@ void DiskStorage::registerClient(const std::string& user, const std::string& cli
     requireSafeId(clientId);
     const std::lock_guard<std::mutex> lock(mutex_);
     const fs::path dir = userDir(user) / "clients";
-    fs::create_directories(dir);
+    createDirectoryDurably(dir);
     writeFileAtomic(dir / clientId, std::string_view());
 }
 
@@ -111,10 +142,17 @@ void DiskStorage::unregisterClient(const std::string& user, const std::string& c
     requireFingerprint(user);
     requireSafeId(clientId);
     const std::lock_guard<std::mutex> lock(mutex_);
-    std::error_code ignored;
-    fs::remove(userDir(user) / "clients" / clientId, ignored);
+    const fs::path clients = userDir(user) / "clients";
+    std::vector<std::string> staying = listDirectoryNames(clients);
+    staying.erase(std::remove(staying.begin(), staying.end(), clientId), staying.end());
     for (const std::string& blobId : listDirectoryNames(userDir(user) / "blobs")) {
-        deleteIfFullyAcked(user, blobId);
+        const fs::path metaPath = userDir(user) / "meta" / (blobId + ".json");
+        if (fs::exists(metaPath) && ackedByAll(readJsonFile(metaPath), staying)) {
+            removeItem(user, blobId);
+        }
+    }
+    if (fs::remove(clients / clientId)) {
+        syncDirectory(clients);
     }
 }
 
@@ -143,10 +181,11 @@ void DiskStorage::registerPasses(const std::string& user, const std::vector<Byte
     }
     const std::lock_guard<std::mutex> lock(mutex_);
     const fs::path dir = userDir(user) / "passes";
-    fs::create_directories(dir);
+    createDirectoryDurably(dir);
     for (const Bytes& handle : handles) {
-        writeFileAtomic(dir / toHex(handle), std::string_view());
+        writeMarker(dir / toHex(handle));
     }
+    syncDirectory(dir);
 }
 
 bool DiskStorage::hasPass(const std::string& user, const Bytes& handle)
@@ -177,16 +216,19 @@ std::size_t DiskStorage::revokePasses(const std::string& user, const std::vector
         if (handle.size() != bazarish::kDeliveryPassSize) {
             continue;
         }
-        std::error_code error;
-        if (fs::remove(dir / toHex(handle), error) && !error) {
+        if (fs::remove(dir / toHex(handle))) {
             ++dropped;
         }
+    }
+    if (dropped > 0) {
+        syncDirectory(dir);
     }
     return dropped;
 }
 
 Storage::PutResult DiskStorage::putBlob(const std::string& user, const std::string& blobId,
-    const Bytes& data, const std::string& deliveryClass, const std::uint64_t quotaBytes, const std::string& alreadyAcked)
+    const Bytes& data, const std::string& deliveryClass, const std::uint64_t quotaBytes,
+    const std::int64_t receivedAt, const std::string& alreadyAcked)
 {
     requireFingerprint(user);
     requireSafeId(blobId);
@@ -201,8 +243,10 @@ Storage::PutResult DiskStorage::putBlob(const std::string& user, const std::stri
         return PutResult::eQuotaExceeded;
     }
 
-    fs::create_directories(blobs);
-    fs::create_directories(meta);
+    const fs::path seen = userDir(user) / "seen";
+    createDirectoryDurably(blobs);
+    createDirectoryDurably(meta);
+    createDirectoryDurably(seen);
 
     nlohmann::json acked = nlohmann::json::array();
     if (!alreadyAcked.empty()) {
@@ -215,6 +259,7 @@ Storage::PutResult DiskStorage::putBlob(const std::string& user, const std::stri
     };
     writeFileAtomic(meta / (blobId + ".json"), metaBody.dump());
     writeFileAtomic(blobs / blobId, data);
+    writeFileAtomic(seen / blobId, std::to_string(receivedAt));
     return PutResult::eStored;
 }
 
@@ -246,17 +291,6 @@ bool DiskStorage::hasSeen(const std::string& user, const std::string& deliveryId
     requireSafeId(deliveryId);
     const std::lock_guard<std::mutex> lock(mutex_);
     return fs::exists(userDir(user) / "seen" / deliveryId);
-}
-
-void DiskStorage::markSeen(const std::string& user, const std::string& deliveryId,
-    const std::int64_t receivedAt)
-{
-    requireFingerprint(user);
-    requireSafeId(deliveryId);
-    const std::lock_guard<std::mutex> lock(mutex_);
-    const fs::path dir = userDir(user) / "seen";
-    fs::create_directories(dir);
-    writeFileAtomic(dir / deliveryId, std::to_string(receivedAt));
 }
 
 bool DiskStorage::allowContactRequest(
@@ -359,19 +393,24 @@ void DiskStorage::ackBlob(const std::string& user, const std::string& blobId,
         return;
     }
     nlohmann::json meta = readJsonFile(metaPath);
-    if (!ackedBy(meta, clientId)) {
+    const bool fresh = !ackedBy(meta, clientId);
+    if (fresh) {
         meta.at("acked").push_back(clientId);
+    }
+    if (ackedByAll(meta, listDirectoryNames(userDir(user) / "clients"))) {
+        removeItem(user, blobId);
+    } else if (fresh) {
         writeFileAtomic(metaPath, meta.dump());
     }
-    deleteIfFullyAcked(user, blobId);
 }
 
 void DiskStorage::forgetUser(const std::string& user)
 {
     requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
-    std::error_code ignored;
-    fs::remove_all(userDir(user), ignored);
+    if (fs::remove_all(userDir(user)) > 0) {
+        syncDirectory(root_ / "users");
+    }
 }
 
 void DiskStorage::purgeExpired(const std::int64_t receivedBefore)
@@ -418,7 +457,7 @@ void DiskStorage::setUserQuota(const std::string& user, const std::uint64_t quot
 {
     requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
-    fs::create_directories(userDir(user));
+    createDirectoryDurably(userDir(user));
     writeFileAtomic(userDir(user) / "quota", std::to_string(quotaBytes));
 }
 
@@ -443,30 +482,22 @@ std::uint64_t DiskStorage::usageLocked(const std::string& user) const
         return total;
     }
     for (const fs::directory_entry& entry : fs::directory_iterator(blobs)) {
-        total += entry.file_size();
+        if (isSafeId(entry.path().filename().string())) {
+            total += entry.file_size();
+        }
     }
     return total;
 }
 
-void DiskStorage::deleteIfFullyAcked(const std::string& user, const std::string& blobId)
+// Blob before record: a stray record is never listed or counted, a stray blob would be.
+void DiskStorage::removeItem(const std::string& user, const std::string& blobId)
 {
-    const fs::path metaPath = userDir(user) / "meta" / (blobId + ".json");
-    if (!fs::exists(metaPath)) {
-        return;
+    if (fs::remove(userDir(user) / "blobs" / blobId)) {
+        syncDirectory(userDir(user) / "blobs");
     }
-    const nlohmann::json meta = readJsonFile(metaPath);
-    const std::vector<std::string> clients = listDirectoryNames(userDir(user) / "clients");
-    if (clients.empty()) {
-        return;
+    if (fs::remove(userDir(user) / "meta" / (blobId + ".json"))) {
+        syncDirectory(userDir(user) / "meta");
     }
-    for (const std::string& clientId : clients) {
-        if (!ackedBy(meta, clientId)) {
-            return;
-        }
-    }
-    std::error_code ignored;
-    fs::remove(userDir(user) / "blobs" / blobId, ignored);
-    fs::remove(metaPath, ignored);
 }
 
 }  // namespace bazarish::server

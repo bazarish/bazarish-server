@@ -24,14 +24,12 @@ public:
     std::size_t revokePasses(const std::string& user, const std::vector<Bytes>& handles) override;
 
     PutResult putBlob(const std::string& user, const std::string& blobId, const Bytes& data,
-        const std::string& deliveryClass, std::uint64_t quotaBytes,
+        const std::string& deliveryClass, std::uint64_t quotaBytes, std::int64_t receivedAt,
         const std::string& alreadyAcked = {}) override;
     bool hasBlob(const std::string& user, const std::string& blobId) override;
     bool isPendingFor(const std::string& user, const std::string& blobId,
         const std::string& clientId) override;
     bool hasSeen(const std::string& user, const std::string& deliveryId) override;
-    void markSeen(const std::string& user, const std::string& deliveryId,
-        std::int64_t receivedAt) override;
     bool allowContactRequest(
         const std::string& user, std::int64_t now, std::size_t maxPerMinute) override;
     std::size_t countHeld(const std::string& user, const std::string& deliveryClass) override;
@@ -55,7 +53,7 @@ private:
 
     std::filesystem::path userDir(const std::string& user) const;
     std::uint64_t usageLocked(const std::string& user) const;
-    void deleteIfFullyAcked(const std::string& user, const std::string& blobId);
+    void removeItem(const std::string& user, const std::string& blobId);
 
     std::filesystem::path root_;
     std::mutex mutex_;

@@ -272,9 +272,9 @@ void AccountApi::setupOpsRoutes()
             try {
                 handler(request, response);
             } catch (const nlohmann::json::exception& error) {
-                respondError(response, 400, ErrorCode::eDeliveryRejected, error.what());
+                respondError(response, 400, ErrorCode::eRequestFailed, error.what());
             } catch (const std::invalid_argument& error) {
-                respondError(response, 400, ErrorCode::eDeliveryRejected, error.what());
+                respondError(response, 400, ErrorCode::eRequestFailed, error.what());
             }
         };
     };
@@ -336,7 +336,7 @@ void AccountApi::setupOpsRoutes()
                 throw std::invalid_argument("a hold needs a message for the account's owner");
             }
             if (!grants_.peekApproval(user).has_value()) {
-                respondError(response, 404, ErrorCode::eDeliveryRejected, "no such account");
+                respondError(response, 404, ErrorCode::eAccountUnknown, "no such account");
                 return;
             }
             revokeDestination(user);
@@ -349,7 +349,7 @@ void AccountApi::setupOpsRoutes()
             const std::string user = request.query("user");
             if (!grants_.peekApproval(user).has_value()
                 && !store_.getAccount(user).has_value()) {
-                respondError(response, 404, ErrorCode::eDeliveryRejected, "no such account");
+                respondError(response, 404, ErrorCode::eAccountUnknown, "no such account");
                 return;
             }
             deleteAccount(user);
@@ -527,7 +527,7 @@ void AccountApi::setupOpsRoutes()
             try {
                 settings_->set(values);
             } catch (const std::exception& error) {
-                respondError(response, 500, ErrorCode::eDeliveryRejected, error.what());
+                respondError(response, 500, ErrorCode::eRequestFailed, error.what());
                 return;
             }
             if (values.logLevel != levelBefore) {
@@ -549,7 +549,7 @@ void AccountApi::setupOpsRoutes()
     ops_->post("/v1/account/restart",
         filled(operatorOnly([this](const http::Request&, http::Response& response) {
             if (!options_.requestRestart) {
-                respondError(response, 503, ErrorCode::eDeliveryRejected,
+                respondError(response, 503, ErrorCode::eRequestFailed,
                     "this node cannot restart itself: it was started without a supervisor");
                 return;
             }
@@ -563,7 +563,7 @@ void AccountApi::setupOpsRoutes()
             const std::string user = request.query("user");
             const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
             if (!approval.has_value() && !store_.getAccount(user).has_value()) {
-                respondError(response, 404, ErrorCode::eDeliveryRejected, "no such account");
+                respondError(response, 404, ErrorCode::eAccountUnknown, "no such account");
                 return;
             }
             respondJson(response, userRecord(user, approval));
@@ -578,7 +578,7 @@ void AccountApi::setupOpsRoutes()
             const std::optional<SubscriptionStore::Account> held
                 = store_.getAccount(user);
             if (!approval.has_value() && !held.has_value()) {
-                respondError(response, 404, ErrorCode::eDeliveryRejected, "no such account");
+                respondError(response, 404, ErrorCode::eAccountUnknown, "no such account");
                 return;
             }
             if (held.has_value()) {
@@ -602,7 +602,7 @@ void AccountApi::setupOpsRoutes()
             const nlohmann::json body = nlohmann::json::parse(request.body);
             const std::string user = body.at("user").get<std::string>();
             if (!grants_.peekApproval(user).has_value()) {
-                respondError(response, 404, ErrorCode::eDeliveryRejected, "no such account");
+                respondError(response, 404, ErrorCode::eAccountUnknown, "no such account");
                 return;
             }
             grants_.approve(user, nowSeconds());
@@ -621,15 +621,15 @@ void AccountApi::setupRoutes()
                     request.method, request.path, bodyBytes(request), replayCache_,
                     request.header("X-Bazarish-Client"));
             } catch (const std::exception& error) {
-                respondError(response, 401, ErrorCode::eDeliveryRejected, error.what());
+                respondError(response, 401, ErrorCode::eRequestFailed, error.what());
                 return;
             }
             try {
                 handler(request, response, user);
             } catch (const nlohmann::json::exception& error) {
-                respondError(response, 400, ErrorCode::eDeliveryRejected, error.what());
+                respondError(response, 400, ErrorCode::eRequestFailed, error.what());
             } catch (const std::invalid_argument& error) {
-                respondError(response, 400, ErrorCode::eDeliveryRejected, error.what());
+                respondError(response, 400, ErrorCode::eRequestFailed, error.what());
             }
         };
     };
@@ -640,11 +640,11 @@ void AccountApi::setupRoutes()
                 auth::authorizeRequest(collectAuthHeaders(request), nowSeconds(), request.method,
                     request.path, bodyBytes(request), {options_.serverFingerprint}, replayCache_);
             } catch (const std::exception& error) {
-                respondError(response, 403, ErrorCode::eDeliveryRejected, error.what());
+                respondError(response, 403, ErrorCode::eRequestFailed, error.what());
                 return;
             }
             if (request.captures.empty() || request.captures.at(0).empty()) {
-                respondError(response, 400, ErrorCode::eDeliveryRejected, "no user named");
+                respondError(response, 400, ErrorCode::eRequestFailed, "no user named");
                 return;
             }
             handler(request, response, request.captures.at(0));
@@ -656,7 +656,7 @@ void AccountApi::setupRoutes()
                 auth::authorizeRequest(collectAuthHeaders(request), nowSeconds(), request.method,
                     request.path, bodyBytes(request), {options_.serverFingerprint}, replayCache_);
             } catch (const std::exception& error) {
-                respondError(response, 403, ErrorCode::eDeliveryRejected, error.what());
+                respondError(response, 403, ErrorCode::eRequestFailed, error.what());
                 return;
             }
             handler(request, response);
@@ -680,18 +680,18 @@ void AccountApi::setupRoutes()
             try {
                 card = ContactCard::verify(der);
             } catch (const std::exception& error) {
-                respondError(response, 400, ErrorCode::eDeliveryRejected,
+                respondError(response, 400, ErrorCode::eRequestFailed,
                     std::string("invalid contact card: ") + error.what());
                 return;
             }
             if (card.fingerprint() != user) {
-                respondError(response, 403, ErrorCode::eDeliveryRejected,
+                respondError(response, 403, ErrorCode::eRequestFailed,
                     "this card was signed by somebody else");
                 return;
             }
             if (const std::optional<GrantStore::Ban> ban = grants_.peekBan(user);
                 ban.has_value()) {
-                respondError(response, 403, ErrorCode::eDeliveryRejected, ban->reason);
+                respondError(response, 403, ErrorCode::eRequestFailed, ban->reason);
                 return;
             }
 
@@ -703,7 +703,7 @@ void AccountApi::setupRoutes()
                 try {
                     if (const ContactCard previous = ContactCard::verify(held->card);
                         card.issuedAt <= previous.issuedAt) {
-                        respondError(response, 409, ErrorCode::eDeliveryRejected,
+                        respondError(response, 409, ErrorCode::eRequestFailed,
                             "this card is not newer than the one already published");
                         return;
                     }
@@ -713,7 +713,7 @@ void AccountApi::setupRoutes()
                 }
             }
             if (card.issuedAt > now + auth::kAuthFreshnessWindowSeconds) {
-                respondError(response, 400, ErrorCode::eDeliveryRejected,
+                respondError(response, 400, ErrorCode::eRequestFailed,
                     "this card is dated in the future - check the clock on that device");
                 return;
             }
@@ -724,7 +724,7 @@ void AccountApi::setupRoutes()
             } else if (held.has_value()) {
                 quota = held->quotaBytes;
             } else {
-                respondError(response, 403, ErrorCode::eDeliveryRejected,
+                respondError(response, 404, ErrorCode::eAccountUnknown,
                     "no pending registration - register on the service portal first");
                 return;
             }
@@ -767,14 +767,14 @@ void AccountApi::setupRoutes()
         [this](const http::Request& request, http::Response& response,
                           const std::string& user) {
             if (!options_.publishI2pTransient) {
-                respondError(response, 503, ErrorCode::eDeliveryRejected,
+                respondError(response, 503, ErrorCode::eRequestFailed,
                     "per-user destinations not available");
                 return;
             }
             const std::int64_t now = nowSeconds();
             const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
             if (!approval.has_value()) {
-                respondError(response, 403, ErrorCode::eDeliveryRejected,
+                respondError(response, 404, ErrorCode::eAccountUnknown,
                     "no account on this server - subscribe first");
                 return;
             }
@@ -790,27 +790,27 @@ void AccountApi::setupRoutes()
             const std::int64_t expiresUnix
                 = transient.empty() ? 0 : body.at("expiresUnix").get<std::int64_t>();
             if (expiresUnix > now + kMaxDelegationDays * bazarish::kSecondsPerDay) {
-                respondError(response, 400, ErrorCode::eDeliveryRejected,
+                respondError(response, 400, ErrorCode::eRequestFailed,
                     "a delegation may run at most " + std::to_string(kMaxDelegationDays)
                         + " days");
                 return;
             }
             if (!transient.empty() && expiresUnix <= now) {
-                respondError(response, 400, ErrorCode::eDeliveryRejected,
+                respondError(response, 400, ErrorCode::eRequestFailed,
                     "this delegation has already run out");
                 return;
             }
             const AddressKeys keys{body.value("sealingKey", std::string()),
                 body.value("signingKey", std::string())};
             if (!transient.empty() && (keys.sealingPem.empty() || keys.signingPem.empty())) {
-                respondError(response, 400, ErrorCode::eDeliveryRejected,
+                respondError(response, 400, ErrorCode::eRequestFailed,
                     "a delegation comes with the serving and signing keys of its address");
                 return;
             }
             const std::optional<ServedDestination> served
                 = options_.publishI2pTransient(user, transient, expiresUnix, keys);
             if (!served.has_value()) {
-                respondError(response, 503, ErrorCode::eDeliveryRejected,
+                respondError(response, 503, ErrorCode::eRequestFailed,
                     "the messaging server did not accept the delegation");
                 return;
             }
@@ -857,8 +857,8 @@ void AccountApi::setupRoutes()
             }
             const bool known = account.has_value() && !account->card.empty();
             if (!known) {
-                respondError(response, 404, ErrorCode::eClientUnregistered,
-                    "that descriptor is out of date");
+                respondError(response, 404, ErrorCode::eAccountUnknown,
+                    "no card for that account");
                 return;
             }
             respondJson(response, {{"user", user}, {"card", toBase64(account->card)}});
@@ -869,7 +869,7 @@ void AccountApi::setupRoutes()
                           const std::string& user) {
             if (const std::optional<GrantStore::Ban> ban = grants_.peekBan(user);
                 ban.has_value()) {
-                respondError(response, 403, ErrorCode::eDeliveryRejected, ban->reason);
+                respondError(response, 403, ErrorCode::eRequestFailed, ban->reason);
                 return;
             }
             const NodeSettings::Values values = settings();

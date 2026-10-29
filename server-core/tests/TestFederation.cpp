@@ -301,6 +301,39 @@ int main()
             payload, nullptr, stranger);
         CHECK(!refusedOther.delivered);
         CHECK(refusedOther.errorCode == refused.errorCode);
+
+        CHECK(roundTrip(engine,
+            makeSealed(sealingPublic, "contact", stranger, "cap-0", {}), payload, nullptr,
+            stranger)
+                  .delivered);
+    }
+
+    {
+        const std::string crowded = toBase32(Bytes(32, 0x45));
+        const Bytes payload(64, 0x41);
+        const auto ask = [&](const std::string& id, const std::int64_t at) {
+            return engine.deliver(makeSealed(sealingPublic, "contact", crowded, id, {}), payload,
+                at, engine.sealingKey(), crowded);
+        };
+        std::int64_t at = kNow;
+        for (std::size_t i = 0; i < bazarish::kMaxPendingContactRequests; ++i) {
+            CHECK(ask("crowd-" + std::to_string(i), at).delivered);
+            at += kSecondsPerMinute;
+        }
+        const DeliveryEngine::Outcome refused = ask("crowd-over", at);
+        CHECK(!refused.delivered);
+        CHECK(refused.errorCode == "CONTACT_RATE_LIMITED");
+        CHECK(ask("crowd-0", at).delivered);
+    }
+
+    {
+        const std::string full = toBase32(Bytes(32, 0x46));
+        storage.setUserQuota(full, kTinyQuotaBytes);
+        const DeliveryEngine::Outcome refused = engine.deliver(
+            makeSealed(sealingPublic, "contact", full, "into-full", {}),
+            Bytes(kTinyQuotaBytes + 1, 0x41), kNow, engine.sealingKey(), full);
+        CHECK(!refused.delivered);
+        CHECK(refused.errorCode == "CONTACT_RATE_LIMITED");
     }
 
     {

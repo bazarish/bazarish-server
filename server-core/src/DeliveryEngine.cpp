@@ -19,6 +19,9 @@ namespace {
 
 constexpr std::size_t kRefusedPassPrefixChars = 12;
 
+constexpr const char* kContactsWaitingRefusal
+    = "this address has too many contact requests waiting - try again later";
+
 }  // namespace
 
 DeliveryEngine::DeliveryEngine(Storage& storage, std::string serverFingerprint,
@@ -81,6 +84,12 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
     }
     outcome.deliveryId = deliveryId;
 
+    const bool servedHere = owner.empty() || mailbox == owner;
+    if (servedHere
+        && (storage_.hasBlob(mailbox, deliveryId) || storage_.hasSeen(mailbox, deliveryId))) {
+        return delivered();
+    }
+
     if (!owner.empty() && deliveryClass == kContactDeliveryClass) {
         if (!storage_.allowContactRequest(owner, now, kContactRequestsPerMinute)) {
             return fail(ErrorCode::eContactRateLimited,
@@ -89,25 +98,16 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
         if (storage_.countHeld(owner, kContactDeliveryClass) >= kMaxPendingContactRequests) {
             bazarish::log::debug("contact request deferred: {} already holds {}",
                 bazarish::log::redact(owner), kMaxPendingContactRequests);
-            return fail(ErrorCode::eContactRateLimited,
-                "this address has too many contact requests waiting - try again later");
+            return fail(ErrorCode::eContactRateLimited, kContactsWaitingRefusal);
         }
     }
 
-    if (!owner.empty() && mailbox != owner) {
+    if (!servedHere) {
         if (deliveryClass == kContactDeliveryClass) {
             return delivered();
         }
         bazarish::log::debug("delivery refused: this destination is not that mailbox's");
         return fail(ErrorCode::eDeliveryRejected, "delivery rejected");
-    }
-
-    if (storage_.hasBlob(mailbox, deliveryId)) {
-        return delivered();
-    }
-
-    if (storage_.hasSeen(mailbox, deliveryId)) {
-        return delivered();
     }
 
     if (deliveryClass == kContactDeliveryClass) {
@@ -141,16 +141,16 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
     }
 
     const Storage::PutResult result = storage_.putBlob(mailbox, deliveryId, payload, deliveryClass,
-        storage_.userQuota(mailbox, options_.defaultQuotaBytes));
+        storage_.userQuota(mailbox, options_.defaultQuotaBytes), now);
     if (result == Storage::PutResult::eQuotaExceeded) {
         if (deliveryClass == kContentDeliveryClass) {
             return fail(ErrorCode::eStorageFull, "recipient storage quota is exhausted");
         }
-        bazarish::log::debug("delivery refused: mailbox is full and this is not content");
-        return fail(ErrorCode::eDeliveryRejected, "delivery rejected");
+        bazarish::log::debug("contact request deferred: the mailbox of {} is full",
+            bazarish::log::redact(mailbox));
+        return fail(ErrorCode::eContactRateLimited, kContactsWaitingRefusal);
     }
 
-    storage_.markSeen(mailbox, deliveryId, now);
     if (options_.onDelivered) {
         options_.onDelivered(mailbox);
     }

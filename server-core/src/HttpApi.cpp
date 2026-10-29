@@ -5,7 +5,6 @@
 
 #include <bazarish/Auth.hpp>
 #include <bazarish/Clock.hpp>
-#include <bazarish/Hybrid.hpp>
 #include <bazarish/ConfigFile.hpp>
 #include <bazarish/Crypto.hpp>
 #include <bazarish/Errors.hpp>
@@ -26,6 +25,7 @@
 #include <chrono>
 #include <cstdint>
 #include <map>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -321,7 +321,7 @@ bazarish::http::Response HttpApi::forwardToNode(
     const bazarish::http::Request& request, const std::string& user)
 {
     if (options_.serviceNodeUrl.empty() || !options_.identity) {
-        return errorResponse(503, ErrorCode::eDeliveryRejected, "no service node here");
+        return errorResponse(503, ErrorCode::eRequestFailed, "no service node here");
     }
     const std::string target = std::string(bazarish::tunnel::kVouchedPrefix) + user + request.path;
     const Bytes body(request.body.begin(), request.body.end());
@@ -350,7 +350,7 @@ bazarish::http::Response HttpApi::forwardToNode(
         if (answered.status == 0) {
             bazarish::log::warn("the service node did not answer: {}", answered.error);
             return errorResponse(
-                502, ErrorCode::eDeliveryRejected, "the service node did not answer");
+                502, ErrorCode::eUpstreamUnavailable, "the service node did not answer");
         }
         bazarish::http::Response response;
         response.status = answered.status;
@@ -359,20 +359,16 @@ bazarish::http::Response HttpApi::forwardToNode(
         return response;
     } catch (const std::exception& error) {
         bazarish::log::warn("the service node did not answer: {}", error.what());
-        return errorResponse(502, ErrorCode::eDeliveryRejected, "the service node did not answer");
+        return errorResponse(502, ErrorCode::eUpstreamUnavailable, "the service node did not answer");
     }
 }
 
 std::optional<bazarish::http::Response> HttpApi::authenticateRequest(
-    const bazarish::http::Request& request, std::string* const outUser, const bool allowSession)
+    const bazarish::http::Request& request, std::string* const outUser)
 {
     const auth::Headers authHeaders = collectAuthHeaders(request);
     const std::string clientId = request.header("X-Bazarish-Client");
     if (auth::hasSessionHeaders(authHeaders)) {
-        if (!allowSession) {
-            return errorResponse(401, ErrorCode::eSessionInvalid,
-                "this route is authenticated by the identity signature, not a session");
-        }
         const std::string handle = authHeaders.at(auth::kHeaderSession);
         const std::optional<SessionStore::Session> session
             = sessions_.findByHandle(handle, nowSeconds());
@@ -395,7 +391,7 @@ std::optional<bazarish::http::Response> HttpApi::authenticateRequest(
         *outUser = auth::verifyRequest(authHeaders, nowSeconds(), request.method, request.path,
             bodyBytes(request), replayCache_, clientId);
     } catch (const std::exception& error) {
-        return errorResponse(401, ErrorCode::eDeliveryRejected, error.what());
+        return errorResponse(401, ErrorCode::eRequestFailed, error.what());
     }
     return std::nullopt;
 }
@@ -415,9 +411,9 @@ void HttpApi::setupOpsRoutes()
             try {
                 return handler(request);
             } catch (const nlohmann::json::exception& error) {
-                return errorResponse(400, ErrorCode::eDeliveryRejected, error.what());
+                return errorResponse(400, ErrorCode::eRequestFailed, error.what());
             } catch (const std::invalid_argument& error) {
-                return errorResponse(400, ErrorCode::eDeliveryRejected, error.what());
+                return errorResponse(400, ErrorCode::eRequestFailed, error.what());
             }
         };
     };
@@ -432,7 +428,7 @@ void HttpApi::setupOpsRoutes()
         operatorOnly([this, &store](const bazarish::http::Request& request) {
             const std::string user = request.query("user");
             if (user.empty()) {
-                return errorResponse(400, ErrorCode::eDeliveryRejected, "no user named");
+                return errorResponse(400, ErrorCode::eRequestFailed, "no user named");
             }
             return jsonResponse({
                 {"devices", store.listClients(user).size()},
@@ -445,7 +441,7 @@ void HttpApi::setupOpsRoutes()
         operatorOnly([this, &store](const bazarish::http::Request& request) {
             const std::string user = request.query("user");
             if (user.empty()) {
-                return errorResponse(400, ErrorCode::eDeliveryRejected, "no user named");
+                return errorResponse(400, ErrorCode::eRequestFailed, "no user named");
             }
             store.forgetUser(user);
             if (options_.forgetI2pDest) {
@@ -459,7 +455,7 @@ void HttpApi::setupOpsRoutes()
     ops_->get("/v1/messaging/settings",
         operatorOnly([this](const bazarish::http::Request&) {
             if (!options_.settings) {
-                return errorResponse(503, ErrorCode::eDeliveryRejected,
+                return errorResponse(503, ErrorCode::eRequestFailed,
                     "this server was started without a config file to write to");
             }
             const ServerSettings::Values values = options_.settings->get();
@@ -485,7 +481,7 @@ void HttpApi::setupOpsRoutes()
     ops_->put("/v1/messaging/settings",
         operatorOnly([this](const bazarish::http::Request& request) {
             if (!options_.settings) {
-                return errorResponse(503, ErrorCode::eDeliveryRejected,
+                return errorResponse(503, ErrorCode::eRequestFailed,
                     "this server was started without a config file to write to");
             }
             ServerSettings::Values values = options_.settings->get();
@@ -531,7 +527,7 @@ void HttpApi::setupOpsRoutes()
             try {
                 options_.settings->set(values);
             } catch (const std::exception& error) {
-                return errorResponse(500, ErrorCode::eDeliveryRejected, error.what());
+                return errorResponse(500, ErrorCode::eRequestFailed, error.what());
             }
             if (values.logLevel != before.logLevel) {
                 if (const std::optional<bazarish::log::Level> level
@@ -552,7 +548,7 @@ void HttpApi::setupOpsRoutes()
     ops_->post("/v1/messaging/restart",
         operatorOnly([this](const bazarish::http::Request&) {
             if (!options_.requestRestart) {
-                return errorResponse(503, ErrorCode::eDeliveryRejected,
+                return errorResponse(503, ErrorCode::eRequestFailed,
                     "this server cannot restart itself: it was started without a supervisor");
             }
             bazarish::log::info("restarting at the operator's request");
@@ -564,7 +560,7 @@ void HttpApi::setupOpsRoutes()
         operatorOnly([this](const bazarish::http::Request&) -> bazarish::http::Response {
             const std::string archive = reseedArchive();
             if (archive.empty()) {
-                return errorResponse(503, ErrorCode::eDeliveryRejected, "no reseed available");
+                return errorResponse(503, ErrorCode::eRequestFailed, "no reseed available");
             }
             return bazarish::http::Response{200, "application/octet-stream", {}, archive};
         }));
@@ -572,7 +568,7 @@ void HttpApi::setupOpsRoutes()
     ops_->get("/v1/messaging/storage", operatorOnly([this](const bazarish::http::Request&) {
         if (!options_.diskUsage) {
             return errorResponse(
-                503, ErrorCode::eDeliveryRejected, "this server cannot measure its storage");
+                503, ErrorCode::eRequestFailed, "this server cannot measure its storage");
         }
         return jsonResponse({{"usedBytes", options_.diskUsage()}});
     }));
@@ -589,7 +585,7 @@ void HttpApi::setupOpsRoutes()
         operatorOnly([this](const bazarish::http::Request& request) {
             if (!options_.provisionI2pDest || !options_.forgetI2pDest) {
                 return errorResponse(
-                    503, ErrorCode::eDeliveryRejected, "per-user destinations not available");
+                    503, ErrorCode::eRequestFailed, "per-user destinations not available");
             }
             const nlohmann::json body = nlohmann::json::parse(request.body);
             const std::string user = body.at("user").get<std::string>();
@@ -601,7 +597,7 @@ void HttpApi::setupOpsRoutes()
             const std::string sealingKey = body.value("sealingKey", std::string());
             const std::string signingKey = body.value("signingKey", std::string());
             if (sealingKey.empty() || signingKey.empty()) {
-                return errorResponse(400, ErrorCode::eDeliveryRejected,
+                return errorResponse(400, ErrorCode::eRequestFailed,
                     "a delegation comes with the serving and signing keys of its address");
             }
             const DestinationAssignment served = options_.provisionI2pDest(user, transient,
@@ -615,7 +611,7 @@ void HttpApi::setupRoutes()
     http_->get(std::string(bazarish::tunnel::kServerCardPath),
         [this](const bazarish::http::Request&) -> bazarish::http::Response {
             if (options_.serverCardDer.empty()) {
-                return errorResponse(503, ErrorCode::eDeliveryRejected, "no card here");
+                return errorResponse(503, ErrorCode::eRequestFailed, "no card here");
             }
             bazarish::http::Response response;
             response.contentType = "application/octet-stream";
@@ -631,28 +627,24 @@ void HttpApi::setupRoutes()
             return std::nullopt;
         });
 
-    const auto authenticate = [this](auto handler, const bool allowSession) {
-        return [this, handler, allowSession](
+    const auto authenticated = [this](auto handler) {
+        return [this, handler](
                    const bazarish::http::Request& request) -> bazarish::http::Response {
             std::string user;
             if (const std::optional<bazarish::http::Response> refused
-                = authenticateRequest(request, &user, allowSession);
+                = authenticateRequest(request, &user);
                 refused.has_value()) {
                 return *refused;
             }
             try {
                 return handler(request, user);
             } catch (const nlohmann::json::exception& error) {
-                return errorResponse(400, ErrorCode::eDeliveryRejected, error.what());
+                return errorResponse(400, ErrorCode::eRequestFailed, error.what());
             } catch (const std::invalid_argument& error) {
-                return errorResponse(400, ErrorCode::eDeliveryRejected, error.what());
+                return errorResponse(400, ErrorCode::eRequestFailed, error.what());
             }
         };
     };
-    const auto authenticated
-        = [authenticate](auto handler) { return authenticate(handler, /*allowSession=*/true); };
-    const auto signedOnly
-        = [authenticate](auto handler) { return authenticate(handler, /*allowSession=*/false); };
 
     Storage& store = storage_;
 
@@ -719,33 +711,6 @@ void HttpApi::setupRoutes()
                 return std::nullopt;
             });
     }
-
-    http_->post("/v1/auth/session",
-        signedOnly([this](const bazarish::http::Request& request,
-                          const std::string& user) -> bazarish::http::Response {
-            if (!options_.assignDestination) {
-                return errorResponse(
-                    503, ErrorCode::eDeliveryRejected, "sessions are not available here");
-            }
-            const DestinationAssignment assigned = options_.assignDestination(user);
-            if (!assigned.servingKey) {
-                return errorResponse(409, ErrorCode::eDeliveryRejected,
-                    "no serving key yet: publish your destination first");
-            }
-            const nlohmann::json body = nlohmann::json::parse(request.body);
-            const Bytes opened
-                = hybrid::unseal(fromBase64(body.at("sealed").get<std::string>()), *assigned.servingKey);
-            const nlohmann::json inner = nlohmann::json::parse(opened.begin(), opened.end());
-            const Bytes secret = fromBase64(inner.at("secret").get<std::string>());
-            const Key replyKey
-                = Key::fromPublicDer(fromBase64(inner.at("replyKey").get<std::string>()));
-            std::int64_t expiresUnix = 0;
-            sessions_.open(user, secret, nowSeconds(), &expiresUnix);
-            const nlohmann::json answer = {{"expiresUnix", expiresUnix}};
-            const std::string answerText = answer.dump();
-            return jsonResponse({{"sealed",
-                toBase64(hybrid::seal(Bytes(answerText.begin(), answerText.end()), replyKey))}});
-        }));
 
     http_->post("/v1/messaging/clients",
         authenticated([&store](const bazarish::http::Request& request,
@@ -817,7 +782,13 @@ void HttpApi::setupRoutes()
             }
             const std::vector<Bytes> handles
                 = passHandles(nlohmann::json::parse(request.body));
-            if (store.passCount(user) + handles.size() > kMaxPassesPerMailbox) {
+            std::set<std::string> added;
+            for (const Bytes& handle : handles) {
+                if (!store.hasPass(user, handle)) {
+                    added.insert(toHex(handle));
+                }
+            }
+            if (store.passCount(user) + added.size() > kMaxPassesPerMailbox) {
                 throw std::invalid_argument("this mailbox holds too many delivery passes");
             }
             store.registerPasses(user, handles);
@@ -914,10 +885,13 @@ void HttpApi::setupRoutes()
             if (storage_.listClients(user).size() <= 1) {
                 return jsonResponse({{"ok", true}, {"stored", false}});
             }
+            if (storage_.hasSeen(user, deliveryId)) {
+                return jsonResponse({{"ok", true}, {"stored", true}});
+            }
 
             const Storage::PutResult result = storage_.putBlob(user, deliveryId, payload,
-                kDeviceDeliveryClass,
-                storage_.userQuota(user, options_.defaultQuotaBytes), caller);
+                kDeviceDeliveryClass, storage_.userQuota(user, options_.defaultQuotaBytes),
+                nowSeconds(), caller);
             if (result == Storage::PutResult::eQuotaExceeded) {
                 return errorResponse(507, ErrorCode::eStorageFull, "your storage is full");
             }

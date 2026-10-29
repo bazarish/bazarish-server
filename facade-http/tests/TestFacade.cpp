@@ -233,9 +233,8 @@ int main()
         CHECK(reply.at("clientHeader") == "");
     }
 
-    for (const char* const gone : {"/v1/messaging/self",
-             "/v1/messaging/pending", "/v1/account/registration",
-             "/v1/auth/session"}) {
+    for (const char* const gone :
+        {"/v1/messaging/self", "/v1/messaging/pending", "/v1/account/registration"}) {
         CHECK(call(facadePort, "POST", gone, {}, "{}").status == 404);
         CHECK(call(facadePort, "GET", gone).status == 404);
     }

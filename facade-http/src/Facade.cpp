@@ -9,6 +9,7 @@
 
 #include <bazarish/HttpClient.hpp>
 #include <bazarish/Clock.hpp>
+#include <bazarish/Errors.hpp>
 #include <bazarish/ConfigFile.hpp>
 #include <bazarish/ConfigFile.hpp>
 #include <bazarish/Log.hpp>
@@ -72,13 +73,15 @@ bazarish::http::Response notFound()
 bazarish::http::Response refusal(const int status, const std::string& message)
 {
     return {status, "application/json", {},
-        nlohmann::json{{"error", {{"message", message}}}}.dump()};
+        bazarish::makeErrorEnvelope(bazarish::ErrorCode::eRequestFailed, message).dump()};
 }
 
 bazarish::http::Response gatewayFailure()
 {
     return {502, "application/json", {},
-        R"({"error":{"code":"FACADE_UPSTREAM","message":"backend unreachable"}})"};
+        bazarish::makeErrorEnvelope(bazarish::ErrorCode::eUpstreamUnavailable,
+            "backend unreachable")
+            .dump()};
 }
 
 }  // namespace

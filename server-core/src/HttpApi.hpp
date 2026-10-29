@@ -81,8 +81,7 @@ private:
     void setupRoutes();
     void setupOpsRoutes();
     std::optional<bazarish::http::Response> authenticateRequest(
-        const bazarish::http::Request& request, std::string* outUser,
-        bool allowSession = true);
+        const bazarish::http::Request& request, std::string* outUser);
     void serveTunnel(const bazarish::http::Request& request, bazarish::http::Responder respond);
     bazarish::http::Response forwardToNode(
         const bazarish::http::Request& request, const std::string& user);

@@ -39,7 +39,8 @@ public:
     };
 
     virtual PutResult putBlob(const std::string& user, const std::string& blobId,
-        const Bytes& data, const std::string& deliveryClass, std::uint64_t quotaBytes, const std::string& alreadyAcked = {})
+        const Bytes& data, const std::string& deliveryClass, std::uint64_t quotaBytes,
+        std::int64_t receivedAt, const std::string& alreadyAcked = {})
         = 0;
     virtual bool hasBlob(const std::string& user, const std::string& blobId) = 0;
     // Held and not yet acknowledged by this client.
@@ -47,9 +48,6 @@ public:
         const std::string& user, const std::string& blobId, const std::string& clientId) = 0;
 
     virtual bool hasSeen(const std::string& user, const std::string& deliveryId) = 0;
-    virtual void markSeen(const std::string& user, const std::string& deliveryId,
-        std::int64_t receivedAt)
-        = 0;
 
     virtual bool allowContactRequest(
         const std::string& user, std::int64_t now, std::size_t maxPerMinute)

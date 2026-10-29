@@ -131,17 +131,21 @@ int main()
     std::string provisionedUser;
     std::string provisionedTransient;
     std::int64_t provisionedExpires = 0;
-    std::string offlineUser;
+    std::string provisionedSealing;
+    std::string provisionedSigning;
     std::string forgottenUser;
     httpOptions.provisionI2pDest = [&](const std::string& user, const std::string& transientB64,
-                                       const std::int64_t expiresUnix)
+                                       const std::int64_t expiresUnix,
+                                       const std::string& sealingKeyPem,
+                                       const std::string& signingKeyPem)
         -> bazarish::server::DestinationAssignment {
         provisionedUser = user;
         provisionedTransient = transientB64;
         provisionedExpires = expiresUnix;
+        provisionedSealing = sealingKeyPem;
+        provisionedSigning = signingKeyPem;
         return {serverDest, serverServingKey, "building"};
     };
-    httpOptions.takeI2pDestOffline = [&](const std::string& user) { offlineUser = user; };
     httpOptions.forgetI2pDest = [&](const std::string& user) { forgottenUser = user; };
 
     const tls::Credential nodeKey = tls::selfSigned(root / "node");
@@ -369,13 +373,21 @@ int main()
         CHECK(result.status == 200);
         const nlohmann::json body = nlohmann::json::parse(result.body);
         CHECK(body.at("dest").get<std::string>() == serverDest);
-        CHECK(body.at("servingKey").get<std::string>() == toBase64(serverServingKey->publicDer()));
+        CHECK(!body.contains("servingKey"));
         CHECK(body.at("state").get<std::string>() == "home");
     }
 
     {
-        const std::string body = nlohmann::json{
+        const std::string keyless = nlohmann::json{
             {"user", "alicefp"}, {"transient", "tb64"}, {"expiresUnix", 1780001234}}
+                                        .dump();
+        const http::ClientResponse withoutKeys = call(opsPort, "PUT", "/v1/messaging/i2p-dest",
+            makeHeaders(operatorIdentity, "PUT", "/v1/messaging/i2p-dest", keyless, ""), keyless);
+        CHECK(withoutKeys.status == 400);
+        CHECK(provisionedUser.empty());
+        const std::string body = nlohmann::json{{"user", "alicefp"}, {"transient", "tb64"},
+            {"expiresUnix", 1780001234}, {"sealingKey", "sealing-pem"},
+            {"signingKey", "signing-pem"}}
                                      .dump();
         const http::ClientResponse noAuth
             = call(opsPort, "PUT", "/v1/messaging/i2p-dest", {}, body);
@@ -389,19 +401,19 @@ int main()
         CHECK(provisionedUser == "alicefp");
         CHECK(provisionedTransient == "tb64");
         CHECK(provisionedExpires == 1780001234);
+        CHECK(provisionedSealing == "sealing-pem");
+        CHECK(provisionedSigning == "signing-pem");
         {
             const nlohmann::json served = nlohmann::json::parse(ok.body);
             CHECK(served.at("dest").get<std::string>() == serverDest);
-            CHECK(served.at("servingKey").get<std::string>()
-                == toBase64(serverServingKey->publicDer()));
+            CHECK(!served.contains("servingKey"));
         }
         const std::string offlineBody = nlohmann::json{{"user", "alicefp"}}.dump();
         const http::ClientResponse offline = call(opsPort, "PUT", "/v1/messaging/i2p-dest",
             makeHeaders(operatorIdentity, "PUT", "/v1/messaging/i2p-dest", offlineBody, ""),
             offlineBody);
         CHECK(offline.status == 200);
-        CHECK(offlineUser == "alicefp");
-        CHECK(forgottenUser.empty());
+        CHECK(forgottenUser == "alicefp");
     }
 
     {

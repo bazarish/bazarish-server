@@ -47,7 +47,7 @@ void sweepIdleAccounts(SubscriptionStore& store, GrantStore& grants, const Opera
         if (since == 0 || since + idleSeconds > now) {
             continue;
         }
-        if (!push.publish(user, std::string(), 0)) {
+        if (!push.publish(user, std::string(), 0, {})) {
             log::warn("destination of swept account {} not revoked on the messaging server",
                 log::redact(user));
         }

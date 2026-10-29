@@ -34,7 +34,7 @@ struct AccountApiOptions {
     std::function<void()> requestRestart;
 
     std::function<std::optional<ServedDestination>(const std::string& user,
-        const std::string& transientB64, std::int64_t expiresUnix)>
+        const std::string& transientB64, std::int64_t expiresUnix, const AddressKeys& keys)>
         publishI2pTransient;
 
     std::function<bool(const std::string& user)> forgetMailbox;

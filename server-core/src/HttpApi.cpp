@@ -586,7 +586,7 @@ void HttpApi::setupOpsRoutes()
 
     ops_->put("/v1/messaging/i2p-dest",
         operatorOnly([this](const bazarish::http::Request& request) {
-            if (!options_.provisionI2pDest || !options_.takeI2pDestOffline) {
+            if (!options_.provisionI2pDest || !options_.forgetI2pDest) {
                 return errorResponse(
                     503, ErrorCode::eDeliveryRejected, "per-user destinations not available");
             }
@@ -594,16 +594,18 @@ void HttpApi::setupOpsRoutes()
             const std::string user = body.at("user").get<std::string>();
             const std::string transient = body.value("transient", std::string());
             if (transient.empty()) {
-                options_.takeI2pDestOffline(user);
-                return jsonResponse({{"dest", ""}, {"servingKey", ""}});
+                options_.forgetI2pDest(user);
+                return jsonResponse({{"dest", ""}});
             }
-            const DestinationAssignment served = options_.provisionI2pDest(
-                user, transient, body.at("expiresUnix").get<std::int64_t>());
-            return jsonResponse({
-                {"dest", served.dest},
-                {"servingKey",
-                    served.servingKey ? toBase64(served.servingKey->publicDer()) : std::string()},
-            });
+            const std::string sealingKey = body.value("sealingKey", std::string());
+            const std::string signingKey = body.value("signingKey", std::string());
+            if (sealingKey.empty() || signingKey.empty()) {
+                return errorResponse(400, ErrorCode::eDeliveryRejected,
+                    "a delegation comes with the serving and signing keys of its address");
+            }
+            const DestinationAssignment served = options_.provisionI2pDest(user, transient,
+                body.at("expiresUnix").get<std::int64_t>(), sealingKey, signingKey);
+            return jsonResponse({{"dest", served.dest}});
         }));
 }
 
@@ -777,13 +779,7 @@ void HttpApi::setupRoutes()
             const DestinationAssignment assigned = options_.assignDestination
                 ? options_.assignDestination(user)
                 : DestinationAssignment{};
-            return jsonResponse({
-                    {"dest", assigned.dest},
-                    {"servingKey", assigned.servingKey
-                            ? toBase64(assigned.servingKey->publicDer())
-                            : std::string()},
-                    {"state", assigned.state},
-                });
+            return jsonResponse({{"dest", assigned.dest}, {"state", assigned.state}});
         }));
 
     http_->get("/v1/messaging/storage-usage",

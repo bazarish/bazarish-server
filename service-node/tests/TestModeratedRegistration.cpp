@@ -103,7 +103,8 @@ int main()
     options.settings = std::make_shared<NodeSettings>(std::filesystem::path(), values);
     int pubCalls = 0;
     options.publishI2pTransient = [&pubCalls](const std::string&, const std::string&,
-                                      std::int64_t) -> std::optional<ServedDestination> {
+                                      std::int64_t, const AddressKeys&)
+        -> std::optional<ServedDestination> {
         ++pubCalls;
         return ServedDestination{};
     };
@@ -115,7 +116,9 @@ int main()
     std::thread serverThread([&api]() { api.wait(); });
 
     const std::string transientBody
-        = nlohmann::json{{"transient", "t-b64"}, {"expiresUnix", now + 7 * 24 * 3600}}.dump();
+        = nlohmann::json{{"transient", "t-b64"}, {"expiresUnix", now + 7 * 24 * 3600},
+            {"sealingKey", "sealing-pem"}, {"signingKey", "signing-pem"}}
+              .dump();
 
     {
         grants.grantSubscription(

@@ -231,12 +231,15 @@ bool OperatorPush::publishQuota(const std::string& user, const std::uint64_t quo
 }
 
 std::optional<ServedDestination> OperatorPush::publish(const std::string& user,
-    const std::string& transientB64, const std::int64_t expiresUnix) const
+    const std::string& transientB64, const std::int64_t expiresUnix,
+    const AddressKeys& keys) const
 {
     nlohmann::json body = {{"user", user}};
     if (!transientB64.empty()) {
         body["transient"] = transientB64;
         body["expiresUnix"] = expiresUnix;
+        body["sealingKey"] = keys.sealingPem;
+        body["signingKey"] = keys.signingPem;
     }
     const std::optional<std::string> answer = putBody(kDestPath, body.dump());
     if (!answer.has_value()) {
@@ -244,8 +247,7 @@ std::optional<ServedDestination> OperatorPush::publish(const std::string& user,
     }
     try {
         const nlohmann::json served = nlohmann::json::parse(*answer);
-        return ServedDestination{served.value("dest", std::string()),
-            served.value("servingKey", std::string())};
+        return ServedDestination{served.value("dest", std::string())};
     } catch (const std::exception& error) {
         bazarish::log::warn("the messaging server's answer about the destination of {} is "
                             "unreadable: {}",

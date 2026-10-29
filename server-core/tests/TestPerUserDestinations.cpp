@@ -76,6 +76,17 @@ int main()
     CHECK(longTerm.b33OfflineKeyDays() == kLongTermDays);
     CHECK(longExpiry > shortExpiry);
 
+    const Key sealingA = Key::generateSealing();
+    const Key signingA = Key::generateSigning();
+    const Key sealingB = Key::generateSealing();
+    const Key signingB = Key::generateSigning();
+    const auto sealingOf = [](const std::filesystem::path& path) {
+        return Key::fromPrivatePem(fieldOf(path, "sealingKey")).publicDer();
+    };
+    const auto signingOf = [](const std::filesystem::path& path) {
+        return Key::fromPrivatePem(fieldOf(path, "signingKey")).publicDer();
+    };
+
     {
         PerUserDestinations guard(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
         const auto refused = [](const auto& call) {
@@ -86,101 +97,92 @@ int main()
             }
             return false;
         };
-        CHECK(refused([&] { guard.provision(alice, transientA, shortExpiry + 1); }));
-        CHECK(refused([&] { guard.provision(alice, toBase64(master.blob()), shortExpiry); }));
+        const std::string sealingPem = sealingA.privatePem();
+        const std::string signingPem = signingA.privatePem();
+        CHECK(refused([&] {
+            guard.provision(alice, transientA, shortExpiry + 1, sealingPem, signingPem);
+        }));
+        CHECK(refused([&] {
+            guard.provision(alice, toBase64(master.blob()), shortExpiry, sealingPem, signingPem);
+        }));
+        CHECK(refused([&] { guard.provision(alice, transientA, shortExpiry, "", ""); }));
+        CHECK(refused([&] {
+            guard.provision(alice, transientA, shortExpiry, signingPem, signingPem);
+        }));
+        CHECK(refused([&] {
+            guard.provision(alice, transientA, shortExpiry, sealingPem, sealingPem);
+        }));
+        CHECK(refused([&] {
+            guard.provision(alice, transientA, shortExpiry, sealingA.kem().privatePem(),
+                signingPem);
+        }));
         CHECK(!std::filesystem::exists(aliceFile));
     }
 
     {
         PerUserDestinations dests(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
 
-        const PerUserDestinations::Assignment served
-            = dests.provision(alice, transientA, shortExpiry);
+        const PerUserDestinations::Assignment served = dests.provision(
+            alice, transientA, shortExpiry, sealingA.privatePem(), signingA.privatePem());
         CHECK(served.dest == addressA);
-        CHECK(served.sealingKey != nullptr);
-        CHECK(std::filesystem::exists(aliceFile));
+        CHECK(served.sealingKey->publicDer() == sealingA.publicDer());
         CHECK(readFile(aliceFile).find(transientA) != std::string::npos);
+        CHECK(sealingOf(aliceFile) == sealingA.publicDer());
+        CHECK(signingOf(aliceFile) == signingA.publicDer());
         CHECK(dests.size() == 1);
-
-        const std::shared_ptr<Key> servingKeyA
-            = dests.assignmentFor(alice, shortExpiry - 1).sealingKey;
-        CHECK(servingKeyA != nullptr);
-        const Bytes servingA = servingKeyA->publicDer();
-        CHECK(readFile(aliceFile).find("sealingKey") != std::string::npos);
-        CHECK(dests.assignmentFor(alice, shortExpiry - 1).dest == addressA);
-        CHECK(dests.provision(alice, transientA, shortExpiry).dest == addressA);
-
-        CHECK(readFile(aliceFile).find("signingKey") != std::string::npos);
-        const std::string signingA = fieldOf(aliceFile, "signingKey");
-        CHECK(!signingA.empty());
-        CHECK(signingA != fieldOf(aliceFile, "sealingKey"));
-
         CHECK(dests.assignmentFor(alice, shortExpiry - 1).state == "building");
         CHECK(dests.assignmentFor(alice, shortExpiry + 1).state == "expired");
         CHECK(dests.assignmentFor("nobody", shortExpiry - 1).state == "none");
 
-        dests.provision(alice, transientA, shortExpiry);
-        CHECK(dests.size() == 1);
-
-        CHECK(dests.provision(alice, transientB, longExpiry).dest == addressA);
+        CHECK(dests.provision(alice, transientB, longExpiry, sealingA.privatePem(),
+                       signingA.privatePem())
+                  .dest
+            == addressA);
         CHECK(dests.size() == 1);
         CHECK(readFile(aliceFile).find(transientB) != std::string::npos);
-        CHECK(dests.assignmentFor(alice, shortExpiry - 1).sealingKey->publicDer() == servingA);
-        CHECK(fieldOf(aliceFile, "signingKey") == signingA);
-
-        dests.provision(alice, movedAway, movedAwayExpiry);
-        CHECK(dests.size() == 1);
-        CHECK(dests.assignmentFor(alice, shortExpiry - 1).sealingKey->publicDer() != servingA);
-        CHECK(fieldOf(aliceFile, "signingKey") != signingA);
-
-        dests.provision(alice, transientA, shortExpiry);
-        CHECK(fieldOf(aliceFile, "signingKey") != signingA);
-
-        const Bytes servingBeforeOffline
-            = dests.assignmentFor(alice, shortExpiry - 1).sealingKey->publicDer();
-        const std::string signingBeforeOffline = fieldOf(aliceFile, "signingKey");
-        dests.takeOffline(alice);
-        CHECK(dests.size() == 0);
-        CHECK(dests.assignmentFor(alice, shortExpiry - 1).sealingKey == nullptr);
-        CHECK(std::filesystem::exists(aliceFile));
-        CHECK(readFile(aliceFile).find(transientA) == std::string::npos);
-        CHECK(dests.provision(alice, transientA, shortExpiry).dest == addressA);
         CHECK(dests.assignmentFor(alice, shortExpiry - 1).sealingKey->publicDer()
-            == servingBeforeOffline);
-        CHECK(fieldOf(aliceFile, "signingKey") == signingBeforeOffline);
+            == sealingA.publicDer());
+
+        dests.provision(alice, transientB, longExpiry, sealingB.privatePem(), signingB.privatePem());
+        CHECK(dests.assignmentFor(alice, shortExpiry - 1).sealingKey->publicDer()
+            == sealingB.publicDer());
+        CHECK(signingOf(aliceFile) == signingB.publicDer());
+
+        dests.provision(
+            alice, movedAway, movedAwayExpiry, sealingA.privatePem(), signingA.privatePem());
+        CHECK(dests.size() == 1);
+        CHECK(dests.assignmentFor(alice, shortExpiry - 1).dest
+            == bazarish::i2p::routingHost(otherMaster.publicBase64()));
 
         dests.forget(alice);
         CHECK(!std::filesystem::exists(aliceFile));
         CHECK(dests.size() == 0);
         CHECK(dests.assignmentFor(alice, shortExpiry - 1).sealingKey == nullptr);
+        dests.provision(alice, transientA, shortExpiry, sealingA.privatePem(), signingA.privatePem());
+        CHECK(dests.assignmentFor(alice, shortExpiry - 1).sealingKey->publicDer()
+            == sealingA.publicDer());
+        dests.forget(alice);
     }
 
     const std::string bob = toBase32(Bytes(32, 0x02));
-    Bytes aliceServing;
     {
         PerUserDestinations writer(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
-        writer.provision(alice, transientB, longExpiry);
-        writer.provision(bob, transientA, shortExpiry);
-        CHECK(fieldOf(root / "i2p-user-dests" / bob, "signingKey")
-            != fieldOf(aliceFile, "signingKey"));
-        const std::shared_ptr<Key> key = writer.assignmentFor(alice, shortExpiry - 1).sealingKey;
-        CHECK(key != nullptr);
-        aliceServing = key->publicDer();
+        writer.provision(alice, transientB, longExpiry, sealingA.privatePem(), signingA.privatePem());
+        writer.provision(bob, transientA, shortExpiry, sealingB.privatePem(), signingB.privatePem());
     }
     {
         PerUserDestinations reloaded(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
         reloaded.reloadPersisted(shortExpiry - kLapseLeadSeconds);
         CHECK(reloaded.size() == 1);
         CHECK(reloaded.assignmentFor(alice, shortExpiry - 1).sealingKey->publicDer()
-            == aliceServing);
+            == sealingA.publicDer());
         reloaded.forget(bob);
+        reloaded.forget(alice);
     }
 
-    Bytes servingBeforeLapse;
     {
         PerUserDestinations dests(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
-        dests.provision(alice, transientA, shortExpiry);
-        servingBeforeLapse = dests.assignmentFor(alice, shortExpiry - 1).sealingKey->publicDer();
+        dests.provision(alice, transientA, shortExpiry, sealingA.privatePem(), signingA.privatePem());
         CHECK(dests.size() == 1);
         const std::int64_t goesDownAt = shortExpiry - kLapseLeadSeconds;
         constexpr std::int64_t kAhead = 30;
@@ -190,16 +192,7 @@ int main()
         CHECK(dests.size() == 1);
         CHECK(dests.sweepExpired(goesDownAt) == 1);
         CHECK(dests.size() == 0);
-        CHECK(std::filesystem::exists(aliceFile));
-        CHECK(readFile(aliceFile).find(transientA) == std::string::npos);
-    }
-    {
-        PerUserDestinations reloaded(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
-        reloaded.reloadPersisted(shortExpiry - 1);
-        CHECK(reloaded.size() == 0);
-        reloaded.provision(alice, transientA, shortExpiry);
-        CHECK(reloaded.assignmentFor(alice, shortExpiry - 1).sealingKey->publicDer()
-            == servingBeforeLapse);
+        CHECK(!std::filesystem::exists(aliceFile));
     }
 
     std::printf("TestPerUserDestinations OK\n");

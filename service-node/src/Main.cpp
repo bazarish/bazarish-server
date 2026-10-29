@@ -284,8 +284,9 @@ int main(const int argc, const char** argv)
     options.opsClientPins = nodeConfig.opsClients;
     options.publishI2pTransient = [&promptPush](const std::string& user,
                                       const std::string& transientB64,
-                                      const std::int64_t expiresUnix) {
-        return promptPush.publish(user, transientB64, expiresUnix);
+                                      const std::int64_t expiresUnix,
+                                      const bazarish::service::AddressKeys& keys) {
+        return promptPush.publish(user, transientB64, expiresUnix, keys);
     };
     options.forgetMailbox
         = [&promptPush](const std::string& user) { return promptPush.forgetMailbox(user); };
@@ -343,7 +344,7 @@ int main(const int argc, const char** argv)
         };
         portalOptions.deleteAccount = [&store, &grants, &operatorPush](const std::string& user) {
             store.deleteAccount(user);
-            if (!operatorPush.publish(user, std::string(), 0)) {
+            if (!operatorPush.publish(user, std::string(), 0, {})) {
                 bazarish::log::warn("destination of {} was not taken down: the messaging server "
                     "refused it", bazarish::log::redact(user));
             }

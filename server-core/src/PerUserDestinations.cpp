@@ -17,6 +17,7 @@
 #include <fstream>
 #include <functional>
 #include <iterator>
+#include <stdexcept>
 #include <system_error>
 #include <thread>
 #include <utility>
@@ -54,15 +55,6 @@ std::string addressOfTransient(const std::string& transientB64)
     }
 }
 
-std::string recordedAddress(const std::filesystem::path& path)
-{
-    try {
-        return readRecord(path).value("address", std::string());
-    } catch (const std::exception&) {
-        return {};
-    }
-}
-
 bool lapsedAt(const std::int64_t expiresUnix, const std::int64_t now)
 {
     return expiresUnix > 0 && now + kLapseLeadSeconds >= expiresUnix;
@@ -84,17 +76,34 @@ void requireUsableDelegation(const std::string& transientB64, const std::int64_t
     }
 }
 
-// An address no longer served keeps its keys: published again it comes back with them.
-void keepKeysOnly(const std::filesystem::path& path)
+Key accountKey(const std::string& pem, const char* const what)
+{
+    try {
+        return Key::fromPrivatePem(pem);
+    } catch (const std::runtime_error& error) {
+        throw std::invalid_argument(std::string(what) + " is not a private key: " + error.what());
+    }
+}
+
+// The account issues the keys of its address; a server only operates them.
+void requireServingKeys(const Key& sealing, const Key& signing)
+{
+    if (!sealing.hasPrivate() || !sealing.hasKem()) {
+        throw std::invalid_argument("a serving key is a hybrid sealing key with its private half");
+    }
+    if (!signing.hasPrivate() || !signing.isA(kClassicalSigningAlgorithm)) {
+        throw std::invalid_argument("a destination signs with a private Ed25519 key");
+    }
+}
+
+void removeRecord(const std::filesystem::path& path, const std::string& userFp)
 {
     std::error_code ec;
-    if (!std::filesystem::exists(path, ec)) {
-        return;
+    std::filesystem::remove(path, ec);
+    if (ec) {
+        throw std::runtime_error("the destination record of " + bazarish::log::redact(userFp)
+            + " cannot be removed: " + ec.message());
     }
-    nlohmann::json record = readRecord(path);
-    record.erase("transient");
-    record.erase("expiresUnix");
-    writePrivateFile(path, record.dump());
 }
 
 SignAckFn signAckWith(std::shared_ptr<Key> signingKey)
@@ -338,56 +347,28 @@ void PerUserDestinations::teardownLocked(const std::string& userFp)
 }
 
 PerUserDestinations::Assignment PerUserDestinations::provision(const std::string& userFp,
-    const std::string& transientB64, const std::int64_t expiresUnix)
+    const std::string& transientB64, const std::int64_t expiresUnix,
+    const std::string& sealingKeyPem, const std::string& signingKeyPem)
 {
     requireUsableDelegation(transientB64, expiresUnix);
+    const Key sealing = accountKey(sealingKeyPem, "the serving key");
+    const Key signing = accountKey(signingKeyPem, "the signing key");
+    requireServingKeys(sealing, signing);
     reapRetired();
     Assignment served;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
         const auto existing = dests_.find(userFp);
-        if (existing != dests_.end() && existing->second->transientB64 == transientB64) {
+        if (existing != dests_.end() && existing->second->transientB64 == transientB64
+            && existing->second->sealingKey->publicDer() == sealing.publicDer()
+            && existing->second->signingKey->publicDer() == signing.publicDer()) {
             return assignedLocked(*existing->second, nowSeconds());
-        }
-        const std::string address = addressOfTransient(transientB64);
-        const bool sameAddress = !address.empty()
-            && ((existing != dests_.end()
-                    && addressOfTransient(existing->second->transientB64) == address)
-                || recordedAddress(pathFor(userFp)) == address);
-
-        std::string sealingKeyPem;
-        std::string signingKeyPem;
-        if (sameAddress && existing != dests_.end() && existing->second->sealingKey) {
-            sealingKeyPem = existing->second->sealingKey->privatePem();
-        }
-        if (sameAddress && existing != dests_.end() && existing->second->signingKey) {
-            signingKeyPem = existing->second->signingKey->privatePem();
-        }
-        if (sameAddress && (sealingKeyPem.empty() || signingKeyPem.empty())) {
-            try {
-                const nlohmann::json record = readRecord(pathFor(userFp));
-                if (sealingKeyPem.empty()) {
-                    sealingKeyPem = record.value("sealingKey", std::string());
-                }
-                if (signingKeyPem.empty()) {
-                    signingKeyPem = record.value("signingKey", std::string());
-                }
-            } catch (const std::exception& error) {
-                bazarish::log::warn("destination record for {} unreadable, minting fresh keys: {}",
-                    bazarish::log::redact(userFp), error.what());
-            }
-        }
-        if (sealingKeyPem.empty()) {
-            sealingKeyPem = Key::generateSealing().privatePem();
-        }
-        if (signingKeyPem.empty()) {
-            signingKeyPem = Key::generateSigning().privatePem();
         }
         std::error_code ec;
         std::filesystem::create_directories(destsDir(), ec);
         const nlohmann::json record = {{"transient", transientB64},
-            {"expiresUnix", expiresUnix}, {"address", address},
-            {"sealingKey", sealingKeyPem}, {"signingKey", signingKeyPem}};
+            {"expiresUnix", expiresUnix}, {"sealingKey", sealingKeyPem},
+            {"signingKey", signingKeyPem}};
         try {
             writePrivateFile(pathFor(userFp), record.dump());
         } catch (const std::exception& error) {
@@ -415,9 +396,9 @@ std::size_t PerUserDestinations::sweepExpired(const std::int64_t now)
         }
         for (const std::string& userFp : lapsed) {
             try {
-                keepKeysOnly(pathFor(userFp));
+                removeRecord(pathFor(userFp), userFp);
             } catch (const std::exception& error) {
-                bazarish::log::warn("lapsed destination record for {} not rewritten: {}",
+                bazarish::log::warn("lapsed destination record for {} not removed: {}",
                     bazarish::log::redact(userFp), error.what());
             }
             teardownLocked(userFp);
@@ -459,27 +440,11 @@ void PerUserDestinations::startSweeper()
     });
 }
 
-void PerUserDestinations::takeOffline(const std::string& userFp)
-{
-    {
-        const std::lock_guard<std::mutex> lock(mutex_);
-        keepKeysOnly(pathFor(userFp));
-        teardownLocked(userFp);
-    }
-    reapRetired();
-    announceServed();
-}
-
 void PerUserDestinations::forget(const std::string& userFp)
 {
     {
         const std::lock_guard<std::mutex> lock(mutex_);
-        std::error_code ec;
-        std::filesystem::remove(pathFor(userFp), ec);
-        if (ec) {
-            throw std::runtime_error("the destination record of " + bazarish::log::redact(userFp)
-                + " cannot be removed: " + ec.message());
-        }
+        removeRecord(pathFor(userFp), userFp);
         teardownLocked(userFp);
     }
     reapRetired();

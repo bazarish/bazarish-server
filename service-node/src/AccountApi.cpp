@@ -180,7 +180,7 @@ void AccountApi::stop()
 void AccountApi::revokeDestination(const std::string& user)
 {
     if (options_.publishI2pTransient) {
-        options_.publishI2pTransient(user, std::string(), 0);
+        options_.publishI2pTransient(user, std::string(), 0, {});
     }
     grants_.setI2pTransient(user, 0, nowSeconds());
 }
@@ -800,8 +800,15 @@ void AccountApi::setupRoutes()
                     "this delegation has already run out");
                 return;
             }
+            const AddressKeys keys{body.value("sealingKey", std::string()),
+                body.value("signingKey", std::string())};
+            if (!transient.empty() && (keys.sealingPem.empty() || keys.signingPem.empty())) {
+                respondError(response, 400, ErrorCode::eDeliveryRejected,
+                    "a delegation comes with the serving and signing keys of its address");
+                return;
+            }
             const std::optional<ServedDestination> served
-                = options_.publishI2pTransient(user, transient, expiresUnix);
+                = options_.publishI2pTransient(user, transient, expiresUnix, keys);
             if (!served.has_value()) {
                 respondError(response, 503, ErrorCode::eDeliveryRejected,
                     "the messaging server did not accept the delegation");
@@ -818,8 +825,7 @@ void AccountApi::setupRoutes()
                 }
                 store_.putAccount(record);
             }
-            respondJson(response,
-                {{"dest", served->dest}, {"servingKey", served->servingKeyB64}});
+            respondJson(response, {{"dest", served->dest}});
         });
 
     clientRoute("GET", "/v1/account/i2p-status",

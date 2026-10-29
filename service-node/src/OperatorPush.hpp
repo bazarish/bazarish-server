@@ -21,7 +21,12 @@ struct MailboxUsage {
 
 struct ServedDestination {
     std::string dest;
-    std::string servingKeyB64;
+};
+
+// The keys an account issued for its address: a node passes them to the messaging server.
+struct AddressKeys {
+    std::string sealingPem;
+    std::string signingPem;
 };
 
 class OperatorPush {
@@ -41,7 +46,7 @@ public:
     bool waitReachable(std::chrono::seconds budget) const;
 
     std::optional<ServedDestination> publish(const std::string& user,
-        const std::string& transientB64, std::int64_t expiresUnix) const;
+        const std::string& transientB64, std::int64_t expiresUnix, const AddressKeys& keys) const;
     std::optional<MailboxUsage> accountUsage(const std::string& user) const;
 
     bool forgetMailbox(const std::string& user) const;

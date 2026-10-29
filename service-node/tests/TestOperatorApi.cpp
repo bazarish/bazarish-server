@@ -90,7 +90,8 @@ int main()
     std::string revokedUser;
     std::string revokedTransient = "not-called";
     options.publishI2pTransient = [&](const std::string& user, const std::string& transientB64,
-                                      const std::int64_t) -> std::optional<ServedDestination> {
+                                      const std::int64_t, const AddressKeys&)
+        -> std::optional<ServedDestination> {
         revokedUser = user;
         revokedTransient = transientB64;
         return ServedDestination{};

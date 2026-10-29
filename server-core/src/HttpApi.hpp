@@ -41,9 +41,9 @@ struct HttpApiOptions {
     std::vector<std::string> operatorFingerprints;
     std::string version;
     std::function<DestinationAssignment(const std::string& user,
-        const std::string& transientB64, std::int64_t expiresUnix)>
+        const std::string& transientB64, std::int64_t expiresUnix,
+        const std::string& sealingKeyPem, const std::string& signingKeyPem)>
         provisionI2pDest;
-    std::function<void(const std::string& user)> takeI2pDestOffline;
     std::function<void(const std::string& user)> forgetI2pDest;
     AssignDestinationFn assignDestination;
 

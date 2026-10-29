@@ -44,12 +44,12 @@ public:
         std::string state = "none";
     };
 
+    // The keys are the account's: it issues them with the address and hands them over each time.
     Assignment provision(const std::string& userFp, const std::string& transientB64,
-        std::int64_t expiresUnix);
+        std::int64_t expiresUnix, const std::string& sealingKeyPem,
+        const std::string& signingKeyPem);
 
-    // Stops serving the address and keeps its keys, which change only with the address.
-    void takeOffline(const std::string& userFp);
-    // The account is gone: its address record and keys go with it.
+    // Stops serving the address and drops its record; the account sends its keys again with the next.
     void forget(const std::string& userFp);
 
     void reloadPersisted(std::int64_t now);

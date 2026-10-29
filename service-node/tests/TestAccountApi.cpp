@@ -34,7 +34,8 @@ using namespace bazarish::service;
 namespace {
 
 constexpr const char* kServedDest = "servedaddressb33";
-constexpr const char* kServedServingKey = "c2VydmluZy1rZXk=";
+constexpr const char* kSealingPem = "sealing-pem";
+constexpr const char* kSigningPem = "signing-pem";
 
 namespace http = bazarish::http;
 
@@ -102,19 +103,21 @@ int main()
     std::string pubUser;
     std::string pubTransient;
     std::int64_t pubExpires = -1;
+    AddressKeys pubKeys;
     int pubCalls = 0;
     bool pubAccepts = true;
     options.publishI2pTransient = [&](const std::string& user, const std::string& transientB64,
-                                      const std::int64_t expiresUnix)
+                                      const std::int64_t expiresUnix, const AddressKeys& keys)
         -> std::optional<ServedDestination> {
         pubUser = user;
         pubTransient = transientB64;
         pubExpires = expiresUnix;
+        pubKeys = keys;
         ++pubCalls;
         if (!pubAccepts) {
             return std::nullopt;
         }
-        return ServedDestination{kServedDest, kServedServingKey};
+        return ServedDestination{kServedDest};
     };
     std::string forgottenMailbox;
     options.forgetMailbox = [&forgottenMailbox](const std::string& user) {
@@ -236,13 +239,20 @@ int main()
     }
 
     {
-        const std::string body
-            = nlohmann::json{{"transient", "user-transient-b64"},
-                  {"expiresUnix", now + 7 * 24 * 3600}}
-                  .dump();
+        const std::string keyless = nlohmann::json{{"transient", "user-transient-b64"},
+            {"expiresUnix", now + 7 * 24 * 3600}}
+                                        .dump();
+        const std::string body = nlohmann::json{{"transient", "user-transient-b64"},
+            {"expiresUnix", now + 7 * 24 * 3600}, {"sealingKey", kSealingPem},
+            {"signingKey", kSigningPem}}
+                                     .dump();
         const http::ClientResponse stranger = call(port, "POST", "/v1/account/i2p-dest",
             makeHeaders(mallory, "POST", "/v1/account/i2p-dest", body), body);
         CHECK(stranger.status == 403);
+        CHECK(pubCalls == 0);
+        const http::ClientResponse withoutKeys = call(port, "POST", "/v1/account/i2p-dest",
+            makeHeaders(alice, "POST", "/v1/account/i2p-dest", keyless), keyless);
+        CHECK(withoutKeys.status == 400);
         CHECK(pubCalls == 0);
 
         CHECK(!grants.peekApproval(alice.fingerprint())->pending());
@@ -253,12 +263,14 @@ int main()
         CHECK(pubUser == alice.fingerprint());
         CHECK(pubTransient == "user-transient-b64");
         CHECK(pubExpires == now + 7 * 24 * 3600);
+        CHECK(pubKeys.sealingPem == kSealingPem);
+        CHECK(pubKeys.signingPem == kSigningPem);
         const std::int64_t delegatedAt = store.getAccount(alice.fingerprint())->delegatedAt;
         CHECK(delegatedAt >= now);
         {
             const nlohmann::json served = nlohmann::json::parse(ok.body);
             CHECK(served.at("dest").get<std::string>() == kServedDest);
-            CHECK(served.at("servingKey").get<std::string>() == kServedServingKey);
+            CHECK(!served.contains("servingKey"));
         }
 
         {

@@ -305,14 +305,13 @@ int main(const int argc, const char** argv)
     {
         httpOptions.provisionI2pDest = [&perUserDests](const std::string& user,
                                            const std::string& transientB64,
-                                           const std::int64_t expiresUnix)
+                                           const std::int64_t expiresUnix,
+                                           const std::string& sealingKeyPem,
+                                           const std::string& signingKeyPem)
             -> bazarish::server::DestinationAssignment {
-            const bazarish::server::PerUserDestinations::Assignment served
-                = perUserDests->provision(user, transientB64, expiresUnix);
+            const bazarish::server::PerUserDestinations::Assignment served = perUserDests->provision(
+                user, transientB64, expiresUnix, sealingKeyPem, signingKeyPem);
             return {served.dest, served.sealingKey, served.state};
-        };
-        httpOptions.takeI2pDestOffline = [&perUserDests](const std::string& user) {
-            perUserDests->takeOffline(user);
         };
         httpOptions.forgetI2pDest = [&perUserDests](const std::string& user) {
             perUserDests->forget(user);

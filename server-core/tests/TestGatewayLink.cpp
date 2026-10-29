@@ -159,8 +159,11 @@ int main()
     const std::string bob = toBase32(Bytes(kAccountIdBytes, 0x02));
     const i2p::Keys aliceKeys = i2p::Keys::generate().issueTransient(kDelegationDays);
     const i2p::Keys bobKeys = i2p::Keys::generate().issueTransient(kDelegationDays);
-    const PerUserDestinations::Assignment aliceServed
-        = dests.provision(alice, toBase64(aliceKeys.blob()), aliceKeys.transientExpires());
+    const auto provisioned = [&dests](const std::string& user, const i2p::Keys& keys) {
+        return dests.provision(user, toBase64(keys.blob()), keys.transientExpires(),
+            Key::generateSealing().privatePem(), Key::generateSigning().privatePem());
+    };
+    const PerUserDestinations::Assignment aliceServed = provisioned(alice, aliceKeys);
 
     {
         const std::unique_ptr<TlsPipe> refused
@@ -174,12 +177,11 @@ int main()
     watch->writeAll(kWatch.data(), kWatch.size());
     CHECK(listed(*watch) == std::vector<std::string>{aliceServed.dest});
 
-    const PerUserDestinations::Assignment bobServed
-        = dests.provision(bob, toBase64(bobKeys.blob()), bobKeys.transientExpires());
+    const PerUserDestinations::Assignment bobServed = provisioned(bob, bobKeys);
     std::vector<std::string> both{aliceServed.dest, bobServed.dest};
     std::sort(both.begin(), both.end());
     CHECK(listed(*watch) == both);
-    dests.takeOffline(bob);
+    dests.forget(bob);
     CHECK(listed(*watch) == std::vector<std::string>{aliceServed.dest});
 
     {

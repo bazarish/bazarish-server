@@ -77,7 +77,8 @@ nlohmann::json pendingJson(bazarish::server::Storage& storage, const std::string
     nlohmann::json items = nlohmann::json::array();
     for (const bazarish::server::Storage::PendingEntry& entry :
         storage.listPending(user, clientId)) {
-        items.push_back({{"id", entry.blobId}, {"class", entry.deliveryClass}});
+        items.push_back(
+            {{"id", entry.blobId}, {"class", entry.deliveryClass}, {"bytes", entry.bytes}});
     }
     return items;
 }
@@ -847,18 +848,33 @@ void HttpApi::setupRoutes()
             return jsonResponse({{"pending", pendingJson(store, user, clientId)}});
         }));
 
-    http_->get(R"(/v1/messaging/pending/([a-z0-9_-]+))",
+    http_->post("/v1/messaging/fetch",
         authenticated([&store, requireClient, clientUnregistered](const bazarish::http::Request& request,
                           const std::string& user) -> bazarish::http::Response {
-            if (requireClient(request, user).empty()) {
+            const std::string clientId = requireClient(request, user);
+            if (clientId.empty()) {
                 return clientUnregistered();
             }
-            const std::string blobId = request.captures.at(0);
-            if (!store.hasBlob(user, blobId)) {
-                return errorResponse(404, ErrorCode::eDeliveryRejected, "no such blob");
+            const nlohmann::json asked = nlohmann::json::parse(request.body).at("ids");
+            if (!asked.is_array() || asked.empty()) {
+                throw std::invalid_argument("a fetch names the items it takes");
             }
-            const Bytes data = store.getBlob(user, blobId);
-            return {200, "application/octet-stream", {}, std::string(data.begin(), data.end())};
+            nlohmann::json items = nlohmann::json::array();
+            std::size_t carried = 0;
+            for (const nlohmann::json& id : asked) {
+                const std::string blobId = id.get<std::string>();
+                if (!store.isPendingFor(user, blobId, clientId)) {
+                    continue;
+                }
+                const Bytes data = store.getBlob(user, blobId);
+                carried += data.size();
+                if (carried > bazarish::kMaxFetchBytes) {
+                    throw std::invalid_argument("the items named exceed one fetch");
+                }
+                items.push_back({{"id", blobId}, {"blob", nlohmann::json::binary(data)}});
+            }
+            const std::vector<std::uint8_t> answer = nlohmann::json::to_cbor({{"items", items}});
+            return {200, "application/cbor", {}, std::string(answer.begin(), answer.end())};
         }));
 
     http_->post("/v1/messaging/ack",
@@ -868,8 +884,14 @@ void HttpApi::setupRoutes()
             if (clientId.empty()) {
                 return clientUnregistered();
             }
-            const nlohmann::json body = nlohmann::json::parse(request.body);
-            store.ackBlob(user, body.at("blobId").get<std::string>(), clientId);
+            const nlohmann::json ids = nlohmann::json::parse(request.body).at("ids");
+            if (!ids.is_array() || ids.size() > bazarish::kMaxAckIdsPerRequest) {
+                throw std::invalid_argument("an ack names at most "
+                    + std::to_string(bazarish::kMaxAckIdsPerRequest) + " items");
+            }
+            for (const nlohmann::json& id : ids) {
+                store.ackBlob(user, id.get<std::string>(), clientId);
+            }
             return jsonResponse({{"ok", true}});
         }));
 

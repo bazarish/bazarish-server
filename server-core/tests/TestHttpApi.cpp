@@ -282,11 +282,17 @@ int main()
         CHECK(list.size() == 1);
         CHECK(list[0].at("id") == "msg-1");
         CHECK(list[0].at("class") == "content");
+        CHECK(list[0].at("bytes") == payload.size());
 
-        const http::ClientResponse blob = call(port, "GET", "/v1/messaging/pending/msg-1",
-            makeHeaders(alice, "GET", "/v1/messaging/pending/msg-1", "", "alicedev"));
-        CHECK(blob.status == 200);
-        CHECK(Bytes(blob.body.begin(), blob.body.end()) == payload);
+        const std::string fetchBody = nlohmann::json{{"ids", {"msg-1", "msg-gone"}}}.dump();
+        const http::ClientResponse fetched = call(port, "POST", "/v1/messaging/fetch",
+            makeHeaders(alice, "POST", "/v1/messaging/fetch", fetchBody, "alicedev"), fetchBody);
+        CHECK(fetched.status == 200);
+        const nlohmann::json items = nlohmann::json::from_cbor(fetched.body).at("items");
+        CHECK(items.size() == 1);
+        CHECK(items[0].at("id") == "msg-1");
+        CHECK(Bytes(items[0].at("blob").get_binary().begin(), items[0].at("blob").get_binary().end())
+            == payload);
 
         const auto aliceQueue = [port, &alice]() {
             const http::ClientResponse clients = call(port, "GET", "/v1/messaging/clients",
@@ -299,7 +305,7 @@ int main()
         };
         CHECK(aliceQueue() == 1);
 
-        const std::string ackBody = nlohmann::json{{"blobId", "msg-1"}}.dump();
+        const std::string ackBody = nlohmann::json{{"ids", {"msg-1"}}}.dump();
 
         {
             Headers swapped
@@ -320,6 +326,54 @@ int main()
         CHECK(acked.status == 200);
         CHECK(storage.usage(alice.fingerprint()) == 0);
         CHECK(aliceQueue() == 0);
+    }
+
+    {
+        storage.registerClient(alice.fingerprint(), "alicephone");
+        CHECK(storage.putBlob(alice.fingerprint(), "seen-here", payload, "content", 1024 * 1024)
+            == Storage::PutResult::eStored);
+        storage.ackBlob(alice.fingerprint(), "seen-here", "alicedev");
+        CHECK(storage.hasBlob(alice.fingerprint(), "seen-here"));
+        const std::string body = nlohmann::json{{"ids", {"seen-here"}}}.dump();
+        const http::ClientResponse again = call(port, "POST", "/v1/messaging/fetch",
+            makeHeaders(alice, "POST", "/v1/messaging/fetch", body, "alicedev"), body);
+        CHECK(again.status == 200);
+        CHECK(nlohmann::json::from_cbor(again.body).at("items").empty());
+        storage.ackBlob(alice.fingerprint(), "seen-here", "alicephone");
+        storage.unregisterClient(alice.fingerprint(), "alicephone");
+    }
+
+    {
+        const Bytes half(kMaxFetchBytes / 2 + 1, 'f');
+        const std::uint64_t quotaBytes = storage.userQuota(alice.fingerprint(), 1024);
+        storage.setUserQuota(alice.fingerprint(), half.size() * 2);
+        for (const char* const id : {"big-a", "big-b"}) {
+            CHECK(storage.putBlob(alice.fingerprint(), id, half, "content", half.size() * 2)
+                == Storage::PutResult::eStored);
+        }
+        const auto fetch = [port, &alice](const nlohmann::json& ids) {
+            const std::string body = nlohmann::json{{"ids", ids}}.dump();
+            return call(port, "POST", "/v1/messaging/fetch",
+                makeHeaders(alice, "POST", "/v1/messaging/fetch", body, "alicedev"), body);
+        };
+        CHECK(fetch({"big-a", "big-b"}).status == 400);
+        CHECK(fetch(nlohmann::json::array()).status == 400);
+        CHECK(fetch({"big-a"}).status == 200);
+
+        nlohmann::json tooMany = nlohmann::json::array();
+        for (std::size_t i = 0; i <= kMaxAckIdsPerRequest; ++i) {
+            tooMany.push_back("big-a");
+        }
+        const auto ack = [port, &alice](const nlohmann::json& ids) {
+            const std::string body = nlohmann::json{{"ids", ids}}.dump();
+            return call(port, "POST", "/v1/messaging/ack",
+                makeHeaders(alice, "POST", "/v1/messaging/ack", body, "alicedev"), body);
+        };
+        CHECK(ack(tooMany).status == 400);
+        CHECK(storage.usage(alice.fingerprint()) == half.size() * 2);
+        CHECK(ack({"big-a", "big-b"}).status == 200);
+        CHECK(storage.usage(alice.fingerprint()) == 0);
+        storage.setUserQuota(alice.fingerprint(), quotaBytes);
     }
 
     {

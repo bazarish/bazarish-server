@@ -27,6 +27,8 @@ public:
         const std::string& deliveryClass, std::uint64_t quotaBytes,
         const std::string& alreadyAcked = {}) override;
     bool hasBlob(const std::string& user, const std::string& blobId) override;
+    bool isPendingFor(const std::string& user, const std::string& blobId,
+        const std::string& clientId) override;
     bool hasSeen(const std::string& user, const std::string& deliveryId) override;
     void markSeen(const std::string& user, const std::string& deliveryId,
         std::int64_t receivedAt) override;

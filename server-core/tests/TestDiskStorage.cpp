@@ -114,18 +114,22 @@ int main()
     CHECK(storage.usage(alice) == 100);
 
     CHECK((storage.listPending(alice, "client1")
-        == std::vector<Storage::PendingEntry>{{"msg1", "content"}}));
+        == std::vector<Storage::PendingEntry>{{"msg1", "content", blob.size()}}));
     {
         std::ofstream stray(root / "users" / alice / "blobs" / "msg9.tmp");
         stray << "half a delivery";
     }
     CHECK((storage.listPending(alice, "client1")
-        == std::vector<Storage::PendingEntry>{{"msg1", "content"}}));
+        == std::vector<Storage::PendingEntry>{{"msg1", "content", blob.size()}}));
     std::filesystem::remove(root / "users" / alice / "blobs" / "msg9.tmp");
+    CHECK(storage.isPendingFor(alice, "msg1", "client1"));
     storage.ackBlob(alice, "msg1", "client1");
+    CHECK(!storage.isPendingFor(alice, "msg1", "client1"));
+    CHECK(storage.isPendingFor(alice, "msg1", "client2"));
+    CHECK(!storage.isPendingFor(alice, "nosuchblob", "client2"));
     CHECK(storage.listPending(alice, "client1").empty());
     CHECK((storage.listPending(alice, "client2")
-        == std::vector<Storage::PendingEntry>{{"msg1", "content"}}));
+        == std::vector<Storage::PendingEntry>{{"msg1", "content", blob.size()}}));
     CHECK(storage.usage(alice) == 100);
     storage.ackBlob(alice, "msg1", "client2");
     CHECK(storage.usage(alice) == 0);
@@ -144,7 +148,8 @@ int main()
             == Storage::PutResult::eStored);
         CHECK((storage.listPending(alice, "client1")
             == std::vector<Storage::PendingEntry>{
-                {"zzz", "content"}, {"mmm", "content"}, {"aaa", "content"}}));
+                {"zzz", "content", blob.size()}, {"mmm", "content", blob.size()},
+                {"aaa", "content", blob.size()}}));
         for (const char* const id : {"zzz", "mmm", "aaa"}) {
             storage.ackBlob(alice, id, "client1");
             storage.ackBlob(alice, id, "client2");

@@ -33,6 +33,7 @@ public:
     struct PendingEntry {
         std::string blobId;
         std::string deliveryClass;
+        std::uint64_t bytes = 0;
 
         bool operator==(const PendingEntry&) const = default;
     };
@@ -41,6 +42,9 @@ public:
         const Bytes& data, const std::string& deliveryClass, std::uint64_t quotaBytes, const std::string& alreadyAcked = {})
         = 0;
     virtual bool hasBlob(const std::string& user, const std::string& blobId) = 0;
+    // Held and not yet acknowledged by this client.
+    virtual bool isPendingFor(
+        const std::string& user, const std::string& blobId, const std::string& clientId) = 0;
 
     virtual bool hasSeen(const std::string& user, const std::string& deliveryId) = 0;
     virtual void markSeen(const std::string& user, const std::string& deliveryId,

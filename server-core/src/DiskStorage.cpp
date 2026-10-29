@@ -226,6 +226,20 @@ bool DiskStorage::hasBlob(const std::string& user, const std::string& blobId)
     return fs::exists(userDir(user) / "blobs" / blobId);
 }
 
+bool DiskStorage::isPendingFor(
+    const std::string& user, const std::string& blobId, const std::string& clientId)
+{
+    requireFingerprint(user);
+    requireSafeId(blobId);
+    requireSafeId(clientId);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const fs::path metaPath = userDir(user) / "meta" / (blobId + ".json");
+    if (!fs::exists(userDir(user) / "blobs" / blobId) || !fs::exists(metaPath)) {
+        return false;
+    }
+    return !ackedBy(readJsonFile(metaPath), clientId);
+}
+
 bool DiskStorage::hasSeen(const std::string& user, const std::string& deliveryId)
 {
     requireFingerprint(user);
@@ -301,8 +315,9 @@ std::vector<Storage::PendingEntry> DiskStorage::listPending(const std::string& u
         }
         const nlohmann::json meta = readJsonFile(metaPath);
         if (!ackedBy(meta, clientId)) {
-            waiting.push_back(
-                {arrivalOf(meta), PendingEntry{blobId, meta.at("class").get<std::string>()}});
+            waiting.push_back({arrivalOf(meta),
+                PendingEntry{blobId, meta.at("class").get<std::string>(),
+                    fs::file_size(userDir(user) / "blobs" / blobId)}});
         }
     }
     std::sort(waiting.begin(), waiting.end(), [](const Waiting& a, const Waiting& b) {

@@ -114,6 +114,24 @@ nlohmann::json linkErrorsOf(const bazarish::admin::GatewayLinking& linking)
     return errors;
 }
 
+nlohmann::json syncedFleets(const std::vector<bazarish::admin::Fleet>& fleets,
+    const bazarish::Identity& identity, const bazarish::tls::Credential& credential)
+{
+    nlohmann::json descriptors = nlohmann::json::array();
+    nlohmann::json links = nlohmann::json::array();
+    for (const bazarish::admin::Fleet& fleet : fleets) {
+        const std::string error = bazarish::admin::publishFacades(fleet, identity, credential);
+        if (!error.empty()) {
+            descriptors.push_back({{"fleet", fleet.name}, {"error", error}});
+        }
+        for (const nlohmann::json& linkError :
+            linkErrorsOf(bazarish::admin::linkGateways(fleet, identity, credential))) {
+            links.push_back({{"fleet", fleet.name}, {"error", linkError}});
+        }
+    }
+    return {{"descriptorErrors", descriptors}, {"gatewayLinkErrors", links}};
+}
+
 std::string settingsPathOf(const std::string& kind)
 {
     if (kind == bazarish::admin::kServerCoreKind) {
@@ -294,6 +312,18 @@ void HttpApi::registerRoutes()
         } catch (const std::exception& error) {
             bazarish::log::warn("panel setup refused: {}", error.what());
             sendHtml(response, setupPage(error.what()), 401);
+            return;
+        }
+        try {
+            for (const nlohmann::json& failures :
+                syncedFleets(settings_->get().fleets, identity_, credential_)) {
+                for (const nlohmann::json& failure : failures) {
+                    bazarish::log::warn("deployment {}: {}", failure.at("fleet").get<std::string>(),
+                        failure.at("error").get<std::string>());
+                }
+            }
+        } catch (const std::exception& error) {
+            bazarish::log::warn("the deployments were not written: {}", error.what());
         }
     }));
 
@@ -757,22 +787,9 @@ void HttpApi::registerRoutes()
                 panel.fleets = std::move(fleets);
             }
             settings_->set(panel);
-            nlohmann::json descriptors = nlohmann::json::array();
-            nlohmann::json links = nlohmann::json::array();
-            for (const Fleet& fleet : panel.fleets) {
-                const std::string error = publishFacades(fleet, identity_, credential_);
-                if (!error.empty()) {
-                    descriptors.push_back({{"fleet", fleet.name}, {"error", error}});
-                }
-                for (const nlohmann::json& linkError :
-                    linkErrorsOf(linkGateways(fleet, identity_, credential_))) {
-                    links.push_back({{"fleet", fleet.name}, {"error", linkError}});
-                }
-            }
-            sendJson(response,
-                nlohmann::json{{"admins", panel.admins}, {"descriptorErrors", descriptors},
-                    {"gatewayLinkErrors", links}}
-                    .dump());
+            nlohmann::json answer = syncedFleets(panel.fleets, identity_, credential_);
+            answer["admins"] = panel.admins;
+            sendJson(response, answer.dump());
         } catch (const std::invalid_argument& error) {
             sendError(response, 400, error.what());
         } catch (const nlohmann::json::exception& error) {

@@ -6,6 +6,7 @@ add_library(bazarish_server_shared STATIC
     RateLimiter.cpp
     Restart.cpp
     SessionStore.cpp
+    StateIdentity.cpp
     TlsPipe.cpp
     TunnelFace.cpp
 )

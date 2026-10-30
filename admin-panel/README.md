@@ -16,6 +16,10 @@ configuration, and signing in consists of signing a challenge with the client.
 4. Submit the resulting blob. The panel verifies the hybrid signature **locally**
    against the configured admin fingerprints and starts a session.
 
+With no `admin` configured the panel is unclaimed: `/setup` presents a challenge,
+and the first key to sign it becomes the administrator. Until then every start
+logs a warning with that address.
+
 Signing in requires no backend to be running: the panel performs the
 verification. The challenge is single-use and names this panel - the words your
 client shows you before signing - so a login blob captured anywhere else cannot
@@ -84,12 +88,13 @@ one central service for the whole project, not part of an operator's server.
 
 The facades' addresses are not configured here or on the node: each facade mints
 its own and reports it, and the panel writes them into the server descriptor
-whenever the service list is saved or a facade is given a new address. A new
+whenever the panel is claimed, the service list is saved or a facade is given a
+new address. A new
 address also rewrites any gateway's direct route to the old one.
 
 The gateways of a deployment are linked to its server-core and facades the same
-way: whenever the service list or the settings of server-core or a facade are
-saved, the panel writes each gateway's `server` and `direct` and server-core's
+way: whenever the panel is claimed, or the service list or the settings of
+server-core or a facade are saved, the panel writes each gateway's `server` and `direct` and server-core's
 `gateways`. The traffic then goes between them directly.
 
 The panel makes its own certificate in `<state>` on first start and prints the

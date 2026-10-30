@@ -1,0 +1,25 @@
+[Unit]
+Description=Bazarish facade
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bazarish
+Group=bazarish
+ExecStart=/usr/lib/bazarish-server/bazarish-facade-http --config /etc/bazarish/facade.json
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+# The daemon keeps its state here and writes the settings it is given into its config.
+StateDirectory=bazarish
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+NoNewPrivileges=true
+ReadWritePaths=/var/lib/bazarish /etc/bazarish
+
+[Install]
+WantedBy=multi-user.target

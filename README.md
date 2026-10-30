@@ -12,6 +12,7 @@ implement is specified in the `docs-main` repository; the desktop client
 | `facade-http` | `bazarish-facade-http` | the client-facing last mile: a sealed tunnel, forwarded blind |
 | `admin-panel` | `bazarish-admin-panel` | operator UI, authenticated by identity signature |
 | `gateway` | `bazarish-gateway` | optional: runs the I2P router for clients that do not run their own |
+| `setup` | `bazarish-setup` | the package's first install: every config, linked by the keys it makes |
 | `common` | - | submodule of `common-cpp`: crypto, I2P transport, embedded i2pd |
 
 The gateway is the one optional component: nothing else here depends on it, and
@@ -48,3 +49,25 @@ time, so a fresh clone needs no manual patching.
 
 A single component can also be configured on its own (`cmake -S server-core -B
 build-core`); it then picks up the same `common` submodule from one directory up.
+
+## Installing
+
+`packaging/deb/build.sh <version> <out-dir>` builds, tests and packs two Debian 13
+packages:
+
+- `bazarish-gateway` - the gateway alone. It needs nothing else to run.
+- `bazarish-server` - server-core, the service node, the facade and the admin
+  panel, with `bazarish-gateway` as a dependency.
+
+The first install of `bazarish-server` runs `bazarish-setup`. It writes the four
+configs into `/etc/bazarish`, makes every service's keys under `/var/lib/bazarish`
+and links the services, the gateway and the panel to each other by those keys,
+all on loopback. A gateway that already has operators keeps them, the panel is
+added beside them. The install then prints what is left to do.
+
+An upgrade or a reinstall leaves `/etc/bazarish` and `/var/lib/bazarish` exactly as
+they were: the packages own neither, and `bazarish-setup` writes nothing once any
+of its configs is there. `packaging/deb/upgrade-test.sh` checks this byte by byte
+over an installed server, in a throwaway container. CI builds, tests, packs and
+upgrade-tests both architectures on every push; a `vX.Y.Z` tag publishes the
+packages in a GitHub release.

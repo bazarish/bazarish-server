@@ -23,6 +23,10 @@ cmake --build build-gateway -j4
 ctest --test-dir build-gateway
 ```
 
+On Debian 13 the gateway is also a package of its own, `bazarish-gateway`. Its
+first install writes `/etc/bazarish/gateway.json` with a fresh path and token and
+starts the daemon.
+
 ## Configuring
 
 One file, given with `--config`. `config.example.json` is a starting point.

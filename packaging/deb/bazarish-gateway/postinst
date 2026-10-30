@@ -1,0 +1,56 @@
+#!/bin/sh
+# Bazarish project (c) 2026
+# Only the program is the package's: the config and the state are the operator's,
+# made here once when missing and never written over.
+set -e
+
+readonly kConfig=/etc/bazarish/gateway.json
+readonly kPort=8440
+readonly kPathBytes=16
+readonly kTokenBytes=32
+
+randomHex() {
+    od -An -tx1 -N"$1" /dev/urandom | tr -d ' \n'
+}
+
+if [ "$1" = "configure" ]; then
+    if ! getent passwd bazarish >/dev/null; then
+        adduser --system --group --home /var/lib/bazarish --no-create-home bazarish
+    fi
+    if [ ! -d /etc/bazarish ]; then
+        install -d -o root -g bazarish -m 0770 /etc/bazarish
+    fi
+    if [ ! -d /var/lib/bazarish ]; then
+        install -d -o bazarish -g bazarish /var/lib/bazarish
+    fi
+    fresh=
+    if [ ! -e "$kConfig" ]; then
+        (
+            umask 077
+            cat > "$kConfig" <<CONFIG
+{
+  "listen": {"host": "127.0.0.1", "port": $kPort},
+  "basePath": "/$(randomHex $kPathBytes)",
+  "token": "$(randomHex $kTokenBytes)",
+  "state": "/var/lib/bazarish/gateway"
+}
+CONFIG
+        )
+        chown bazarish:bazarish "$kConfig"
+        fresh=yes
+    fi
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload
+        systemctl enable bazarish-gateway.service >/dev/null
+        systemctl restart bazarish-gateway.service
+    fi
+    if [ -n "$fresh" ]; then
+        cat <<NOTICE
+The Bazarish gateway runs on 127.0.0.1:$kPort. To finish:
+
+1. Put a TLS front before it: /usr/share/doc/bazarish-gateway/README.md
+2. Give clients https://<the front's name><basePath>#<token>, with basePath
+   and token from $kConfig.
+NOTICE
+    fi
+fi

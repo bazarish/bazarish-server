@@ -17,6 +17,7 @@
 #include <bazarish/PrivateFile.hpp>
 #include <bazarish/Tls.hpp>
 #include <Restart.hpp>
+#include <StateIdentity.hpp>
 #include <bazarish/ServerDescriptor.hpp>
 
 #include <chrono>
@@ -79,17 +80,6 @@ bazarish::Bytes readFileBytes(const fs::path& path)
 
 using bazarish::readFileText;
 using bazarish::writePrivateFile;
-
-bazarish::Identity loadOrCreateIdentity(const fs::path& stateDir)
-{
-    const fs::path path = stateDir / "identity.pem";
-    if (fs::exists(path)) {
-        return bazarish::Identity::fromPrivatePem(readFileText(path));
-    }
-    bazarish::Identity identity = bazarish::Identity::generate();
-    writePrivateFile(path, identity.privatePem());
-    return identity;
-}
 
 bazarish::Key loadOrCreateSealingKey(const fs::path& stateDir)
 {
@@ -225,7 +215,7 @@ int main(const int argc, const char** argv)
 
     if (argc == 4 && std::strcmp(argv[3], "--fingerprint") == 0) {
         fs::create_directories(stateDir);
-        std::printf("%s\n", loadOrCreateIdentity(stateDir).fingerprint().c_str());
+        std::printf("%s\n", bazarish::server::loadOrCreateIdentity(stateDir).fingerprint().c_str());
         return 0;
     }
     if (argc != 3) {
@@ -247,7 +237,7 @@ int main(const int argc, const char** argv)
         = bazarish::ServerCard::verify(cardDer, bazarish::ServerCard::Service::eMessaging);
 
     fs::create_directories(stateDir);
-    const bazarish::Identity nodeIdentity = loadOrCreateIdentity(stateDir);
+    const bazarish::Identity nodeIdentity = bazarish::server::loadOrCreateIdentity(stateDir);
     const auto sealing = std::make_shared<bazarish::Key>(loadOrCreateSealingKey(stateDir));
     const bazarish::tls::Credential credential = bazarish::tls::selfSigned(stateDir);
     std::printf("service-node operator fingerprint: %s\n", nodeIdentity.fingerprint().c_str());

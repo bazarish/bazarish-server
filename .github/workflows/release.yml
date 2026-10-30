@@ -1,0 +1,89 @@
+# Bazarish project (c) 2026
+name: Release
+
+on:
+  # Every push walks the whole path - build, tests, packages and their upgrade over
+  # an installed server; only the publishing below waits for a tag.
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  # The runners carry four cores, and a build is capped at them, not above.
+  BAZARISH_JOBS: 4
+
+jobs:
+  deb:
+    name: Debian 13 ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    container: debian:trixie
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Install the toolchain and the dependencies
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            build-essential cmake ninja-build git ca-certificates pkg-config python3 \
+            libssl-dev zlib1g-dev libboost-dev libboost-program-options-dev libqrencode-dev \
+            dpkg-dev
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      # The container runs as root over a checkout the runner's user owns, and git
+      # works only in a repository it trusts.
+      - name: Trust the checkout
+        run: git config --global --add safe.directory '*'
+      - name: Build, test and pack
+        run: |
+          set -o pipefail
+          version=0.0.0
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version=${GITHUB_REF_NAME#v}
+          fi
+          bash packaging/deb/build.sh "$version" out 2>&1 | tee ci-build.log
+      - name: Upgrade an installed server
+        run: |
+          set -o pipefail
+          bash packaging/deb/upgrade-test.sh out 2>&1 | tee ci-upgrade.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb-${{ matrix.arch }}
+          path: out/*.deb
+          if-no-files-found: error
+      - name: Say what broke
+        if: failure()
+        run: .github/ci/report.sh
+
+  publish:
+    name: Publish
+    needs: [deb]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: packages
+          merge-multiple: true
+      - name: Hand the packages to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          packages=()
+          while IFS= read -r file; do packages+=("$file"); done < <(find packages -type f)
+          printf '%s\n' "${packages[@]}"
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" --generate-notes "${packages[@]}"

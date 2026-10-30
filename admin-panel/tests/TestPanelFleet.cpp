@@ -22,6 +22,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #define CHECK(condition)                                                            \
     do {                                                                            \
@@ -93,11 +94,11 @@ struct Panel {
     }
 };
 
-std::string signIn(const int port, const Identity& admin)
+std::string signIn(const int port, const Identity& admin, const std::string& path = "/login")
 {
     http::ClientRequest page;
     page.method = "GET";
-    page.target = "/login";
+    page.target = path;
     const http::ClientResponse shown = http::request("127.0.0.1", port, page, {});
     const std::size_t start = shown.body.find(kChallengeField);
     CHECK(start != std::string::npos);
@@ -106,7 +107,7 @@ std::string signIn(const int port, const Identity& admin)
 
     http::ClientRequest login;
     login.method = "POST";
-    login.target = "/login";
+    login.target = path;
     login.contentType = "application/x-www-form-urlencoded";
     login.body = "challenge=" + formEncoded(challenge) + "&blob="
         + formEncoded(service::signLoginBlob(
@@ -282,6 +283,34 @@ int main()
 
     api.stop();
     serverThread.join();
+
+    {
+        {
+            const std::lock_guard<std::mutex> lock(guard);
+            described = nlohmann::json::array();
+            routes = nlohmann::json::array();
+        }
+        const std::filesystem::path unclaimedPath = root / "unclaimed-panel.json";
+        { std::ofstream(unclaimedPath) << "{}\n"; }
+        Config unclaimed = initial;
+        unclaimed.admins.clear();
+        const auto fresh = std::make_shared<PanelSettings>(unclaimedPath, unclaimed);
+        HttpApi claimed(fresh, panelIdentity, panelKeys, options);
+        const int port = claimed.bind("127.0.0.1", 0);
+        CHECK(port > 0);
+        std::thread claimedThread([&claimed]() { claimed.wait(); });
+        CHECK(!signIn(port, admin, "/setup").empty());
+        CHECK(fresh->get().admins == std::vector<std::string>{admin.fingerprint()});
+        {
+            const std::lock_guard<std::mutex> lock(guard);
+            CHECK(described == nlohmann::json::array({kNewAddress}));
+            CHECK(routes.size() == 1);
+            CHECK(routes[0].at("dest") == kNewAddress);
+        }
+        claimed.stop();
+        claimedThread.join();
+    }
+
     node->stop();
     facade->stop();
     gateway->stop();

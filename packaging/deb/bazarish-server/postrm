@@ -1,0 +1,14 @@
+#!/bin/sh
+# Bazarish project (c) 2026
+# Even a purge leaves /etc/bazarish and /var/lib/bazarish: they hold the server's
+# keys, its accounts and its mail, and only the operator removes those.
+set -e
+
+if [ "$1" = "purge" ]; then
+    for unit in bazarish-server bazarish-service-node bazarish-facade bazarish-admin-panel; do
+        rm -f "/etc/systemd/system/multi-user.target.wants/$unit.service"
+    done
+fi
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload
+fi

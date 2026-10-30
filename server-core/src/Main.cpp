@@ -16,6 +16,7 @@
 #include <bazarish/PrivateFile.hpp>
 #include <bazarish/Tls.hpp>
 #include <Restart.hpp>
+#include <StateIdentity.hpp>
 
 #include <bazarish/HttpClient.hpp>
 #include <nlohmann/json.hpp>
@@ -66,17 +67,6 @@ void printUsage()
 using bazarish::nowSeconds;
 using bazarish::readFileText;
 using bazarish::writePrivateFile;
-
-bazarish::Identity loadOrCreateIdentity(const fs::path& stateDir)
-{
-    const fs::path path = stateDir / "identity.pem";
-    if (fs::exists(path)) {
-        return bazarish::Identity::fromPrivatePem(readFileText(path));
-    }
-    bazarish::Identity identity = bazarish::Identity::generate();
-    writePrivateFile(path, identity.privatePem());
-    return identity;
-}
 
 bazarish::Key loadOrCreateSealingKey(const fs::path& stateDir)
 {
@@ -169,7 +159,7 @@ int main(const int argc, const char** argv)
 
     fs::create_directories(stateDir);
     const auto identity = std::make_shared<const bazarish::Identity>(
-        loadOrCreateIdentity(stateDir));
+        bazarish::server::loadOrCreateIdentity(stateDir));
     const auto sealing = std::make_shared<bazarish::Key>(loadOrCreateSealingKey(stateDir));
 
     bazarish::server::DiskStorage storage(stateDir / "storage");

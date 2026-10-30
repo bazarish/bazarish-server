@@ -1,0 +1,25 @@
+[Unit]
+Description=Bazarish service node
+After=network-online.target bazarish-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bazarish
+Group=bazarish
+ExecStart=/usr/lib/bazarish-server/bazarish-service-node --config /etc/bazarish/service-node.json
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+# The daemon keeps its state here and writes the settings it is given into its config.
+StateDirectory=bazarish
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+NoNewPrivileges=true
+ReadWritePaths=/var/lib/bazarish /etc/bazarish
+
+[Install]
+WantedBy=multi-user.target

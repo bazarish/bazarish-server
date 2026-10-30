@@ -4,9 +4,10 @@
 #include "PanelSettings.hpp"
 
 #include <Restart.hpp>
+#include <StateIdentity.hpp>
 
 #include <bazarish/Crypto.hpp>
-#include <bazarish/PrivateFile.hpp>
+#include <bazarish/Log.hpp>
 #include <bazarish/Tls.hpp>
 
 #include <cstdio>
@@ -36,20 +37,6 @@ void printUsage()
         "the panel's challenge in your client; only an admin identity named in the\n"
         "config may sign in, and no backend needs to be online to log in.\n",
         kVersion);
-}
-
-using bazarish::readFileText;
-using bazarish::writePrivateFile;
-
-bazarish::Identity loadOrCreateIdentity(const fs::path& stateDir)
-{
-    const fs::path path = stateDir / "identity.pem";
-    if (fs::exists(path)) {
-        return bazarish::Identity::fromPrivatePem(readFileText(path));
-    }
-    bazarish::Identity identity = bazarish::Identity::generate();
-    writePrivateFile(path, identity.privatePem());
-    return identity;
 }
 
 }  // namespace
@@ -92,7 +79,8 @@ int main(const int argc, const char** argv)
     }
 
     fs::create_directories(config.stateDir);
-    const bazarish::Identity identity = loadOrCreateIdentity(config.stateDir);
+    const bazarish::Identity identity
+        = bazarish::server::loadOrCreateIdentity(config.stateDir);
     const std::string host = config.listenHost;
     const int port = config.listenPort;
 
@@ -123,12 +111,12 @@ int main(const int argc, const char** argv)
     std::printf("panel socket pin: %s\n", credential.pin.c_str());
     std::printf("put this pin in each service's \"opsClients\" list\n");
     std::printf("listening on %s:%d\n", host.c_str(), port);
-    if (unclaimed) {
-        std::printf("no administrator configured yet: open http://%s:%d/setup and sign in -\n"
-                    "the first key to sign there administers this panel\n",
-            host.c_str(), port);
-    }
     std::fflush(stdout);
+    if (unclaimed) {
+        bazarish::log::warn("no administrator yet: open http://{}:{}/setup and sign in - the first"
+                            " key to sign there administers this panel",
+            host, port);
+    }
 
     bazarish::RestartSwitch restart([&api]() { api->stop(); });
     *restartHook = [&restart]() { restart.request(); };

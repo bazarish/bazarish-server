@@ -2,6 +2,7 @@
 #include "Gateway.hpp"
 #include "Settings.hpp"
 
+#include <BuildVersion.hpp>
 #include <Restart.hpp>
 
 #include <bazarish/ConfigFile.hpp>
@@ -44,7 +45,7 @@ void printUsage()
                 "walk into. TLS, the public address and the cover site belong to\n"
                 "the front this listens behind. \"operators\" names who may use\n"
                 "\"opsListen\": health, settings and restart. The README has the rest.\n",
-        bazarish::gateway::kVersion);
+        bazarish::kBuildVersion);
 }
 
 }  // namespace
@@ -52,7 +53,7 @@ void printUsage()
 int main(const int argc, const char** argv)
 {
     if (argc == 2 && std::strcmp(argv[1], "--version") == 0) {
-        std::printf("bazarish-gateway %s\n", bazarish::gateway::kVersion);
+        std::printf("bazarish-gateway %s\n", bazarish::kBuildVersion);
         return 0;
     }
     if (argc != 3 || std::strcmp(argv[1], "--config") != 0) {
@@ -85,7 +86,7 @@ int main(const int argc, const char** argv)
         bazarish::gateway::OpsControl{
             std::filesystem::path(argv[2]), [&restartWanted]() { restartWanted = true; }});
     const int port = gateway.start();
-    std::printf("bazarish-gateway %s listening on %s:%d\n", bazarish::gateway::kVersion, settings.listenHost.c_str(),
+    std::printf("bazarish-gateway %s listening on %s:%d\n", bazarish::kBuildVersion, settings.listenHost.c_str(),
         port);
     std::fflush(stdout);
 

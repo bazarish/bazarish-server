@@ -42,6 +42,7 @@ target_link_libraries(bazarish_server_lib PUBLIC Bazarish::Common Threads::Threa
 target_compile_options(bazarish_server_lib PRIVATE -Wall -Wextra -Werror)
 
 add_executable(bazarish-server src/Main.cpp)
+bazarish_stamp_version(bazarish-server)
 target_link_libraries(bazarish-server PRIVATE bazarish_server_lib)
 target_compile_options(bazarish-server PRIVATE -Wall -Wextra -Werror)
 

@@ -1,20 +1,26 @@
 #!/bin/bash
 # Bazarish project (c) 2026
 # Builds, tests and packs bazarish-server and bazarish-gateway as .deb packages for
-# Debian 13: build.sh <version> <out-dir>. Runs from the repository root on a Debian 13
-# host with the build dependencies.
+# Debian 13: build.sh <out-dir>. Runs from the repository root of a git checkout on a
+# Debian 13 host with the build dependencies.
 set -euo pipefail
 umask 022
 
-readonly kVersion=$1
-readonly kOut=$2
+readonly kOut=$1
 readonly kJobs=${BAZARISH_JOBS:-4}
 readonly kBuild=build-deb
 readonly kArch=$(dpkg --print-architecture)
 
-if [[ ! $kVersion =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "the version is three numbers, as in 1.2.3: $kVersion" >&2
-    exit 1
+# The tag a release is cut from, or dev and the commit, counted so that apt takes a
+# later build for newer.
+if tag=$(git describe --tags --exact-match 2>/dev/null); then
+    if [[ ! $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "a release tag is v and three numbers, as in v1.2.3: $tag" >&2
+        exit 1
+    fi
+    readonly kVersion=${tag#v}
+else
+    readonly kVersion=0~dev.$(git rev-list --count HEAD)+$(git rev-parse --short HEAD)
 fi
 
 cmake -S . -B "$kBuild" -G Ninja -DCMAKE_BUILD_TYPE=Release

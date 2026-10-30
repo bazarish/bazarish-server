@@ -23,12 +23,12 @@ snapshot() {
     find "${kData[@]}" -type f -print0 | sort -z | xargs -0 sha256sum
 }
 
-# nextVersion <deb>: the same package one patch version up, as the next release is.
+# nextVersion <deb>: the same package under a version apt takes for newer.
 nextVersion() {
     local -r unpacked=$kWork/$(basename "$1" .deb)
     dpkg-deb -R "$1" "$unpacked"
     local -r version=$(sed -n 's/^Version: //p' "$unpacked/DEBIAN/control")
-    local -r next=${version%.*}.$((${version##*.} + 1))
+    local -r next=$version.1
     sed -i "s/^Version: .*/Version: $next/; s/(= $version)/(= $next)/" "$unpacked/DEBIAN/control"
     dpkg-deb --root-owner-group -b "$unpacked" "$kWork/$(basename "$1" | sed "s/_${version}_/_${next}_/")" >/dev/null
 }

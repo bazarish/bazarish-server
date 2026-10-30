@@ -52,12 +52,16 @@ build-core`); it then picks up the same `common` submodule from one directory up
 
 ## Installing
 
-`packaging/deb/build.sh <version> <out-dir>` builds, tests and packs two Debian 13
-packages:
+`packaging/deb/build.sh <out-dir>` builds, tests and packs two Debian 13 packages:
 
 - `bazarish-gateway` - the gateway alone. It needs nothing else to run.
 - `bazarish-server` - server-core, the service node, the facade and the admin
   panel, with `bazarish-gateway` as a dependency.
+
+Every binary here reports the git tag it is built from, or `dev (<commit>)` between
+tags. A package built on a tag `vX.Y.Z` is version `X.Y.Z`; one built between tags is
+`0~dev.<commits>+<commit>`, which apt takes for older than any release and for newer
+than the dev builds before it.
 
 The first install of `bazarish-server` runs `bazarish-setup`. It writes the four
 configs into `/etc/bazarish`, makes every service's keys under `/var/lib/bazarish`

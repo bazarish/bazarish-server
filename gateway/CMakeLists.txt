@@ -34,6 +34,7 @@ add_library(bazarish_gateway_lib STATIC
     src/Settings.cpp
     src/Sessions.cpp
 )
+bazarish_stamp_version(bazarish_gateway_lib)
 target_include_directories(bazarish_gateway_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(bazarish_gateway_lib PUBLIC Bazarish::Common Threads::Threads bazarish_server_shared)
 target_compile_options(bazarish_gateway_lib PRIVATE -Wall -Wextra -Werror)

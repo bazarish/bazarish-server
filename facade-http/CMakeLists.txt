@@ -38,6 +38,7 @@ target_link_libraries(bazarish_facade_lib PUBLIC Bazarish::Common Threads::Threa
 target_compile_options(bazarish_facade_lib PRIVATE -Wall -Wextra -Werror)
 
 add_executable(bazarish-facade-http src/Main.cpp)
+bazarish_stamp_version(bazarish-facade-http)
 target_link_libraries(bazarish-facade-http PRIVATE bazarish_facade_lib)
 target_compile_options(bazarish-facade-http PRIVATE -Wall -Wextra -Werror)
 

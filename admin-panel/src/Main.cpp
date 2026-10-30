@@ -3,6 +3,7 @@
 #include "HttpApi.hpp"
 #include "PanelSettings.hpp"
 
+#include <BuildVersion.hpp>
 #include <Restart.hpp>
 #include <StateIdentity.hpp>
 
@@ -22,7 +23,6 @@ namespace {
 
 namespace fs = std::filesystem;
 
-constexpr const char* kVersion = "0.0.1";
 
 void printUsage()
 {
@@ -36,7 +36,7 @@ void printUsage()
         "printed fingerprint in each service's \"operators\" list. Sign in by signing\n"
         "the panel's challenge in your client; only an admin identity named in the\n"
         "config may sign in, and no backend needs to be online to log in.\n",
-        kVersion);
+        bazarish::kBuildVersion);
 }
 
 }  // namespace
@@ -46,7 +46,7 @@ int main(const int argc, const char** argv)
     using namespace bazarish::admin;
 
     if (argc == 2 && std::strcmp(argv[1], "--version") == 0) {
-        std::printf("bazarish-admin-panel %s\n", kVersion);
+        std::printf("bazarish-admin-panel %s\n", bazarish::kBuildVersion);
         return 0;
     }
 
@@ -85,7 +85,7 @@ int main(const int argc, const char** argv)
     const int port = config.listenPort;
 
     HttpApiOptions options;
-    options.version = kVersion;
+    options.version = bazarish::kBuildVersion;
     options.assetsDirectory = config.assetsDir;
     const bool unclaimed = config.admins.empty();
     const bazarish::tls::Credential credential = bazarish::tls::selfSigned(config.stateDir);
@@ -105,7 +105,7 @@ int main(const int argc, const char** argv)
         return 2;
     }
 
-    std::printf("bazarish-admin-panel %s\n", kVersion);
+    std::printf("bazarish-admin-panel %s\n", bazarish::kBuildVersion);
     std::printf("panel operator fingerprint: %s\n", identity.fingerprint().c_str());
     std::printf("put this fingerprint in each service's \"operators\" list\n");
     std::printf("panel socket pin: %s\n", credential.pin.c_str());

@@ -40,6 +40,7 @@ target_link_libraries(bazarish_admin_lib PUBLIC Bazarish::Common Threads::Thread
 target_compile_options(bazarish_admin_lib PRIVATE -Wall -Wextra -Werror)
 
 add_executable(bazarish-admin-panel src/Main.cpp)
+bazarish_stamp_version(bazarish-admin-panel)
 target_link_libraries(bazarish-admin-panel PRIVATE bazarish_admin_lib)
 target_compile_options(bazarish-admin-panel PRIVATE -Wall -Wextra -Werror)
 

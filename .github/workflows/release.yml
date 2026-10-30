@@ -50,11 +50,7 @@ jobs:
       - name: Build, test and pack
         run: |
           set -o pipefail
-          version=0.0.0
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
-            version=${GITHUB_REF_NAME#v}
-          fi
-          bash packaging/deb/build.sh "$version" out 2>&1 | tee ci-build.log
+          bash packaging/deb/build.sh out 2>&1 | tee ci-build.log
       - name: Upgrade an installed server
         run: |
           set -o pipefail

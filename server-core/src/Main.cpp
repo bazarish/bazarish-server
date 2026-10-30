@@ -6,6 +6,7 @@
 #include "HttpApi.hpp"
 #include "PerUserDestinations.hpp"
 
+#include <BuildVersion.hpp>
 #include <bazarish/Auth.hpp>
 #include <bazarish/Certificates.hpp>
 #include <bazarish/Clock.hpp>
@@ -37,7 +38,6 @@ namespace {
 
 namespace fs = std::filesystem;
 
-constexpr const char* kVersion = "0.0.2";
 constexpr const char* kDefaultHost = "127.0.0.1";
 constexpr int kDefaultPort = 8420;
 constexpr int kDefaultOpsPort = 8428;
@@ -61,7 +61,7 @@ void printUsage()
         "The server keeps no destination of its own: inbound federation arrives on\n"
         "each user's own I2P destination, which it operates from the transient that\n"
         "user delegated to it. Clients reach this server through a facade.\n",
-        kVersion);
+        bazarish::kBuildVersion);
 }
 
 using bazarish::nowSeconds;
@@ -84,7 +84,7 @@ bazarish::Key loadOrCreateSealingKey(const fs::path& stateDir)
 int main(const int argc, const char** argv)
 {
     if (argc == 2 && std::strcmp(argv[1], "--version") == 0) {
-        std::printf("bazarish-server %s\n", kVersion);
+        std::printf("bazarish-server %s\n", bazarish::kBuildVersion);
         return 0;
     }
     if (argc != 3 || std::strcmp(argv[1], "--config") != 0) {
@@ -169,7 +169,7 @@ int main(const int argc, const char** argv)
         storage, identity->fingerprint(), sealing, engineOptions);
 
     const bazarish::tls::Credential credential = bazarish::tls::selfSigned(stateDir);
-    std::printf("bazarish-server %s\n", kVersion);
+    std::printf("bazarish-server %s\n", bazarish::kBuildVersion);
     std::printf("server fingerprint: %s\n", identity->fingerprint().c_str());
     std::printf("server socket pin: %s\n", credential.pin.c_str());
     std::fflush(stdout);
@@ -268,7 +268,7 @@ int main(const int argc, const char** argv)
 
     bazarish::server::HttpApiOptions httpOptions;
     httpOptions.operatorFingerprints = operatorFingerprints;
-    httpOptions.version = kVersion;
+    httpOptions.version = bazarish::kBuildVersion;
     httpOptions.eventGate = &eventGate;
     httpOptions.defaultQuotaBytes = engineOptions.defaultQuotaBytes;
     httpOptions.reseedSample

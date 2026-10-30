@@ -50,6 +50,7 @@ target_include_directories(bazarish_service_lib PRIVATE ${QRENCODE_INCLUDE_DIR})
 target_link_libraries(bazarish_service_lib PRIVATE ${QRENCODE_LIBRARY})
 
 add_executable(bazarish-service-node src/Main.cpp)
+bazarish_stamp_version(bazarish-service-node)
 target_link_libraries(bazarish-service-node PRIVATE bazarish_service_lib)
 target_compile_options(bazarish-service-node PRIVATE -Wall -Wextra -Werror)
 

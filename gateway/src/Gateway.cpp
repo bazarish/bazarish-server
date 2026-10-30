@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #include "Gateway.hpp"
 
+#include <BuildVersion.hpp>
 #include <bazarish/Auth.hpp>
 #include <bazarish/Clock.hpp>
 #include <bazarish/Crypto.hpp>
@@ -67,7 +68,7 @@ nlohmann::json editable(const Settings& written)
                     {"pin", written.server->pin}}
                 : nlohmann::json(nullptr)},
         {"stateDirectory", written.stateDir.string()},
-        {"version", kVersion},
+        {"version", kBuildVersion},
     };
 }
 
@@ -235,7 +236,7 @@ http::Response Gateway::health(const http::Request& request) const
         {"i2pd", i2p::routerVersion()},
     };
     return {200, "application/json", {},
-        health::reportJson("gateway", kVersion, startedAt_, nowSeconds(), extras.dump())};
+        health::reportJson("gateway", kBuildVersion, startedAt_, nowSeconds(), extras.dump())};
 }
 
 http::Response Gateway::settingsShown(const http::Request& request) const

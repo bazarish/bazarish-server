@@ -7,6 +7,7 @@
 #include "PortalApi.hpp"
 #include "SubscriptionStore.hpp"
 
+#include <BuildVersion.hpp>
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Certificates.hpp>
 #include <bazarish/Clock.hpp>
@@ -37,7 +38,6 @@ namespace {
 
 namespace fs = std::filesystem;
 
-constexpr const char* kVersion = "0.0.1";
 constexpr const char* kDefaultHost = "127.0.0.1";
 constexpr int kDefaultPort = 8421;
 constexpr int kDefaultOpsPort = 8427;
@@ -65,7 +65,7 @@ void printUsage()
         "--fingerprint prints this node's operator fingerprint (creating its\n"
         "identity if needed) and exits, so the messaging server can be started\n"
         "with it already authorised before this node runs.\n",
-        kVersion);
+        bazarish::kBuildVersion);
 }
 
 bazarish::Bytes readFileBytes(const fs::path& path)
@@ -192,7 +192,7 @@ bazarish::service::LoginConsumer portalConsumer(const NodeConfig& config)
 int main(const int argc, const char** argv)
 {
     if (argc == 2 && std::strcmp(argv[1], "--version") == 0) {
-        std::printf("bazarish-service-node %s\n", kVersion);
+        std::printf("bazarish-service-node %s\n", bazarish::kBuildVersion);
         return 0;
     }
     if (argc < 3 || std::strcmp(argv[1], "--config") != 0) {
@@ -280,7 +280,7 @@ int main(const int argc, const char** argv)
     options.serverFingerprint = card.server;
     options.serverCardDer = cardDer;
     options.sealingKey = sealing;
-    options.version = kVersion;
+    options.version = bazarish::kBuildVersion;
     options.operatorFingerprints = nodeConfig.operators;
     options.settings = settings;
     options.tlsCertificate = credential.certificate.string();
@@ -408,7 +408,7 @@ int main(const int argc, const char** argv)
     bazarish::RestartSwitch restart(stopEverything);
     *restartHook = [&restart]() { restart.request(); };
 
-    std::printf("bazarish-service-node %s\n", kVersion);
+    std::printf("bazarish-service-node %s\n", bazarish::kBuildVersion);
     std::printf("bound to server: %s\n", card.server.c_str());
     std::fflush(stdout);
     bazarish::log::info("listening on {}:{} (private channel for facades and the messaging server)",

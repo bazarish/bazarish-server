@@ -16,7 +16,6 @@
 
 namespace bazarish::gateway {
 
-inline constexpr const char* kVersion = "0.0.1";
 inline constexpr std::size_t kDefaultStreamPool = 4;
 inline constexpr std::size_t kDefaultCallPool = 2;
 inline constexpr std::size_t kDefaultWatchPool = 2;

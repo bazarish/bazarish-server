@@ -3,6 +3,7 @@
 #include "FacadeAddress.hpp"
 #include "I2pFront.hpp"
 
+#include <BuildVersion.hpp>
 #include <bazarish/ConfigFile.hpp>
 #include <bazarish/I2p.hpp>
 #include <bazarish/Log.hpp>
@@ -18,7 +19,6 @@
 
 namespace {
 
-constexpr const char* kVersion = "0.0.1";
 constexpr const char* kDefaultHost = "127.0.0.1";
 constexpr int kDefaultPort = 8419;
 constexpr int kDefaultTunnelQuantity = 16;
@@ -41,7 +41,7 @@ void printUsage()
         "server descriptor. The admin panel can replace it.\n"
         "\"opsListen\" adds a private socket serving the operator-signed health,\n"
         "settings and restart for the admin panel; it is never published to clients.\n",
-        kVersion);
+        bazarish::kBuildVersion);
 }
 
 }  // namespace
@@ -49,7 +49,7 @@ void printUsage()
 int main(const int argc, const char** argv)
 {
     if (argc == 2 && std::strcmp(argv[1], "--version") == 0) {
-        std::printf("bazarish-facade-http %s\n", kVersion);
+        std::printf("bazarish-facade-http %s\n", bazarish::kBuildVersion);
         return 0;
     }
 
@@ -99,7 +99,7 @@ int main(const int argc, const char** argv)
     }
 
     bazarish::facade::FacadeOptions options;
-    options.version = kVersion;
+    options.version = bazarish::kBuildVersion;
     options.operatorFingerprints = config.list("operators");
     const auto readUpstream = [&config](
                                   const std::string& key, bazarish::facade::Upstream& upstream) {
@@ -162,7 +162,7 @@ int main(const int argc, const char** argv)
 
     bazarish::RestartSwitch restart([&facade]() { facade.stop(); });
     *restartHook = [&restart]() { restart.request(); };
-    std::printf("bazarish-facade-http %s\n", kVersion);
+    std::printf("bazarish-facade-http %s\n", bazarish::kBuildVersion);
     std::printf("facade socket pin: %s\n", credential.pin.c_str());
     std::fflush(stdout);
     bazarish::log::info("messaging -> {}:{}", options.messaging.host, options.messaging.port);

@@ -1004,13 +1004,3 @@ Both sides agree, so there is nothing to refuse.
    when there is no local netDb.
 8. One global setting switches the router off. The library stays linked, because
    the account's own destination is still minted on the device.
-
-## What is not built yet
-
-Written down rather than discovered later.
-
-- **Nothing has run against a live I2P network.** The daemon, the wire and the
-  transport are proved end to end against each other - a destination the gateway
-  minted and named, two of its own clients meeting inside it, and a transfer
-  carried across nine replacements of the socket under it. What is untested is a
-  tunnel actually carrying something.

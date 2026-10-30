@@ -1129,7 +1129,8 @@ void Gateway::datagramLoop(
         std::vector<std::uint8_t> payload;
         try {
             payload = entry->endpoint->receiveRawDatagram(kDatagramWait);
-        } catch (const std::exception&) {
+        } catch (const std::exception& error) {
+            bazarish::log::debug("gateway: datagrams stopped: {}", error.what());
             break;
         }
         if (payload.empty()) {
@@ -1243,7 +1244,8 @@ void Gateway::dial(const std::shared_ptr<Session>& session,
             } else {
                 opened = overI2p(from->endpoint->connect(host, left));
             }
-        } catch (const std::exception&) {
+        } catch (const std::exception& error) {
+            bazarish::log::debug("gateway: a dial did not open: {}", error.what());
             opened.reset();
         }
         if (opened != nullptr) {
@@ -1380,7 +1382,8 @@ void Gateway::acceptLoop(
         std::unique_ptr<i2p::Stream> caller;
         try {
             caller = entry->endpoint->accept(peer, kAcceptWait);
-        } catch (const std::exception&) {
+        } catch (const std::exception& error) {
+            bazarish::log::debug("gateway: accepting stopped: {}", error.what());
             break;
         }
         if (caller == nullptr) {
@@ -1443,7 +1446,8 @@ void Gateway::readLoop(
         std::size_t got = 0;
         try {
             got = entry->stream->readSome(buffer.data(), room);
-        } catch (const std::exception&) {
+        } catch (const std::exception& error) {
+            bazarish::log::debug("gateway: a stream stopped reading: {}", error.what());
             break;
         }
         if (got == 0) {
@@ -1675,7 +1679,9 @@ void Gateway::statusLoop()
         std::vector<i2p::LocalDestination> local;
         try {
             local = router_.localDestinations();
-        } catch (const std::exception&) {
+        } catch (const std::exception& error) {
+            bazarish::log::warn("gateway: the router's destinations could not be read: {}",
+                error.what());
             continue;
         }
 

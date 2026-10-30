@@ -5,6 +5,7 @@
 #include "DiskStorage.hpp"
 
 #include <bazarish/Auth.hpp>
+#include <bazarish/Certificates.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/Hybrid.hpp>
 #include <bazarish/I2p.hpp>
@@ -13,7 +14,6 @@
 
 #include <bazarish/HttpClient.hpp>
 #include <bazarish/HttpServer.hpp>
-#include <bazarish/Tls.hpp>
 #include <bazarish/Tunnel.hpp>
 #include <nlohmann/json.hpp>
 
@@ -151,20 +151,6 @@ int main()
     };
     httpOptions.forgetI2pDest = [&](const std::string& user) { forgottenUser = user; };
 
-    const tls::Credential nodeKey = tls::selfSigned(root / "node");
-    http::Server::Options nodeOptions;
-    nodeOptions.host = "127.0.0.1";
-    nodeOptions.port = 0;
-    nodeOptions.certificate = nodeKey.certificate.string();
-    nodeOptions.key = nodeKey.key.string();
-    http::Server node(nodeOptions);
-    node.get("(.*)", [](const http::Request&) {
-        return http::Response{200, "application/json", {}, R"({"portal":"from the node"})"};
-    });
-    const int nodePort = node.start();
-    CHECK(nodePort > 0);
-    httpOptions.serviceNodeUrl = "https://127.0.0.1:" + std::to_string(nodePort);
-    httpOptions.serviceNodePin = nodeKey.pin;
     httpOptions.identity
         = std::make_shared<const Identity>(Identity::fromPrivatePem(serverIdentity.privatePem()));
 
@@ -196,8 +182,25 @@ int main()
     {
         const http::ClientResponse result = call(port, "GET", "/v1/account/portal",
             makeHeaders(alice, "GET", "/v1/account/portal", "", "alicedev"));
-        CHECK(result.status == 200);
-        CHECK(nlohmann::json::parse(result.body).at("portal") == "from the node");
+        CHECK(result.status == 404);
+    }
+
+    {
+        const Key nodeSealing = Key::generateSealing();
+        const std::string body
+            = nlohmann::json{{"sealingKey", toBase64(nodeSealing.publicDer())}}.dump();
+        CHECK(call(opsPort, "POST", "/v1/messaging/node-card",
+                  makeHeaders(alice, "POST", "/v1/messaging/node-card", body, ""), body)
+                  .status
+            == 403);
+        const http::ClientResponse issued = call(opsPort, "POST", "/v1/messaging/node-card",
+            makeHeaders(operatorIdentity, "POST", "/v1/messaging/node-card", body, ""), body);
+        CHECK(issued.status == 200);
+        const Bytes der
+            = fromBase64(nlohmann::json::parse(issued.body).at("card").get<std::string>());
+        const ServerCard card = ServerCard::verify(der, ServerCard::Service::eServiceNode);
+        CHECK(card.server == serverFp);
+        CHECK(card.sealingKey().fingerprint() == nodeSealing.fingerprint());
     }
 
     const Bytes aliceSecret = randomBytes(kDeliverySecretSize);
@@ -578,6 +581,13 @@ int main()
                   makeHeaders(operatorIdentity, "PUT", path, tooMany, {}), tooMany)
                   .status
             == 400);
+        const std::string moved = nlohmann::json{{"serviceNode", "https://127.0.0.1:9421"}}.dump();
+        CHECK(call(opsPort, "PUT", path, makeHeaders(operatorIdentity, "PUT", path, moved, {}), moved)
+                  .status
+            == 200);
+        std::ifstream rewritten(configPath);
+        CHECK(nlohmann::json::parse(rewritten).at("serviceNode").at("url").get<std::string>()
+            == "https://127.0.0.1:9421");
         const std::string quiet = nlohmann::json{{"logLevel", "info"}}.dump();
         CHECK(call(opsPort, "PUT", path, makeHeaders(operatorIdentity, "PUT", path, quiet, {}), quiet)
                   .status
@@ -592,7 +602,6 @@ int main()
 
     api.stop();
     serverThread.join();
-    node.stop();
     std::filesystem::remove_all(root);
     return 0;
 }

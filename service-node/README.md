@@ -63,8 +63,11 @@ place to look, one place to change - and the admin panel edits the same file one
 value at a time, leaving the rest of it, comments included, untouched.
 
 The server card is produced by the messaging server and binds this node to it.
-The service node sits behind the facade (`facade-http` in this repository), which
-routes `/v1/account/*` to it.
+A client reaches this node through the facade (`facade-http` in this repository)
+in a sealed tunnel of the node's own, `POST /n`, opened under the key in the node
+card, `GET /v1/node/card`. The node makes that key in `state`; at every start the
+messaging server signs the card with its root, so a client checks it against the
+same fingerprint as the server card, and the node does not start without it.
 
 `listen` and `opsListen` both speak TLS, with a certificate this node makes in
 its state directory on first start; the hash of its key is printed at startup

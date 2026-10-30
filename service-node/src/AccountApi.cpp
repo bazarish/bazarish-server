@@ -24,8 +24,6 @@
 
 namespace {
 
-const char* const kFingerprintPattern = "([a-z2-7]{52})";
-
 using bazarish::Bytes;
 using bazarish::ErrorCode;
 
@@ -120,6 +118,7 @@ AccountApi::AccountApi(
     , grants_(grants)
     , options_(options)
     , startedAt_(nowSeconds())
+    , tunnel_(options_.sealingKey)
 {
 }
 
@@ -613,15 +612,31 @@ void AccountApi::setupOpsRoutes()
 
 void AccountApi::setupRoutes()
 {
+    http_->get(std::string(bazarish::tunnel::kNodeCardPath),
+        filled([this](const http::Request&, http::Response& response) {
+            if (options_.nodeCardDer.empty()) {
+                respondError(response, 503, ErrorCode::eRequestFailed, "no card here");
+                return;
+            }
+            response.contentType = "application/octet-stream";
+            response.body
+                = std::string(options_.nodeCardDer.begin(), options_.nodeCardDer.end());
+        }));
+
+    http_->routeAsync("POST", std::string(bazarish::tunnel::kNodeTunnelPath),
+        [this](const http::Request& request,
+            http::Responder respond) -> std::optional<http::Response> {
+            tunnel_.serve(request, *http_, std::move(respond));
+            return std::nullopt;
+        });
+
     const auto authenticated = [this](auto handler) {
         return [this, handler](const http::Request& request, http::Response& response) {
             std::string user;
-            try {
-                user = auth::verifyRequest(collectAuthHeaders(request), nowSeconds(),
-                    request.method, request.path, bodyBytes(request), replayCache_,
-                    request.header("X-Bazarish-Client"));
-            } catch (const std::exception& error) {
-                respondError(response, 401, ErrorCode::eRequestFailed, error.what());
+            if (const std::optional<http::Response> refused
+                = tunnel_.authenticate(request, &user);
+                refused.has_value()) {
+                response = *refused;
                 return;
             }
             try {
@@ -634,22 +649,6 @@ void AccountApi::setupRoutes()
         };
     };
 
-    const auto vouched = [this](auto handler) {
-        return [this, handler](const http::Request& request, http::Response& response) {
-            try {
-                auth::authorizeRequest(collectAuthHeaders(request), nowSeconds(), request.method,
-                    request.path, bodyBytes(request), {options_.serverFingerprint}, replayCache_);
-            } catch (const std::exception& error) {
-                respondError(response, 403, ErrorCode::eRequestFailed, error.what());
-                return;
-            }
-            if (request.captures.empty() || request.captures.at(0).empty()) {
-                respondError(response, 400, ErrorCode::eRequestFailed, "no user named");
-                return;
-            }
-            handler(request, response, request.captures.at(0));
-        };
-    };
     const auto fromServer = [this](auto handler) {
         return [this, handler](const http::Request& request, http::Response& response) {
             try {
@@ -662,12 +661,9 @@ void AccountApi::setupRoutes()
             handler(request, response);
         };
     };
-    const auto clientRoute = [this, &authenticated, &vouched](const std::string& method,
+    const auto clientRoute = [this, &authenticated](const std::string& method,
                                  const std::string& path, auto handler) {
         http_->route(method, path, filled(authenticated(handler)));
-        http_->route(method,
-            std::string(bazarish::tunnel::kVouchedPrefix) + kFingerprintPattern + path,
-            filled(vouched(handler)));
     };
 
     clientRoute("POST", "/v1/account/card",
@@ -901,9 +897,6 @@ void AccountApi::setupRoutes()
             });
     };
     http_->get("/v1/account/portal", filled(portalHandler));
-    http_->get(std::string(bazarish::tunnel::kVouchedPrefix) + kFingerprintPattern
-            + "/v1/account/portal",
-        filled(portalHandler));
 }
 
 }  // namespace bazarish::service

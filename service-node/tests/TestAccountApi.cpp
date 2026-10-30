@@ -8,6 +8,7 @@
 #include <bazarish/Descriptor.hpp>
 #include <bazarish/Hybrid.hpp>
 #include <bazarish/Crypto.hpp>
+#include <bazarish/Tunnel.hpp>
 
 #include <bazarish/HttpClient.hpp>
 #include <nlohmann/json.hpp>
@@ -36,6 +37,8 @@ namespace {
 constexpr const char* kServedDest = "servedaddressb33";
 constexpr const char* kSealingPem = "sealing-pem";
 constexpr const char* kSigningPem = "signing-pem";
+constexpr std::size_t kSessionSecretBytes = 32;
+constexpr std::size_t kSessionIdChars = 32;
 
 namespace http = bazarish::http;
 
@@ -90,8 +93,11 @@ int main()
     const Key serverSealing = Key::generateSealing();
     const std::string serverFp = serverIdentity.fingerprint();
     const std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
-    const Bytes cardDer
-        = ServerCard::issue(serverIdentity, Key::fromPublicDer(serverSealing.publicDer()), now);
+    const Bytes cardDer = ServerCard::issue(serverIdentity, ServerCard::Service::eMessaging,
+        Key::fromPublicDer(serverSealing.publicDer()), now);
+    const Key nodeSealing = Key::generateSealing();
+    const Bytes nodeCardDer = ServerCard::issue(serverIdentity,
+        ServerCard::Service::eServiceNode, Key::fromPublicDer(nodeSealing.publicDer()), now);
 
     constexpr std::uint64_t kQuota = 10 * 1024 * 1024;
     NodeSettings::Values values;
@@ -99,6 +105,8 @@ int main()
     AccountApiOptions options;
     options.serverFingerprint = serverFp;
     options.serverCardDer = cardDer;
+    options.sealingKey = std::make_shared<Key>(Key::fromPrivatePem(nodeSealing.privatePem()));
+    options.nodeCardDer = nodeCardDer;
     options.settings = std::make_shared<NodeSettings>(std::filesystem::path(), values);
     std::string pubUser;
     std::string pubTransient;
@@ -317,6 +325,67 @@ int main()
             makeHeaders(alice, "POST", "/v1/account/i2p-dest", body), body);
         CHECK(orphan.status == 404);
         CHECK(pubCalls == 4);
+    }
+
+    {
+        const http::ClientResponse served = call(port, "GET", tunnel::kNodeCardPath);
+        CHECK(served.status == 200);
+        CHECK(Bytes(served.body.begin(), served.body.end()) == nodeCardDer);
+
+        const auto post = [port](const Bytes& frame) {
+            http::ClientRequest request;
+            request.method = "POST";
+            request.target = tunnel::kNodeTunnelPath;
+            request.contentType = "application/octet-stream";
+            request.body = std::string(frame.begin(), frame.end());
+            return http::request("127.0.0.1", port, request, {});
+        };
+        const Identity carol = Identity::generate();
+        grants.recordRegistration(carol.fingerprint(), now, true);
+        const Bytes secret = randomBytes(kSessionSecretBytes);
+        const Key replyKey = Key::generateSealing();
+        tunnel::Hello hello;
+        hello.secret = secret;
+        hello.replyKeyDer = replyKey.publicDer();
+        hello.signature = auth::signRequest(
+            carol, now, tunnel::kHelloMethod, tunnel::kHelloPath, secret);
+
+        const http::ClientResponse misaddressed
+            = post(tunnel::sealHello(hello, Key::fromPublicDer(serverSealing.publicDer())));
+        CHECK(misaddressed.status == 200);
+        bool opened = true;
+        try {
+            (void)tunnel::openWelcome(
+                Bytes(misaddressed.body.begin(), misaddressed.body.end()), replyKey);
+        } catch (const std::exception&) {
+            opened = false;
+        }
+        CHECK(!opened);
+
+        const http::ClientResponse welcomed
+            = post(tunnel::sealHello(hello, Key::fromPublicDer(nodeSealing.publicDer())));
+        CHECK(welcomed.status == 200);
+        CHECK(tunnel::openWelcome(Bytes(welcomed.body.begin(), welcomed.body.end()), replyKey)
+                  .expiresUnix
+            > now);
+
+        const std::string id = toHex(sha256(secret)).substr(0, kSessionIdChars);
+        const Bytes tunnelKey = tunnel::deriveTunnelKey(secret, id);
+        const std::uint64_t seq = 1;
+        const std::string handle = auth::sessionHandle(secret, seq);
+        tunnel::Request inner;
+        inner.method = "GET";
+        inner.path = "/v1/account/i2p-status";
+        const auth::Headers mac = auth::macRequest(handle, auth::deriveSessionKey(secret, id),
+            seq, now, inner.method, inner.path, {});
+        inner.headers = std::map<std::string, std::string>(mac.begin(), mac.end());
+        const http::ClientResponse carried
+            = post(tunnel::carry(handle, tunnelKey, tunnel::encodeRequest(inner)));
+        CHECK(carried.status == 200);
+        const tunnel::Response answer = tunnel::decodeResponse(
+            tunnel::open(Bytes(carried.body.begin(), carried.body.end()), tunnelKey));
+        CHECK(answer.status == 200);
+        CHECK(nlohmann::json::parse(answer.body).at("approval") == "approved");
     }
 
     api.stop();

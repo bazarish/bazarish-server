@@ -29,6 +29,7 @@ constexpr int kFirstServerErrorStatus = 500;
 constexpr const char* kDestPath = "/v1/messaging/i2p-dest";
 constexpr const char* kQuotaPath = "/v1/messaging/quota";
 constexpr const char* kAccountPath = "/v1/messaging/account";
+constexpr const char* kNodeCardPath = "/v1/messaging/node-card";
 
 }  // namespace
 
@@ -222,6 +223,23 @@ std::optional<std::string> OperatorPush::send(const std::string& method, const s
         }
     }
     return std::nullopt;
+}
+
+std::optional<Bytes> OperatorPush::nodeCard(const Bytes& sealingPublicKeyDer) const
+{
+    const nlohmann::json body = {{"sealingKey", toBase64(sealingPublicKeyDer)}};
+    const std::optional<std::string> answer
+        = send("POST", kNodeCardPath, kNodeCardPath, body.dump());
+    if (!answer.has_value()) {
+        return std::nullopt;
+    }
+    try {
+        return fromBase64(nlohmann::json::parse(*answer).at("card").get<std::string>());
+    } catch (const std::exception& error) {
+        bazarish::log::warn("the messaging server's answer with the node card is unreadable: {}",
+            error.what());
+        return std::nullopt;
+    }
 }
 
 bool OperatorPush::publishQuota(const std::string& user, const std::uint64_t quotaBytes) const

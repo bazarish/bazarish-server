@@ -8,9 +8,10 @@
   // A private socket serving the operator-signed health, settings and restart
   // for the admin panel. Never published to clients.
   "opsListen": {"host": "127.0.0.1", "port": 8429},
-  // The only backend: the messaging server, which carries the sealed tunnel.
-  // "pin" is the key it prints when it starts.
+  // The two backends, each the far end of its own sealed tunnel. "pin" is the
+  // key each prints when it starts.
   "messaging": {"host": "127.0.0.1", "port": 8420, "pin": ""},
+  "serviceNode": {"host": "127.0.0.1", "port": 8421, "pin": ""},
   "operators": [],
   // The keys allowed to open the ops socket (the panel's).
   "opsClients": [],

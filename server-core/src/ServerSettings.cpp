@@ -21,6 +21,7 @@ const char* const kListenKey = "listen";
 const char* const kHostKey = "host";
 const char* const kPortKey = "port";
 const char* const kServiceNodeKey = "serviceNode";
+const char* const kUrlKey = "url";
 const char* const kGatewayListenKey = "gatewayListen";
 const char* const kGatewaysKey = "gateways";
 
@@ -58,7 +59,8 @@ void ServerSettings::persist(const Values& values) const
         file, {kI2pKey, kI2pTunnelsKey}, values.i2pTunnelQuantity, values_.i2pTunnelQuantity);
     setIfChanged(file, {kListenKey, kHostKey}, values.listenHost, values_.listenHost);
     setIfChanged(file, {kListenKey, kPortKey}, values.listenPort, values_.listenPort);
-    setIfChanged(file, {kServiceNodeKey}, values.serviceNodeUrl, values_.serviceNodeUrl);
+    setIfChanged(
+        file, {kServiceNodeKey, kUrlKey}, values.serviceNodeUrl, values_.serviceNodeUrl);
     if (!values.gatewayListenHost.empty()) {
         setIfChanged(file, {kGatewayListenKey, kHostKey}, values.gatewayListenHost,
             values_.gatewayListenHost);

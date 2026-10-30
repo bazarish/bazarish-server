@@ -4,13 +4,12 @@
 #include "ServerSettings.hpp"
 #include "Storage.hpp"
 
-#include "SessionStore.hpp"
-
 #include <bazarish/Auth.hpp>
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Clock.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <Restart.hpp>
+#include <TunnelFace.hpp>
 
 #include <cstdint>
 #include <functional>
@@ -54,8 +53,6 @@ struct HttpApiOptions {
     std::shared_ptr<const Identity> identity;
     std::shared_ptr<Key> sealingKey;
     Bytes serverCardDer;
-    std::string serviceNodeUrl;
-    std::string serviceNodePin;
     std::string tlsCertificate;
     std::string tlsKey;
     std::vector<std::string> opsClientPins;
@@ -80,11 +77,6 @@ private:
 
     void setupRoutes();
     void setupOpsRoutes();
-    std::optional<bazarish::http::Response> authenticateRequest(
-        const bazarish::http::Request& request, std::string* outUser);
-    void serveTunnel(const bazarish::http::Request& request, bazarish::http::Responder respond);
-    bazarish::http::Response forwardToNode(
-        const bazarish::http::Request& request, const std::string& user);
     std::string reseedArchive();
 
     void expiredSweepLoop();
@@ -98,7 +90,7 @@ private:
 
     std::unique_ptr<bazarish::http::Server> http_;
     std::unique_ptr<bazarish::http::Server> ops_;
-    SessionStore sessions_;
+    TunnelFace tunnel_;
     std::int64_t startedAt_ = 0;
 
     bazarish::StopGate stopGate_;

@@ -10,7 +10,9 @@
 
 #include <bazarish/Auth.hpp>
 #include <bazarish/Bytes.hpp>
+#include <bazarish/Crypto.hpp>
 #include <Restart.hpp>
+#include <TunnelFace.hpp>
 
 #include <cstdint>
 #include <functional>
@@ -29,6 +31,8 @@ struct AccountApiOptions {
     std::string serverFingerprint;
     // The server card the node hands its own clients (DER).
     Bytes serverCardDer;
+    std::shared_ptr<Key> sealingKey;
+    Bytes nodeCardDer;
     std::string version;
     std::vector<std::string> operatorFingerprints;
     std::function<void()> requestRestart;
@@ -85,6 +89,7 @@ private:
     bazarish::StopGate stopGate_;
 
     auth::ReplayCache replayCache_;
+    server::TunnelFace tunnel_;
 };
 
 }  // namespace bazarish::service

@@ -14,6 +14,7 @@ namespace fs = std::filesystem;
 
 const char* const kLogLevelKey = "logLevel";
 const char* const kMessagingKey = "messaging";
+const char* const kServiceNodeKey = "serviceNode";
 const char* const kListenKey = "listen";
 const char* const kOpsListenKey = "opsListen";
 const char* const kDirectListenKey = "directListen";
@@ -53,6 +54,10 @@ void FacadeSettings::persist(const Values& values) const
     setIfChanged(file, {kLogLevelKey}, values.logLevel, values_.logLevel);
     setIfChanged(file, {kMessagingKey, kHostKey}, values.messagingHost, values_.messagingHost);
     setIfChanged(file, {kMessagingKey, kPortKey}, values.messagingPort, values_.messagingPort);
+    setIfChanged(
+        file, {kServiceNodeKey, kHostKey}, values.serviceNodeHost, values_.serviceNodeHost);
+    setIfChanged(
+        file, {kServiceNodeKey, kPortKey}, values.serviceNodePort, values_.serviceNodePort);
     setIfChanged(file, {kListenKey, kHostKey}, values.listenHost, values_.listenHost);
     setIfChanged(file, {kListenKey, kPortKey}, values.listenPort, values_.listenPort);
     setIfChanged(file, {kOpsListenKey, kHostKey}, values.opsHost, values_.opsHost);

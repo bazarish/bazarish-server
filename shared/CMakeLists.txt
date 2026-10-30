@@ -5,7 +5,9 @@ add_library(bazarish_server_shared STATIC
     Health.cpp
     RateLimiter.cpp
     Restart.cpp
+    SessionStore.cpp
     TlsPipe.cpp
+    TunnelFace.cpp
 )
 target_include_directories(bazarish_server_shared PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(bazarish_server_shared PUBLIC bazarish_common)
@@ -30,3 +32,8 @@ add_executable(TestTlsPipe TestTlsPipe.cpp)
 target_link_libraries(TestTlsPipe PRIVATE bazarish_server_shared)
 target_compile_options(TestTlsPipe PRIVATE -Wall -Wextra -Werror)
 add_test(NAME TestTlsPipe COMMAND TestTlsPipe)
+
+add_executable(TestSessionStore TestSessionStore.cpp)
+target_link_libraries(TestSessionStore PRIVATE bazarish_server_shared)
+target_compile_options(TestSessionStore PRIVATE -Wall -Wextra -Werror)
+add_test(NAME TestSessionStore COMMAND TestSessionStore)

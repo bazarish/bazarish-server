@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #pragma once
 
+#include <bazarish/Bytes.hpp>
+
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -54,6 +56,8 @@ public:
     bool publishQuota(const std::string& user, std::uint64_t quotaBytes) const;
 
     std::string reseedArchive() const;
+
+    std::optional<Bytes> nodeCard(const Bytes& sealingPublicKeyDer) const;
 
 private:
     std::optional<std::string> send(const std::string& method, const std::string& path,

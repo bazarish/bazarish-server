@@ -4,18 +4,17 @@
 #include "EventGate.hpp"
 
 #include <bazarish/Auth.hpp>
+#include <bazarish/Certificates.hpp>
 #include <bazarish/Clock.hpp>
 #include <bazarish/ConfigFile.hpp>
 #include <bazarish/Crypto.hpp>
 #include <bazarish/Errors.hpp>
 #include <Health.hpp>
-#include <bazarish/HttpClient.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <bazarish/I2p.hpp>
 #include <bazarish/I2pAddress.hpp>
 #include <bazarish/Limits.hpp>
 #include <bazarish/Log.hpp>
-#include <bazarish/Padding.hpp>
 #include <bazarish/Pass.hpp>
 #include <bazarish/Tunnel.hpp>
 
@@ -33,9 +32,6 @@
 
 namespace {
 
-constexpr std::size_t kRefusalNoiseBytes = 64;
-
-constexpr const char* kInternalPrefix = "/internal/";
 constexpr const char* kReseedPath = "/internal/i2pseeds.su3";
 
 using bazarish::Bytes;
@@ -44,21 +40,7 @@ using bazarish::ErrorCode;
 constexpr std::size_t kReseedRouters = 60;
 constexpr std::int64_t kReseedRefreshSeconds = 3600;
 
-std::string lowered(std::string name)
-{
-    std::transform(name.begin(), name.end(), name.begin(),
-        [](const unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return name;
-}
-
-constexpr int kNodeTimeoutSeconds = 5;
-
 using bazarish::nowSeconds;
-
-Bytes bodyBytes(const bazarish::http::Request& request)
-{
-    return Bytes(request.body.begin(), request.body.end());
-}
 
 bazarish::http::Response errorResponse(
     const int status, const ErrorCode code, const std::string& message)
@@ -101,8 +83,6 @@ std::vector<Bytes> passHandles(const nlohmann::json& body)
     return handles;
 }
 
-using bazarish::http::collectAuthHeaders;
-
 }  // namespace
 
 namespace bazarish::server {
@@ -110,6 +90,7 @@ namespace bazarish::server {
 HttpApi::HttpApi(Storage& storage, const HttpApiOptions options)
     : storage_(storage)
     , options_(options)
+    , tunnel_(options_.sealingKey)
     , startedAt_(nowSeconds())
 {
     janitorThread_ = std::thread([this]() { expiredSweepLoop(); });
@@ -214,186 +195,6 @@ void HttpApi::wakeUser(const std::string& user)
     if (options_.eventGate != nullptr && !user.empty()) {
         options_.eventGate->notify(user);
     }
-}
-
-void HttpApi::serveTunnel(
-    const bazarish::http::Request& request, bazarish::http::Responder respond)
-{
-    const Bytes frame(request.body.begin(), request.body.end());
-    const auto refuse = [respond]() {
-        bazarish::http::Response response;
-        response.contentType = "application/octet-stream";
-        const Bytes noise = bazarish::padToLadder(randomBytes(kRefusalNoiseBytes));
-        response.body = std::string(noise.begin(), noise.end());
-        respond(std::move(response));
-    };
-    const auto sealed = [respond](const Bytes& body) {
-        bazarish::http::Response response;
-        response.contentType = "application/octet-stream";
-        response.body = std::string(body.begin(), body.end());
-        respond(std::move(response));
-    };
-
-    if (bazarish::tunnel::isHello(frame)) {
-        if (!options_.sealingKey) {
-            refuse();
-            return;
-        }
-        try {
-            const bazarish::tunnel::Hello hello
-                = bazarish::tunnel::openHello(frame, *options_.sealingKey);
-            const std::string user = auth::verifyRequest(hello.signature, nowSeconds(),
-                bazarish::tunnel::kHelloMethod, bazarish::tunnel::kHelloPath, hello.secret,
-                replayCache_);
-            std::int64_t expiresUnix = 0;
-            const std::string id = sessions_.open(user, hello.secret, nowSeconds(), &expiresUnix);
-            sessions_.setTunnelKey(id, bazarish::tunnel::deriveTunnelKey(hello.secret, id));
-            sealed(bazarish::tunnel::sealWelcome(
-                {expiresUnix}, Key::fromPublicDer(hello.replyKeyDer)));
-        } catch (const std::exception& error) {
-            bazarish::log::debug("a tunnel did not open: {}", error.what());
-            refuse();
-        }
-        return;
-    }
-
-    std::string handle;
-    std::optional<SessionStore::Session> session;
-    try {
-        handle = bazarish::tunnel::handleOf(frame);
-        session = sessions_.findByHandle(handle, nowSeconds());
-    } catch (const std::exception& error) {
-        bazarish::log::debug("tunnel frame not addressed to any tunnel: {}", error.what());
-        refuse();
-        return;
-    }
-    if (!session.has_value() || session->tunnelKey.empty()) {
-        bazarish::log::debug("tunnel frame names a tunnel this server does not hold");
-        refuse();
-        return;
-    }
-    bazarish::http::Request carried;
-    try {
-        const bazarish::tunnel::Request inner = bazarish::tunnel::decodeRequest(
-            bazarish::tunnel::open(frame, session->tunnelKey));
-        carried.method = inner.method;
-        carried.path = inner.path;
-        carried.target = inner.query.empty() ? inner.path : inner.path + "?" + inner.query;
-        carried.body = std::string(inner.body.begin(), inner.body.end());
-        for (const auto& [name, value] : inner.headers) {
-            carried.headers[lowered(name)] = value;
-        }
-        if (!inner.contentType.empty()) {
-            carried.headers["content-type"] = inner.contentType;
-        }
-    } catch (const std::exception& error) {
-        bazarish::log::debug("tunnel frame did not open: {}", error.what());
-        refuse();
-        return;
-    }
-    if (carried.path == bazarish::tunnel::kTunnelPath) {
-        bazarish::log::debug("a tunnel frame carried another tunnel frame");
-        refuse();
-        return;
-    }
-    if (carried.path.rfind(kInternalPrefix, 0) == 0) {
-        bazarish::log::debug("a tunnel frame named an internal path: {}", carried.path);
-        refuse();
-        return;
-    }
-    const Bytes tunnelKey = session->tunnelKey;
-    http_->dispatch(carried,
-        [respond = std::move(respond), handle, tunnelKey](bazarish::http::Response answer) {
-            bazarish::tunnel::Response inner;
-            inner.status = answer.status;
-            inner.contentType = answer.contentType;
-            inner.body = Bytes(answer.body.begin(), answer.body.end());
-            const Bytes body = bazarish::tunnel::carry(
-                handle, tunnelKey, bazarish::tunnel::encodeResponse(inner));
-            bazarish::http::Response outer;
-            outer.contentType = "application/octet-stream";
-            outer.body = std::string(body.begin(), body.end());
-            respond(std::move(outer));
-        });
-}
-
-bazarish::http::Response HttpApi::forwardToNode(
-    const bazarish::http::Request& request, const std::string& user)
-{
-    if (options_.serviceNodeUrl.empty() || !options_.identity) {
-        return errorResponse(503, ErrorCode::eRequestFailed, "no service node here");
-    }
-    const std::string target = std::string(bazarish::tunnel::kVouchedPrefix) + user + request.path;
-    const Bytes body(request.body.begin(), request.body.end());
-    const auth::Headers signed_
-        = auth::signRequest(*options_.identity, nowSeconds(), request.method, target, body);
-    bazarish::http::ClientRequest forwarded;
-    forwarded.method = request.method;
-    forwarded.target = request.target.size() > request.path.size()
-        ? target + request.target.substr(request.path.size())
-        : target;
-    forwarded.headers = std::map<std::string, std::string>(signed_.begin(), signed_.end());
-    forwarded.body = request.body;
-    if (!request.body.empty()) {
-        forwarded.contentType = "application/json";
-    }
-    const bazarish::http::Url node = bazarish::http::parseUrl(options_.serviceNodeUrl);
-    bazarish::http::ClientOptions clientOptions;
-    clientOptions.tls = node.tls;
-    clientOptions.pin = options_.serviceNodePin;
-    clientOptions.connectTimeout = std::chrono::seconds(kNodeTimeoutSeconds);
-    clientOptions.readTimeout = std::chrono::seconds(kNodeTimeoutSeconds);
-    clientOptions.writeTimeout = std::chrono::seconds(kNodeTimeoutSeconds);
-    try {
-        const bazarish::http::ClientResponse answered
-            = bazarish::http::request(node.host, node.port, forwarded, clientOptions);
-        if (answered.status == 0) {
-            bazarish::log::warn("the service node did not answer: {}", answered.error);
-            return errorResponse(
-                502, ErrorCode::eUpstreamUnavailable, "the service node did not answer");
-        }
-        bazarish::http::Response response;
-        response.status = answered.status;
-        response.contentType = "application/json";
-        response.body = answered.body;
-        return response;
-    } catch (const std::exception& error) {
-        bazarish::log::warn("the service node did not answer: {}", error.what());
-        return errorResponse(502, ErrorCode::eUpstreamUnavailable, "the service node did not answer");
-    }
-}
-
-std::optional<bazarish::http::Response> HttpApi::authenticateRequest(
-    const bazarish::http::Request& request, std::string* const outUser)
-{
-    const auth::Headers authHeaders = collectAuthHeaders(request);
-    const std::string clientId = request.header("X-Bazarish-Client");
-    if (auth::hasSessionHeaders(authHeaders)) {
-        const std::string handle = authHeaders.at(auth::kHeaderSession);
-        const std::optional<SessionStore::Session> session
-            = sessions_.findByHandle(handle, nowSeconds());
-        if (!session.has_value()) {
-            return errorResponse(401, ErrorCode::eSessionInvalid, "unknown or expired session");
-        }
-        try {
-            const std::uint64_t seq = auth::verifyMac(authHeaders, session->key, nowSeconds(),
-                request.method, request.path, bodyBytes(request), clientId);
-            if (!sessions_.acceptSeq(handle, seq, nowSeconds())) {
-                return errorResponse(401, ErrorCode::eSessionInvalid, "sequence replayed");
-            }
-        } catch (const std::exception& error) {
-            return errorResponse(401, ErrorCode::eSessionInvalid, error.what());
-        }
-        *outUser = session->user;
-        return std::nullopt;
-    }
-    try {
-        *outUser = auth::verifyRequest(authHeaders, nowSeconds(), request.method, request.path,
-            bodyBytes(request), replayCache_, clientId);
-    } catch (const std::exception& error) {
-        return errorResponse(401, ErrorCode::eRequestFailed, error.what());
-    }
-    return std::nullopt;
 }
 
 void HttpApi::setupOpsRoutes()
@@ -604,6 +405,20 @@ void HttpApi::setupOpsRoutes()
                 body.at("expiresUnix").get<std::int64_t>(), sealingKey, signingKey);
             return jsonResponse({{"dest", served.dest}});
         }));
+
+    ops_->post("/v1/messaging/node-card",
+        operatorOnly([this](const bazarish::http::Request& request) {
+            if (!options_.identity) {
+                return errorResponse(503, ErrorCode::eRequestFailed, "no server identity here");
+            }
+            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const Key sealing
+                = Key::fromPublicDer(fromBase64(body.at("sealingKey").get<std::string>()));
+            const Bytes card = ServerCard::issue(
+                *options_.identity, ServerCard::Service::eServiceNode, sealing, nowSeconds());
+            bazarish::log::info("issued the service node its card");
+            return jsonResponse({{"card", toBase64(card)}});
+        }));
 }
 
 void HttpApi::setupRoutes()
@@ -623,7 +438,7 @@ void HttpApi::setupRoutes()
     http_->routeAsync("POST", std::string(bazarish::tunnel::kTunnelPath),
         [this](const bazarish::http::Request& request,
             bazarish::http::Responder respond) -> std::optional<bazarish::http::Response> {
-            serveTunnel(request, std::move(respond));
+            tunnel_.serve(request, *http_, std::move(respond));
             return std::nullopt;
         });
 
@@ -632,7 +447,7 @@ void HttpApi::setupRoutes()
                    const bazarish::http::Request& request) -> bazarish::http::Response {
             std::string user;
             if (const std::optional<bazarish::http::Response> refused
-                = authenticateRequest(request, &user);
+                = tunnel_.authenticate(request, &user);
                 refused.has_value()) {
                 return *refused;
             }
@@ -670,7 +485,7 @@ void HttpApi::setupRoutes()
                 bazarish::http::Responder respond) -> std::optional<bazarish::http::Response> {
                 std::string user;
                 const std::optional<bazarish::http::Response> refused
-                    = authenticateRequest(request, &user);
+                    = tunnel_.authenticate(request, &user);
                 if (refused.has_value()) {
                     return *refused;
                 }
@@ -756,22 +571,6 @@ void HttpApi::setupRoutes()
                     {"quotaBytes", storage_.userQuota(user, options_.defaultQuotaBytes)},
                 });
         }));
-
-    for (const auto& [method, path] :
-        std::vector<std::pair<const char*, const char*>>{
-            {"POST", "/v1/account/card"},
-            {"POST", "/v1/account/registration"},
-            {"DELETE", "/v1/account/registration"},
-            {"GET", "/v1/account/portal"},
-            {"POST", "/v1/account/i2p-dest"},
-            {"GET", "/v1/account/i2p-status"},
-        }) {
-        http_->route(method, path,
-            authenticated([this](const bazarish::http::Request& request,
-                              const std::string& user) -> bazarish::http::Response {
-                return forwardToNode(request, user);
-            }));
-    }
 
     http_->post("/v1/messaging/passes",
         authenticated([&store, requireClient, clientUnregistered](

@@ -16,10 +16,19 @@
 
 namespace bazarish::facade {
 
+inline constexpr const char* kDefaultUpstreamHost = "127.0.0.1";
+inline constexpr int kDefaultMessagingPort = 8420;
+inline constexpr int kDefaultServiceNodePort = 8421;
+
+struct Upstream {
+    std::string host;
+    int port = 0;
+    std::string pin;
+};
+
 struct FacadeOptions {
-    std::string messagingHost = "127.0.0.1";
-    int messagingPort = 8420;
-    std::string messagingPin;
+    Upstream messaging{kDefaultUpstreamHost, kDefaultMessagingPort, {}};
+    Upstream serviceNode{kDefaultUpstreamHost, kDefaultServiceNodePort, {}};
     std::string address;
     std::shared_ptr<FacadeSettings> settings;
     std::function<void()> requestRestart;

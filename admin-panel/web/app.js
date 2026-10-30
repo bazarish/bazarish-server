@@ -1009,8 +1009,8 @@
             + " client.");
 
         var wiring = section(form, "This node's own wiring");
-        var listen = endpointRow(wiring, "Operator API", data.listen,
-            "Where the node answers the panel. Not a public address.", true);
+        var listen = endpointRow(wiring, "API", data.listen,
+            "Facades and the messaging server reach the node here. Not a public address.", true);
         var messaging = endpointRow(wiring, "Messaging server", data.messaging,
             "The server-core this node is bound to: where it pushes quotas and reads mailboxes.",
             true);
@@ -1250,7 +1250,9 @@
 
         var backends = section(form, "What it forwards to");
         var messaging = endpointRow(backends, "Messaging server", data.messaging,
-            "Its only backend. The sealed client tunnel and the server card go here.", true);
+            "The messaging tunnel and the server card go here.", true);
+        var serviceNode = endpointRow(backends, "Service node", data.serviceNode,
+            "The account tunnel and the node card go here.", true);
 
         var i2p = section(form, "Its I2P address");
         var privacy = chipRow(i2p, "Privacy", "Hops each tunnel takes: minimal is one, max is"
@@ -1287,6 +1289,10 @@
                         messaging: {
                             host: messaging.host.value.trim(),
                             port: portRead(messaging.port, "The messaging server")
+                        },
+                        serviceNode: {
+                            host: serviceNode.host.value.trim(),
+                            port: portRead(serviceNode.port, "The service node")
                         },
                         i2pPrivacy: privacy(),
                         i2pTunnelQuantity: Math.round(Number(tunnels.value) || 0)

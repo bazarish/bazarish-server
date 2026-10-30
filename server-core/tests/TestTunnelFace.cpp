@@ -56,8 +56,8 @@ int main()
 
     const Identity serverIdentity = Identity::generate();
     const Key serverSealing = Key::generateSealing();
-    const Bytes card = ServerCard::issue(
-        serverIdentity, Key::fromPublicDer(serverSealing.publicDer()), nowSeconds());
+    const Bytes card = ServerCard::issue(serverIdentity, ServerCard::Service::eMessaging,
+        Key::fromPublicDer(serverSealing.publicDer()), nowSeconds());
 
     HttpApiOptions options;
     options.sealingKey = std::make_shared<Key>(Key::fromPrivatePem(serverSealing.privatePem()));
@@ -136,10 +136,11 @@ int main()
         innermost.path = tunnel::kServerCardPath;
         const Bytes nested = tunnel::carry(
             auth::sessionHandle(secret, 1000), tunnelKey, tunnel::encodeRequest(innermost));
-        const http::ClientResponse answered
-            = carry("POST", std::string(tunnel::kTunnelPath), nested);
-        CHECK(answered.status == 200);
-        CHECK(!opensAsAnswer(answered.body, tunnelKey));
+        for (const char* const path : {tunnel::kTunnelPath, tunnel::kNodeTunnelPath}) {
+            const http::ClientResponse answered = carry("POST", path, nested);
+            CHECK(answered.status == 200);
+            CHECK(!opensAsAnswer(answered.body, tunnelKey));
+        }
     }
 
     {

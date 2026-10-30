@@ -91,6 +91,17 @@ bazarish::Identity loadOrCreateIdentity(const fs::path& stateDir)
     return identity;
 }
 
+bazarish::Key loadOrCreateSealingKey(const fs::path& stateDir)
+{
+    const fs::path path = stateDir / "sealing.pem";
+    if (fs::exists(path)) {
+        return bazarish::Key::fromPrivatePem(readFileText(path));
+    }
+    bazarish::Key key = bazarish::Key::generateSealing();
+    writePrivateFile(path, key.privatePem());
+    return key;
+}
+
 struct PortalConfig {
     std::string message = kDefaultPortalMessage;
     std::string name;
@@ -232,10 +243,12 @@ int main(const int argc, const char** argv)
     bazarish::log::setLevel(nodeConfig.logLevel);
 
     const bazarish::Bytes cardDer = readFileBytes(fs::path(nodeConfig.serverCard));
-    const bazarish::ServerCard card = bazarish::ServerCard::verify(cardDer);
+    const bazarish::ServerCard card
+        = bazarish::ServerCard::verify(cardDer, bazarish::ServerCard::Service::eMessaging);
 
     fs::create_directories(stateDir);
     const bazarish::Identity nodeIdentity = loadOrCreateIdentity(stateDir);
+    const auto sealing = std::make_shared<bazarish::Key>(loadOrCreateSealingKey(stateDir));
     const bazarish::tls::Credential credential = bazarish::tls::selfSigned(stateDir);
     std::printf("service-node operator fingerprint: %s\n", nodeIdentity.fingerprint().c_str());
     std::printf("service-node socket pin: %s\n", credential.pin.c_str());
@@ -276,6 +289,7 @@ int main(const int argc, const char** argv)
     bazarish::service::AccountApiOptions options;
     options.serverFingerprint = card.server;
     options.serverCardDer = cardDer;
+    options.sealingKey = sealing;
     options.version = kVersion;
     options.operatorFingerprints = nodeConfig.operators;
     options.settings = settings;
@@ -309,6 +323,18 @@ int main(const int argc, const char** argv)
                             " it is refused until it does",
             kBackendWaitBudget.count());
     }
+    const std::optional<bazarish::Bytes> nodeCard = operatorPush.nodeCard(sealing->publicDer());
+    if (!nodeCard.has_value()) {
+        bazarish::log::error("the messaging server issued this node no card: no client could open"
+                             " a tunnel to it");
+        return 1;
+    }
+    if (bazarish::ServerCard::verify(*nodeCard, bazarish::ServerCard::Service::eServiceNode).server
+        != card.server) {
+        bazarish::log::error("the node card names another server than this node's server card");
+        return 1;
+    }
+    options.nodeCardDer = *nodeCard;
     for (const bazarish::service::SubscriptionStore::Account& account : store.allAccounts()) {
         if (!operatorPush.publishQuota(account.user, account.quotaBytes)) {
             bazarish::log::warn("quota for {} not reconciled at start",
@@ -395,7 +421,7 @@ int main(const int argc, const char** argv)
     std::printf("bazarish-service-node %s\n", kVersion);
     std::printf("bound to server: %s\n", card.server.c_str());
     std::fflush(stdout);
-    bazarish::log::info("listening on {}:{} (private channel for facades)",
+    bazarish::log::info("listening on {}:{} (private channel for facades and the messaging server)",
         nodeConfig.listen.host, nodeConfig.listen.port);
 
     const bool boundOps = api.bindOps(nodeConfig.opsListen.host, nodeConfig.opsListen.port) > 0;

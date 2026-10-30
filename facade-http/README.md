@@ -3,20 +3,21 @@
 The HTTP facade for the [Bazarish](https://github.com/bazarish/docs-main)
 messenger: the "last mile" between a client and the server infrastructure.
 
-The messaging server is its only backend. It forwards exactly two requests there
-and answers everything else with the same bare 404:
+It has two backends and forwards exactly four requests to them; everything else
+gets the same bare 404:
 
-- `POST /t` - the sealed tunnel every client request travels inside. The real
-  method, path and headers are encrypted, so the facade cannot tell a message
-  from a mailbox poll, and the service node is reached through the same tunnel
-  rather than by a path of its own.
-- `GET /v1/server/card` - the signed server card, which is what lets a client
-  seal that tunnel in the first place. Public by nature and identical for every
-  caller, so serving it tells nobody anything.
+- `POST /t` and `GET /v1/server/card` go to the messaging server: the sealed
+  tunnel of the mailbox calls and the signed card whose key seals it.
+- `POST /n` and `GET /v1/node/card` go to the service node: the same for the
+  account calls.
+
+Inside a tunnel the method, path and headers are encrypted, so the facade cannot
+tell a message from a mailbox poll; it learns only which backend a frame is for.
+A card is public by nature and identical for every caller.
 
 The facade holds **no keys and no content at rest**; it parses nothing and
 stores nothing identifying. Compromising it must not damage the server
-infrastructure - it knows only the private-channel address of its backend and
+infrastructure - it knows only the private-channel addresses of its backends and
 the (end-to-end encrypted) traffic passing through. Clients reach it through
 its own I2P destination, and through nothing else: it relays to the `listen`
 socket on loopback.
@@ -65,5 +66,5 @@ operator runs: given a route, that gateway dials this address instead of the
 destination, and the flow does not enter I2P. Left out, the destination is the
 only way in.
 
-The backend is reached over TLS as well, pinned by the key the messaging server
-prints: `"messaging": {"host": ..., "port": ..., "pin": ...}`.
+Both backends are reached over TLS, each pinned by the key it prints:
+`"messaging"` and `"serviceNode"`, each `{"host": ..., "port": ..., "pin": ...}`.

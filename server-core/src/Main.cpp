@@ -261,8 +261,9 @@ int main(const int argc, const char** argv)
         perUserDests->reloadPersisted(nowSeconds());
     }
 
-    const bazarish::Bytes card = bazarish::ServerCard::issue(
-        *identity, bazarish::Key::fromPublicDer(sealing->publicDer()), nowSeconds());
+    const bazarish::Bytes card = bazarish::ServerCard::issue(*identity,
+        bazarish::ServerCard::Service::eMessaging,
+        bazarish::Key::fromPublicDer(sealing->publicDer()), nowSeconds());
     {
         const fs::path cardPath = stateDir / "server-card.der";
         std::ofstream out(cardPath, std::ios::binary | std::ios::trunc);
@@ -335,8 +336,6 @@ int main(const int argc, const char** argv)
     httpOptions.sealingKey = sealing;
     httpOptions.serverCardDer = card;
     httpOptions.identity = identity;
-    httpOptions.serviceNodeUrl = serviceNodeUrl;
-    httpOptions.serviceNodePin = serviceNodePin;
     httpOptions.tlsCertificate = credential.certificate.string();
     httpOptions.tlsKey = credential.key.string();
     httpOptions.opsClientPins = opsClientPins;

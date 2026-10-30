@@ -36,6 +36,7 @@ using Headers = std::map<std::string, std::string>;
 
 constexpr int kDirectPort = 8418;
 constexpr int kMovedDirectPort = 8417;
+constexpr int kMovedNodePort = 8431;
 
 http::ClientResponse call(const int port, const std::string& method, const std::string& path,
     const Headers& headers = {}, const std::string& body = {})
@@ -163,11 +164,19 @@ int main()
     installBackend(messaging, "messaging");
     const int messagingPort = messaging.start();
     CHECK(messagingPort > 0);
+    const bazarish::tls::Credential nodeCredential = bazarish::tls::selfSigned(
+        std::filesystem::temp_directory_path() / "bazarish-facade-test-node");
+    http::Server::Options nodeOptions = backendOptions();
+    nodeOptions.certificate = nodeCredential.certificate.string();
+    nodeOptions.key = nodeCredential.key.string();
+    http::Server serviceNode(nodeOptions);
+    installBackend(serviceNode, "service-node");
+    const int nodePort = serviceNode.start();
+    CHECK(nodePort > 0);
 
     bazarish::facade::FacadeOptions options;
-    options.messagingHost = "127.0.0.1";
-    options.messagingPort = messagingPort;
-    options.messagingPin = backendCredential.pin;
+    options.messaging = {"127.0.0.1", messagingPort, backendCredential.pin};
+    options.serviceNode = {"127.0.0.1", nodePort, nodeCredential.pin};
     options.address = "example.b32.i2p";
     const std::filesystem::path configPath
         = std::filesystem::temp_directory_path() / "bazarish-facade-test.json";
@@ -179,6 +188,8 @@ int main()
     facadeValues.logLevel = "info";
     facadeValues.messagingHost = "127.0.0.1";
     facadeValues.messagingPort = messagingPort;
+    facadeValues.serviceNodeHost = "127.0.0.1";
+    facadeValues.serviceNodePort = nodePort;
     facadeValues.listenHost = "127.0.0.1";
     facadeValues.listenPort = 8419;
     facadeValues.opsHost = "127.0.0.1";
@@ -245,6 +256,19 @@ int main()
         const nlohmann::json reply = nlohmann::json::parse(result.body);
         CHECK(reply.at("backend") == "messaging");
         CHECK(reply.at("path") == "/v1/server/card");
+    }
+
+    {
+        const http::ClientResponse tunnel = call(facadePort, "POST", "/n", {}, "frame");
+        CHECK(tunnel.status == 200);
+        CHECK(nlohmann::json::parse(tunnel.body).at("backend") == "service-node");
+        CHECK(nlohmann::json::parse(tunnel.body).at("body") == "frame");
+        const http::ClientResponse card = call(facadePort, "GET", "/v1/node/card");
+        CHECK(card.status == 200);
+        CHECK(nlohmann::json::parse(card.body).at("backend") == "service-node");
+        CHECK(call(facadePort, "GET", "/n").status == 404);
+        CHECK(call(facadePort, "POST", "/v1/node/card", {}, "{}").status == 404);
+        CHECK(call(facadePort, "GET", "/t").status == 404);
     }
 
     {
@@ -321,9 +345,11 @@ int main()
         CHECK(!values.contains("url"));
         CHECK(values.at("i2pTunnelQuantity").get<int>() == 3);
         CHECK(values.at("directListen").at("port").get<int>() == kDirectPort);
+        CHECK(values.at("serviceNode").at("port").get<int>() == nodePort);
 
         const nlohmann::json wanted = {{"i2pTunnelQuantity", 8},
-            {"directListen", {{"host", "127.0.0.1"}, {"port", kMovedDirectPort}}}};
+            {"directListen", {{"host", "127.0.0.1"}, {"port", kMovedDirectPort}}},
+            {"serviceNode", {{"host", "127.0.0.1"}, {"port", kMovedNodePort}}}};
         const std::string body = wanted.dump();
         CHECK(callTls(opsPort, facadeCredential.pin, "PUT", path, signedHeaders(operatorIdentity, "PUT", path, body), body)
                   .status
@@ -334,6 +360,7 @@ int main()
         const nlohmann::json onDisk = nlohmann::json::parse(written);
         CHECK(onDisk.at("i2p").at("tunnelQuantity").get<int>() == 8);
         CHECK(onDisk.at("directListen").at("port").get<int>() == kMovedDirectPort);
+        CHECK(onDisk.at("serviceNode").at("port").get<int>() == kMovedNodePort);
 
         const std::string bad = nlohmann::json{{"i2pTunnelQuantity", 0}}.dump();
         CHECK(callTls(opsPort, facadeCredential.pin, "PUT", path, signedHeaders(operatorIdentity, "PUT", path, bad), bad)
@@ -372,5 +399,6 @@ int main()
 
     facade.stop();
     messaging.stop();
+    serviceNode.stop();
     return 0;
 }

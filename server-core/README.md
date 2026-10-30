@@ -61,8 +61,9 @@ Both sockets speak TLS, with a certificate this server makes in its state
 directory on first start; the hash of its key is printed at startup and is what
 a peer is configured with. `listen` carries the sealed tunnel and federation,
 which the facade forwards to. `opsListen` carries everything that is the
-operator's - health, settings, restart, quotas, destinations, the reseed archive
-the portal serves - and admits only a certificate listed in `opsClients`: the
+operator's - health, settings, restart, quotas, destinations, the service node's
+card signed with this server's root, the reseed archive the portal serves - and
+admits only a certificate listed in `opsClients`: the
 admin panel's and the service node's. The node beside it is named the same way,
 `"serviceNode": {"url": "https://...", "pin": "..."}`, and the pin is not
 optional: without one the dial is refused rather than trusted.

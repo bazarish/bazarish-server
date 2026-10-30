@@ -51,18 +51,20 @@ std::string pathOf(const std::string& target)
     return target.substr(0, target.find('?'));
 }
 
-bool isForwarded(const std::string& method, const std::string& path)
+const Upstream* upstreamFor(const FacadeOptions& options, const bazarish::http::Request& request)
 {
-    return (method == "POST" && path == bazarish::tunnel::kTunnelPath)
-        || (method == "GET" && path == bazarish::tunnel::kServerCardPath);
-}
-
-std::optional<std::string> forwardedTarget(const bazarish::http::Request& request)
-{
-    if (!isForwarded(request.method, pathOf(request.target))) {
-        return std::nullopt;
+    const std::string path = pathOf(request.target);
+    const bool tunnel = request.method == "POST";
+    const bool card = request.method == "GET";
+    if ((tunnel && path == bazarish::tunnel::kTunnelPath)
+        || (card && path == bazarish::tunnel::kServerCardPath)) {
+        return &options.messaging;
     }
-    return request.target;
+    if ((tunnel && path == bazarish::tunnel::kNodeTunnelPath)
+        || (card && path == bazarish::tunnel::kNodeCardPath)) {
+        return &options.serviceNode;
+    }
+    return nullptr;
 }
 
 bazarish::http::Response notFound()
@@ -175,14 +177,14 @@ void Facade::setupRoutes(bazarish::http::Server& server)
                              bazarish::http::Responder respond)
         -> std::optional<bazarish::http::Response> {
         load_.record(nowSeconds());
-        const std::optional<std::string> target = forwardedTarget(request);
-        if (!target.has_value()) {
+        const Upstream* const upstream = upstreamFor(options_, request);
+        if (upstream == nullptr) {
             return notFound();
         }
         const auto inFlight = std::make_shared<Load::InFlight>(load_);
         bazarish::http::ClientRequest forwarded;
         forwarded.method = request.method;
-        forwarded.target = *target;
+        forwarded.target = request.target;
         forwarded.headers = request.headers;
         forwarded.body = request.body;
         for (const char* const hop : {"host", "connection", "keep-alive", "proxy-connection",
@@ -192,19 +194,18 @@ void Facade::setupRoutes(bazarish::http::Server& server)
 
         boost::asio::co_spawn(
             server.executor(),
-            [executor = server.executor(), host = options_.messagingHost,
-                port = options_.messagingPort, pin = options_.messagingPin,
+            [executor = server.executor(), upstream = *upstream,
                 forwarded = std::move(forwarded), respond,
                 inFlight]() -> boost::asio::awaitable<void> {
                 bazarish::http::ClientOptions upstreamOptions;
                 upstreamOptions.tls = true;
-                upstreamOptions.pin = pin;
+                upstreamOptions.pin = upstream.pin;
                 upstreamOptions.connectTimeout = std::chrono::seconds(kUpstreamTimeoutSeconds);
                 upstreamOptions.readTimeout = std::chrono::seconds(kUpstreamTimeoutSeconds);
                 upstreamOptions.writeTimeout = std::chrono::seconds(kUpstreamTimeoutSeconds);
-                const bazarish::http::Response upstream = co_await bazarish::http::fetch(
-                    executor, host, port, forwarded, upstreamOptions);
-                respond(upstream.status == 0 ? gatewayFailure() : upstream);
+                const bazarish::http::Response answer = co_await bazarish::http::fetch(
+                    executor, upstream.host, upstream.port, forwarded, upstreamOptions);
+                respond(answer.status == 0 ? gatewayFailure() : answer);
             },
             boost::asio::detached);
         return std::nullopt;
@@ -258,6 +259,8 @@ void Facade::setupOpsRoutes()
                 {"logLevel", values.logLevel},
                 {"address", options_.address},
                 {"messaging", {{"host", values.messagingHost}, {"port", values.messagingPort}}},
+                {"serviceNode",
+                    {{"host", values.serviceNodeHost}, {"port", values.serviceNodePort}}},
                 {"listen", {{"host", values.listenHost}, {"port", values.listenPort}}},
                 {"opsListen", {{"host", values.opsHost}, {"port", values.opsPort}}},
                 {"directListen", {{"host", values.directHost}, {"port", values.directPort}}},
@@ -284,6 +287,7 @@ void Facade::setupOpsRoutes()
             values.logLevel = level;
         }
         readEndpointInto(body, "messaging", values.messagingHost, values.messagingPort);
+        readEndpointInto(body, "serviceNode", values.serviceNodeHost, values.serviceNodePort);
         readEndpointInto(body, "listen", values.listenHost, values.listenPort);
         readEndpointInto(body, "opsListen", values.opsHost, values.opsPort);
         readEndpointInto(body, "directListen", values.directHost, values.directPort);

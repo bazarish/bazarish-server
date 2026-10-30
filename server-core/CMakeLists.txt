@@ -36,7 +36,6 @@ add_library(bazarish_server_lib STATIC
     src/EventGate.cpp
     src/HttpApi.cpp
     src/ServerSettings.cpp
-    src/SessionStore.cpp
 )
 target_include_directories(bazarish_server_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(bazarish_server_lib PUBLIC Bazarish::Common Threads::Threads bazarish_server_shared)
@@ -61,5 +60,4 @@ bazarish_server_add_test(TestHttpApi)
 bazarish_server_add_test(TestFederation)
 bazarish_server_add_test(TestGatewayLink)
 bazarish_server_add_test(TestPerUserDestinations)
-bazarish_server_add_test(TestSessionStore)
 bazarish_server_add_test(TestTunnelFace)

@@ -101,13 +101,17 @@ int main(const int argc, const char** argv)
     bazarish::facade::FacadeOptions options;
     options.version = kVersion;
     options.operatorFingerprints = config.list("operators");
-    if (const std::optional<bazarish::ConfigView::Endpoint> messaging
-        = config.endpoint("messaging");
-        messaging.has_value()) {
-        options.messagingHost = messaging->host;
-        options.messagingPort = messaging->port;
-        options.messagingPin = config.text("messaging.pin");
-    }
+    const auto readUpstream = [&config](
+                                  const std::string& key, bazarish::facade::Upstream& upstream) {
+        if (const std::optional<bazarish::ConfigView::Endpoint> named = config.endpoint(key);
+            named.has_value()) {
+            upstream.host = named->host;
+            upstream.port = named->port;
+            upstream.pin = config.text(key + ".pin");
+        }
+    };
+    readUpstream("messaging", options.messaging);
+    readUpstream("serviceNode", options.serviceNode);
 
     if (stateDir.empty()) {
         std::fprintf(stderr, "config: \"state\" is mandatory: the destination key must"
@@ -128,8 +132,10 @@ int main(const int argc, const char** argv)
 
     bazarish::facade::FacadeSettings::Values settingValues;
     settingValues.logLevel = config.text("logLevel").empty() ? "info" : config.text("logLevel");
-    settingValues.messagingHost = options.messagingHost;
-    settingValues.messagingPort = options.messagingPort;
+    settingValues.messagingHost = options.messaging.host;
+    settingValues.messagingPort = options.messaging.port;
+    settingValues.serviceNodeHost = options.serviceNode.host;
+    settingValues.serviceNodePort = options.serviceNode.port;
     settingValues.listenHost = listen.host;
     settingValues.listenPort = listen.port;
     settingValues.opsHost = ops.has_value() ? ops->host : std::string();
@@ -159,7 +165,9 @@ int main(const int argc, const char** argv)
     std::printf("bazarish-facade-http %s\n", kVersion);
     std::printf("facade socket pin: %s\n", credential.pin.c_str());
     std::fflush(stdout);
-    bazarish::log::info("messaging -> {}:{}", options.messagingHost, options.messagingPort);
+    bazarish::log::info("messaging -> {}:{}", options.messaging.host, options.messaging.port);
+    bazarish::log::info(
+        "service node -> {}:{}", options.serviceNode.host, options.serviceNode.port);
 
     if (ops.has_value()) {
         if (facade.bindOps(ops->host, ops->port) <= 0) {

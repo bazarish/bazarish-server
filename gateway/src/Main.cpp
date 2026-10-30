@@ -70,6 +70,7 @@ int main(const int argc, const char** argv)
         return 2;
     }
 
+    std::filesystem::create_directories(settings.stateDir);
     bazarish::i2p::RouterConfig routerConfig;
     routerConfig.dataDir = settings.stateDir / "i2p";
     routerConfig.role = bazarish::i2p::Role::eClient;

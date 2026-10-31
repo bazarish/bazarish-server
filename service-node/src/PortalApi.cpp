@@ -3,21 +3,17 @@
 
 #include <bazarish/ServerDescriptor.hpp>
 
-#include <bazarish/HttpClient.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <bazarish/Clock.hpp>
 #include <bazarish/Log.hpp>
 
 #include <functional>
-#include <nlohmann/json.hpp>
 #include <qrencode.h>
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <exception>
-#include <filesystem>
 #include <iterator>
 #include <map>
 #include <memory>
@@ -29,6 +25,7 @@
 namespace {
 
 constexpr std::int64_t kReseedHoldSeconds = 300;
+constexpr std::int64_t kSessionTtlSeconds = 3600;
 // ISO/IEC 18004: four light modules around the symbol; bit 0 of a module is dark.
 constexpr int kQrQuietModules = 4;
 constexpr unsigned char kQrDark = 1;
@@ -71,12 +68,6 @@ std::string qrSvg(const std::string& text)
         + "\" shape-rendering=\"crispEdges\" aria-hidden=\"true\"><rect width=\"" + side
         + "\" height=\"" + side + "\" fill=\"#fff\"/><path fill=\"#000\" d=\"" + path
         + "\"/></svg>";
-}
-
-void respondJson(http::Response& response, const nlohmann::json& body)
-{
-    response.contentType = "application/json";
-    response.body = body.dump();
 }
 
 void sendHtml(http::Response& response, const std::string& html, const int status = 200)
@@ -143,7 +134,7 @@ PortalApi::PortalApi(PortalApiOptions options, GrantStore& grants)
     , messages_(options_.assetsDirectory / "messages.json")
     , grants_(grants)
     , login_(options_.challengeSecret, settings_->get().loginConsumer)
-    , session_(options_.sessionSecret, options_.sessionTtlSeconds)
+    , session_(options_.sessionSecret, kSessionTtlSeconds)
 {
 }
 
@@ -187,61 +178,6 @@ void PortalApi::stop()
 
 void PortalApi::setupRoutes()
 {
-    http_->get("/portal/login", filled([this](const http::Request&, http::Response& response) {
-        respondJson(response, {{"challenge", login().issue(nowSeconds())}});
-    }));
-
-    http_->post("/portal/login", filled([this](const http::Request& request,
-                                      http::Response& response) {
-        const nlohmann::json body = nlohmann::json::parse(request.body, nullptr, false);
-        if (body.is_discarded() || !body.contains("challenge") || !body.contains("blob")) {
-            response.status = 400;
-            respondJson(response, {{"error", "bad request"}});
-            return;
-        }
-        try {
-            const std::string userId = login().verify(body.at("challenge").get<std::string>(),
-                body.at("blob").get<std::string>(), nowSeconds());
-            setSessionCookie(response, session_.issue(userId, nowSeconds()));
-            respondJson(response, {{"ok", true}, {"userId", userId}});
-        } catch (const std::exception&) {
-            response.status = 401;
-            respondJson(response, {{"error", "login failed"}});
-        }
-    }));
-
-    http_->get("/portal/me", filled([this](const http::Request& request, http::Response& response) {
-        try {
-            const std::string userId
-                = session_.verify(request.cookie(kSessionCookie), nowSeconds());
-            respondJson(response, {{"userId", userId}});
-        } catch (const std::exception&) {
-            response.status = 401;
-            respondJson(response, {{"error", "not authenticated"}});
-        }
-    }));
-
-    http_->post(
-        "/portal/register", filled([this](const http::Request& request, http::Response& response) {
-            std::string userId;
-            try {
-                userId = session_.verify(request.cookie(kSessionCookie), nowSeconds());
-            } catch (const std::exception&) {
-                response.status = 401;
-                respondJson(response, {{"error", "not authenticated"}});
-                return;
-            }
-            if (const std::optional<GrantStore::Ban> ban = grants_.peekBan(userId);
-                ban.has_value()) {
-                response.status = 403;
-                respondJson(response, {{"error", "banned"}, {"message", ban->reason}});
-                return;
-            }
-            const std::uint64_t quota = settings().defaultQuotaBytes;
-            grants_.grantSubscription(userId, quota, nowSeconds());
-            respondJson(response, {{"ok", true}, {"quotaBytes", quota}});
-        }));
-
     setupWebRoutes();
 }
 
@@ -267,21 +203,19 @@ std::string PortalApi::reseedArchive()
 
 void PortalApi::setupWebRoutes()
 {
-    if (options_.fetchReseedArchive) {
-        http_->get("/i2pseeds.su3", [this](const http::Request&) {
-            http::Response response;
-            const std::string archive = reseedArchive();
-            if (archive.empty()) {
-                response.status = 503;
-                response.contentType = "text/plain";
-                response.body = "no reseed available";
-                return response;
-            }
-            response.contentType = "application/octet-stream";
-            response.body = archive;
+    http_->get("/i2pseeds.su3", [this](const http::Request&) {
+        http::Response response;
+        const std::string archive = reseedArchive();
+        if (archive.empty()) {
+            response.status = 503;
+            response.contentType = "text/plain";
+            response.body = "no reseed available";
             return response;
-        });
-    }
+        }
+        response.contentType = "application/octet-stream";
+        response.body = archive;
+        return response;
+    });
 
     for (const std::string& name : assets_.published()) {
         const WebAssets::File& file = assets_.file(name);
@@ -348,12 +282,7 @@ void PortalApi::setupWebRoutes()
         if (request.param("confirm") != "yes") {
             sendHtml(response,
                 page(request, "{{t.delete.title}}", assets_.render("session.html", {{"fingerprint", htmlEscape(user)}}),
-                    assets_.render("confirm-delete.html",
-                        accountValues(user, grants_.peekSubscription(user)))));
-            return;
-        }
-        if (!options_.deleteAccount) {
-            sendHtml(response, homePage(request, user, "{{t.delete.refused}}"), 503);
+                    assets_.render("confirm-delete.html", accountValues(user))));
             return;
         }
         options_.deleteAccount(user);
@@ -402,31 +331,25 @@ std::string PortalApi::languageSwitch(const std::string& lang, const std::string
         + list + "    </ul>\n  </details>\n";
 }
 
-std::map<std::string, std::string> PortalApi::accountValues(
-    const std::string& user, const std::optional<GrantStore::SubscriptionGrant>& subscription)
+std::map<std::string, std::string> PortalApi::accountValues(const std::string& user)
 {
     const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
     const NodeSettings::Values values = settings();
-    const std::uint64_t granted
-        = subscription.has_value() ? subscription->quotaBytes : values.defaultQuotaBytes;
     const std::string note = approval.has_value() && !approval->message.empty()
         ? approval->message
         : values.registrationMessage;
 
     std::string mailbox = "{{t.facts.unknown}}";
     std::string devices = "{{t.facts.unknown}}";
-    if (options_.accountUsage) {
-        if (const std::optional<MailboxUsage> usage = options_.accountUsage(user);
-            usage.has_value()) {
-            mailbox = bytesHuman(usage->usedBytes) + " of " + bytesHuman(usage->quotaBytes);
-            devices = std::to_string(usage->devices);
-        }
+    if (const std::optional<MailboxUsage> usage = options_.accountUsage(user);
+        usage.has_value()) {
+        mailbox = bytesHuman(usage->usedBytes) + " of " + bytesHuman(usage->quotaBytes);
+        devices = std::to_string(usage->devices);
     }
 
     const std::string descriptor
         = encodeServerDescriptor({options_.serverFingerprint, values.facades, values.reseeds});
     return {
-        {"quota", htmlEscape(bytesHuman(granted))},
         {"descriptor",
             assets_.render(
                 "descriptor.html", {{"text", htmlEscape(descriptor)}, {"qr", qrSvg(descriptor)}})},
@@ -455,8 +378,7 @@ std::string PortalApi::homePage(
             assets_.render("banned.html", {{"message", htmlEscape(ban->reason)}}));
     }
 
-    const std::map<std::string, std::string> account
-        = accountValues(user, grants_.peekSubscription(user));
+    const std::map<std::string, std::string> account = accountValues(user);
     const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
     if (approval.has_value() && approval->pending()) {
         return page(request, "{{t.waiting.title}}", session, assets_.render("waiting.html", account));

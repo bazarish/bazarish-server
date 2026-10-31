@@ -24,15 +24,13 @@
 
 namespace bazarish::server {
 
-// A destination goes down this long before its delegation ends: from the first second of the day
-// it has no key for, the lease set its router builds cannot be signed and brings the router down.
+// A destination outliving its day keys cannot sign its lease set, and that brings the router down.
 inline constexpr std::int64_t kLapseLeadSeconds = 60;
 
 class PerUserDestinations {
 public:
     PerUserDestinations(bazarish::i2p::Router* router, DeliveryEngine& engine,
-        std::filesystem::path stateDir, bazarish::i2p::Privacy privacy,
-        int tunnelQuantity = bazarish::i2p::kDefaultTunnelQuantity);
+        std::filesystem::path stateDir, bazarish::i2p::Privacy privacy, int tunnelQuantity);
     ~PerUserDestinations();
 
     PerUserDestinations(const PerUserDestinations&) = delete;
@@ -49,7 +47,6 @@ public:
         std::int64_t expiresUnix, const std::string& sealingKeyPem,
         const std::string& signingKeyPem);
 
-    // Stops serving the address and drops its record; the account sends its keys again with the next.
     void forget(const std::string& userFp);
 
     void reloadPersisted(std::int64_t now);
@@ -61,7 +58,6 @@ public:
     void setServedChanged(std::function<void()> changed);
     std::vector<std::string> served() const;
     bool serveDirect(const std::string& to, const std::string& from, TlsPipe& pipe);
-    std::shared_ptr<bazarish::i2p::Endpoint> endpointForDest(const std::string& dest) const;
 
     std::size_t size() const;
 

@@ -5,7 +5,6 @@
 
 #include <nlohmann/json.hpp>
 
-#include <stdexcept>
 #include <utility>
 
 namespace bazarish::service {
@@ -56,9 +55,6 @@ void NodeSettings::set(const Values& values)
 
 void NodeSettings::persist(const Values& values) const
 {
-    if (configPath_.empty()) {
-        throw std::runtime_error("this node was started without a config file to write to");
-    }
     ConfigFile file(configPath_);
     setIfChanged(file, {kRegistrationKey, kRequireApprovalKey}, values.requireApproval,
         values_.requireApproval);

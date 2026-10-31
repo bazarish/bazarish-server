@@ -30,7 +30,6 @@ struct PortalApiOptions {
     std::string serverFingerprint;
     std::string challengeSecret;
     std::string sessionSecret;
-    std::int64_t sessionTtlSeconds = 3600;
     std::function<std::string()> fetchReseedArchive;
     std::filesystem::path assetsDirectory;
     std::shared_ptr<NodeSettings> settings;
@@ -67,8 +66,7 @@ private:
     std::string page(const bazarish::http::Request& request, const std::string& title,
         const std::string& session,
         const std::string& content);
-    std::map<std::string, std::string> accountValues(const std::string& user,
-        const std::optional<GrantStore::SubscriptionGrant>& subscription);
+    std::map<std::string, std::string> accountValues(const std::string& user);
 
     NodeSettings::Values settings() const { return settings_->get(); }
 

@@ -17,7 +17,6 @@ class TunnelFace {
 public:
     explicit TunnelFace(std::shared_ptr<Key> sealingKey);
 
-    // A carried request is answered by `routes`, sealed under the tunnel it came in.
     void serve(const http::Request& request, http::Server& routes, http::Responder respond);
 
     std::optional<http::Response> authenticate(const http::Request& request, std::string* outUser);

@@ -15,12 +15,12 @@ Inside a tunnel the method, path and headers are encrypted, so the facade cannot
 tell a message from a mailbox poll; it learns only which backend a frame is for.
 A card is public by nature and identical for every caller.
 
-The facade holds **no keys and no content at rest**; it parses nothing and
+The facade holds **no key of the server or of a user, and no content at rest**;
+its own keys are its address and its TLS certificate. It parses nothing and
 stores nothing identifying. Compromising it must not damage the server
 infrastructure - it knows only the private-channel addresses of its backends and
-the (end-to-end encrypted) traffic passing through. Clients reach it through
-its own I2P destination, and through nothing else: it relays to the `listen`
-socket on loopback.
+the (end-to-end encrypted) traffic passing through. Clients reach it through its
+own I2P destination, which relays to the `listen` socket on loopback.
 
 ## Build
 

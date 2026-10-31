@@ -30,9 +30,7 @@
 #include <mutex>
 #include <map>
 #include <optional>
-#include <stdexcept>
 #include <string>
-#include <thread>
 
 namespace {
 
@@ -53,7 +51,7 @@ void printUsage()
         "       bazarish-server --version\n"
         "\n"
         "Everything this server runs on is in the config file - state directory,\n"
-        "listen address, operator fingerprints, I2P settings, limits - so there is\n"
+        "listen addresses, operator fingerprints, I2P settings - so there is\n"
         "one place to look and one place to change. The state directory holds the\n"
         "server keys and the content storage; keys are generated on first start,\n"
         "and the server card is always written to <state>/server-card.der.\n"
@@ -147,12 +145,10 @@ int main(const int argc, const char** argv)
         }
         logLevel = *parsed;
     }
-    // libi2pd's own logging is off by default; the config turns it on for debugging.
     const bool i2pLog = config.flag("i2p.log", false);
 
     bazarish::log::setComponent("server-core");
     bazarish::log::setLevel(logLevel);
-    // Route libi2pd's own logs into our log only when explicitly requested.
     if (i2pLog) {
         bazarish::i2p::setI2pLogging(true);
     }
@@ -165,8 +161,7 @@ int main(const int argc, const char** argv)
     bazarish::server::DiskStorage storage(stateDir / "storage");
     bazarish::server::EventGate eventGate;
     engineOptions.onDelivered = [&eventGate](const std::string& user) { eventGate.notify(user); };
-    bazarish::server::DeliveryEngine engine(
-        storage, identity->fingerprint(), sealing, engineOptions);
+    bazarish::server::DeliveryEngine engine(storage, engineOptions);
 
     const bazarish::tls::Credential credential = bazarish::tls::selfSigned(stateDir);
     std::printf("bazarish-server %s\n", bazarish::kBuildVersion);
@@ -291,7 +286,7 @@ int main(const int argc, const char** argv)
         = [&perUserDests](const std::string& user) -> bazarish::server::DestinationAssignment {
         const bazarish::server::PerUserDestinations::Assignment assigned
             = perUserDests->assignmentFor(user, nowSeconds());
-        return {assigned.dest, assigned.sealingKey, assigned.state};
+        return {assigned.dest, assigned.state};
     };
     {
         httpOptions.provisionI2pDest = [&perUserDests](const std::string& user,
@@ -302,7 +297,7 @@ int main(const int argc, const char** argv)
             -> bazarish::server::DestinationAssignment {
             const bazarish::server::PerUserDestinations::Assignment served = perUserDests->provision(
                 user, transientB64, expiresUnix, sealingKeyPem, signingKeyPem);
-            return {served.dest, served.sealingKey, served.state};
+            return {served.dest, served.state};
         };
         httpOptions.forgetI2pDest = [&perUserDests](const std::string& user) {
             perUserDests->forget(user);
@@ -336,11 +331,7 @@ int main(const int argc, const char** argv)
         }
     };
     const auto restartHook = std::make_shared<std::function<void()>>();
-    httpOptions.requestRestart = [restartHook]() {
-        if (*restartHook) {
-            (*restartHook)();
-        }
-    };
+    httpOptions.requestRestart = [restartHook]() { (*restartHook)(); };
 
     bazarish::server::HttpApi api(storage, httpOptions);
 
@@ -361,9 +352,6 @@ int main(const int argc, const char** argv)
     }
 
     if (api.bindOps(opsListen.host, opsListen.port) <= 0) {
-        if (restart.requested()) {
-            return bazarish::kRestartExitCode;
-        }
         bazarish::log::error(
             "failed to listen on {}:{}", opsListen.host, opsListen.port);
         return 1;

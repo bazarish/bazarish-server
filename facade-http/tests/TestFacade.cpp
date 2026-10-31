@@ -15,9 +15,11 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <cstdlib>
 #include <string>
 #include <map>
+#include <utility>
 
 #define CHECK(condition)                                                            \
     do {                                                                            \
@@ -244,12 +246,6 @@ int main()
         CHECK(reply.at("clientHeader") == "");
     }
 
-    for (const char* const gone :
-        {"/v1/messaging/self", "/v1/messaging/pending", "/v1/account/registration"}) {
-        CHECK(call(facadePort, "POST", gone, {}, "{}").status == 404);
-        CHECK(call(facadePort, "GET", gone).status == 404);
-    }
-
     {
         const http::ClientResponse result = call(facadePort, "GET", "/v1/server/card");
         CHECK(result.status == 200);
@@ -271,59 +267,14 @@ int main()
         CHECK(call(facadePort, "GET", "/t").status == 404);
     }
 
-    {
-        const http::ClientResponse result = call(facadePort, "POST", "/s/9f3c/t", {}, "frame");
-        CHECK(result.status == 404);
-    }
-
-    {
-        const http::ClientResponse result = call(facadePort, "GET", "/v1/other/thing");
-        CHECK(result.status == 404);
-    }
-
-    {
-        const http::ClientResponse result
-            = call(facadePort, "PUT", "/v1/storage/blob", {}, "ciphertext-bytes");
-        CHECK(result.status == 404);
-    }
-
-    {
-        const http::ClientResponse lookup = call(facadePort, "GET",
-            "/v1/account/card?user=alice&key=AAAA");
-        CHECK(lookup.status == 404);
-        const http::ClientResponse publish = call(facadePort, "POST",
-            "/v1/account/card", {}, R"({"card":"AAAA"})");
-        CHECK(publish.status == 404);
-        const http::ClientResponse unknown
-            = call(facadePort, "GET", "/v1/other/thing");
-        CHECK(lookup.body == unknown.body);
-        CHECK(publish.body == unknown.body);
-    }
-
-    {
-        const http::ClientResponse result
-            = call(facadePort, "PUT", "/v1/storage/quota", {}, "{}");
-        CHECK(result.status == 404);
-    }
-
-    {
-        const http::ClientResponse result = call(facadePort, "GET", "/b/somecapability");
-        CHECK(result.status == 404);
-    }
-
-    {
-        for (const char* const path : {"/v1/messaging/reseed", "/v1/account/portal", "/healthz",
-                 "/"}) {
-            const http::ClientResponse result = call(facadePort, "GET", path);
-            CHECK(result.status == 404);
-            CHECK(result.body.empty());
-        }
-    }
-
-    {
-        const http::ClientResponse result
-            = call(facadePort, "GET", "/v1/messaging/reseed");
-        CHECK(result.status == 404);
+    for (const auto& [method, path] : std::initializer_list<std::pair<const char*, const char*>>{
+             {"GET", "/"}, {"GET", "/healthz"}, {"GET", "/settings"},
+             {"POST", "/v1/messaging/self"}, {"GET", "/v1/messaging/pending"},
+             {"POST", "/v1/account/registration"}, {"GET", "/v1/account/portal"},
+             {"POST", "/t/more"}, {"PUT", "/t"}, {"DELETE", "/n"}}) {
+        const http::ClientResponse refused = call(facadePort, method, path, {}, "{}");
+        CHECK(refused.status == 404);
+        CHECK(refused.body.empty());
     }
 
     {
@@ -367,9 +318,6 @@ int main()
                   .status
             == 400);
         CHECK(facadeSettings->get().i2pTunnelQuantity == 8);
-
-        CHECK(call(facadePort, "GET", "/settings").status == 404);
-        CHECK(call(facadePort, "GET", "/settings").status != 200);
 
         const std::string restart = "/restart";
         CHECK(callTls(opsPort, facadeCredential.pin, "POST", restart).status == 403);

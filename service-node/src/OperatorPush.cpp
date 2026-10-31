@@ -42,9 +42,6 @@ OperatorPush::OperatorPush(Dial backend, const Identity& signer, const int attem
 
 bool OperatorPush::waitReachable(const std::chrono::seconds budget) const
 {
-    if (backend_.url.empty()) {
-        return false;
-    }
     const std::chrono::steady_clock::time_point deadline
         = std::chrono::steady_clock::now() + budget;
     bool waited = false;
@@ -75,9 +72,8 @@ bool OperatorPush::waitReachable(const std::chrono::seconds budget) const
             lastError = error.what();
         }
         if (std::chrono::steady_clock::now() >= deadline) {
-            bazarish::log::warn("the messaging server at {} is not answering ({}); what this "
-                                "node has for it will be pushed when it is",
-                backend_.url, lastError.empty() ? std::string("no answer") : lastError);
+            bazarish::log::error("the messaging server at {} is not answering: {}", backend_.url,
+                lastError.empty() ? std::string("no answer") : lastError);
             return false;
         }
         if (!waited) {
@@ -91,9 +87,6 @@ bool OperatorPush::waitReachable(const std::chrono::seconds budget) const
 std::optional<MailboxUsage> OperatorPush::accountUsage(
     const std::string& user) const
 {
-    if (backend_.url.empty()) {
-        return std::nullopt;
-    }
     const std::string path = "/v1/messaging/account";
     const bazarish::http::Url target = bazarish::http::parseUrl(backend_.url);
     const auth::Headers signature = auth::signRequest(
@@ -131,9 +124,6 @@ std::optional<MailboxUsage> OperatorPush::accountUsage(
 
 std::string OperatorPush::reseedArchive() const
 {
-    if (backend_.url.empty()) {
-        return {};
-    }
     const std::string path = "/internal/i2pseeds.su3";
     const bazarish::http::Url target = bazarish::http::parseUrl(backend_.url);
     const auth::Headers signature = auth::signRequest(
@@ -179,9 +169,6 @@ bool OperatorPush::forgetMailbox(const std::string& user) const
 std::optional<std::string> OperatorPush::send(const std::string& method, const std::string& path,
     const std::string& target, const std::string& bodyText) const
 {
-    if (backend_.url.empty()) {
-        return std::nullopt;
-    }
     for (int attempt = 1; attempt <= attempts_; ++attempt) {
         try {
             const bazarish::http::Url backend = bazarish::http::parseUrl(backend_.url);

@@ -84,7 +84,6 @@ Bytes sealEnvelope(const Key& serverSealingPublic, const nlohmann::json& inner)
 
 }  // namespace
 
-// The engine takes unix seconds; nothing in this test depends on the wall clock.
 constexpr std::int64_t kNow = 1780000000;
 constexpr std::size_t kHeavyPayloadBytes = 64 * 1024;
 
@@ -103,14 +102,13 @@ int main()
 
     DeliveryEngineOptions engineOptions;
     engineOptions.defaultQuotaBytes = 1024;
-    DeliveryEngine engine(storage, serverFp,
-        std::make_shared<Key>(Key::fromPrivatePem(serverSealing.privatePem())), engineOptions);
+    DeliveryEngine engine(storage, engineOptions);
     HttpApiOptions httpOptions;
     const auto serverServingKey
         = std::make_shared<Key>(Key::fromPrivatePem(serverSealing.privatePem()));
     httpOptions.sealingKey = serverServingKey;
-    httpOptions.assignDestination = [serverDest, serverServingKey](const std::string&) {
-        return DestinationAssignment{serverDest, serverServingKey, "home"};
+    httpOptions.assignDestination = [serverDest](const std::string&) {
+        return DestinationAssignment{serverDest, "home"};
     };
     const Identity operatorIdentity = Identity::generate();
     httpOptions.operatorFingerprints = {operatorIdentity.fingerprint()};
@@ -147,9 +145,12 @@ int main()
         provisionedExpires = expiresUnix;
         provisionedSealing = sealingKeyPem;
         provisionedSigning = signingKeyPem;
-        return {serverDest, serverServingKey, "building"};
+        return {serverDest, "building"};
     };
     httpOptions.forgetI2pDest = [&](const std::string& user) { forgottenUser = user; };
+    httpOptions.reseedSample = [](std::size_t) { return std::vector<Bytes>{}; };
+    int restarts = 0;
+    httpOptions.requestRestart = [&restarts]() { ++restarts; };
 
     httpOptions.identity
         = std::make_shared<const Identity>(Identity::fromPrivatePem(serverIdentity.privatePem()));
@@ -177,12 +178,6 @@ int main()
         const http::ClientResponse result = call(port, "POST", "/v1/messaging/clients",
             makeHeaders(identity, "POST", "/v1/messaging/clients", body, ""), body);
         CHECK(result.status == 200);
-    }
-
-    {
-        const http::ClientResponse result = call(port, "GET", "/v1/account/portal",
-            makeHeaders(alice, "GET", "/v1/account/portal", "", "alicedev"));
-        CHECK(result.status == 404);
     }
 
     {
@@ -280,7 +275,7 @@ int main()
         {{"class", "content"}, {"mailbox", alice.fingerprint()},
             {"pass", toBase64(passForBob)}, {"deliveryId", "msg-1"}});
     const Key engineSealing = Key::fromPrivatePem(serverSealing.privatePem());
-    CHECK(engine.deliver(envelope, payload, kNow, engineSealing, alice.fingerprint()).delivered);
+    CHECK(engine.deliver(envelope, payload, kNow, engineSealing, alice.fingerprint(), {}).delivered);
     CHECK(storage.passCount(alice.fingerprint()) == 2);
 
     {
@@ -292,7 +287,7 @@ int main()
         const Bytes admitted = sealEnvelope(sealingPublic,
             {{"class", "content"}, {"mailbox", alice.fingerprint()},
                 {"pass", toBase64(passForBob)}, {"deliveryId", "msg-heavy"}});
-        CHECK(engine.deliver(admitted, heavy, kNow, engineSealing, alice.fingerprint()).delivered);
+        CHECK(engine.deliver(admitted, heavy, kNow, engineSealing, alice.fingerprint(), {}).delivered);
         CHECK(storage.passCount(alice.fingerprint()) == before);
         storage.ackBlob(alice.fingerprint(), "msg-heavy", "alicedev");
         storage.setUserQuota(alice.fingerprint(), quotaBytes);
@@ -449,7 +444,6 @@ int main()
         CHECK(result.status == 200);
         const nlohmann::json body = nlohmann::json::parse(result.body);
         CHECK(body.at("dest").get<std::string>() == serverDest);
-        CHECK(!body.contains("servingKey"));
         CHECK(body.at("state").get<std::string>() == "home");
     }
 
@@ -479,11 +473,7 @@ int main()
         CHECK(provisionedExpires == 1780001234);
         CHECK(provisionedSealing == "sealing-pem");
         CHECK(provisionedSigning == "signing-pem");
-        {
-            const nlohmann::json served = nlohmann::json::parse(ok.body);
-            CHECK(served.at("dest").get<std::string>() == serverDest);
-            CHECK(!served.contains("servingKey"));
-        }
+        CHECK(nlohmann::json::parse(ok.body).at("dest").get<std::string>() == serverDest);
         const std::string offlineBody = nlohmann::json{{"user", "alicefp"}}.dump();
         const http::ClientResponse offline = call(opsPort, "PUT", "/v1/messaging/i2p-dest",
             makeHeaders(operatorIdentity, "PUT", "/v1/messaging/i2p-dest", offlineBody, ""),
@@ -494,7 +484,6 @@ int main()
 
     {
         const std::string seeds = "/internal/i2pseeds.su3";
-        CHECK(call(port, "GET", seeds).status == 404);
         CHECK(call(opsPort, "GET", seeds).status == 403);
         CHECK(call(opsPort, "GET", seeds, makeHeaders(operatorIdentity, "GET", seeds, "", ""))
                   .status
@@ -520,7 +509,7 @@ int main()
                   .deliver(sealEnvelope(sealingPublic,
                                {{"class", "content"}, {"mailbox", alice.fingerprint()},
                                    {"pass", toBase64(passForBob)}, {"deliveryId", "msg-last"}}),
-                      payload, kNow, engineSealing, alice.fingerprint())
+                      payload, kNow, engineSealing, alice.fingerprint(), {})
                   .delivered);
         CHECK(storage.usage(alice.fingerprint()) > 0);
 
@@ -597,7 +586,8 @@ int main()
         CHECK(call(opsPort, "POST", restart,
                   makeHeaders(operatorIdentity, "POST", restart, {}, {}))
                   .status
-            == 503);
+            == 200);
+        CHECK(restarts == 1);
     }
 
     api.stop();

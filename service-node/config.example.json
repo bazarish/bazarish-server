@@ -24,14 +24,14 @@
     "assets": "/opt/bazarish/bazarish-server/service-node/portal",
     // What a client is told before it registers here. Shown only while
     // requireApproval is on.
-    "message": "Registration here is confirmed by hand. The portal is at example.i2p",
+    "message": "Registration here is confirmed by hand.",
     // What the portal calls itself and where users open it. A client shows these
     // words before it signs a login, and the user compares them with the address
     // bar, so "address" has to be the address they actually opened. Left out,
-    // the name is "Bazarish server" and the address is the first link
-    // below - and with no links either, the portal refuses to start.
+    // the name is "Bazarish server" and the address is the links below - and
+    // with no links either, the portal refuses to start.
     "name": "",
-    "address": "",
+    "address": [],
     "links": [],
     // Where clients reach this server (I2P, and nothing else), and where a client
     // with no router yet fetches a slice of netdb (clearnet, and nothing else).

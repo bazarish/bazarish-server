@@ -30,8 +30,7 @@ public:
     bool isPendingFor(const std::string& user, const std::string& blobId,
         const std::string& clientId) override;
     bool hasSeen(const std::string& user, const std::string& deliveryId) override;
-    bool allowContactRequest(
-        const std::string& user, std::int64_t now, std::size_t maxPerMinute) override;
+    bool allowContactRequest(const std::string& user, std::int64_t now) override;
     std::size_t countHeld(const std::string& user, const std::string& deliveryClass) override;
     std::vector<PendingEntry> listPending(const std::string& user,
         const std::string& clientId) override;

@@ -102,6 +102,8 @@ int main()
     options.serverCardDer = cardDer;
     options.operatorFingerprints = {panel.fingerprint()};
     options.settings = std::make_shared<NodeSettings>(std::filesystem::path(), values);
+    options.forgetMailbox = [](const std::string&) { return true; };
+    options.publishQuota = [](const std::string&, std::uint64_t) {};
     int pubCalls = 0;
     options.publishI2pTransient = [&pubCalls](const std::string&, const std::string&,
                                       std::int64_t, const AddressKeys&)

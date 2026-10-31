@@ -1033,7 +1033,7 @@
                         reseeds: reseedList,
                         listen: {
                             host: listen.host.value.trim(),
-                            port: portRead(listen.port, "The operator API")
+                            port: portRead(listen.port, "The API listener")
                         },
                         messaging: {
                             host: messaging.host.value.trim(),
@@ -1240,7 +1240,7 @@
 
         var sockets = section(form, "Sockets");
         var listen = endpointRow(sockets, "API", data.listen,
-            "What its I2P address relays to, under the secret path. Keep it on loopback.", true);
+            "What its I2P address relays to. Keep it on loopback.", true);
         var ops = endpointRow(sockets, "Operator", data.opsListen,
             "The private socket this page is talking to: health, settings, restart. Never"
             + " published to clients.", true);
@@ -1266,7 +1266,7 @@
 
         var facts = section(form, "What this facade is");
         readOnlyRow(facts, "State", data.stateDirectory,
-            "Where its key and secret path live, so its address survives a restart.");
+            "Where its keys live, so its address survives a restart.");
         readOnlyRow(facts, "Version", data.version);
 
         var footer = saveFooter(form,

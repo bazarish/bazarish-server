@@ -1,7 +1,7 @@
 {
   // Keys and stored content; the server card is written here on first start.
   "state": "/var/lib/bazarish/server-core",
-  // The sealed tunnel and federation. TLS, with the certificate this server
+  // The sealed tunnel and the server card. TLS, with the certificate this server
   // makes in its state directory on first start.
   "listen": {"host": "127.0.0.1", "port": 8420},
   // The operator's socket: health, settings, restart, quotas, destinations.

@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #include "Messages.hpp"
 
+#include <bazarish/Clock.hpp>
+
 #include <nlohmann/json.hpp>
 
 #include <cctype>
@@ -15,7 +17,6 @@ namespace {
 constexpr const char* kKeyOpens = "{{t.";
 constexpr const char* kKeyCloses = "}}";
 
-constexpr int kSecondsPerDay = 24 * 60 * 60;
 constexpr std::size_t kLongestBackPath = 512;
 
 std::string valueSlot(const std::size_t index)

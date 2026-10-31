@@ -6,7 +6,6 @@
 #include <bazarish/ConfigFile.hpp>
 #include <bazarish/Tunnel.hpp>
 #include <bazarish/Certificates.hpp>
-#include <bazarish/Descriptor.hpp>
 #include <bazarish/ServerDescriptor.hpp>
 #include <bazarish/Errors.hpp>
 #include <Health.hpp>
@@ -18,7 +17,6 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <filesystem>
 #include <optional>
 #include <stdexcept>
 
@@ -190,35 +188,12 @@ void AccountApi::deleteAccount(const std::string& user)
         return;
     }
     revokeDestination(user);
-    if (options_.forgetMailbox && !options_.forgetMailbox(user)) {
+    if (!options_.forgetMailbox(user)) {
         bazarish::log::warn("mailbox of {} was not dropped: the messaging server refused it",
             log::redact(user));
     }
     store_.deleteAccount(user);
     grants_.erase(user);
-}
-
-std::string AccountApi::destinationOf(const std::optional<SubscriptionStore::Account>& held)
-{
-    if (!held.has_value() || !held->dest.empty() || held->card.empty()) {
-        return held.has_value() ? held->dest : std::string();
-    }
-    ContactCard card;
-    try {
-        card = ContactCard::verify(held->card);
-    } catch (const std::exception& error) {
-        // One unreadable record must not take the whole listing down with it.
-        bazarish::log::warn("card of {} is unreadable: {}", log::redact(held->user),
-            error.what());
-        return {};
-    }
-    if (card.dest.empty()) {
-        return {};
-    }
-    SubscriptionStore::Account repaired = *held;
-    repaired.dest = card.dest;
-    store_.putAccount(repaired);
-    return card.dest;
 }
 
 nlohmann::json AccountApi::userRecord(
@@ -237,7 +212,7 @@ nlohmann::json AccountApi::userRecord(
         = held.has_value() && held->delegatedAt != 0 ? held->delegatedAt : registeredAt;
     return {
         {"user", user},
-        {"dest", destinationOf(held)},
+        {"dest", held.has_value() ? held->dest : std::string()},
         {"registeredAt", registeredAt},
         {"delegatedAt", held.has_value() ? held->delegatedAt : 0},
         {"sweepAt", sweepDeadline(idleSince, values)},
@@ -300,7 +275,7 @@ void AccountApi::setupOpsRoutes()
                 if (!query.empty()) {
                     const std::optional<SubscriptionStore::Account> held
                         = store_.getAccount(user);
-                    const std::string dest = destinationOf(held);
+                    const std::string dest = held.has_value() ? held->dest : std::string();
                     const bool matches = lowercased(user).find(query) != std::string::npos
                         || lowercased(dest).find(query) != std::string::npos;
                     if (!matches) {
@@ -547,11 +522,6 @@ void AccountApi::setupOpsRoutes()
 
     ops_->post("/v1/account/restart",
         filled(operatorOnly([this](const http::Request&, http::Response& response) {
-            if (!options_.requestRestart) {
-                respondError(response, 503, ErrorCode::eRequestFailed,
-                    "this node cannot restart itself: it was started without a supervisor");
-                return;
-            }
             bazarish::log::info("restarting at the operator's request");
             options_.requestRestart();
             respondJson(response, {{"restarting", true}});
@@ -590,9 +560,7 @@ void AccountApi::setupOpsRoutes()
                 grant.has_value()) {
                 grants_.grantSubscription(user, quotaBytes, grant->grantedAt);
             }
-            if (options_.publishQuota) {
-                options_.publishQuota(user, quotaBytes);
-            }
+            options_.publishQuota(user, quotaBytes);
             respondJson(response, userRecord(user, approval));
         })));
 
@@ -614,10 +582,6 @@ void AccountApi::setupRoutes()
 {
     http_->get(std::string(bazarish::tunnel::kNodeCardPath),
         filled([this](const http::Request&, http::Response& response) {
-            if (options_.nodeCardDer.empty()) {
-                respondError(response, 503, ErrorCode::eRequestFailed, "no card here");
-                return;
-            }
             response.contentType = "application/octet-stream";
             response.body
                 = std::string(options_.nodeCardDer.begin(), options_.nodeCardDer.end());
@@ -734,9 +698,7 @@ void AccountApi::setupRoutes()
             record.delegatedAt = held.has_value() ? held->delegatedAt : 0;
             record.card = der;
             store_.putAccount(record);
-            if (options_.publishQuota) {
-                options_.publishQuota(user, quota);
-            }
+            options_.publishQuota(user, quota);
 
             grants_.recordRegistration(user, now, !settings().requireApproval);
             const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);

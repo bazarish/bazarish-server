@@ -277,11 +277,7 @@ int main()
         CHECK(pubKeys.signingPem == kSigningPem);
         const std::int64_t delegatedAt = store.getAccount(alice.fingerprint())->delegatedAt;
         CHECK(delegatedAt >= now);
-        {
-            const nlohmann::json served = nlohmann::json::parse(ok.body);
-            CHECK(served.at("dest").get<std::string>() == kServedDest);
-            CHECK(!served.contains("servingKey"));
-        }
+        CHECK(nlohmann::json::parse(ok.body).at("dest").get<std::string>() == kServedDest);
 
         {
             pubAccepts = false;

@@ -11,8 +11,6 @@
 
 #include <nlohmann/json.hpp>
 
-#include <stdexcept>
-
 namespace bazarish::server {
 
 namespace {
@@ -24,25 +22,12 @@ constexpr const char* kContactsWaitingRefusal
 
 }  // namespace
 
-DeliveryEngine::DeliveryEngine(Storage& storage, std::string serverFingerprint,
-    std::shared_ptr<const Key> sealingKey, const DeliveryEngineOptions options)
+DeliveryEngine::DeliveryEngine(Storage& storage, const DeliveryEngineOptions options)
     : storage_(storage)
-    , serverFingerprint_(std::move(serverFingerprint))
-    , sealingKey_(std::move(sealingKey))
     , options_(options)
     , contactSources_(kContactSourceMemorySeconds)
     , mailPerPass_(kMailPerPassPerMinute, kSecondsPerMinute)
 {
-}
-
-const std::string& DeliveryEngine::serverFingerprint() const
-{
-    return serverFingerprint_;
-}
-
-const Key& DeliveryEngine::sealingKey() const
-{
-    return *sealingKey_;
 }
 
 DeliveryEngine::Outcome DeliveryEngine::deliver(
@@ -84,14 +69,14 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
     }
     outcome.deliveryId = deliveryId;
 
-    const bool servedHere = owner.empty() || mailbox == owner;
+    const bool servedHere = mailbox == owner;
     if (servedHere
         && (storage_.hasBlob(mailbox, deliveryId) || storage_.hasSeen(mailbox, deliveryId))) {
         return delivered();
     }
 
-    if (!owner.empty() && deliveryClass == kContactDeliveryClass) {
-        if (!storage_.allowContactRequest(owner, now, kContactRequestsPerMinute)) {
+    if (deliveryClass == kContactDeliveryClass) {
+        if (!storage_.allowContactRequest(owner, now)) {
             return fail(ErrorCode::eContactRateLimited,
                 "this address is taking too many contact requests right now - try again shortly");
         }
@@ -118,7 +103,7 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
     } else if (!storage_.hasPass(mailbox, sha256(pass))) {
         bazarish::log::debug("delivery refused: pass {}... unknown for {} on {}, id {}",
             toHex(pass).substr(0, kRefusedPassPrefixChars), bazarish::log::redact(mailbox),
-            owner.empty() ? std::string("the server's own address") : bazarish::log::redact(owner),
+            bazarish::log::redact(owner),
             deliveryId.substr(0, kRefusedPassPrefixChars));
         return fail(ErrorCode::eDeliveryRejected, "delivery rejected");
     }

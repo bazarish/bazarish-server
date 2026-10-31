@@ -3,6 +3,7 @@
 
 #include <bazarish/Address.hpp>
 #include <bazarish/ConfigFile.hpp>
+#include <bazarish/Limits.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/Pass.hpp>
 #include <bazarish/PrivateFile.hpp>
@@ -10,7 +11,6 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <cctype>
 #include <chrono>
 #include <fstream>
 #include <iterator>
@@ -293,8 +293,7 @@ bool DiskStorage::hasSeen(const std::string& user, const std::string& deliveryId
     return fs::exists(userDir(user) / "seen" / deliveryId);
 }
 
-bool DiskStorage::allowContactRequest(
-    const std::string& user, const std::int64_t now, const std::size_t maxPerMinute)
+bool DiskStorage::allowContactRequest(const std::string& user, const std::int64_t now)
 {
     requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
@@ -303,7 +302,7 @@ bool DiskStorage::allowContactRequest(
         window.start = now;
         window.count = 0;
     }
-    if (window.count >= maxPerMinute) {
+    if (window.count >= kContactRequestsPerMinute) {
         return false;
     }
     ++window.count;
@@ -489,7 +488,7 @@ std::uint64_t DiskStorage::usageLocked(const std::string& user) const
     return total;
 }
 
-// Blob before record: a stray record is never listed or counted, a stray blob would be.
+// Blob first: a blob left without its record would still count against the quota.
 void DiskStorage::removeItem(const std::string& user, const std::string& blobId)
 {
     if (fs::remove(userDir(user) / "blobs" / blobId)) {

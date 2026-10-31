@@ -13,9 +13,6 @@ RateLimiter::RateLimiter(const std::size_t maxPerWindow, const std::int64_t wind
 
 bool RateLimiter::allow(const std::string& caller, const std::int64_t now)
 {
-    if (caller.empty()) {
-        return true;
-    }
     const std::lock_guard<std::mutex> lock(mutex_);
     if (windows_.size() > kSweepAbove) {
         for (auto at = windows_.begin(); at != windows_.end();) {

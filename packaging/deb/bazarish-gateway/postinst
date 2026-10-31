@@ -1,7 +1,6 @@
 #!/bin/sh
 # Bazarish project (c) 2026
-# Only the program is the package's: the config and the state are the operator's,
-# made here once when missing and never written over.
+# The config and the state are the operator's: made once when missing, never written over.
 set -e
 
 readonly kConfig=/etc/bazarish/gateway.json

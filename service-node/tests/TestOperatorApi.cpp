@@ -100,6 +100,7 @@ int main()
         quotaUser = user;
         quotaPushed = quotaBytes;
     };
+    options.forgetMailbox = [](const std::string&) { return true; };
     std::filesystem::create_directories(root);
     const std::filesystem::path configPath = root / "service-node.json";
     {

@@ -48,9 +48,6 @@ void ServerSettings::set(const Values& values)
 
 void ServerSettings::persist(const Values& values) const
 {
-    if (configPath_.empty()) {
-        throw std::runtime_error("this server was started without a config file to write to");
-    }
     ConfigFile file(configPath_);
     setIfChanged(file, {kLogLevelKey}, values.logLevel, values_.logLevel);
     setIfChanged(file, {kI2pKey, kI2pLogKey}, values.i2pLog, values_.i2pLog);

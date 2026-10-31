@@ -1,7 +1,6 @@
 #!/bin/sh
 # Bazarish project (c) 2026
-# Even a purge leaves /etc/bazarish/gateway.json and /var/lib/bazarish: the path
-# and the token are what clients were given, and only the operator removes them.
+# A purge leaves gateway.json and /var/lib/bazarish: clients were given its path and token.
 set -e
 
 if [ "$1" = "purge" ]; then

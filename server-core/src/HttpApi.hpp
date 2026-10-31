@@ -25,7 +25,6 @@ class EventGate;
 
 struct DestinationAssignment {
     std::string dest;
-    std::shared_ptr<Key> servingKey;
     std::string state;
 };
 
@@ -48,7 +47,6 @@ struct HttpApiOptions {
 
     std::function<std::vector<Bytes>(std::size_t count)> reseedSample;
     std::function<std::uint64_t()> diskUsage;
-    int maxEventWaitSeconds = 30;
     EventGate* eventGate = nullptr;
     std::shared_ptr<const Identity> identity;
     std::shared_ptr<Key> sealingKey;

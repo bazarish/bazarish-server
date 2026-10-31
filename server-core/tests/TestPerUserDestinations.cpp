@@ -52,10 +52,7 @@ int main()
     std::filesystem::remove_all(root);
     DiskStorage storage(root);
 
-    const Key sealing = Key::generateSealing();
-    DeliveryEngine engine(storage, toBase32(Bytes(32, 0xee)),
-        std::make_shared<Key>(Key::fromPrivatePem(sealing.privatePem())),
-        DeliveryEngineOptions{});
+    DeliveryEngine engine(storage, DeliveryEngineOptions{});
 
     const std::string alice = toBase32(Bytes(32, 0x01));
     const std::filesystem::path aliceFile = root / "i2p-user-dests" / alice;
@@ -88,7 +85,8 @@ int main()
     };
 
     {
-        PerUserDestinations guard(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
+        PerUserDestinations guard(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal,
+            bazarish::i2p::kDefaultTunnelQuantity);
         const auto refused = [](const auto& call) {
             try {
                 call();
@@ -120,7 +118,8 @@ int main()
     }
 
     {
-        PerUserDestinations dests(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
+        PerUserDestinations dests(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal,
+            bazarish::i2p::kDefaultTunnelQuantity);
 
         const PerUserDestinations::Assignment served = dests.provision(
             alice, transientA, shortExpiry, sealingA.privatePem(), signingA.privatePem());
@@ -166,12 +165,14 @@ int main()
 
     const std::string bob = toBase32(Bytes(32, 0x02));
     {
-        PerUserDestinations writer(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
+        PerUserDestinations writer(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal,
+            bazarish::i2p::kDefaultTunnelQuantity);
         writer.provision(alice, transientB, longExpiry, sealingA.privatePem(), signingA.privatePem());
         writer.provision(bob, transientA, shortExpiry, sealingB.privatePem(), signingB.privatePem());
     }
     {
-        PerUserDestinations reloaded(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
+        PerUserDestinations reloaded(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal,
+            bazarish::i2p::kDefaultTunnelQuantity);
         reloaded.reloadPersisted(shortExpiry - kLapseLeadSeconds);
         CHECK(reloaded.size() == 1);
         CHECK(reloaded.assignmentFor(alice, shortExpiry - 1).sealingKey->publicDer()
@@ -181,7 +182,8 @@ int main()
     }
 
     {
-        PerUserDestinations dests(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
+        PerUserDestinations dests(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal,
+            bazarish::i2p::kDefaultTunnelQuantity);
         dests.provision(alice, transientA, shortExpiry, sealingA.privatePem(), signingA.privatePem());
         CHECK(dests.size() == 1);
         const std::int64_t goesDownAt = shortExpiry - kLapseLeadSeconds;

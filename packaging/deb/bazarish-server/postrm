@@ -1,7 +1,6 @@
 #!/bin/sh
 # Bazarish project (c) 2026
-# Even a purge leaves /etc/bazarish and /var/lib/bazarish: they hold the server's
-# keys, its accounts and its mail, and only the operator removes those.
+# A purge leaves /etc/bazarish and /var/lib/bazarish: the keys, accounts and mail stay.
 set -e
 
 if [ "$1" = "purge" ]; then

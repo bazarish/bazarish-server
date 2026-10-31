@@ -44,7 +44,7 @@ int main()
             restart.request();
             CHECK(restart.requested());
             CHECK(stops.load() == 0);
-        }  // the destructor waits for the switch's thread
+        }
         CHECK(stops.load() == 1);
         CHECK(stoppedByAnotherThread.load());
     }

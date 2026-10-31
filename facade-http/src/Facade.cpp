@@ -3,39 +3,27 @@
 #include "FacadeAddress.hpp"
 
 #include <bazarish/Auth.hpp>
-#include <bazarish/Tunnel.hpp>
-#include <bazarish/Bytes.hpp>
-#include <Health.hpp>
-
-#include <bazarish/HttpClient.hpp>
 #include <bazarish/Clock.hpp>
+#include <bazarish/ConfigFile.hpp>
 #include <bazarish/Errors.hpp>
-#include <bazarish/ConfigFile.hpp>
-#include <bazarish/ConfigFile.hpp>
-#include <bazarish/Log.hpp>
+#include <bazarish/HttpClient.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <bazarish/I2p.hpp>
-
-#include <utility>
+#include <bazarish/Log.hpp>
+#include <bazarish/Tunnel.hpp>
+#include <Health.hpp>
 
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
-
-#include <algorithm>
-#include <array>
-#include <atomic>
-#include <chrono>
-#include <cstddef>
-#include <cstdint>
-#include <exception>
-#include <filesystem>
-#include <fstream>
 #include <nlohmann/json.hpp>
 
+#include <chrono>
+#include <exception>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
-#include <system_error>
+#include <utility>
 
 namespace bazarish::facade {
 
@@ -250,9 +238,6 @@ void Facade::setupOpsRoutes()
     }));
 
     ops_->get("/settings", operatorOnly([this](const bazarish::http::Request&) {
-        if (!options_.settings) {
-            return refusal(503, "this facade was started without a config file to write to");
-        }
         const FacadeSettings::Values values = options_.settings->get();
         return bazarish::http::Response{200, "application/json", {},
             nlohmann::json{
@@ -274,9 +259,6 @@ void Facade::setupOpsRoutes()
     }));
 
     ops_->put("/settings", operatorOnly([this](const bazarish::http::Request& request) {
-        if (!options_.settings) {
-            return refusal(503, "this facade was started without a config file to write to");
-        }
         FacadeSettings::Values values = options_.settings->get();
         const nlohmann::json body = nlohmann::json::parse(request.body);
         if (body.contains("logLevel")) {
@@ -325,10 +307,6 @@ void Facade::setupOpsRoutes()
     }));
 
     ops_->post("/new-address", operatorOnly([this](const bazarish::http::Request&) {
-        if (!options_.requestRestart) {
-            return refusal(
-                503, "this facade cannot restart itself: it was started without a supervisor");
-        }
         const FacadeAddress minted = mintAddress(options_.stateDirectory);
         bazarish::log::info(
             "new address minted, restarting to publish it: {}", minted.address());
@@ -340,10 +318,6 @@ void Facade::setupOpsRoutes()
     }));
 
     ops_->post("/restart", operatorOnly([this](const bazarish::http::Request&) {
-        if (!options_.requestRestart) {
-            return refusal(
-                503, "this facade cannot restart itself: it was started without a supervisor");
-        }
         bazarish::log::info("restarting at the operator's request");
         options_.requestRestart();
         return bazarish::http::Response{200, "application/json", {}, R"({"restarting":true})"};

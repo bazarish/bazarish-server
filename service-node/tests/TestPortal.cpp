@@ -113,6 +113,8 @@ void testPortalDiscovery()
         config << "{\n  \"state\": \"" << root.string() << "\"\n}\n";
     }
     options.settings = std::make_shared<NodeSettings>(configPath, values);
+    options.forgetMailbox = [](const std::string&) { return true; };
+    options.publishQuota = [](const std::string&, std::uint64_t) {};
 
     AccountApi api(store, grants, options);
     const int port = api.bind("127.0.0.1", 0);
@@ -253,9 +255,9 @@ void testWebFlow()
     CHECK(stranger.status == 200);
     CHECK(stranger.body.find("lang=\"en\"") != std::string::npos);
 
-    const http::ClientResponse switched = call(port, "GET", "/lang/ru?back=%2Fportal%2Fme");
+    const http::ClientResponse switched = call(port, "GET", "/lang/ru?back=%2Fstyle.css");
     CHECK(switched.status == 303);
-    CHECK(switched.headers.at("location") == "/portal/me");
+    CHECK(switched.headers.at("location") == "/style.css");
     CHECK(switched.headers.at("set-cookie").find("lang=ru;") == 0);
     const http::ClientResponse away
         = call(port, "GET", "/lang/ru?back=https%3A%2F%2Fevil.example");
@@ -287,7 +289,6 @@ void testWebFlow()
     const http::ClientResponse asked = call(port, "GET", "/", {{"Cookie", "session=" + cookie}});
     CHECK(asked.status == 200);
     CHECK(asked.body.find(identity.fingerprint()) != std::string::npos);
-    CHECK(postForm(port, "/register", "", "session=" + cookie).status == 404);
     const std::optional<GrantStore::SubscriptionGrant> grant
         = grants.peekSubscription(identity.fingerprint());
     CHECK(grant.has_value());

@@ -1,6 +1,5 @@
 # Bazarish project (c) 2026
-# What the servers in this repository share and the client has no use for. The
-# common library is the protocol core; this is the four components' own ground.
+# What the servers share and the client has no use for.
 add_library(bazarish_server_shared STATIC
     Health.cpp
     RateLimiter.cpp

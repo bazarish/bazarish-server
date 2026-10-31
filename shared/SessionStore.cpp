@@ -17,7 +17,7 @@ constexpr std::size_t kJitterBytes = 2;
 }  // namespace
 
 std::string SessionStore::open(const std::string& user, const Bytes& secret, const std::int64_t now,
-    std::int64_t* const outExpiresUnix)
+    std::int64_t& outExpiresUnix)
 {
     const std::string id = toHex(sha256(secret)).substr(0, kSessionIdChars);
     const std::int64_t span
@@ -38,9 +38,7 @@ std::string SessionStore::open(const std::string& user, const Bytes& secret, con
             if (found->second.user != user) {
                 throw std::runtime_error("this session secret is already another account's");
             }
-            if (outExpiresUnix != nullptr) {
-                *outExpiresUnix = found->second.expiresUnix;
-            }
+            outExpiresUnix = found->second.expiresUnix;
             return id;
         }
         if (found != sessions_.end()) {
@@ -49,9 +47,7 @@ std::string SessionStore::open(const std::string& user, const Bytes& secret, con
         sessions_[id] = session;
         indexHandlesLocked(session);
     }
-    if (outExpiresUnix != nullptr) {
-        *outExpiresUnix = session.expiresUnix;
-    }
+    outExpiresUnix = session.expiresUnix;
     return id;
 }
 

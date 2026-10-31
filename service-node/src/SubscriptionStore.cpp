@@ -9,7 +9,6 @@
 
 #include <nlohmann/json.hpp>
 
-#include <stdexcept>
 #include <system_error>
 
 namespace bazarish::service {

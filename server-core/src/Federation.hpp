@@ -20,7 +20,6 @@
 
 namespace bazarish::server {
 
-// Looks up a local user's contact card (DER) for the federation card fetch.
 using GetCardFn = std::function<std::optional<Bytes>(const std::string& fingerprint)>;
 
 using SignAckFn = std::function<void(
@@ -29,17 +28,16 @@ using SignAckFn = std::function<void(
 void federationServeFrame(const std::string& headerLine,
     const std::function<Bytes(std::size_t)>& readPayload,
     const std::function<void(const std::string&)>& writeReply, DeliveryEngine& engine,
-    std::int64_t now, const Key* sealingKey, const std::string& owner, const GetCardFn& getCard,
-    const SignAckFn& signAck = {}, const std::string& peer = {});
+    std::int64_t now, const Key& sealingKey, const std::string& owner, const GetCardFn& getCard,
+    const SignAckFn& signAck, const std::string& peer);
 
 inline constexpr std::size_t kDiscardChunkBytes = 64 * 1024;
 inline constexpr std::size_t kMaxDiscardBytes = 4 * kMaxMessagePayloadBytes;
 
 template <class Stream>
 void federationServeOnce(Stream& stream, DeliveryEngine& engine, const std::int64_t now,
-    const std::string& peerDest = std::string(), const Key* const sealingKey = nullptr,
-    const std::string& owner = std::string(), const GetCardFn& getCard = {},
-    const SignAckFn& signAck = {})
+    const std::string& peerDest, const Key& sealingKey, const std::string& owner,
+    const GetCardFn& getCard, const SignAckFn& signAck)
 {
     detail::FrameReader<Stream> reader(stream);
     try {

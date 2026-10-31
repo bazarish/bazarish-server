@@ -12,7 +12,6 @@ namespace bazarish::server {
 class ServerSettings {
 public:
     struct Values {
-        // How much the server says, and whether libi2pd's own lines join it.
         std::string logLevel;
         bool i2pLog = false;
         std::string i2pPrivacy;

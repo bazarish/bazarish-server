@@ -99,24 +99,36 @@ Bytes makeSealed(const Key& sealingPublic, const std::string& kind,
     return hybrid::seal(Bytes(text.begin(), text.end()), sealingPublic);
 }
 
+const Key& servingKey()
+{
+    static const Key key = Key::generateSealing();
+    return key;
+}
+
+const Key& ackKey()
+{
+    static const Key key = Key::generateSigning();
+    return key;
+}
+
+void signAck(const std::string& deliveryId, Bytes& outPub, Bytes& outSig)
+{
+    outSig = bazarish::sign(ackKey(), Bytes(deliveryId.begin(), deliveryId.end()));
+    outPub = ackKey().publicDer();
+}
+
 FederationDeliverResult roundTrip(DeliveryEngine& engine, const Bytes& sealed, const Bytes& payload,
-    const Key* const servingKey = nullptr, const std::string& owner = std::string(),
-    const Key* const ackSigningKey = nullptr, const std::string& peer = std::string())
+    const std::string& owner, const std::string& peer = std::string(),
+    const Key& sealingKey = servingKey())
 {
     int fds[2];
     CHECK(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0);
     SocketStream serverStream(fds[0]);
     SocketStream clientStream(fds[1]);
 
-    std::thread serverThread([&engine, &serverStream, servingKey, owner, ackSigningKey, peer]() {
-        SignAckFn signAck;
-        if (ackSigningKey != nullptr) {
-            signAck = [ackSigningKey](const std::string& deliveryId, Bytes& outPub, Bytes& outSig) {
-                outSig = bazarish::sign(*ackSigningKey, Bytes(deliveryId.begin(), deliveryId.end()));
-                outPub = ackSigningKey->publicDer();
-            };
-        }
-        federationServeOnce(serverStream, engine, kNow, peer, servingKey, owner, GetCardFn{}, signAck);
+    std::thread serverThread([&engine, &serverStream, &sealingKey, &owner, &peer]() {
+        federationServeOnce(
+            serverStream, engine, kNow, peer, sealingKey, owner, GetCardFn{}, signAck);
     });
     const FederationDeliverResult result
         = federationSendDeliver(clientStream, sealed, payload);
@@ -125,7 +137,7 @@ FederationDeliverResult roundTrip(DeliveryEngine& engine, const Bytes& sealed, c
 }
 
 FederationFetchResult roundTripCard(DeliveryEngine& engine, const CardFetchQuery& query,
-    const GetCardFn& getCard, const std::string& owner = {})
+    const GetCardFn& getCard, const std::string& owner)
 {
     int fds[2];
     CHECK(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0);
@@ -134,7 +146,7 @@ FederationFetchResult roundTripCard(DeliveryEngine& engine, const CardFetchQuery
 
     std::thread serverThread([&engine, &serverStream, &getCard, &owner]() {
         federationServeOnce(
-            serverStream, engine, kNow, std::string(), nullptr, owner, getCard);
+            serverStream, engine, kNow, std::string(), servingKey(), owner, getCard, signAck);
     });
     const std::string queryText = toJson(query).dump();
     const FederationFetchResult result = federationSendFetch(
@@ -153,11 +165,8 @@ int main()
     DiskStorage storage(root);
 
     const std::string alice = toBase32(Bytes(32, 0x01));
-    const Key sealing = Key::generateSealing();
-    const Key sealingPublic = Key::fromPublicDer(sealing.publicDer());
-    DeliveryEngine engine(storage, toBase32(Bytes(32, 0xee)),
-        std::make_shared<Key>(Key::fromPrivatePem(sealing.privatePem())),
-        DeliveryEngineOptions{});
+    const Key sealingPublic = Key::fromPublicDer(servingKey().publicDer());
+    DeliveryEngine engine(storage, DeliveryEngineOptions{});
 
     const Bytes secret = randomBytes(kDeliverySecretSize);
     const Bytes pass = deliveryPass(secret, std::string(52, 'b'));
@@ -167,7 +176,7 @@ int main()
 
     {
         const Bytes sealed = makeSealed(sealingPublic, "content", alice, "fmsg-1", pass);
-        const FederationDeliverResult result = roundTrip(engine, sealed, payload);
+        const FederationDeliverResult result = roundTrip(engine, sealed, payload, alice);
         CHECK(result.delivered);
         CHECK(storage.passCount(alice) == 1);
         CHECK(storage.getBlob(alice, "fmsg-1") == payload);
@@ -176,20 +185,20 @@ int main()
     for (int i = 0; i < 100; ++i) {
         const Bytes sealed = makeSealed(
             sealingPublic, "content", alice, "fmsg-again-" + std::to_string(i), pass);
-        CHECK(roundTrip(engine, sealed, payload).delivered);
+        CHECK(roundTrip(engine, sealed, payload, alice).delivered);
     }
     CHECK(storage.passCount(alice) == 1);
 
     {
         const Bytes sealed = makeSealed(sealingPublic, "content", alice, "fmsg-1", pass);
-        const FederationDeliverResult result = roundTrip(engine, sealed, payload);
+        const FederationDeliverResult result = roundTrip(engine, sealed, payload, alice);
         CHECK(result.delivered);
     }
 
     {
         const Bytes sealed = makeSealed(sealingPublic, "content", alice, "fmsg-2",
             deliveryPass(randomBytes(kDeliverySecretSize), std::string(52, 'b')));
-        const FederationDeliverResult result = roundTrip(engine, sealed, payload);
+        const FederationDeliverResult result = roundTrip(engine, sealed, payload, alice);
         CHECK(!result.delivered);
         CHECK(result.errorCode == "DELIVERY_REJECTED");
     }
@@ -197,7 +206,7 @@ int main()
     {
         const Bytes sealed = makeSealed(sealingPublic, "content", alice, "fmsg-huge", pass);
         const FederationDeliverResult result
-            = roundTrip(engine, sealed, Bytes(bazarish::kMaxMessagePayloadBytes + 1, 0x55));
+            = roundTrip(engine, sealed, Bytes(bazarish::kMaxMessagePayloadBytes + 1, 0x55), alice);
         CHECK(!result.delivered);
         CHECK(result.errorCode == "MESSAGE_TOO_LARGE");
     }
@@ -206,10 +215,10 @@ int main()
         const Bytes stranger = deliveryPass(randomBytes(kDeliverySecretSize), std::string(52, 'z'));
         const Bytes small
             = makeSealed(sealingPublic, "content", alice, "fmsg-probe-small", stranger);
-        const FederationDeliverResult refusedSmall = roundTrip(engine, small, payload);
+        const FederationDeliverResult refusedSmall = roundTrip(engine, small, payload, alice);
         const Bytes huge = makeSealed(sealingPublic, "content", alice, "fmsg-probe-huge", stranger);
         const FederationDeliverResult refusedHuge
-            = roundTrip(engine, huge, Bytes(bazarish::kMaxMessagePayloadBytes + 1, 0x55));
+            = roundTrip(engine, huge, Bytes(bazarish::kMaxMessagePayloadBytes + 1, 0x55), alice);
         CHECK(!refusedSmall.delivered);
         CHECK(!refusedHuge.delivered);
         CHECK(refusedHuge.errorCode == refusedSmall.errorCode);
@@ -220,7 +229,7 @@ int main()
         const std::string newcomer = toBase32(Bytes(32, 0x66));
         const Bytes sealed = makeSealed(sealingPublic, "contact", newcomer, "freq-big", {});
         const FederationDeliverResult result = roundTrip(engine, sealed,
-            Bytes(bazarish::kMaxContactRequestBytes + 1, 0x55), nullptr, newcomer);
+            Bytes(bazarish::kMaxContactRequestBytes + 1, 0x55), newcomer);
         CHECK(!result.delivered);
         CHECK(result.errorCode == "CONTACT_REQUEST_TOO_LARGE");
     }
@@ -229,7 +238,7 @@ int main()
         storage.setUserQuota(alice, kTinyQuotaBytes);
         const Bytes sealed = makeSealed(sealingPublic, "content", alice, "fmsg-full", pass);
         const FederationDeliverResult result
-            = roundTrip(engine, sealed, Bytes(kTinyQuotaBytes * 2, 0x77));
+            = roundTrip(engine, sealed, Bytes(kTinyQuotaBytes * 2, 0x77), alice);
         CHECK(!result.delivered);
         CHECK(result.errorCode == "STORAGE_FULL");
         CHECK(storage.passCount(alice) == 1);
@@ -238,7 +247,7 @@ int main()
 
     {
         const Bytes sealed = makeSealed(sealingPublic, "contact", alice, "freq-1", {});
-        const FederationDeliverResult result = roundTrip(engine, sealed, Bytes(100, 0x33));
+        const FederationDeliverResult result = roundTrip(engine, sealed, Bytes(100, 0x33), alice);
         CHECK(result.delivered);
         CHECK(storage.getBlob(alice, "freq-1").size() == 100);
     }
@@ -247,13 +256,13 @@ int main()
         storage.registerClient(alice, "client01");
         const Bytes sealed = makeSealed(sealingPublic, "contact", alice, "freq-replay", {});
 
-        CHECK(roundTrip(engine, sealed, Bytes(100, 0x44)).delivered);
+        CHECK(roundTrip(engine, sealed, Bytes(100, 0x44), alice).delivered);
         CHECK(storage.hasBlob(alice, "freq-replay"));
 
         storage.ackBlob(alice, "freq-replay", "client01");
         CHECK(!storage.hasBlob(alice, "freq-replay"));
 
-        CHECK(roundTrip(engine, sealed, Bytes(100, 0x44)).delivered);
+        CHECK(roundTrip(engine, sealed, Bytes(100, 0x44), alice).delivered);
         CHECK(!storage.hasBlob(alice, "freq-replay"));
     }
 
@@ -261,7 +270,7 @@ int main()
         const Key wrong = Key::generateSealing();
         const Bytes sealed = makeSealed(Key::fromPublicDer(wrong.publicDer()), "content", alice,
             "fmsg-3", pass);
-        const FederationDeliverResult result = roundTrip(engine, sealed, payload);
+        const FederationDeliverResult result = roundTrip(engine, sealed, payload, alice);
         CHECK(!result.delivered);
         CHECK(result.errorCode == "DELIVERY_REJECTED");
     }
@@ -269,13 +278,13 @@ int main()
     {
         const Key destKey = Key::generateSealing();
         const Bytes sealed
-            = makeSealed(Key::fromPublicDer(destKey.publicDer()), "contact", alice, "fdest-1", {});
-        CHECK(roundTrip(engine, sealed, Bytes(50, 0x55), &destKey).delivered);
+            = makeSealed(Key::fromPublicDer(destKey.publicDer()), "content", alice, "fdest-1", pass);
+        CHECK(roundTrip(engine, sealed, Bytes(50, 0x55), alice, {}, destKey).delivered);
         CHECK(storage.getBlob(alice, "fdest-1").size() == 50);
 
         const Bytes sealedHome
-            = makeSealed(Key::fromPublicDer(destKey.publicDer()), "contact", alice, "fdest-2", {});
-        CHECK(!roundTrip(engine, sealedHome, Bytes(50, 0x55)).delivered);
+            = makeSealed(Key::fromPublicDer(destKey.publicDer()), "content", alice, "fdest-2", pass);
+        CHECK(!roundTrip(engine, sealedHome, Bytes(50, 0x55), alice).delivered);
     }
 
     {
@@ -284,27 +293,25 @@ int main()
         for (std::size_t i = 0; i < bazarish::kContactRequestsPerMinute; ++i) {
             const FederationDeliverResult result = roundTrip(engine,
                 makeSealed(sealingPublic, "contact", stranger, "cap-" + std::to_string(i), {}),
-                payload, nullptr, stranger);
+                payload, stranger);
             CHECK(result.delivered);
         }
         CHECK(storage.listPending(stranger, "dev").size()
             == bazarish::kContactRequestsPerMinute);
 
         const FederationDeliverResult refused = roundTrip(engine,
-            makeSealed(sealingPublic, "contact", stranger, "cap-over", {}), payload, nullptr,
-            stranger);
+            makeSealed(sealingPublic, "contact", stranger, "cap-over", {}), payload, stranger);
         CHECK(!refused.delivered);
         CHECK(refused.errorCode == "CONTACT_RATE_LIMITED");
 
         const FederationDeliverResult refusedOther = roundTrip(engine,
             makeSealed(sealingPublic, "contact", toBase32(Bytes(32, 0x55)), "cap-other", {}),
-            payload, nullptr, stranger);
+            payload, stranger);
         CHECK(!refusedOther.delivered);
         CHECK(refusedOther.errorCode == refused.errorCode);
 
         CHECK(roundTrip(engine,
-            makeSealed(sealingPublic, "contact", stranger, "cap-0", {}), payload, nullptr,
-            stranger)
+            makeSealed(sealingPublic, "contact", stranger, "cap-0", {}), payload, stranger)
                   .delivered);
     }
 
@@ -313,7 +320,7 @@ int main()
         const Bytes payload(64, 0x41);
         const auto ask = [&](const std::string& id, const std::int64_t at) {
             return engine.deliver(makeSealed(sealingPublic, "contact", crowded, id, {}), payload,
-                at, engine.sealingKey(), crowded);
+                at, servingKey(), crowded, std::string());
         };
         std::int64_t at = kNow;
         for (std::size_t i = 0; i < bazarish::kMaxPendingContactRequests; ++i) {
@@ -331,7 +338,7 @@ int main()
         storage.setUserQuota(full, kTinyQuotaBytes);
         const DeliveryEngine::Outcome refused = engine.deliver(
             makeSealed(sealingPublic, "contact", full, "into-full", {}),
-            Bytes(kTinyQuotaBytes + 1, 0x41), kNow, engine.sealingKey(), full);
+            Bytes(kTinyQuotaBytes + 1, 0x41), kNow, servingKey(), full, std::string());
         CHECK(!refused.delivered);
         CHECK(refused.errorCode == "CONTACT_RATE_LIMITED");
     }
@@ -339,33 +346,33 @@ int main()
     {
         const Bytes payload(64, 0x41);
         const std::string source = "requester.b32.i2p";
-        const auto request = [&](const unsigned char to, const std::string& id) {
-            return makeSealed(sealingPublic, "contact", toBase32(Bytes(32, to)), id, {});
+        const auto request = [&](const std::string& to, const std::string& id) {
+            return makeSealed(sealingPublic, "contact", to, id, {});
         };
-        const Bytes first = request(0x80, "source-first");
-        CHECK(roundTrip(engine, first, payload, nullptr, std::string(), nullptr, source).delivered);
-        CHECK(roundTrip(engine, first, payload, nullptr, std::string(), nullptr, source).delivered);
+        const std::string firstTo = toBase32(Bytes(32, 0x80));
+        const Bytes first = request(firstTo, "source-first");
+        CHECK(roundTrip(engine, first, payload, firstTo, source).delivered);
+        CHECK(roundTrip(engine, first, payload, firstTo, source).delivered);
 
-        const Bytes second = request(0x81, "source-second");
-        const FederationDeliverResult refused
-            = roundTrip(engine, second, payload, nullptr, std::string(), nullptr, source);
+        const std::string secondTo = toBase32(Bytes(32, 0x81));
+        const Bytes second = request(secondTo, "source-second");
+        const FederationDeliverResult refused = roundTrip(engine, second, payload, secondTo, source);
         CHECK(!refused.delivered);
         CHECK(refused.errorCode == "CONTACT_RATE_LIMITED");
-        CHECK(roundTrip(engine, second, payload, nullptr, std::string(), nullptr,
-            "another.b32.i2p")
-                  .delivered);
+        CHECK(roundTrip(engine, second, payload, secondTo, "another.b32.i2p").delivered);
 
-        const Bytes third = request(0x82, "source-third");
+        const std::string thirdTo = toBase32(Bytes(32, 0x82));
+        const Bytes third = request(thirdTo, "source-third");
         CHECK(!engine
-                   .deliver(third, payload, kNow + kContactSourceMemorySeconds - 1,
-                       engine.sealingKey(), {}, source)
+                   .deliver(third, payload, kNow + kContactSourceMemorySeconds - 1, servingKey(),
+                       thirdTo, source)
                    .delivered);
         CHECK(engine
-                  .deliver(third, payload, kNow + kContactSourceMemorySeconds,
-                      engine.sealingKey(), {}, source)
+                  .deliver(third, payload, kNow + kContactSourceMemorySeconds, servingKey(),
+                      thirdTo, source)
                   .delivered);
         CHECK(roundTrip(engine, makeSealed(sealingPublic, "content", alice, "source-mail", pass),
-            payload, nullptr, std::string(), nullptr, source)
+            payload, alice, source)
                   .delivered);
     }
 
@@ -378,7 +385,7 @@ int main()
         const Bytes payload(16, 0x42);
         const auto mail = [&](const Bytes& with, const std::string& id, const std::int64_t at) {
             return engine.deliver(makeSealed(sealingPublic, "content", alice, id, with), payload,
-                at, engine.sealingKey(), {}, "bot.b32.i2p");
+                at, servingKey(), alice, "bot.b32.i2p");
         };
         for (std::size_t i = 0; i < kMailPerPassPerMinute; ++i) {
             CHECK(mail(busy, "busy-" + std::to_string(i), later).delivered);
@@ -397,14 +404,13 @@ int main()
         const Bytes sealedForStranger
             = makeSealed(sealingPublic, "contact", stranger, "wrong-dest", {});
         const FederationDeliverResult answered
-            = roundTrip(engine, sealedForStranger, payload, nullptr, alice);
+            = roundTrip(engine, sealedForStranger, payload, alice);
         CHECK(answered.delivered);
         CHECK(storage.listPending(stranger, "dev").empty());
         CHECK(storage.usage(stranger) == 0);
 
         const FederationDeliverResult real = roundTrip(engine,
-            makeSealed(sealingPublic, "contact", stranger, "wrong-dest", {}), payload, nullptr,
-            stranger);
+            makeSealed(sealingPublic, "contact", stranger, "wrong-dest", {}), payload, stranger);
         CHECK(real.delivered);
         CHECK(storage.listPending(stranger, "dev").size() == 1);
     }
@@ -418,17 +424,19 @@ int main()
             return std::nullopt;
         };
 
-        const FederationFetchResult ok = roundTripCard(engine, CardFetchQuery{alice}, getCard);
+        const FederationFetchResult ok
+            = roundTripCard(engine, CardFetchQuery{alice}, getCard, alice);
         CHECK(ok.ok);
         CHECK(ok.sealed == cardDer);
 
+        const std::string cardless = toBase32(Bytes(32, 0x77));
         const FederationFetchResult unknown
-            = roundTripCard(engine, CardFetchQuery{toBase32(Bytes(32, 0x77))}, getCard);
+            = roundTripCard(engine, CardFetchQuery{cardless}, getCard, cardless);
         CHECK(!unknown.ok);
         CHECK(unknown.errorCode == "CARD_UNKNOWN");
 
         const FederationFetchResult noFn
-            = roundTripCard(engine, CardFetchQuery{alice}, GetCardFn{});
+            = roundTripCard(engine, CardFetchQuery{alice}, GetCardFn{}, alice);
         CHECK(!noFn.ok);
         CHECK(noFn.errorCode == "CARD_UNKNOWN");
 
@@ -454,13 +462,11 @@ int main()
     }
 
     {
-        const Key ackKey = Key::generateSigning();
         const Bytes sealed = makeSealed(sealingPublic, "content", alice, "fmsg-signed", pass);
-        const FederationDeliverResult result
-            = roundTrip(engine, sealed, payload, nullptr, std::string(), &ackKey);
+        const FederationDeliverResult result = roundTrip(engine, sealed, payload, alice);
         CHECK(result.delivered);
         CHECK(result.deliveryId == "fmsg-signed");
-        CHECK(!result.signature.empty());
+        CHECK(result.signerPublicDer == ackKey().publicDer());
         const Bytes signedBytes(result.deliveryId.begin(), result.deliveryId.end());
         CHECK(bazarish::verify(
             Key::fromPublicDer(result.signerPublicDer), signedBytes, result.signature));
@@ -470,19 +476,13 @@ int main()
     }
 
     {
-        const Bytes sealed = makeSealed(sealingPublic, "content", alice, "fmsg-unsigned", pass);
-        const FederationDeliverResult result = roundTrip(engine, sealed, payload);
-        CHECK(result.delivered);
-        CHECK(result.signature.empty());
-    }
-
-    {
         int fds[2];
         CHECK(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0);
         SocketStream serverStream(fds[0]);
         SocketStream clientStream(fds[1]);
-        std::thread serverThread([&engine, &serverStream]() {
-            federationServeOnce(serverStream, engine, kNow);
+        std::thread serverThread([&engine, &serverStream, &alice]() {
+            federationServeOnce(
+                serverStream, engine, kNow, std::string(), servingKey(), alice, GetCardFn{}, signAck);
         });
         const std::string truncated = "{\"op\":\"deli";
         CHECK(::write(fds[1], truncated.data(), truncated.size())

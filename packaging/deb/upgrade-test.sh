@@ -1,9 +1,6 @@
 #!/bin/bash
 # Bazarish project (c) 2026
-# upgrade-test.sh <out-dir>: installs the packages build.sh left there, changes what an
-# operator would, installs them again as the next version and fails if anything under
-# /etc/bazarish or /var/lib/bazarish changed. It installs into this system: run it as
-# root in a throwaway Debian 13 container only.
+# Installs into this system: run as root in a throwaway Debian 13 container only.
 set -euo pipefail
 
 readonly kOut=$1

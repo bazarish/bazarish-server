@@ -6,8 +6,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# The common library is this repository's own submodule, named and not searched
-# for: a directory beside a component must not be able to take its place.
+# common is this repository's own submodule, never a directory found beside a component.
 get_filename_component(BAZARISH_SERVER_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 set(BAZARISH_COMMON_DIR "${BAZARISH_SERVER_ROOT}/common" CACHE PATH
     "Path to the bazarish common library repository")
@@ -43,10 +42,8 @@ add_executable(bazarish-gateway src/Main.cpp)
 target_link_libraries(bazarish-gateway PRIVATE bazarish_gateway_lib)
 target_compile_options(bazarish-gateway PRIVATE -Wall -Wextra -Werror)
 
-# A live check against a real gateway. Not an add_test: it needs one running,
-# the way i2p_smoke needs a network.
-# The address parser lives with the client core, which a gateway build leaves
-# out; the one file comes along rather than the whole of it.
+# A live check against a running gateway, so not an add_test.
+# The address parser comes alone: a gateway build leaves the client core out.
 add_executable(gateway_smoke tests/GatewaySmoke.cpp
     ${BAZARISH_COMMON_DIR}/client/GatewayAddress.cpp)
 target_link_libraries(gateway_smoke PRIVATE bazarish_gateway_lib)

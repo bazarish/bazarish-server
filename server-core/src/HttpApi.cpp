@@ -12,7 +12,6 @@
 #include <Health.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <bazarish/I2p.hpp>
-#include <bazarish/I2pAddress.hpp>
 #include <bazarish/Limits.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/Pass.hpp>
@@ -23,7 +22,6 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
-#include <map>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -39,6 +37,7 @@ using bazarish::ErrorCode;
 
 constexpr std::size_t kReseedRouters = 60;
 constexpr std::int64_t kReseedRefreshSeconds = 3600;
+constexpr int kMaxEventWaitSeconds = 30;
 
 using bazarish::nowSeconds;
 
@@ -158,9 +157,6 @@ void HttpApi::stop()
 
 std::string HttpApi::reseedArchive()
 {
-    if (!options_.reseedSample) {
-        return {};
-    }
     const std::lock_guard<std::mutex> lock(reseedMutex_);
     const std::int64_t now = nowSeconds();
     if (!reseedSu3_.empty() && now - reseedPackedAt_ < kReseedRefreshSeconds) {
@@ -192,9 +188,7 @@ void HttpApi::expiredSweepLoop()
 
 void HttpApi::wakeUser(const std::string& user)
 {
-    if (options_.eventGate != nullptr && !user.empty()) {
-        options_.eventGate->notify(user);
-    }
+    options_.eventGate->notify(user);
 }
 
 void HttpApi::setupOpsRoutes()
@@ -245,9 +239,7 @@ void HttpApi::setupOpsRoutes()
                 return errorResponse(400, ErrorCode::eRequestFailed, "no user named");
             }
             store.forgetUser(user);
-            if (options_.forgetI2pDest) {
-                options_.forgetI2pDest(user);
-            }
+            options_.forgetI2pDest(user);
             bazarish::log::info("mailbox of {} dropped: the account was deleted",
                 bazarish::log::redact(user));
             return jsonResponse({{"ok", true}});
@@ -255,10 +247,6 @@ void HttpApi::setupOpsRoutes()
 
     ops_->get("/v1/messaging/settings",
         operatorOnly([this](const bazarish::http::Request&) {
-            if (!options_.settings) {
-                return errorResponse(503, ErrorCode::eRequestFailed,
-                    "this server was started without a config file to write to");
-            }
             const ServerSettings::Values values = options_.settings->get();
             return jsonResponse({
                 {"logLevel", values.logLevel},
@@ -281,10 +269,6 @@ void HttpApi::setupOpsRoutes()
 
     ops_->put("/v1/messaging/settings",
         operatorOnly([this](const bazarish::http::Request& request) {
-            if (!options_.settings) {
-                return errorResponse(503, ErrorCode::eRequestFailed,
-                    "this server was started without a config file to write to");
-            }
             ServerSettings::Values values = options_.settings->get();
             {
                 const nlohmann::json body = nlohmann::json::parse(request.body);
@@ -340,7 +324,7 @@ void HttpApi::setupOpsRoutes()
             if (values.i2pLog != before.i2pLog) {
                 bazarish::i2p::setI2pLogging(values.i2pLog);
             }
-            if (values.gateways != before.gateways && options_.gatewaysChanged) {
+            if (values.gateways != before.gateways) {
                 options_.gatewaysChanged(values.gateways);
             }
             return jsonResponse({{"logLevel", values.logLevel}, {"i2pLog", values.i2pLog}});
@@ -348,10 +332,6 @@ void HttpApi::setupOpsRoutes()
 
     ops_->post("/v1/messaging/restart",
         operatorOnly([this](const bazarish::http::Request&) {
-            if (!options_.requestRestart) {
-                return errorResponse(503, ErrorCode::eRequestFailed,
-                    "this server cannot restart itself: it was started without a supervisor");
-            }
             bazarish::log::info("restarting at the operator's request");
             options_.requestRestart();
             return jsonResponse({{"restarting", true}});
@@ -367,10 +347,6 @@ void HttpApi::setupOpsRoutes()
         }));
 
     ops_->get("/v1/messaging/storage", operatorOnly([this](const bazarish::http::Request&) {
-        if (!options_.diskUsage) {
-            return errorResponse(
-                503, ErrorCode::eRequestFailed, "this server cannot measure its storage");
-        }
         return jsonResponse({{"usedBytes", options_.diskUsage()}});
     }));
 
@@ -384,10 +360,6 @@ void HttpApi::setupOpsRoutes()
 
     ops_->put("/v1/messaging/i2p-dest",
         operatorOnly([this](const bazarish::http::Request& request) {
-            if (!options_.provisionI2pDest || !options_.forgetI2pDest) {
-                return errorResponse(
-                    503, ErrorCode::eRequestFailed, "per-user destinations not available");
-            }
             const nlohmann::json body = nlohmann::json::parse(request.body);
             const std::string user = body.at("user").get<std::string>();
             const std::string transient = body.value("transient", std::string());
@@ -408,9 +380,6 @@ void HttpApi::setupOpsRoutes()
 
     ops_->post("/v1/messaging/node-card",
         operatorOnly([this](const bazarish::http::Request& request) {
-            if (!options_.identity) {
-                return errorResponse(503, ErrorCode::eRequestFailed, "no server identity here");
-            }
             const nlohmann::json body = nlohmann::json::parse(request.body);
             const Key sealing
                 = Key::fromPublicDer(fromBase64(body.at("sealingKey").get<std::string>()));
@@ -425,9 +394,6 @@ void HttpApi::setupRoutes()
 {
     http_->get(std::string(bazarish::tunnel::kServerCardPath),
         [this](const bazarish::http::Request&) -> bazarish::http::Response {
-            if (options_.serverCardDer.empty()) {
-                return errorResponse(503, ErrorCode::eRequestFailed, "no card here");
-            }
             bazarish::http::Response response;
             response.contentType = "application/octet-stream";
             response.body = std::string(
@@ -476,56 +442,53 @@ void HttpApi::setupRoutes()
             403, ErrorCode::eClientUnregistered, "client ID is not registered for this user");
     };
 
-    if (options_.eventGate != nullptr) {
-        EventGate* const gate = options_.eventGate;
-        const int maxWait = options_.maxEventWaitSeconds;
-        http_->getAsync("/v1/messaging/events",
-            [this, &store, requireClient, clientUnregistered, gate, maxWait](
-                const bazarish::http::Request& request,
-                bazarish::http::Responder respond) -> std::optional<bazarish::http::Response> {
-                std::string user;
-                const std::optional<bazarish::http::Response> refused
-                    = tunnel_.authenticate(request, &user);
-                if (refused.has_value()) {
-                    return *refused;
-                }
-                const std::string clientId = requireClient(request, user);
-                if (clientId.empty()) {
-                    return clientUnregistered();
-                }
-                const nlohmann::json waiting = pendingJson(store, user, clientId);
-                if (!waiting.empty()) {
-                    return jsonResponse({{"pending", waiting}});
-                }
-                int wait = maxWait;
-                const std::string asked = request.query("wait");
-                if (!asked.empty()) {
-                    try {
-                        wait = std::clamp(std::stoi(asked), 0, maxWait);
-                    } catch (const std::exception& error) {
-                        bazarish::log::debug("bad wait '{}': {}", asked, error.what());
-                    }
-                }
-                gate->wait(http_->executor(), user, std::chrono::seconds(wait),
-                    [&store, user, clientId, respond]() {
-                        nlohmann::json items = nlohmann::json::array();
-                        try {
-                            items = pendingJson(store, user, clientId);
-                        } catch (const std::exception& error) {
-                            bazarish::log::warn("event face: {}", error.what());
-                        }
-                        respond(jsonResponse({{"pending", items}}));
-                    });
+    EventGate* const gate = options_.eventGate;
+    http_->getAsync("/v1/messaging/events",
+        [this, &store, requireClient, clientUnregistered, gate](
+            const bazarish::http::Request& request,
+            bazarish::http::Responder respond) -> std::optional<bazarish::http::Response> {
+            std::string user;
+            const std::optional<bazarish::http::Response> refused
+                = tunnel_.authenticate(request, &user);
+            if (refused.has_value()) {
+                return *refused;
+            }
+            const std::string clientId = requireClient(request, user);
+            if (clientId.empty()) {
+                return clientUnregistered();
+            }
+            const nlohmann::json waiting = pendingJson(store, user, clientId);
+            if (!waiting.empty()) {
+                return jsonResponse({{"pending", waiting}});
+            }
+            int wait = kMaxEventWaitSeconds;
+            const std::string asked = request.query("wait");
+            if (!asked.empty()) {
                 try {
-                    if (!pendingJson(store, user, clientId).empty()) {
-                        gate->notify(user);
-                    }
+                    wait = std::clamp(std::stoi(asked), 0, kMaxEventWaitSeconds);
                 } catch (const std::exception& error) {
-                    bazarish::log::warn("event face re-check: {}", error.what());
+                    bazarish::log::debug("bad wait '{}': {}", asked, error.what());
                 }
-                return std::nullopt;
-            });
-    }
+            }
+            gate->wait(http_->executor(), user, std::chrono::seconds(wait),
+                [&store, user, clientId, respond]() {
+                    nlohmann::json items = nlohmann::json::array();
+                    try {
+                        items = pendingJson(store, user, clientId);
+                    } catch (const std::exception& error) {
+                        bazarish::log::warn("event face: {}", error.what());
+                    }
+                    respond(jsonResponse({{"pending", items}}));
+                });
+            try {
+                if (!pendingJson(store, user, clientId).empty()) {
+                    gate->notify(user);
+                }
+            } catch (const std::exception& error) {
+                bazarish::log::warn("event face re-check: {}", error.what());
+            }
+            return std::nullopt;
+        });
 
     http_->post("/v1/messaging/clients",
         authenticated([&store](const bazarish::http::Request& request,
@@ -557,9 +520,7 @@ void HttpApi::setupRoutes()
     http_->get("/v1/messaging/destination",
         authenticated([this](const bazarish::http::Request&, const std::string& user)
                           -> bazarish::http::Response {
-            const DestinationAssignment assigned = options_.assignDestination
-                ? options_.assignDestination(user)
-                : DestinationAssignment{};
+            const DestinationAssignment assigned = options_.assignDestination(user);
             return jsonResponse({{"dest", assigned.dest}, {"state", assigned.state}});
         }));
 

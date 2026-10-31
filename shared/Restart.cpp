@@ -51,9 +51,7 @@ RestartSwitch::RestartSwitch(std::function<void()> stop)
             }
         }
         std::this_thread::sleep_for(kResponseGrace);
-        if (stop_) {
-            stop_();
-        }
+        stop_();
     });
 }
 

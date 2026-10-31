@@ -20,7 +20,6 @@ public:
         std::uint64_t quotaBytes = 0;
         std::string dest;
         std::int64_t delegatedAt = 0;
-        // The hybrid-signed contact card (DER), as published by the user.
         Bytes card;
     };
 

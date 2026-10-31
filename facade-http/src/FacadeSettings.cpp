@@ -3,7 +3,6 @@
 
 #include <bazarish/ConfigFile.hpp>
 
-#include <stdexcept>
 #include <utility>
 
 namespace bazarish::facade {
@@ -47,9 +46,6 @@ void FacadeSettings::set(const Values& values)
 
 void FacadeSettings::persist(const Values& values) const
 {
-    if (configPath_.empty()) {
-        throw std::runtime_error("this facade was started without a config file to write to");
-    }
     ConfigFile file(configPath_);
     setIfChanged(file, {kLogLevelKey}, values.logLevel, values_.logLevel);
     setIfChanged(file, {kMessagingKey, kHostKey}, values.messagingHost, values_.messagingHost);

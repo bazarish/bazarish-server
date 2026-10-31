@@ -29,7 +29,6 @@ namespace bazarish::service {
 
 struct AccountApiOptions {
     std::string serverFingerprint;
-    // The server card the node hands its own clients (DER).
     Bytes serverCardDer;
     std::shared_ptr<Key> sealingKey;
     Bytes nodeCardDer;
@@ -68,8 +67,6 @@ public:
 private:
     void revokeDestination(const std::string& user);
     void deleteAccount(const std::string& user);
-
-    std::string destinationOf(const std::optional<SubscriptionStore::Account>& held);
 
     NodeSettings::Values settings() const { return settings_->get(); }
 

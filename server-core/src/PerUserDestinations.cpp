@@ -6,7 +6,6 @@
 #include <bazarish/Address.hpp>
 #include <bazarish/Clock.hpp>
 #include <bazarish/Crypto.hpp>
-#include <bazarish/I2pAddress.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/PrivateFile.hpp>
 #include <nlohmann/json.hpp>
@@ -39,9 +38,6 @@ nlohmann::json readRecord(const std::filesystem::path& path)
     std::ifstream in(path, std::ios::binary);
     const std::string text(
         (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    if (text.empty()) {
-        return nlohmann::json::object();
-    }
     return nlohmann::json::parse(text);
 }
 
@@ -85,7 +81,6 @@ Key accountKey(const std::string& pem, const char* const what)
     }
 }
 
-// The account issues the keys of its address; a server only operates them.
 void requireServingKeys(const Key& sealing, const Key& signing)
 {
     if (!sealing.hasPrivate() || !sealing.hasKem()) {
@@ -110,9 +105,6 @@ SignAckFn signAckWith(std::shared_ptr<Key> signingKey)
 {
     return [signingKey = std::move(signingKey)](const std::string& deliveryId,
                Bytes& outSignerPublicDer, Bytes& outSignature) {
-        if (!signingKey) {
-            return;
-        }
         const Bytes signedBytes(deliveryId.begin(), deliveryId.end());
         outSignature = bazarish::sign(*signingKey, signedBytes);
         outSignerPublicDer = signingKey->publicDer();
@@ -318,12 +310,11 @@ void PerUserDestinations::serveLoop(Destination* const raw, const std::string& u
                 signingKey = raw->signingKey;
             }
             watchStream(stream);
-            federationServeOnce(*stream, engine_, nowSeconds(), peer, serving.get(), userFp,
+            federationServeOnce(*stream, engine_, nowSeconds(), peer, *serving, userFp,
                 getCard_, signAckWith(signingKey));
             unwatchStream(stream.get());
         } catch (const std::exception& error) {
             unwatchStream(stream.get());
-            // A failed serve must not kill the loop.
             bazarish::log::warn("serving a user's destination failed: {}", error.what());
         }
     }
@@ -477,9 +468,6 @@ void PerUserDestinations::reloadLocked(const std::int64_t now)
         }
         try {
             const nlohmann::json record = readRecord(entry.path());
-            if (!record.contains("transient")) {
-                continue;
-            }
             const std::int64_t expiresUnix = record.at("expiresUnix").get<std::int64_t>();
             if (lapsedAt(expiresUnix, now)) {
                 continue;
@@ -547,24 +535,9 @@ bool PerUserDestinations::serveDirect(
         return false;
     }
     pipe.closeAfter(std::chrono::seconds(kServeDeadlineSeconds));
-    federationServeOnce(pipe, engine_, nowSeconds(), from, sealing.get(), owner, getCard_,
+    federationServeOnce(pipe, engine_, nowSeconds(), from, *sealing, owner, getCard_,
         signAckWith(std::move(signing)));
     return true;
-}
-
-std::shared_ptr<bazarish::i2p::Endpoint> PerUserDestinations::endpointForDest(
-    const std::string& dest) const
-{
-    if (dest.empty()) {
-        return nullptr;
-    }
-    const std::lock_guard<std::mutex> lock(mutex_);
-    for (const auto& entry : dests_) {
-        if (entry.second->dest == dest) {
-            return entry.second->endpoint;
-        }
-    }
-    return nullptr;
 }
 
 std::size_t PerUserDestinations::size() const

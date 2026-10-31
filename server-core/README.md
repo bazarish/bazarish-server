@@ -24,12 +24,12 @@ sealed to the server's sealing key.
   pending blobs. Content is deleted as soon as every registered client has acked
   it, and otherwise when the account goes: a mailbox nobody collects is the
   client's business, and the quota is what bounds it.
-- **HTTP API** - one route a facade can see: the sealed tunnel every client
-  request travels inside, carrying `/v1/messaging/*` (client registry, passes and
-  their revocation, pending fetch/ack, the write a device makes into its own
-  account's mailbox) and the account calls this server forwards to the service
-  node under its own signature. There is no send endpoint: a client delivers its
-  own outgoing mail, so this server is never told whom its users write to.
+- **HTTP API** - two routes a facade can see: the server card and the sealed
+  tunnel every client request travels inside, carrying `/v1/messaging/*` (client
+  registry, passes and their revocation, pending fetch/ack, the write a device
+  makes into its own account's mailbox). There is no send endpoint: a client
+  delivers its own outgoing mail, so this server is never told whom its users
+  write to.
 - **Federation** - serves **each user's own destination** over I2P; there is no
   destination for the server as a whole. It admits what arrives and signs its
   confirmation with that destination's own key.
@@ -59,8 +59,8 @@ transport endpoints).
 
 Both sockets speak TLS, with a certificate this server makes in its state
 directory on first start; the hash of its key is printed at startup and is what
-a peer is configured with. `listen` carries the sealed tunnel and federation,
-which the facade forwards to. `opsListen` carries everything that is the
+a peer is configured with. `listen` carries the sealed tunnel and the server
+card, which the facade forwards to. `opsListen` carries everything that is the
 operator's - health, settings, restart, quotas, destinations, the service node's
 card signed with this server's root, the reseed archive the portal serves - and
 admits only a certificate listed in `opsClients`: the

@@ -26,10 +26,6 @@ int main()
     const std::string alice = "alice.b32.i2p";
     const std::string bob = "bob.b32.i2p";
 
-    for (int i = 0; i < 100; ++i) {
-        CHECK(limiter.allow("", 1000));
-    }
-
     CHECK(limiter.allow(alice, 1000));
     CHECK(limiter.allow(alice, 1000));
     CHECK(limiter.allow(alice, 1000));
@@ -48,7 +44,6 @@ int main()
 
     RateLimiter closed(0, 60);
     CHECK(!closed.allow(alice, 0));
-    CHECK(closed.allow("", 0));
 
     std::printf("TestRateLimiter OK\n");
     return 0;

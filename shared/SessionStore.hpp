@@ -24,7 +24,7 @@ public:
     };
 
     std::string open(const std::string& user, const Bytes& secret, std::int64_t now,
-        std::int64_t* outExpiresUnix);
+        std::int64_t& outExpiresUnix);
 
     std::optional<Session> findByHandle(const std::string& handle, std::int64_t now);
 

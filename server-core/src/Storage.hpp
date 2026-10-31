@@ -43,15 +43,12 @@ public:
         std::int64_t receivedAt, const std::string& alreadyAcked = {})
         = 0;
     virtual bool hasBlob(const std::string& user, const std::string& blobId) = 0;
-    // Held and not yet acknowledged by this client.
     virtual bool isPendingFor(
         const std::string& user, const std::string& blobId, const std::string& clientId) = 0;
 
     virtual bool hasSeen(const std::string& user, const std::string& deliveryId) = 0;
 
-    virtual bool allowContactRequest(
-        const std::string& user, std::int64_t now, std::size_t maxPerMinute)
-        = 0;
+    virtual bool allowContactRequest(const std::string& user, std::int64_t now) = 0;
 
     virtual std::size_t countHeld(const std::string& user, const std::string& deliveryClass) = 0;
 

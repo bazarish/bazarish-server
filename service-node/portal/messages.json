@@ -213,11 +213,11 @@
       "ar": "لا يمكن التراجع عن هذا. يُحذف صندوق البريد وكل ما فيه، ويتوقف تقديم الخدمة للعنوان."
     },
     "delete.note": {
-      "en": "Deleting drops the certificate, the mailbox and everything in it, and the address stops being served. The same key can register here again.",
-      "ru": "При удалении пропадают сертификат, почтовый ящик и всё его содержимое, а адрес перестаёт обслуживаться. Тот же ключ может зарегистрироваться здесь снова.",
-      "es": "Al eliminarla se pierden el certificado, el buzón y todo lo que contiene, y la dirección deja de servirse. La misma clave puede volver a registrarse aquí.",
-      "zh": "删除会丢弃证书、信箱及其中的全部内容，该地址也不再被服务。同一个密钥之后可以再次在此注册。",
-      "ar": "يؤدي الحذف إلى إسقاط الشهادة وصندوق البريد وكل ما فيه، ويتوقف تقديم الخدمة للعنوان. ويمكن للمفتاح نفسه التسجيل هنا من جديد."
+      "en": "Deleting drops the mailbox and everything in it, and the address stops being served. The same key can register here again.",
+      "ru": "При удалении пропадают почтовый ящик и всё его содержимое, а адрес перестаёт обслуживаться. Тот же ключ может зарегистрироваться здесь снова.",
+      "es": "Al eliminarla se pierden el buzón y todo lo que contiene, y la dirección deja de servirse. La misma clave puede volver a registrarse aquí.",
+      "zh": "删除会丢弃信箱及其中的全部内容，该地址也不再被服务。同一个密钥之后可以再次在此注册。",
+      "ar": "يؤدي الحذف إلى إسقاط صندوق البريد وكل ما فيه، ويتوقف تقديم الخدمة للعنوان. ويمكن للمفتاح نفسه التسجيل هنا من جديد."
     },
     "delete.do": {
       "en": "Delete it",
@@ -239,13 +239,6 @@
       "es": "Conservar la cuenta",
       "zh": "保留账号",
       "ar": "الاحتفاظ بالحساب"
-    },
-    "delete.refused": {
-      "en": "This portal cannot delete accounts.",
-      "ru": "Этот портал не умеет удалять аккаунты.",
-      "es": "Este portal no puede eliminar cuentas.",
-      "zh": "本门户无法删除账号。",
-      "ar": "لا تستطيع هذه البوابة حذف الحسابات."
     },
     "facts.unknown": {
       "en": "not known",

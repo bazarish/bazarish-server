@@ -44,8 +44,7 @@ constexpr int kDefaultOpsPort = 8427;
 constexpr std::size_t kPortalSecretBytes = 16;
 constexpr std::chrono::hours kIdleSweepInterval{1};
 constexpr std::chrono::seconds kBackendWaitBudget{60};
-constexpr const char* kDefaultPortalMessage
-    = "Registration here is confirmed by hand. The portal is at example.i2p";
+constexpr const char* kDefaultPortalMessage = "Registration here is confirmed by hand.";
 constexpr const char* kDefaultRegistrationMessage
     = "Send a few sentences about yourself and your key fingerprint to me@example.com.";
 
@@ -302,16 +301,10 @@ int main(const int argc, const char** argv)
         }
     };
     const auto restartHook = std::make_shared<std::function<void()>>();
-    options.requestRestart = [restartHook]() {
-        if (*restartHook) {
-            (*restartHook)();
-        }
-    };
+    options.requestRestart = [restartHook]() { (*restartHook)(); };
 
     if (!operatorPush.waitReachable(kBackendWaitBudget)) {
-        bazarish::log::warn("the messaging server did not answer within {}s; what this node owes"
-                            " it is refused until it does",
-            kBackendWaitBudget.count());
+        return 1;
     }
     const std::optional<bazarish::Bytes> nodeCard = operatorPush.nodeCard(sealing->publicDer());
     if (!nodeCard.has_value()) {

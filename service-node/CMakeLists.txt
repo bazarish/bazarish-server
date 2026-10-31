@@ -6,8 +6,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# The common library is this repository's own submodule, named and not searched
-# for: a directory beside a component must not be able to take its place.
+# common is this repository's own submodule, never a directory found beside a component.
 get_filename_component(BAZARISH_SERVER_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 set(BAZARISH_COMMON_DIR "${BAZARISH_SERVER_ROOT}/common" CACHE PATH
     "Path to the bazarish common library repository")
@@ -19,7 +18,6 @@ if(NOT TARGET bazarish_common)
     add_subdirectory(${BAZARISH_COMMON_DIR} bazarish-common)
 endif()
 
-# What the servers here share and the client has no use for.
 if(NOT TARGET bazarish_server_shared)
     add_subdirectory(${BAZARISH_SERVER_ROOT}/shared bazarish-server-shared)
 endif()
@@ -39,10 +37,6 @@ add_library(bazarish_service_lib STATIC
 target_include_directories(bazarish_service_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(bazarish_service_lib PUBLIC Bazarish::Common Threads::Threads bazarish_server_shared)
 target_compile_options(bazarish_service_lib PRIVATE -Wall -Wextra -Werror)
-# The HTTPS leg of common's HTTP client (hosted payment gateways) needs the TLS
-# library; OpenSSL::Crypto already comes transitively via common.
-find_package(OpenSSL 3.5 REQUIRED)
-target_link_libraries(bazarish_service_lib PUBLIC OpenSSL::SSL)
 # The portal draws the server descriptor as a QR code for the app's camera.
 find_library(QRENCODE_LIBRARY NAMES qrencode REQUIRED)
 find_path(QRENCODE_INCLUDE_DIR NAMES qrencode.h REQUIRED)
@@ -60,7 +54,6 @@ function(bazarish_service_add_test name)
     add_executable(${name} tests/${name}.cpp)
     target_link_libraries(${name} PRIVATE bazarish_service_lib)
     target_compile_options(${name} PRIVATE -Wall -Wextra -Werror)
-    # The portal's web files, for the tests that render a page.
     target_compile_definitions(${name} PRIVATE
         BAZARISH_PORTAL_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/portal")
     add_test(NAME ${name} COMMAND ${name})

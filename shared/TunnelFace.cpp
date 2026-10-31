@@ -17,7 +17,6 @@ namespace bazarish::server {
 namespace {
 
 constexpr std::size_t kRefusalNoiseBytes = 64;
-constexpr const char* kInternalPrefix = "/internal/";
 
 std::string lowered(std::string name)
 {
@@ -67,16 +66,12 @@ void TunnelFace::serve(
     };
 
     if (tunnel::isHello(frame)) {
-        if (!sealingKey_) {
-            refuse();
-            return;
-        }
         try {
             const tunnel::Hello hello = tunnel::openHello(frame, *sealingKey_);
             const std::string user = auth::verifyRequest(hello.signature, nowSeconds(),
                 tunnel::kHelloMethod, tunnel::kHelloPath, hello.secret, replays_);
             std::int64_t expiresUnix = 0;
-            const std::string id = sessions_.open(user, hello.secret, nowSeconds(), &expiresUnix);
+            const std::string id = sessions_.open(user, hello.secret, nowSeconds(), expiresUnix);
             sessions_.setTunnelKey(id, tunnel::deriveTunnelKey(hello.secret, id));
             sealed(tunnel::sealWelcome({expiresUnix}, Key::fromPublicDer(hello.replyKeyDer)));
         } catch (const std::exception& error) {
@@ -122,11 +117,6 @@ void TunnelFace::serve(
     }
     if (namesTunnel(carried.path)) {
         log::debug("a tunnel frame carried another tunnel frame");
-        refuse();
-        return;
-    }
-    if (carried.path.rfind(kInternalPrefix, 0) == 0) {
-        log::debug("a tunnel frame named an internal path: {}", carried.path);
         refuse();
         return;
     }

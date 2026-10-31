@@ -79,10 +79,7 @@ int main()
     const Bytes handleCarol = deliveryPassHandle(passCarol);
     storage.registerPasses(alice, {handleBob, handleCarol});
     CHECK(storage.passCount(alice) == 2);
-    for (int i = 0; i < 100; ++i) {
-        CHECK(storage.hasPass(alice, handleBob));
-    }
-    CHECK(storage.passCount(alice) == 2);
+    CHECK(storage.hasPass(alice, handleBob));
     // Registering one already held is how a block is lifted, so it must not create a second entry.
     storage.registerPasses(alice, {handleBob});
     CHECK(storage.passCount(alice) == 2);

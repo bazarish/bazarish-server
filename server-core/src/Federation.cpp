@@ -16,7 +16,7 @@ namespace bazarish::server {
 void federationServeFrame(const std::string& headerLine,
     const std::function<Bytes(std::size_t)>& readPayload,
     const std::function<void(const std::string&)>& writeReply, DeliveryEngine& engine,
-    const std::int64_t now, const Key* const sealingKey, const std::string& owner,
+    const std::int64_t now, const Key& sealingKey, const std::string& owner,
     const GetCardFn& getCard, const SignAckFn& signAck, const std::string& peer)
 {
     const nlohmann::json header = nlohmann::json::parse(headerLine);
@@ -27,22 +27,20 @@ void federationServeFrame(const std::string& headerLine,
         const std::size_t length = header.at("len").get<std::size_t>();
         const Bytes payload = readPayload(length);
 
-        const DeliveryEngine::Outcome outcome = engine.deliver(sealed, payload, now,
-            sealingKey != nullptr ? *sealingKey : engine.sealingKey(), owner, peer);
+        const DeliveryEngine::Outcome outcome
+            = engine.deliver(sealed, payload, now, sealingKey, owner, peer);
         nlohmann::json reply = {{"delivered", outcome.delivered}};
         if (!outcome.delivered) {
             reply["errorCode"] = outcome.errorCode;
             reply["errorMessage"] = outcome.errorMessage;
         }
-        if (outcome.delivered && signAck && !outcome.deliveryId.empty()) {
+        if (outcome.delivered && !outcome.deliveryId.empty()) {
             Bytes signerPublicDer;
             Bytes signature;
             signAck(outcome.deliveryId, signerPublicDer, signature);
-            if (!signature.empty()) {
-                reply["deliveryId"] = outcome.deliveryId;
-                reply["signerPub"] = toBase64(signerPublicDer);
-                reply["sig"] = toBase64(signature);
-            }
+            reply["deliveryId"] = outcome.deliveryId;
+            reply["signerPub"] = toBase64(signerPublicDer);
+            reply["sig"] = toBase64(signature);
         }
         writeReply(reply.dump());
         return;
@@ -52,7 +50,7 @@ void federationServeFrame(const std::string& headerLine,
         if (getCard) {
             const Bytes queryBytes = fromBase64(header.at("sealed").get<std::string>());
             const CardFetchQuery query = cardFetchQueryFromJson(nlohmann::json::parse(queryBytes));
-            if (!owner.empty() && query.fingerprint != owner) {
+            if (query.fingerprint != owner) {
                 writeReply(
                     nlohmann::json({{"ok", false}, {"errorCode", "CARD_UNKNOWN"}}).dump());
                 return;

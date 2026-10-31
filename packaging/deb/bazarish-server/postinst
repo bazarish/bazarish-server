@@ -1,8 +1,6 @@
 #!/bin/sh
 # Bazarish project (c) 2026
-# The configs and the state are the operator's: bazarish-setup writes them on the
-# first install and leaves them alone from then on. The user and the directories
-# come with bazarish-gateway, which is configured first.
+# bazarish-setup writes the configs on the first install only; bazarish-gateway made the user.
 set -e
 
 readonly kUnits="bazarish-server.service bazarish-service-node.service \

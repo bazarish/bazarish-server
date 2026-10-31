@@ -136,11 +136,9 @@ int main()
     const fs::path root = fs::temp_directory_path()
         / ("bazarish-gateway-link-" + toHex(randomBytes(kRandomNameBytes)));
     DiskStorage storage(root / "storage");
-    const Key sealing = Key::generateSealing();
-    DeliveryEngine engine(storage, toBase32(Bytes(kAccountIdBytes, 0xee)),
-        std::make_shared<Key>(Key::fromPrivatePem(sealing.privatePem())),
-        DeliveryEngineOptions{});
-    PerUserDestinations dests(nullptr, engine, root / "dests", i2p::Privacy::eMinimal);
+    DeliveryEngine engine(storage, DeliveryEngineOptions{});
+    PerUserDestinations dests(
+        nullptr, engine, root / "dests", i2p::Privacy::eMinimal, i2p::kDefaultTunnelQuantity);
 
     const tls::Credential server = tls::selfSigned(root / "server");
     const tls::Credential gateway = tls::selfSigned(root / "gateway");

@@ -1,8 +1,6 @@
 #!/bin/bash
 # Bazarish project (c) 2026
-# Builds, tests and packs bazarish-server and bazarish-gateway as .deb packages for
-# Debian 13: build.sh <out-dir>. Runs from the repository root of a git checkout on a
-# Debian 13 host with the build dependencies.
+# Builds, tests and packs bazarish-server and bazarish-gateway for Debian 13: build.sh <out-dir>.
 set -euo pipefail
 umask 022
 
@@ -11,8 +9,7 @@ readonly kJobs=${BAZARISH_JOBS:-4}
 readonly kBuild=build-deb
 readonly kArch=$(dpkg --print-architecture)
 
-# The tag a release is cut from, or dev and the commit, counted so that apt takes a
-# later build for newer.
+# A release tag, or dev with a commit count so that apt takes a later build for newer.
 if tag=$(git describe --tags --exact-match 2>/dev/null); then
     if [[ ! $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         echo "a release tag is v and three numbers, as in v1.2.3: $tag" >&2

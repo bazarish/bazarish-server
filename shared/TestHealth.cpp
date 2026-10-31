@@ -30,8 +30,7 @@ int main()
     CHECK(report.at("service").get<std::string>() == "server-core");
     CHECK(report.at("version").get<std::string>() == "0.0.2");
     CHECK(report.at("uptime").get<std::int64_t>() == 123);
-    CHECK(report.at("ramBytes").get<std::uint64_t>() == memory.current
-        || report.at("ramBytes").get<std::uint64_t>() > 0);
+    CHECK(report.at("ramBytes").get<std::uint64_t>() > 0);
     CHECK(report.contains("ramPeakBytes"));
 
     std::printf("TestHealth: all checks passed\n");

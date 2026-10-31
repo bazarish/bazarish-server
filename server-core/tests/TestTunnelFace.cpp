@@ -62,10 +62,8 @@ int main()
     HttpApiOptions options;
     options.sealingKey = std::make_shared<Key>(Key::fromPrivatePem(serverSealing.privatePem()));
     options.serverCardDer = card;
-    const auto serving = std::make_shared<Key>(Key::fromPrivatePem(serverSealing.privatePem()));
-    options.assignDestination = [serving](const std::string&) {
-        return DestinationAssignment{"x.b32.i2p", serving, "home"};
-    };
+    options.assignDestination
+        = [](const std::string&) { return DestinationAssignment{"x.b32.i2p", "home"}; };
 
     HttpApi api(storage, options);
     const int port = api.bind("127.0.0.1", 0);
@@ -141,12 +139,6 @@ int main()
             CHECK(answered.status == 200);
             CHECK(!opensAsAnswer(answered.body, tunnelKey));
         }
-    }
-
-    {
-        const http::ClientResponse answered = carry("GET", "/internal/i2pseeds.su3");
-        CHECK(answered.status == 200);
-        CHECK(!opensAsAnswer(answered.body, tunnelKey));
     }
 
     {

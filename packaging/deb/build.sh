@@ -67,7 +67,7 @@ pack() {
 Package: $1
 Version: $kVersion
 Architecture: $kArch
-Maintainer: Bazarish <noreply@bazarish.org>
+Maintainer: Bazarish <gusto@bazari.sh>
 Depends: adduser, systemd, ca-certificates, $2$libraries
 Section: net
 Priority: optional

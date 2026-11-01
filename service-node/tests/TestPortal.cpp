@@ -83,7 +83,7 @@ std::int64_t now()
 void testLoginVerification()
 {
     const Identity identity = Identity::generate();
-    const std::string challenge = "portal-challenge-abc";
+    const std::string challenge = encodeLoginChallenge("portal-challenge-abc");
     const std::string blob = signLoginBlob(identity, now(), challenge);
 
     CHECK(verifyLoginBlob(blob, now(), challenge) == identity.fingerprint());

@@ -292,8 +292,15 @@ void PerUserDestinations::serveLoop(Destination* const raw, const std::string& u
     }
     while (raw->running.load()) {
         std::string peer;
-        const std::shared_ptr<bazarish::i2p::Stream> stream
-            = endpoint->accept(peer, std::chrono::seconds(kAcceptTimeoutSeconds));
+        std::shared_ptr<bazarish::i2p::Stream> stream;
+        try {
+            stream = endpoint->accept(peer, std::chrono::seconds(kAcceptTimeoutSeconds));
+        } catch (const std::exception& error) {
+            // Over SAM the router refuses while another session still holds the address.
+            bazarish::log::warn("a user's destination takes no streams yet: {}", error.what());
+            std::this_thread::sleep_for(std::chrono::seconds(kAcceptTimeoutSeconds));
+            continue;
+        }
         if (!stream) {
             continue;
         }

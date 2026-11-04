@@ -80,17 +80,6 @@ bazarish::Bytes readFileBytes(const fs::path& path)
 using bazarish::readFileText;
 using bazarish::writePrivateFile;
 
-bazarish::Key loadOrCreateSealingKey(const fs::path& stateDir)
-{
-    const fs::path path = stateDir / "sealing.pem";
-    if (fs::exists(path)) {
-        return bazarish::Key::fromPrivatePem(readFileText(path));
-    }
-    bazarish::Key key = bazarish::Key::generateSealing();
-    writePrivateFile(path, key.privatePem());
-    return key;
-}
-
 struct PortalConfig {
     std::string message = kDefaultPortalMessage;
     std::string name;
@@ -237,7 +226,7 @@ int main(const int argc, const char** argv)
 
     fs::create_directories(stateDir);
     const bazarish::Identity nodeIdentity = bazarish::server::loadOrCreateIdentity(stateDir);
-    const auto sealing = std::make_shared<bazarish::Key>(loadOrCreateSealingKey(stateDir));
+    const auto sealing = std::make_shared<bazarish::Key>(bazarish::server::loadOrCreateSealingKey(stateDir));
     const bazarish::tls::Credential credential = bazarish::tls::selfSigned(stateDir);
     std::printf("service-node operator fingerprint: %s\n", nodeIdentity.fingerprint().c_str());
     std::printf("service-node socket pin: %s\n", credential.pin.c_str());

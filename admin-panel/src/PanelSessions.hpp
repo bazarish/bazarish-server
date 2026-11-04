@@ -8,9 +8,9 @@
 
 namespace bazarish::admin {
 
-class SessionStore {
+class PanelSessions {
 public:
-    explicit SessionStore(std::int64_t ttlSeconds = 3600);
+    explicit PanelSessions(std::int64_t ttlSeconds = 3600);
 
     std::string create(std::int64_t now);
 

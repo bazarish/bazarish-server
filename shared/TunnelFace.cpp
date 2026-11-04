@@ -139,7 +139,7 @@ std::optional<http::Response> TunnelFace::authenticate(
     const http::Request& request, std::string* const outUser)
 {
     const auth::Headers authHeaders = http::collectAuthHeaders(request);
-    const std::string clientId = request.header("X-Bazarish-Client");
+    const std::string clientId = request.header(auth::kHeaderClient);
     if (auth::hasSessionHeaders(authHeaders)) {
         const std::string handle = authHeaders.at(auth::kHeaderSession);
         const std::optional<SessionStore::Session> session

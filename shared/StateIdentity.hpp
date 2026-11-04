@@ -8,5 +8,6 @@
 namespace bazarish::server {
 
 Identity loadOrCreateIdentity(const std::filesystem::path& stateDir);
+Key loadOrCreateSealingKey(const std::filesystem::path& stateDir);
 
 }  // namespace bazarish::server

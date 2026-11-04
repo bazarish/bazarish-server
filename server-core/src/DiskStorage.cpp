@@ -2,6 +2,7 @@
 #include "DiskStorage.hpp"
 
 #include <bazarish/Address.hpp>
+#include <bazarish/Clock.hpp>
 #include <bazarish/ConfigFile.hpp>
 #include <bazarish/Limits.hpp>
 #include <bazarish/Log.hpp>
@@ -11,7 +12,6 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <chrono>
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
@@ -45,13 +45,6 @@ void requireSafeId(const std::string& id)
     if (!isSafeId(id)) {
         throw std::invalid_argument("identifier has invalid format");
     }
-}
-
-std::int64_t arrivalMillis()
-{
-    return std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::system_clock::now().time_since_epoch())
-        .count();
 }
 
 std::int64_t arrivalOf(const nlohmann::json& meta)
@@ -253,7 +246,7 @@ Storage::PutResult DiskStorage::putBlob(const std::string& user, const std::stri
         acked.push_back(alreadyAcked);
     }
     const nlohmann::json metaBody = {
-        {"receivedAtMs", arrivalMillis()},
+        {"receivedAtMs", nowMillis()},
         {"class", deliveryClass},
         {"acked", acked},
     };

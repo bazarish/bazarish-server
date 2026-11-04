@@ -431,7 +431,7 @@ void HttpApi::setupRoutes()
 
     const auto requireClient
         = [&store](const bazarish::http::Request& request, const std::string& user) -> std::string {
-        const std::string clientId = request.header("X-Bazarish-Client");
+        const std::string clientId = request.header(auth::kHeaderClient);
         if (clientId.empty() || !store.isClientRegistered(user, clientId)) {
             return {};
         }
@@ -501,7 +501,7 @@ void HttpApi::setupRoutes()
     http_->get("/v1/messaging/clients",
         authenticated([&store](const bazarish::http::Request& request,
                           const std::string& user) -> bazarish::http::Response {
-            const std::string caller = request.header("X-Bazarish-Client");
+            const std::string caller = request.header(auth::kHeaderClient);
             nlohmann::json clients = nlohmann::json::array();
             for (const std::string& clientId : store.listClients(user)) {
                 clients.push_back({{"clientId", clientId}, {"current", clientId == caller},

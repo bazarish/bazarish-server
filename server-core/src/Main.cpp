@@ -66,17 +66,6 @@ using bazarish::nowSeconds;
 using bazarish::readFileText;
 using bazarish::writePrivateFile;
 
-bazarish::Key loadOrCreateSealingKey(const fs::path& stateDir)
-{
-    const fs::path path = stateDir / "sealing.pem";
-    if (fs::exists(path)) {
-        return bazarish::Key::fromPrivatePem(readFileText(path));
-    }
-    bazarish::Key key = bazarish::Key::generateSealing();
-    writePrivateFile(path, key.privatePem());
-    return key;
-}
-
 }  // namespace
 
 int main(const int argc, const char** argv)
@@ -156,7 +145,7 @@ int main(const int argc, const char** argv)
     fs::create_directories(stateDir);
     const auto identity = std::make_shared<const bazarish::Identity>(
         bazarish::server::loadOrCreateIdentity(stateDir));
-    const auto sealing = std::make_shared<bazarish::Key>(loadOrCreateSealingKey(stateDir));
+    const auto sealing = std::make_shared<bazarish::Key>(bazarish::server::loadOrCreateSealingKey(stateDir));
 
     bazarish::server::DiskStorage storage(stateDir / "storage");
     bazarish::server::EventGate eventGate;

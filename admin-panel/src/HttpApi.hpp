@@ -6,7 +6,7 @@
 #include "PanelSettings.hpp"
 
 #include <bazarish/Tls.hpp>
-#include "SessionStore.hpp"
+#include "PanelSessions.hpp"
 
 #include <Restart.hpp>
 #include <bazarish/WebAssets.hpp>
@@ -65,7 +65,7 @@ private:
     bazarish::tls::Credential credential_;
     HttpApiOptions options_;
     AdminAuth auth_;
-    SessionStore sessions_;
+    PanelSessions sessions_;
     WebAssets assets_;
     std::unique_ptr<bazarish::http::Server> http_;
     bazarish::StopGate stopGate_;

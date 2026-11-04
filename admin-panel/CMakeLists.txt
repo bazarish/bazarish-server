@@ -29,7 +29,7 @@ add_library(bazarish_admin_lib STATIC
     src/Config.cpp
     src/PanelSettings.cpp
     src/AdminAuth.cpp
-    src/SessionStore.cpp
+    src/PanelSessions.cpp
     src/ServiceClient.cpp
     src/FleetSync.cpp
     src/HttpApi.cpp

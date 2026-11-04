@@ -2,10 +2,9 @@
 #include "Settings.hpp"
 
 #include <bazarish/I2p.hpp>
+#include <bazarish/PrivateFile.hpp>
 
-#include <fstream>
 #include <optional>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 
@@ -20,17 +19,6 @@ constexpr const char* kNginxNotFound = "<html>\r\n"
                                        "<hr><center>nginx</center>\r\n"
                                        "</body>\r\n"
                                        "</html>\r\n";
-
-std::string readFile(const std::filesystem::path& path)
-{
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
-        throw std::runtime_error("cannot read " + path.string());
-    }
-    std::ostringstream text;
-    text << file.rdbuf();
-    return text.str();
-}
 
 std::size_t poolDepth(const ConfigView& config, const std::string& path, const std::size_t fallback)
 {
@@ -162,7 +150,7 @@ Settings Settings::from(const ConfigView& config)
 
     const std::string notFoundFile = config.text("notFound");
     settings.notFoundBody
-        = notFoundFile.empty() ? std::string(kNginxNotFound) : readFile(notFoundFile);
+        = notFoundFile.empty() ? std::string(kNginxNotFound) : readFileText(notFoundFile);
     const std::string serverName = config.text("serverName");
     if (!serverName.empty()) {
         settings.serverName = serverName;

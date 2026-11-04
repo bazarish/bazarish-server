@@ -1,5 +1,5 @@
 // Bazarish project (c) 2026
-#include "SessionStore.hpp"
+#include "PanelSessions.hpp"
 
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Crypto.hpp>
@@ -10,12 +10,12 @@ namespace {
 constexpr std::size_t kSessionTokenBytes = 24;
 }  // namespace
 
-SessionStore::SessionStore(const std::int64_t ttlSeconds)
+PanelSessions::PanelSessions(const std::int64_t ttlSeconds)
     : ttlSeconds_(ttlSeconds)
 {
 }
 
-void SessionStore::pruneLocked(const std::int64_t now)
+void PanelSessions::pruneLocked(const std::int64_t now)
 {
     for (auto it = tokens_.begin(); it != tokens_.end();) {
         if (it->second <= now) {
@@ -26,7 +26,7 @@ void SessionStore::pruneLocked(const std::int64_t now)
     }
 }
 
-std::string SessionStore::create(const std::int64_t now)
+std::string PanelSessions::create(const std::int64_t now)
 {
     const std::string token = toBase64Url(randomBytes(kSessionTokenBytes));
     const std::lock_guard<std::mutex> lock(mutex_);
@@ -35,7 +35,7 @@ std::string SessionStore::create(const std::int64_t now)
     return token;
 }
 
-bool SessionStore::valid(const std::string& token, const std::int64_t now)
+bool PanelSessions::valid(const std::string& token, const std::int64_t now)
 {
     if (token.empty()) {
         return false;
@@ -45,7 +45,7 @@ bool SessionStore::valid(const std::string& token, const std::int64_t now)
     return it != tokens_.end() && it->second > now;
 }
 
-void SessionStore::destroy(const std::string& token)
+void PanelSessions::destroy(const std::string& token)
 {
     const std::lock_guard<std::mutex> lock(mutex_);
     tokens_.erase(token);

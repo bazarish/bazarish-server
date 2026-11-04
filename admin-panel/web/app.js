@@ -13,7 +13,7 @@
     var kMaxPort = 65535;
     var kConsumerNameMax = 96;
     var kConsumerRoleMax = 48;
-    var kDefaultHoldMessage = "Service for this account has been stopped.";
+    var kDefaultHoldMessage = "Service for this account has been stopped";
 
     var content = document.getElementById("content");
     var fleet = window.localStorage.getItem("bazarish.fleet") || "";
@@ -337,10 +337,10 @@
         box.appendChild(facts);
 
         if (user.banned) {
-            controls(section(box, "Ban"), "The key may register again.")
+            controls(section(box, "Ban"), "The key may register again")
                 .appendChild(actionButton("Lift the ban", "btn-quiet", function (done) {
                     api("POST", withFleet("/api/unban"), { user: user.user }).then(function () {
-                        onChanged("Ban lifted.");
+                        onChanged("Ban lifted");
                     }).catch(function (error) {
                         done();
                         onError(error);
@@ -364,14 +364,14 @@
             if (!Number.isFinite(megabytes) || megabytes < kMinQuotaMiB
                 || megabytes > kMaxQuotaMiB) {
                 done();
-                onError(new Error("A quota is a whole number of MiB."));
+                onError(new Error("A quota is a whole number of MiB"));
                 return;
             }
             api("PUT", withFleet("/api/quota"), {
                 user: user.user,
                 quotaBytes: Math.round(megabytes) * kBytesPerMiB
             }).then(function () {
-                onChanged("Quota set to " + Math.round(megabytes) + " MiB.");
+                onChanged("Quota set to " + Math.round(megabytes) + " MiB");
             }).catch(function (error) {
                 done();
                 onError(error);
@@ -382,11 +382,11 @@
         if (user.approval === "pending") {
             controls(section(box, onHold ? "Back into service" : "Approval"),
                 onHold ? "The client republishes the address within a minute."
-                    : "The account is served from now on.")
+                    : "The account is served from now on")
                 .appendChild(actionButton(onHold ? "Return to service" : "Approve", "",
                     function (done) {
                         api("POST", withFleet("/api/approve"), { user: user.user }).then(function () {
-                            onChanged(onHold ? "Back in service." : "Approved.");
+                            onChanged(onHold ? "Back in service" : "Approved");
                         }).catch(function (error) {
                             done();
                             onError(error);
@@ -409,14 +409,14 @@
                 function (done) {
                     if (!holdNote.value.trim()) {
                         done();
-                        onError(new Error("Say what you are stopping the account for."));
+                        onError(new Error("Say what you are stopping the account for"));
                         return;
                     }
                     api("POST", withFleet("/api/undelegate"), {
                         user: user.user,
                         message: holdNote.value.trim()
                     }).then(function () {
-                        onChanged(onHold ? "Message updated." : "Undelegated. The account is on hold.");
+                        onChanged(onHold ? "Message updated" : "Undelegated. The account is on hold.");
                     }).catch(function (error) {
                         done();
                         onError(error);
@@ -438,7 +438,7 @@
                     return;
                 }
                 api("POST", withFleet("/api/delete"), { user: user.user }).then(function () {
-                    onGone("Account deleted.");
+                    onGone("Account deleted");
                 }).catch(function (error) {
                     done();
                     onError(error);
@@ -460,7 +460,7 @@
                 user: user.user,
                 reason: banReason.value.trim()
             }).then(function () {
-                onGone("Key banned.");
+                onGone("Key banned");
             }).catch(function (error) {
                 done();
                 onError(error);
@@ -601,7 +601,7 @@
                     : offset + " of " + accountsCounted(total);
                 more.textContent = exhausted ? "" : "Scroll for more";
                 if (!rows.children.length) {
-                    rows.appendChild(element("p", "muted", "Nothing here."));
+                    rows.appendChild(element("p", "muted", "Nothing here"));
                 }
                 if (!exhausted && more.getBoundingClientRect().top < window.innerHeight) {
                     loadPage();
@@ -822,7 +822,7 @@
     function portRead(input, what) {
         var port = Number(input.value);
         if (!Number.isInteger(port) || port < kMinPort || port > kMaxPort) {
-            throw new Error(what + " needs a port between " + kMinPort + " and " + kMaxPort + ".");
+            throw new Error(what + " needs a port between " + kMinPort + " and " + kMaxPort);
         }
         return port;
     }
@@ -920,13 +920,13 @@
         says.hidden = !data.requireApproval;
         var portalMessage = textareaBlock(says, "Before registering", data.portalMessage,
             "What this server is, and what registering here means",
-            "Shown by a client that reaches this server without an account here.");
+            "Shown by a client that reaches this server without an account here");
         var waiting = textareaBlock(says, "While waiting", data.registrationMessage,
             "How to reach you",
-            "Shown to an account that is registered and not served yet.");
+            "Shown to an account that is registered and not served yet");
 
         var footer = saveFooter(form,
-            "Applies now and is written to the node's config, so a restart keeps it.",
+            "Applies now and is written to the node's config, so a restart keeps it",
             function () {
                 return {
                     method: "PUT", path: withFleet("/api/settings"),
@@ -963,7 +963,7 @@
             "The socket the portal binds. It serves the reseed too.", true);
 
         var footer = saveFooter(form,
-            "The words apply to the next challenge; the listener needs a restart.",
+            "The words apply to the next challenge; the listener needs a restart",
             function () {
                 var signer = {
                     name: name.value.trim(), place: linesOf(places), role: role.value.trim()
@@ -972,7 +972,7 @@
                     return signer[key].length === 0;
                 });
                 if (missing.length > 0) {
-                    throw new Error("A sign-in challenge needs its " + missing[0] + ".");
+                    throw new Error("A sign-in challenge needs its " + missing[0]);
                 }
                 return {
                     method: "PUT", path: withFleet("/api/settings"),
@@ -1012,14 +1012,14 @@
         var listen = endpointRow(wiring, "API", data.listen,
             "Facades and the messaging server reach the node here. Not a public address.", true);
         var messaging = endpointRow(wiring, "Messaging server", data.messaging,
-            "The server-core this node is bound to: where it pushes quotas and reads mailboxes.",
+            "The server-core this node is bound to: where it pushes quotas and reads mailboxes",
             true);
-        var level = chipRow(wiring, "Log level", "Applies at once.",
+        var level = chipRow(wiring, "Log level", "Applies at once",
             kLogLevels.map(function (name) { return { value: name, label: name }; }),
             data.logLevel || "info");
 
         var footer = saveFooter(form,
-            "Addresses and the log level apply now; the sockets need a restart.",
+            "Addresses and the log level apply now; the sockets need a restart",
             function () {
                 var reseedList = linesOf(reseeds);
                 var wrongReseed = reseedList.filter(isI2pUrl);
@@ -1065,12 +1065,12 @@
             hint: "An account that delegates no address for this long is deleted."
         });
 
-        saveFooter(form, "Applies now and is written to the node's config, so a restart keeps it.",
+        saveFooter(form, "Applies now and is written to the node's config, so a restart keeps it",
             function () {
                 var megabytes = Number(quota.value);
                 if (!Number.isFinite(megabytes) || megabytes < kMinQuotaMiB
                     || megabytes > kMaxQuotaMiB) {
-                    throw new Error("Storage is a whole number of MiB.");
+                    throw new Error("Storage is a whole number of MiB");
                 }
                 return {
                     method: "PUT", path: withFleet("/api/settings"),
@@ -1084,7 +1084,7 @@
 
     function renderServerTab(form, data) {
         var talk = section(form, "What the server says");
-        var level = chipRow(talk, "Log level", "Applies at once.",
+        var level = chipRow(talk, "Log level", "Applies at once",
             kLogLevels.map(function (name) { return { value: name, label: name }; }),
             data.logLevel || "info");
         var i2pLog = chipRow(talk, "i2pd log",
@@ -1094,7 +1094,7 @@
 
         var i2p = section(form, "How this server sits on I2P");
         var privacy = chipRow(i2p, "Privacy",
-            "Hops each tunnel takes: minimal is one, max is three.",
+            "Hops each tunnel takes: minimal is one, max is three",
             kPrivacyLevels.map(function (name) { return { value: name, label: name }; }),
             data.i2pPrivacy || "max", { restart: true });
         var tunnels = fieldRow(i2p, "Tunnels per address", data.i2pTunnelQuantity, {
@@ -1119,7 +1119,7 @@
         readOnlyRow(wiring, "Version", data.version);
 
         var footer = saveFooter(form,
-            "The log levels apply now; everything else is written for the next start.",
+            "The log levels apply now; everything else is written for the next start",
             function () {
                 var body = {
                     logLevel: level(),
@@ -1189,20 +1189,20 @@
         form.appendChild(list);
         form.appendChild(element("p", "hint", "Each facade reports its own address. The panel"
             + " writes them into the descriptor, in the order of Settings, Panel, whenever that"
-            + " list is saved or a facade gets a new address."));
+            + " list is saved or a facade gets a new address"));
     }
 
     function renderFacadePage(form, name, data) {
         itemHead(form, "facades", "all facades", name);
         var address = section(form, "Its address");
         var shown = readOnlyRow(address, "Address", data.address,
-            "Its I2P destination, minted at its first start.");
+            "Its I2P destination, minted at its first start");
         var said = element("div");
         address.appendChild(said);
         controls(address, "Replaces the key and restarts the facade. The"
             + " descriptor and any gateway route to the old address follow by themselves; a"
             + " client that knows only the old address loses the server until it is given the"
-            + " new link.").appendChild(actionButton("New address", "btn-danger", function (done) {
+            + " new link").appendChild(actionButton("New address", "btn-danger", function (done) {
             if (!window.confirm("Give " + name + " a new address? Clients that know only the"
                 + " old one lose the server until they are given the new link.")) {
                 done();
@@ -1214,7 +1214,7 @@
                     said.innerHTML = "";
                     said.appendChild(notice(answer.descriptorError
                         ? "The descriptor was not changed: " + answer.descriptorError
-                        : "The descriptor carries the new address.",
+                        : "The descriptor carries the new address",
                         answer.descriptorError ? "is-error" : ""));
                     answer.gateways.forEach(function (gateway) {
                         if (gateway.error) {
@@ -1222,7 +1222,7 @@
                                 + " reached: " + gateway.error, "is-error"));
                         } else if (gateway.changed) {
                             said.appendChild(notice("Gateway " + gateway.name + " routes the new"
-                                + " address directly."));
+                                + " address directly"));
                         }
                     });
                     done();
@@ -1234,7 +1234,7 @@
         }));
 
         var talk = section(form, "What the facade says");
-        var level = chipRow(talk, "Log level", "Applies at once.",
+        var level = chipRow(talk, "Log level", "Applies at once",
             kLogLevels.map(function (level) { return { value: level, label: level }; }),
             data.logLevel || "info");
 
@@ -1250,13 +1250,13 @@
 
         var backends = section(form, "What it forwards to");
         var messaging = endpointRow(backends, "Messaging server", data.messaging,
-            "The messaging tunnel and the server card go here.", true);
+            "The messaging tunnel and the server card go here", true);
         var serviceNode = endpointRow(backends, "Service node", data.serviceNode,
-            "The account tunnel and the node card go here.", true);
+            "The account tunnel and the node card go here", true);
 
         var i2p = section(form, "Its I2P address");
         var privacy = chipRow(i2p, "Privacy", "Hops each tunnel takes: minimal is one, max is"
-            + " three.",
+            + " three",
             kPrivacyLevels.map(function (level) { return { value: level, label: level }; }),
             data.i2pPrivacy || "max", { restart: true });
         var tunnels = fieldRow(i2p, "Tunnels", data.i2pTunnelQuantity, {
@@ -1266,11 +1266,11 @@
 
         var facts = section(form, "What this facade is");
         readOnlyRow(facts, "State", data.stateDirectory,
-            "Where its keys live, so its address survives a restart.");
+            "Where its keys live, so its address survives a restart");
         readOnlyRow(facts, "Version", data.version);
 
         var footer = saveFooter(form,
-            "The log level applies now; everything else is written for the next start.",
+            "The log level applies now; everything else is written for the next start",
             function () {
                 var request = {
                     method: "PUT",
@@ -1370,7 +1370,7 @@
                 route.dest + " -> " + route.host + ":" + route.port);
         });
         routes.appendChild(element("p", "hint", "Written by the panel from this deployment's"
-            + " server and facades."));
+            + " server and facades"));
 
         var facts = section(form, "What this gateway is");
         readOnlyRow(facts, "State", data.stateDirectory);
@@ -1379,12 +1379,12 @@
         function count(input, what, low, high) {
             var value = Number(input.value);
             if (!Number.isInteger(value) || value < low || value > high) {
-                throw new Error(what + " is a whole number from " + low + " to " + high + ".");
+                throw new Error(what + " is a whole number from " + low + " to " + high);
             }
             return value;
         }
 
-        var footer = saveFooter(form, "Written for the next start: the pools are built then.",
+        var footer = saveFooter(form, "Written for the next start: the pools are built then",
             function () {
                 return {
                     method: "PUT",
@@ -1502,23 +1502,23 @@
 
         var where = section(form, "Where the panel listens");
         var listen = endpointRow(where, "Listens on", data.listen,
-            "The socket this page is served on.", true);
+            "The socket this page is served on", true);
 
         var facts = section(form, "What this panel is");
         readOnlyRow(facts, "Fingerprint", data.fingerprint,
-            "The key the panel signs its calls with.");
+            "The key the panel signs its calls with");
         readOnlyRow(facts, "Config file", data.configPath,
-            "Where everything on this page is written back.");
+            "Where everything on this page is written back");
         readOnlyRow(facts, "State", data.stateDir);
         readOnlyRow(facts, "Web files", data.assetsDir);
         readOnlyRow(facts, "Version", data.version);
 
         var footer = saveFooter(form,
-            "Applies now, except the listener, which the panel picks up when it restarts.",
+            "Applies now, except the listener, which the panel picks up when it restarts",
             function () {
                 var list = linesOf(admins);
                 if (list.length === 0) {
-                    throw new Error("A panel needs at least one administrator.");
+                    throw new Error("A panel needs at least one administrator");
                 }
                 var kept = rows.filter(function (entry) {
                     return !entry.dropped;
@@ -1528,7 +1528,7 @@
                         || !entry.pin.value.trim();
                 });
                 if (incomplete.length > 0) {
-                    throw new Error("A service needs a name, an https URL and a key.");
+                    throw new Error("A service needs a name, an https URL and a key");
                 }
                 var names = {};
                 var singles = {};
@@ -1536,14 +1536,14 @@
                     var named = entry.fleet + "\n" + entry.name.value.trim();
                     if (names[named]) {
                         throw new Error("Two services in " + entry.fleet + " are named "
-                            + entry.name.value.trim() + ".");
+                            + entry.name.value.trim());
                     }
                     names[named] = true;
                     if (entry.kind.value === "server-core" || entry.kind.value === "service-node") {
                         var single = entry.fleet + "\n" + entry.kind.value;
                         if (singles[single]) {
                             throw new Error(entry.fleet + " already has a " + entry.kind.value
-                                + ": a second server is a deployment of its own.");
+                                + ": a second server is a deployment of its own");
                         }
                         singles[single] = true;
                     }

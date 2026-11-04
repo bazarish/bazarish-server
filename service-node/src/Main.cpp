@@ -44,9 +44,9 @@ constexpr int kDefaultOpsPort = 8427;
 constexpr std::size_t kPortalSecretBytes = 16;
 constexpr std::chrono::hours kIdleSweepInterval{1};
 constexpr std::chrono::seconds kBackendWaitBudget{60};
-constexpr const char* kDefaultPortalMessage = "Registration here is confirmed by hand.";
+constexpr const char* kDefaultPortalMessage = "Registration here is confirmed by hand";
 constexpr const char* kDefaultRegistrationMessage
-    = "Send a few sentences about yourself and your key fingerprint to me@example.com.";
+    = "Send a few sentences about yourself and your key fingerprint to me@example.com";
 
 void printUsage()
 {

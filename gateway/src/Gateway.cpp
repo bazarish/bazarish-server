@@ -190,17 +190,7 @@ bool Gateway::admitted(const http::Request& request) const
 
 std::optional<http::Response> Gateway::operatorRefusal(const http::Request& request) const
 {
-    try {
-        auth::authorizeRequest(http::collectAuthHeaders(request), nowSeconds(), request.method,
-            request.path, Bytes(request.body.begin(), request.body.end()), settings_.operators,
-            operatorReplays_);
-    } catch (const std::exception& error) {
-        bazarish::log::debug("gateway: {} {} refused: {}", request.method, request.path,
-            error.what());
-        return http::Response{403, "application/json", {},
-            R"({"error":{"message":"operator authentication required"}})"};
-    }
-    return std::nullopt;
+    return http::operatorRefusal(request, nowSeconds(), settings_.operators, operatorReplays_);
 }
 
 http::Response Gateway::health(const http::Request& request) const

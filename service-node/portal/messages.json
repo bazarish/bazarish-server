@@ -38,11 +38,11 @@
       "ar": "خادم {0}"
     },
     "page.colophon": {
-      "en": "A server of the Bazarish messenger.",
-      "ru": "Сервер мессенджера Bazarish.",
-      "es": "Un servidor del mensajero Bazarish.",
-      "zh": "Bazarish 通讯工具的一台服务器。",
-      "ar": "خادم من خوادم مرسال Bazarish."
+      "en": "A server of the Bazarish messenger",
+      "ru": "Сервер мессенджера Bazarish",
+      "es": "Un servidor del mensajero Bazarish",
+      "zh": "Bazarish 通讯工具的一台服务器",
+      "ar": "خادم من خوادم مرسال Bazarish"
     },
     "copy.do": {
       "en": "Copy",
@@ -73,11 +73,11 @@
       "ar": "الدخول بمفتاحك"
     },
     "signin.note": {
-      "en": "Sign this challenge with your account's key in Bazarish App and paste the signature back.",
-      "ru": "Подпишите эту строку запроса ключом своего аккаунта в приложении Bazarish и вставьте подпись сюда.",
-      "es": "Firma este desafío con la clave de tu cuenta en la app de Bazarish y pega aquí la firma.",
-      "zh": "请在 Bazarish 应用中用你的账户密钥签署下面的字符串，再把签名粘贴回来。",
-      "ar": "وقّع هذا النص بمفتاح حسابك في تطبيق Bazarish، ثم ألصق التوقيع هنا."
+      "en": "Sign this challenge with your account's key in Bazarish App and paste the signature back",
+      "ru": "Подпишите эту строку запроса ключом своего аккаунта в приложении Bazarish и вставьте подпись сюда",
+      "es": "Firma este desafío con la clave de tu cuenta en la app de Bazarish y pega aquí la firma",
+      "zh": "请在 Bazarish 应用中用你的账户密钥签署下面的字符串，再把签名粘贴回来",
+      "ar": "وقّع هذا النص بمفتاح حسابك في تطبيق Bazarish، ثم ألصق التوقيع هنا"
     },
     "signin.challenge": {
       "en": "Challenge",
@@ -122,11 +122,11 @@
       "ar": "مرفوض"
     },
     "banned.note": {
-      "en": "This key cannot register here.",
-      "ru": "С этим ключом здесь зарегистрироваться нельзя.",
-      "es": "Esta clave no puede registrarse aquí.",
-      "zh": "这个密钥无法在此注册。",
-      "ar": "لا يمكن لهذا المفتاح التسجيل هنا."
+      "en": "This key cannot register here",
+      "ru": "С этим ключом здесь зарегистрироваться нельзя",
+      "es": "Esta clave no puede registrarse aquí",
+      "zh": "这个密钥无法在此注册",
+      "ar": "لا يمكن لهذا المفتاح التسجيل هنا"
     },
     "registered.title": {
       "en": "registered",
@@ -153,8 +153,8 @@
       "en": "The account exists. It is served once the operator approves it.",
       "ru": "Аккаунт создан. Обслуживаться он начнёт после подтверждения оператором.",
       "es": "La cuenta existe. Se servirá cuando el operador la apruebe.",
-      "zh": "账号已经存在，通过运营者审核后即可使用。",
-      "ar": "الحساب موجود، وسيُخدَم بعد موافقة المشغّل."
+      "zh": "账号已经存在，通过运营者审核后即可使用",
+      "ar": "الحساب موجود، وسيُخدَم بعد موافقة المشغّل"
     },
     "facts.mailbox": {
       "en": "Mailbox",
@@ -178,11 +178,11 @@
       "ar": "واصف الخادم"
     },
     "descriptor.paste": {
-      "en": "Paste it into Bazarish App to connect this account here.",
-      "ru": "Вставьте его в приложение Bazarish, чтобы подключить этот аккаунт к серверу.",
-      "es": "Pégalo en la app de Bazarish para conectar esta cuenta aquí.",
-      "zh": "把它粘贴到 Bazarish 应用里，就能把这个账号连接到本服务器。",
-      "ar": "ألصقه في تطبيق Bazarish لربط هذا الحساب بهذا الخادم."
+      "en": "Paste it into Bazarish App to connect this account here",
+      "ru": "Вставьте его в приложение Bazarish, чтобы подключить этот аккаунт к серверу",
+      "es": "Pégalo en la app de Bazarish para conectar esta cuenta aquí",
+      "zh": "把它粘贴到 Bazarish 应用里，就能把这个账号连接到本服务器",
+      "ar": "ألصقه في تطبيق Bazarish لربط هذا الحساب بهذا الخادم"
     },
     "qr.show": {
       "en": "Show as a QR code",

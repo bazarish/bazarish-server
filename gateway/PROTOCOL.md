@@ -364,7 +364,9 @@ arrives after its subject is gone is recognisably stale rather than ambiguously
 fresh. When the counter would wrap, the side that exhausted it ends the session.
 
 `ref` is therefore globally unique, and every response echoes the `ref` of what
-it answers.
+it answers. A response is `ok`, `error`, `ready` or `stream-opened`. Any other
+frame under the same `ref` is news about its subject, not the answer. An
+endpoint's identifier is the `ref` of its `endpoint-create`.
 
 ### Frame types
 
@@ -569,7 +571,10 @@ This gateway keeps four of the first and two of each of the others.
 
 The gateway pushes `endpoint-status` whenever readiness, the tunnel counts, the
 held LeaseSets or `localRoute` change, and the client answers `ready()` and `waitReady()`
-out of what it was last told. `retagEndpoint` is local to the client and sends nothing.
+out of what it was last told. The first `endpoint-status` can arrive before the `ok` to
+the create. The status goes on the control socket, and the answer on the socket
+the request came in on. The client keeps that status and applies it once the
+destination is made. `retagEndpoint` is local to the client and sends nothing.
 
 `endpoint-stop` gives up on everything the destination is waiting for and
 refuses to start anything new; the gateway resets every stream on it. A stopped

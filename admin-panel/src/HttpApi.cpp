@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #include "HttpApi.hpp"
 
+#include <QrSvg.hpp>
+
 #include "FleetSync.hpp"
 #include "ServiceClient.hpp"
 
@@ -448,6 +450,11 @@ void HttpApi::registerRoutes()
             query += "&offset=" + urlEncoded(offset);
         }
         proxyToNode(request.query("fleet"), response, "GET", query, std::string());
+    }));
+
+    http_->post("/api/qr", api([](const http::Request& request, http::Response& response) {
+        const nlohmann::json body = nlohmann::json::parse(request.body);
+        sendJson(response, nlohmann::json{{"svg", qr::svg(body.at("text").get<std::string>())}}.dump());
     }));
 
     http_->post("/api/approve", api([this](const http::Request& request, http::Response& response) {

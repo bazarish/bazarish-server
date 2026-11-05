@@ -651,6 +651,38 @@
     var settingsTab = kSettingsTabs[0].id;
     var settingsItem = "";
 
+    function showQr(text) {
+        api("POST", "/api/qr", { text: text }).then(function (answer) {
+            var sheet = element("dialog", "qr-sheet");
+            var picture = element("img", "qr-picture");
+            picture.alt = "QR code";
+            picture.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(answer.svg);
+            var close = element("button", "btn btn-quiet", "Close");
+            close.type = "button";
+            close.addEventListener("click", function () { sheet.close(); });
+            sheet.addEventListener("close", function () { sheet.remove(); });
+            sheet.addEventListener("click", function (event) {
+                if (event.target === sheet) {
+                    sheet.close();
+                }
+            });
+            sheet.appendChild(picture);
+            sheet.appendChild(close);
+            document.body.appendChild(sheet);
+            sheet.showModal();
+        }).catch(function (error) {
+            window.alert(error.message);
+        });
+    }
+
+    function shareButtons(row, text) {
+        row.appendChild(window.bazarishCopy.button("Copy", function () { return text; }));
+        var qr = element("button", "btn btn-quiet btn-copy", "QR");
+        qr.type = "button";
+        qr.addEventListener("click", function () { showQr(text); });
+        row.appendChild(qr);
+    }
+
     function restartBadge() {
         var badge = element("span", "badge-restart", "restart");
         badge.title = "Takes effect at the next start of the service";
@@ -1083,9 +1115,12 @@
             "https://host:port/<base path>",
             "One per line. A client with no I2P router fetches the network database here.",
             true);
-        readOnlyRow(reach, "Descriptor", data.descriptor,
+        var descriptorRow = readOnlyRow(reach, "Descriptor", data.descriptor,
             "Built from the facades and the reseeds. This is what a user pastes into their"
             + " client.");
+        if (data.descriptor) {
+            shareButtons(descriptorRow, data.descriptor);
+        }
 
         var wiring = section(form, "This node's own wiring");
         var listen = endpointRow(wiring, "API", data.listen,
@@ -1459,9 +1494,7 @@
         var linkRow = readOnlyRow(clients, "Link", data.link,
             "What a client is given. It carries the secret path and the token");
         if (data.link) {
-            linkRow.appendChild(window.bazarishCopy.button("Copy", function () {
-                return data.link;
-            }));
+            shareButtons(linkRow, data.link);
         }
 
         var facts = section(form, "What this gateway is");

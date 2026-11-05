@@ -35,13 +35,9 @@ add_library(bazarish_service_lib STATIC
     src/OperatorPush.cpp
 )
 target_include_directories(bazarish_service_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(bazarish_service_lib PUBLIC Bazarish::Common Threads::Threads bazarish_server_shared)
+target_link_libraries(bazarish_service_lib PUBLIC Bazarish::Common Threads::Threads bazarish_server_shared
+    bazarish_server_qr)
 target_compile_options(bazarish_service_lib PRIVATE -Wall -Wextra -Werror)
-# The portal draws the server descriptor as a QR code for the app's camera.
-find_library(QRENCODE_LIBRARY NAMES qrencode REQUIRED)
-find_path(QRENCODE_INCLUDE_DIR NAMES qrencode.h REQUIRED)
-target_include_directories(bazarish_service_lib PRIVATE ${QRENCODE_INCLUDE_DIR})
-target_link_libraries(bazarish_service_lib PRIVATE ${QRENCODE_LIBRARY})
 
 add_executable(bazarish-service-node src/Main.cpp)
 bazarish_stamp_version(bazarish-service-node)

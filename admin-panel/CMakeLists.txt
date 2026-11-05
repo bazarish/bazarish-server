@@ -35,7 +35,8 @@ add_library(bazarish_admin_lib STATIC
     src/HttpApi.cpp
 )
 target_include_directories(bazarish_admin_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(bazarish_admin_lib PUBLIC Bazarish::Common Threads::Threads bazarish_server_shared)
+target_link_libraries(bazarish_admin_lib PUBLIC Bazarish::Common Threads::Threads bazarish_server_shared
+    bazarish_server_qr)
 target_compile_options(bazarish_admin_lib PRIVATE -Wall -Wextra -Werror)
 
 add_executable(bazarish-admin-panel src/Main.cpp)

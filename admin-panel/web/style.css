@@ -1138,3 +1138,23 @@ body.centred {
         outline-offset: 2px;
     }
 }
+
+.qr-sheet {
+    padding: 1.1rem;
+    background: var(--bz-surface);
+    border: 1px solid var(--bz-line-2);
+    border-radius: var(--bz-radius);
+    color: var(--bz-ink);
+    text-align: center;
+}
+
+.qr-sheet::backdrop {
+    background: rgb(0 0 0 / 0.6);
+}
+
+.qr-picture {
+    display: block;
+    width: min(22rem, 80vw);
+    height: auto;
+    margin-bottom: 0.75rem;
+}

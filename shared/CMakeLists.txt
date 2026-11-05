@@ -13,6 +13,15 @@ target_include_directories(bazarish_server_shared PUBLIC ${CMAKE_CURRENT_SOURCE_
 target_link_libraries(bazarish_server_shared PUBLIC bazarish_common)
 target_compile_options(bazarish_server_shared PRIVATE -Wall -Wextra -Werror)
 
+# Its own library: only the faces that draw a QR code take libqrencode.
+add_library(bazarish_server_qr STATIC QrSvg.cpp)
+target_include_directories(bazarish_server_qr PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+find_library(QRENCODE_LIBRARY NAMES qrencode REQUIRED)
+find_path(QRENCODE_INCLUDE_DIR NAMES qrencode.h REQUIRED)
+target_include_directories(bazarish_server_qr PRIVATE ${QRENCODE_INCLUDE_DIR})
+target_link_libraries(bazarish_server_qr PRIVATE ${QRENCODE_LIBRARY})
+target_compile_options(bazarish_server_qr PRIVATE -Wall -Wextra -Werror)
+
 add_executable(TestRestart TestRestart.cpp)
 target_link_libraries(TestRestart PRIVATE bazarish_server_shared)
 target_compile_options(TestRestart PRIVATE -Wall -Wextra -Werror)

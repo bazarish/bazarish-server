@@ -617,9 +617,24 @@ body.centred {
 }
 
 .sidebar-foot {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.6rem;
     margin: 0;
     padding-top: 1rem;
     border-top: 1px solid var(--bz-line);
+}
+
+.sidebar-foot form {
+    margin: 0;
+}
+
+.sidebar-foot .lang-list {
+    inset-inline-start: 0;
+    inset-inline-end: auto;
+    bottom: 100%;
+    margin: 0 0 0.3rem;
 }
 
 .content {
@@ -1156,5 +1171,101 @@ body.centred {
     display: block;
     width: min(22rem, 80vw);
     height: auto;
+    margin-bottom: 0.75rem;
+}
+
+.lang {
+    position: relative;
+    z-index: 3;
+    font-size: 0.75rem;
+}
+
+.lang-now {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-height: 2rem;
+    padding: 0 0.7rem;
+    background: var(--bz-surface);
+    border: 1px solid var(--bz-line-2);
+    border-radius: var(--bz-radius-sm);
+    color: var(--bz-ink-dim);
+    cursor: pointer;
+    list-style: none;
+}
+
+.lang-now::-webkit-details-marker {
+    display: none;
+}
+
+.lang-now::after {
+    content: "";
+    width: 0;
+    height: 0;
+    border-inline-start: 0.3rem solid transparent;
+    border-inline-end: 0.3rem solid transparent;
+    border-top: 0.34rem solid currentColor;
+}
+
+.lang[open] .lang-now::after {
+    border-top: 0;
+    border-bottom: 0.34rem solid currentColor;
+}
+
+.lang-now:hover {
+    border-color: var(--bz-ink-faint);
+    color: var(--bz-ink);
+}
+
+.lang-now:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--bz-bg), 0 0 0 4px var(--bz-key);
+}
+
+.lang-list {
+    position: absolute;
+    inset-inline-end: 0;
+    z-index: 2;
+    min-width: 100%;
+    margin: 0.3rem 0 0;
+    padding: 0.3rem;
+    list-style: none;
+    background: var(--bz-surface-2);
+    border: 1px solid var(--bz-line-2);
+    border-radius: var(--bz-radius-sm);
+}
+
+.lang-one {
+    display: block;
+    width: 100%;
+    background: transparent;
+    border: 0;
+    font: inherit;
+    text-align: start;
+    cursor: pointer;
+    padding: 0.4rem 0.7rem;
+    border-radius: var(--bz-radius-sm);
+    color: var(--bz-ink-dim);
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.lang-one:hover {
+    background: var(--bz-surface);
+    color: var(--bz-ink);
+}
+
+.lang-one.is-on {
+    color: var(--bz-key);
+}
+
+.lang-one:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--bz-surface-2), 0 0 0 4px var(--bz-key);
+}
+
+.lang-slot {
+    display: flex;
+    justify-content: flex-end;
     margin-bottom: 0.75rem;
 }

@@ -3,6 +3,7 @@
     "use strict";
 
     document.addEventListener("DOMContentLoaded", function () {
+        document.getElementById("languageSlot").appendChild(languagePicker(function () {}));
         var blob = document.getElementById("blob");
         if (!blob) {
             return;

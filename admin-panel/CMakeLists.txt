@@ -65,3 +65,8 @@ target_compile_definitions(TestLoginPage
 bazarish_admin_add_test(TestPanelFleet)
 target_compile_definitions(TestPanelFleet
     PRIVATE BAZARISH_PANEL_WEB_DIR="${CMAKE_CURRENT_SOURCE_DIR}/web")
+
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME AdminWebTranslations
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/../tools/check-web-i18n.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/web)

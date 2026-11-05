@@ -27,9 +27,9 @@
         button.textContent = label;
         button.addEventListener("click", function () {
             copy(source()).then(function () {
-                button.textContent = "Copied";
+                button.textContent = t("Copied");
             }, function () {
-                button.textContent = "Select it and copy";
+                button.textContent = t("Select it and copy");
             }).then(function () {
                 window.setTimeout(function () {
                     button.textContent = label;
@@ -43,7 +43,7 @@
         var button = document.createElement("button");
         button.type = "button";
         button.className = "icon-copy";
-        button.title = title || "Copy";
+        button.title = title || t("Copy");
         button.setAttribute("aria-label", button.title);
         button.innerHTML = "<svg viewBox=\"0 0 16 16\" aria-hidden=\"true\">"
             + "<rect x=\"5.5\" y=\"5.5\" width=\"8\" height=\"9\" rx=\"1.5\"/>"
@@ -70,7 +70,7 @@
         var blocks = document.querySelectorAll("pre.copy");
         for (var i = 0; i < blocks.length; ++i) {
             (function (block) {
-                block.parentNode.insertBefore(copyButton("Copy", function () {
+                block.parentNode.insertBefore(copyButton(t("Copy"), function () {
                     return block.textContent;
                 }), block.nextSibling);
             })(blocks[i]);

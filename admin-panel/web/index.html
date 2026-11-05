@@ -15,16 +15,21 @@
     <p class="sidebar-note sidebar-tag">admin {{version}}</p>
     <div id="fleets" class="fleets"></div>
     <ul class="nav" id="nav">
-      <li><a href="#/monitoring" data-view="monitoring">Monitoring</a></li>
-      <li><a href="#/users" data-view="users">Users</a></li>
-      <li><a href="#/settings" data-view="settings">Settings</a></li>
+      <li><a href="#/monitoring" data-view="monitoring" data-t="Monitoring">Monitoring</a></li>
+      <li><a href="#/users" data-view="users" data-t="Users">Users</a></li>
+      <li><a href="#/settings" data-view="settings" data-t="Settings">Settings</a></li>
     </ul>
-    <form class="sidebar-foot" method="post" action="/logout">
-      <button class="btn btn-quiet" type="submit">Sign out</button>
-    </form>
+    <div class="sidebar-foot">
+      <div id="languageSlot"></div>
+      <form method="post" action="/logout">
+        <button class="btn btn-quiet" type="submit" data-t="Sign out">Sign out</button>
+      </form>
+    </div>
   </nav>
   <main class="content" id="content"></main>
 </div>
+<script src="messages.js" defer></script>
+<script src="i18n.js" defer></script>
 <script src="copy.js" defer></script>
 <script src="app.js" defer></script>
 </body>

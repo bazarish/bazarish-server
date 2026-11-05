@@ -617,24 +617,9 @@ body.centred {
 }
 
 .sidebar-foot {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.6rem;
     margin: 0;
     padding-top: 1rem;
     border-top: 1px solid var(--bz-line);
-}
-
-.sidebar-foot form {
-    margin: 0;
-}
-
-.sidebar-foot .lang-list {
-    inset-inline-start: 0;
-    inset-inline-end: auto;
-    bottom: 100%;
-    margin: 0 0 0.3rem;
 }
 
 .content {
@@ -1264,8 +1249,24 @@ body.centred {
     box-shadow: 0 0 0 2px var(--bz-surface-2), 0 0 0 4px var(--bz-key);
 }
 
-.lang-slot {
+.corner {
+    position: absolute;
+    top: 1.25rem;
+    inset-inline-end: 1.5rem;
+    z-index: 3;
+}
+
+.sheet-head {
     display: flex;
-    justify-content: flex-end;
-    margin-bottom: 0.75rem;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+@media (max-width: 46rem) {
+    .corner {
+        top: 1.1rem;
+        inset-inline-end: 1.25rem;
+    }
 }

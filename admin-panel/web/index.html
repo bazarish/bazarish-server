@@ -19,13 +19,11 @@
       <li><a href="#/users" data-view="users" data-t="Users">Users</a></li>
       <li><a href="#/settings" data-view="settings" data-t="Settings">Settings</a></li>
     </ul>
-    <div class="sidebar-foot">
-      <div id="languageSlot"></div>
-      <form method="post" action="/logout">
-        <button class="btn btn-quiet" type="submit" data-t="Sign out">Sign out</button>
-      </form>
-    </div>
+    <form class="sidebar-foot" method="post" action="/logout">
+      <button class="btn btn-quiet" type="submit" data-t="Sign out">Sign out</button>
+    </form>
   </nav>
+  <div class="corner" id="languageSlot"></div>
   <main class="content" id="content"></main>
 </div>
 <script src="messages.js" defer></script>

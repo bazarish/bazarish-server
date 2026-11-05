@@ -296,7 +296,7 @@ void testWebFlow()
 
     const http::ClientResponse done = call(port, "GET", "/", {{"Cookie", "session=" + cookie}});
     CHECK(done.status == 200);
-    CHECK(done.body.find("registered") != std::string::npos);
+    CHECK(done.body.find("<h2 class=\"panel-title\">account</h2>") != std::string::npos);
     CHECK(done.body.find(htmlEscape(descriptor)) != std::string::npos);
     CHECK(done.body.find("href=\"#descriptor-qr\"") != std::string::npos);
     CHECK(done.body.find("id=\"descriptor-qr\"") != std::string::npos);

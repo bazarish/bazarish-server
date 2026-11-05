@@ -601,6 +601,10 @@ body {
     padding-bottom: 1.25rem;
 }
 
+.masthead + .view > .panel:first-child {
+    margin-top: 0.5rem;
+}
+
 .masthead-row {
     display: flex;
     flex-wrap: wrap;

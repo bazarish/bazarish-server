@@ -753,6 +753,80 @@
         return area;
     }
 
+    function sameUrl(one, other) {
+        return one.replace(/\/+$/, "") === other.replace(/\/+$/, "");
+    }
+
+    // The portal's links, each of which can also be one of the reseeds it serves.
+    function linkList(block, links, reseeds) {
+        block.appendChild(element("p", "field-label", "Links"));
+        var wrap = element("div", "link-list");
+        var list = element("div", "link-list");
+        wrap.appendChild(list);
+        controls(block, "Shown by a client to a person who has no account here. The portal"
+            + " serves the reseed at each of them.").appendChild(wrap);
+        var rows = [];
+        function addRow(address) {
+            var row = element("div", "link-row");
+            var url = element("input", "field");
+            url.type = "text";
+            url.placeholder = "https://host:port";
+            url.value = address;
+            var label = element("label", "link-reseed");
+            var reseed = element("input");
+            reseed.type = "checkbox";
+            reseed.checked = reseeds.some(function (held) { return sameUrl(held, address); });
+            label.appendChild(reseed);
+            label.appendChild(document.createTextNode(" Add to reseeds"));
+            var drop = element("button", "chip", "remove");
+            drop.type = "button";
+            var entry = { url: url, reseed: reseed, dropped: false };
+            function followScheme() {
+                var secure = /^https:\/\//.test(url.value.trim());
+                reseed.disabled = !secure;
+                if (!secure) {
+                    reseed.checked = false;
+                }
+            }
+            url.addEventListener("input", followScheme);
+            drop.addEventListener("click", function () {
+                entry.dropped = true;
+                row.remove();
+            });
+            followScheme();
+            row.appendChild(url);
+            row.appendChild(label);
+            row.appendChild(drop);
+            list.appendChild(row);
+            rows.push(entry);
+        }
+        links.forEach(addRow);
+        var add = element("button", "chip", "add link");
+        add.type = "button";
+        add.addEventListener("click", function () { addRow(""); });
+        wrap.appendChild(add);
+        function kept() {
+            return rows.filter(function (entry) {
+                return !entry.dropped && entry.url.value.trim().length > 0;
+            });
+        }
+        return {
+            addresses: function () {
+                return kept().map(function (entry) { return entry.url.value.trim(); });
+            },
+            reseeds: function () {
+                var mine = links.concat(kept().map(function (entry) {
+                    return entry.url.value.trim();
+                }));
+                var others = reseeds.filter(function (held) {
+                    return !mine.some(function (link) { return sameUrl(link, held); });
+                });
+                return kept().filter(function (entry) { return entry.reseed.checked; })
+                    .map(function (entry) { return entry.url.value.trim(); }).concat(others);
+            }
+        };
+    }
+
     function linesOf(area) {
         return area.value.split("\n").map(function (line) {
             return line.trim();
@@ -962,9 +1036,7 @@
         });
 
         var reach = section(form, "Where the portal answers");
-        var links = textareaBlock(reach, "Links", (data.portalLinks || []).join("\n"),
-            "https://host:port",
-            "Shown by a client to a person who has no account here. One per line.");
+        var links = linkList(reach, data.portalLinks || [], data.reseeds || []);
         var listen = endpointRow(reach, "Listens on", data.portalListen,
             "The socket the portal binds. It serves the reseed too.", true);
 
@@ -984,7 +1056,8 @@
                     method: "PUT", path: withFleet("/api/settings"),
                     body: {
                         loginConsumer: signer,
-                        portalLinks: linesOf(links),
+                        portalLinks: links.addresses(),
+                        reseeds: links.reseeds(),
                         portalListen: {
                             host: listen.host.value.trim(),
                             port: portRead(listen.port, "The portal")
@@ -1187,7 +1260,7 @@
         var list = element("ul", "facts");
         data.facades.forEach(function (facade) {
             var tags = facade.error ? [{ text: "down", kind: "is-pending" }]
-                : [facade.inDescriptor ? { text: "in the descriptor", kind: "is-approved" }
+                : [facade.inDescriptor ? { text: "up", kind: "is-approved" }
                     : { text: "not in the descriptor", kind: "is-pending" }];
             itemRow(list, facade.name, "#/settings/facades/" + encodeURIComponent(facade.name),
                 facade.error || facade.address, tags);

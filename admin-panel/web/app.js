@@ -945,14 +945,14 @@
         var signing = section(form, "What a user sees before signing in");
         var name = fieldRow(signing, "Name", consumer.name, {
             limit: kConsumerNameMax, placeholder: "The name of this site",
-            hint: "Shown in the client's window before a user signs a login for this portal."
+            hint: "Shown in the client's window before a user signs a login for this portal"
         });
         var places = textareaBlock(signing, "Addresses", (consumer.place || []).join("\n"),
             "http://host:port",
             "One per line. A user compares these with their address bar before signing.");
         var role = fieldRow(signing, "Role", consumer.role, {
             limit: kConsumerRoleMax, placeholder: "Account owner",
-            hint: "Whose account the signature is for."
+            hint: "Whose account the signature is for"
         });
 
         var reach = section(form, "Where the portal answers");
@@ -1058,11 +1058,11 @@
         var accounts = section(form, "What a new account gets");
         var quota = fieldRow(accounts, "Storage", Math.round(data.defaultQuotaBytes / kBytesPerMiB), {
             type: "number", narrow: true, min: kMinQuotaMiB, max: kMaxQuotaMiB, unit: "MiB",
-            hint: "The mailbox a registration is granted."
+            hint: "The mailbox a registration is granted"
         });
         var ttl = fieldRow(accounts, "Delete when idle for", data.idleDeleteDays, {
             type: "number", narrow: true, min: 0, unit: "days (0: forever)",
-            hint: "An account that delegates no address for this long is deleted."
+            hint: "An account that delegates no address for this long is deleted"
         });
 
         saveFooter(form, "Applies now and is written to the node's config, so a restart keeps it",
@@ -1111,7 +1111,7 @@
                 + " I2P. Never public.", true);
         var node = fieldRow(wiring, "Service node", data.serviceNode, {
             placeholder: "http://127.0.0.1:8421", restart: true,
-            hint: "The node this server reports to."
+            hint: "The node this server reports to"
         });
         readOnlyRow(wiring, "Fingerprint", data.fingerprint,
             "This server's identity. Clients pin it.");
@@ -1352,12 +1352,12 @@
         var callPool = fieldRow(pools, "Calls", data.callPool, {
             type: "number", narrow: true, min: 0, max: data.poolMax,
             unit: "of " + data.poolMax, restart: true,
-            hint: "Destinations kept built for call media."
+            hint: "Destinations kept built for call media"
         });
         var watchPool = fieldRow(pools, "Watching", data.watchPool, {
             type: "number", narrow: true, min: 0, max: data.poolMax,
             unit: "of " + data.poolMax, restart: true,
-            hint: "Destinations kept built for watching presence."
+            hint: "Destinations kept built for watching presence"
         });
 
         var routes = section(form, "Without I2P");
@@ -1412,14 +1412,14 @@
         var signing = section(form, "What an administrator sees before signing in");
         var name = fieldRow(signing, "Name", consumer.name, {
             limit: kConsumerNameMax, placeholder: "Bazarish admin panel",
-            hint: "Shown in the client's window before you sign a login for this panel."
+            hint: "Shown in the client's window before you sign a login for this panel"
         });
         var places = textareaBlock(signing, "Addresses", (consumer.place || []).join("\n"),
             "http://host:port",
             "One per line, as you have them in the address bar when you sign in here.");
         var role = fieldRow(signing, "Role", consumer.role, {
             limit: kConsumerRoleMax, placeholder: "Administrator",
-            hint: "What signing in here opens."
+            hint: "What signing in here opens"
         });
 
         var serviceBlock = section(form, "Services this panel manages");

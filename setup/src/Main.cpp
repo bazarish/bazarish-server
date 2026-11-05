@@ -51,9 +51,9 @@ int main(const int argc, const char**)
         "       ssh -L %d:127.0.0.1:%d <user>@<this host>\n"
         "   then http://127.0.0.1:%d/setup in a browser. The first key to sign the\n"
         "   challenge there administers the panel.\n"
-        "2. Give users the descriptor shown on the panel's Portal tab.\n"
-        "3. For the browser portal and the private reseed, set a public HTTPS address\n"
-        "   on the same tab and put a TLS front before the portal's socket.\n",
+        "2. Give users the descriptor shown under Settings, Addresses.\n"
+        "3. For the browser portal and the private reseed, give the portal its public\n"
+        "   HTTPS address under Settings, Portal and put a TLS front before its socket.\n",
         bazarish::setup::kPanelPort, bazarish::setup::kPanelPort, bazarish::setup::kPanelPort);
     return 0;
 }

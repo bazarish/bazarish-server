@@ -327,13 +327,15 @@ int main()
         CHECK(call(opsPort, panel, "PUT", "/v1/account/settings", nameless).status == 400);
         CHECK(settings->get().loginConsumer.name == "Bazarish alpha");
 
-        const std::string seeded
-            = nlohmann::json{{"reseeds", {"https://seed.example/"}}}.dump();
+        const std::string seeded = nlohmann::json{
+            {"reseeds", {"https://seed.example/", "https://seed.example"}},
+            {"portalLinks", {"https://portal.example", "https://portal.example/"}}}.dump();
         CHECK(call(opsPort, panel, "PUT", "/v1/account/settings", seeded).status == 200);
         const std::string plainSeed
             = nlohmann::json{{"reseeds", {"http://seed.example/"}}}.dump();
         CHECK(call(opsPort, panel, "PUT", "/v1/account/settings", plainSeed).status == 400);
-        CHECK(settings->get().reseeds == std::vector<std::string>{"https://seed.example/"});
+        CHECK(settings->get().reseeds == std::vector<std::string>{"https://seed.example"});
+        CHECK(settings->get().portalLinks == std::vector<std::string>{"https://portal.example"});
     }
 
     api.stop();

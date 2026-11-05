@@ -30,6 +30,37 @@ namespace http = bazarish::http;
 using bazarish::nowSeconds;
 using bazarish::http::filled;
 
+constexpr std::string_view kSchemeEnd = "://";
+
+// The client puts the slash back where it needs one, so a URL is kept without it.
+std::string withoutTrailingSlash(std::string url)
+{
+    const std::size_t scheme = url.find(kSchemeEnd);
+    const std::size_t floor = scheme == std::string::npos ? 0 : scheme + kSchemeEnd.size();
+    while (url.size() > floor && url.back() == '/') {
+        url.pop_back();
+    }
+    return url;
+}
+
+void addOnce(std::vector<std::string>& list, const std::string& url)
+{
+    if (std::find(list.begin(), list.end(), url) == list.end()) {
+        list.push_back(url);
+    }
+}
+
+std::vector<std::string> normalizedUrls(const std::vector<std::string>& urls)
+{
+    std::vector<std::string> out;
+    for (const std::string& url : urls) {
+        if (!url.empty()) {
+            addOnce(out, withoutTrailingSlash(url));
+        }
+    }
+    return out;
+}
+
 Bytes bodyBytes(const http::Request& request)
 {
     return Bytes(request.body.begin(), request.body.end());
@@ -412,7 +443,8 @@ void AccountApi::setupOpsRoutes()
                 const nlohmann::json& consumer = body.at("loginConsumer");
                 LoginConsumer wanted;
                 wanted.name = consumer.value("name", values.loginConsumer.name);
-                wanted.place = consumer.value("place", values.loginConsumer.place);
+                wanted.place
+                    = normalizedUrls(consumer.value("place", values.loginConsumer.place));
                 wanted.role = consumer.value("role", values.loginConsumer.role);
                 try {
                     requireUsableConsumer(wanted);
@@ -447,7 +479,7 @@ void AccountApi::setupOpsRoutes()
             if (body.contains("reseeds")) {
                 std::vector<std::string> reseeds;
                 for (const nlohmann::json& entry : body.at("reseeds")) {
-                    std::string url = entry.get<std::string>();
+                    const std::string url = withoutTrailingSlash(entry.get<std::string>());
                     if (url.empty()) {
                         continue;
                     }
@@ -458,19 +490,13 @@ void AccountApi::setupOpsRoutes()
                         throw std::invalid_argument(
                             "a reseed must not be a .b32.i2p address: " + url);
                     }
-                    reseeds.push_back(std::move(url));
+                    addOnce(reseeds, url);
                 }
                 values.reseeds = std::move(reseeds);
             }
             if (body.contains("portalLinks")) {
-                std::vector<std::string> links;
-                for (const nlohmann::json& entry : body.at("portalLinks")) {
-                    std::string link = entry.get<std::string>();
-                    if (!link.empty()) {
-                        links.push_back(std::move(link));
-                    }
-                }
-                values.portalLinks = std::move(links);
+                values.portalLinks
+                    = normalizedUrls(body.at("portalLinks").get<std::vector<std::string>>());
             }
             if (body.contains("logLevel")) {
                 const std::string level = body.at("logLevel").get<std::string>();

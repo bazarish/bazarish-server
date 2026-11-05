@@ -331,7 +331,7 @@
             devices.lastChild.textContent = t("unknown");
         });
         if (user.sweepAt) {
-            facts.appendChild(fact(N_("deleted unless it delegates"), humanDate(user.sweepAt)));
+            facts.appendChild(fact(N_("deletion date"), humanDate(user.sweepAt)));
         }
         box.appendChild(facts);
 
@@ -380,7 +380,7 @@
         var onHold = user.approval === "pending" && Boolean(user.holdMessage);
         if (user.approval === "pending") {
             controls(section(box, onHold ? N_("Back into service") : N_("Approval")),
-                onHold ? N_("The client republishes the address within a minute")
+                onHold ? N_("The app publishes the address again within a minute")
                     : N_("The account is served from now on"))
                 .appendChild(actionButton(onHold ? N_("Return to service") : N_("Approve"), "",
                     function (done) {
@@ -395,11 +395,11 @@
 
         if (user.approval === "approved" || onHold) {
             var holdBlock = section(box,
-                onHold ? N_("Message to its owner") : N_("Take out of service"));
+                onHold ? N_("Message to the owner") : N_("Take out of service"));
             var holdRow = controls(holdBlock, onHold
-                ? N_("Replaces the line its owner reads. The account stays out of service.")
-                : N_("Revokes the address. The account waits for approval again and its owner"
-                    + " reads this line."));
+                ? N_("Changes the message the owner sees. The account stays stopped.")
+                : N_("Revokes the address. The account waits for approval again, and its owner sees"
+                    + " this message."));
             var holdNote = element("input", "field");
             holdNote.type = "text";
             holdNote.value = onHold ? user.holdMessage : t(kDefaultHoldMessage);
@@ -409,7 +409,7 @@
                 function (done) {
                     if (!holdNote.value.trim()) {
                         done();
-                        onError(new Error(t("Say what you are stopping the account for")));
+                        onError(new Error(t("Write why the account is stopped")));
                         return;
                     }
                     api("POST", withFleet("/api/undelegate"), {
@@ -427,12 +427,12 @@
 
         if (user.approval === "none") {
             section(box, N_("Approval")).appendChild(element("p", "hint",
-                t("Registered at the portal, not redeemed by a client yet. Nothing to approve.")));
+                t("Registered on the portal but not opened in the app yet. Nothing to approve.")));
         }
 
         var removeBlock = section(box, N_("Delete"));
         controls(removeBlock,
-            N_("Deletes the certificate, the grants and the address. The key may register again."))
+            N_("Deletes the account. The key can register again."))
             .appendChild(actionButton(N_("Delete account"), "btn-danger", function (done) {
                 if (!window.confirm(t("Delete this account? The key may register again."))) {
                     done();
@@ -447,7 +447,7 @@
             }));
 
         var banRow = controls(section(box, N_("Ban")),
-            N_("Deletes the account. This key does not register here again."));
+            N_("Deletes the account. The key cannot register again."));
         var banReason = element("input", "field");
         banReason.type = "text";
         banReason.placeholder = t("Reason shown to the key (default: Banned)");
@@ -761,7 +761,7 @@
         var picked = current;
         choices.forEach(function (choice) {
             var chip = element("button", "chip" + (choice.value === picked ? " is-on" : ""),
-                t(choice.label));
+                choice.raw ? choice.label : t(choice.label));
             chip.addEventListener("click", function () {
                 picked = choice.value;
                 Object.keys(chips).forEach(function (key) {
@@ -799,9 +799,7 @@
         var wrap = element("div", "link-list");
         var list = element("div", "link-rows");
         wrap.appendChild(list);
-        controls(block, N_("A client shows them to a person with no account here, and a user"
-            + " compares them with the address bar before signing. The portal serves the reseed"
-            + " at each of them.")).appendChild(wrap);
+        controls(block, N_("Public portal addresses. Each also serves the reseed.")).appendChild(wrap);
         var rows = [];
         function addRow(address) {
             var row = element("div", "link-row");
@@ -1026,24 +1024,25 @@
 
     function renderRegistrationTab(form, data) {
         var says;
-        var how = section(form, N_("Who gets an account"));
+        var how = section(form, N_("Registration"));
         var moderated = chipRow(how, "",
-            N_("Open: an account is served as soon as it registers. Moderated: it waits for you."),
+            N_("Open: accounts are served right after registration. Moderated: you approve"
+                + " each one."),
             [{ value: false, label: N_("open") }, { value: true, label: N_("moderated") }],
             Boolean(data.requireApproval),
             { onPick: function (picked) { says.hidden = !picked; } });
 
-        says = section(form, N_("What people are told"));
+        says = section(form, N_("Messages"));
         says.hidden = !data.requireApproval;
         var portalMessage = textareaBlock(says, N_("Before registering"), data.portalMessage,
-            N_("What this server is, and what registering here means"),
-            N_("Shown by a client that reaches this server without an account here"));
+            N_("About this server and registration"),
+            N_("Shown to a client that connects without registering first"));
         var waiting = textareaBlock(says, N_("While waiting"), data.registrationMessage,
-            N_("How to reach you"),
-            N_("Shown to an account that is registered and not served yet"));
+            N_("Contacts for approval"),
+            N_("Shown to accounts waiting for approval"));
 
         var footer = saveFooter(form,
-            N_("Applies now and is written to the node's config, so a restart keeps it"),
+            N_("Applies at once"),
             function () {
                 return {
                     method: "PUT", path: withFleet("/api/settings"),
@@ -1059,10 +1058,10 @@
 
     function renderPortalTab(form, data) {
         var consumer = data.loginConsumer || {};
-        var signing = section(form, N_("What a user sees before signing in"));
+        var signing = section(form, N_("Sign-in"));
         var name = fieldRow(signing, N_("Name"), consumer.name, {
             limit: kConsumerNameMax, placeholder: N_("The name of this site"),
-            hint: N_("Shown in the client's window before a user signs a login for this portal")
+            hint: N_("Shown in the app before signing in to the portal")
         });
         var addresses = (consumer.place || []).slice();
         (data.portalLinks || []).forEach(function (link) {
@@ -1072,16 +1071,14 @@
         });
         var links = linkList(signing, addresses, data.reseeds || []);
         var role = fieldRow(signing, N_("Role"), consumer.role, {
-            limit: kConsumerRoleMax, placeholder: N_("Account owner"),
-            hint: N_("Whose account the signature is for")
+            limit: kConsumerRoleMax, placeholder: N_("Account owner")
         });
 
-        var reach = section(form, N_("Where the portal answers"));
-        var listen = endpointRow(reach, N_("Listens on"), data.portalListen,
-            N_("The socket the portal binds. It serves the reseed too."), true);
+        var reach = section(form, N_("Socket"));
+        var listen = endpointRow(reach, N_("Listens on"), data.portalListen, "", true);
 
         var footer = saveFooter(form,
-            N_("The words apply to the next challenge; the listener needs a restart"),
+            N_("Applies now. Sockets change after a restart."),
             function () {
                 var signer = {
                     name: name.value.trim(), place: links.addresses(), role: role.value.trim()
@@ -1110,7 +1107,7 @@
     }
 
     function renderAddressesTab(form, data) {
-        var reach = section(form, N_("How clients reach this server"));
+        var reach = section(form, N_("Connecting to the server"));
         var reported = data.facades || [];
         if (reported.length === 0) {
             readOnlyRow(reach, N_("Facades"), "");
@@ -1118,38 +1115,35 @@
         reported.forEach(function (address, index) {
             readOnlyRow(reach, index === 0 ? N_("Facades") : "", address);
         });
-        reach.appendChild(element("p", "hint", t("Each facade reports its own address, and the"
-            + " panel writes them here in the order of Settings, Panel. See the Facades tab.")));
+        reach.appendChild(element("p", "hint", t("Reported by the facades. Order: Settings, Panel.")));
         var reseeds = textareaBlock(reach, N_("Reseeds"), (data.reseeds || []).join("\n"),
             "https://host:port/<base path>",
-            N_("One per line. A client with no I2P router fetches the network database here."),
+            N_("One per line. Clients without an I2P router start from these."),
             true);
         var descriptorRow = readOnlyRow(reach, N_("Descriptor"), data.descriptor,
-            N_("Built from the facades and the reseeds. This is what a user pastes into their"
-            + " client."));
+            N_("Users paste it into the app to connect"));
         if (data.descriptor) {
             shareButtons(descriptorRow, data.descriptor);
         }
 
-        var wiring = section(form, N_("This node's own wiring"));
+        var wiring = section(form, N_("Service node"));
         var listen = endpointRow(wiring, "API", data.listen,
-            N_("Facades and the messaging server reach the node here. Not a public address."),
+            N_("Facades and the messaging server connect here. Not public."),
             true);
         var messaging = endpointRow(wiring, N_("Messaging server"), data.messaging,
-            N_("The server-core this node is bound to: where it pushes quotas and reads mailboxes"),
+            N_("The server-core this node works with"),
             true);
         var level = chipRow(wiring, N_("Log level"), N_("Applies at once"),
-            kLogLevels.map(function (name) { return { value: name, label: name }; }),
+            kLogLevels.map(function (name) { return { value: name, label: name, raw: true }; }),
             data.logLevel || "info");
 
         var footer = saveFooter(form,
-            N_("Addresses and the log level apply now; the sockets need a restart"),
+            N_("Applies now. Sockets change after a restart."),
             function () {
                 var reseedList = linesOf(reseeds);
                 var wrongReseed = reseedList.filter(isI2pUrl);
                 if (wrongReseed.length > 0) {
-                    throw new Error(t("A reseed must not be a .b32.i2p address - it is what a"
-                        + " client without a router asks first: %1", wrongReseed[0]));
+                    throw new Error(t("A reseed cannot be a .b32.i2p address: %1", wrongReseed[0]));
                 }
                 return {
                     method: "PUT", path: withFleet("/api/settings"),
@@ -1179,19 +1173,19 @@
             : humanBytes(data.diskUsedBytes)));
         form.appendChild(totals);
 
-        var accounts = section(form, N_("What a new account gets"));
+        var accounts = section(form, N_("New accounts"));
         var quota = fieldRow(accounts, N_("Storage"),
             Math.round(data.defaultQuotaBytes / kBytesPerMiB), {
                 type: "number", narrow: true, min: kMinQuotaMiB, max: kMaxQuotaMiB, unit: N_("MiB"),
-                hint: N_("The mailbox a registration is granted")
+                hint: N_("Mailbox size for new accounts")
             });
         var ttl = fieldRow(accounts, N_("Delete when idle for"), data.idleDeleteDays, {
             type: "number", narrow: true, min: 0, unit: N_("days (0: forever)"),
-            hint: N_("An account that delegates no address for this long is deleted")
+            hint: N_("Accounts inactive this long are deleted")
         });
 
         saveFooter(form,
-            N_("Applies now and is written to the node's config, so a restart keeps it"),
+            N_("Applies at once"),
             function () {
                 var megabytes = Number(quota.value);
                 if (!Number.isFinite(megabytes) || megabytes < kMinQuotaMiB
@@ -1209,43 +1203,40 @@
     }
 
     function renderServerTab(form, data) {
-        var talk = section(form, N_("What the server says"));
+        var talk = section(form, N_("Logs"));
         var level = chipRow(talk, N_("Log level"), N_("Applies at once"),
-            kLogLevels.map(function (name) { return { value: name, label: name }; }),
+            kLogLevels.map(function (name) { return { value: name, label: name, raw: true }; }),
             data.logLevel || "info");
         var i2pLog = chipRow(talk, N_("i2pd log"),
-            N_("libi2pd's own lines in this server's log. Loud. Applies at once."),
+            N_("libi2pd log. Verbose."),
             [{ value: false, label: N_("off") }, { value: true, label: N_("on") }],
             Boolean(data.i2pLog));
 
-        var i2p = section(form, N_("How this server sits on I2P"));
+        var i2p = section(form, N_("I2P"));
         var privacy = chipRow(i2p, N_("Privacy"),
-            N_("Hops each tunnel takes: minimal is one, max is three"),
-            kPrivacyLevels.map(function (name) { return { value: name, label: name }; }),
+            N_("Hops in each tunnel: minimal is one, max is three"),
+            kPrivacyLevels.map(function (name) { return { value: name, label: name, raw: true }; }),
             data.i2pPrivacy || "max", { restart: true });
         var tunnels = fieldRow(i2p, N_("Tunnels per address"), data.i2pTunnelQuantity, {
             type: "number", narrow: true, min: 1, max: data.i2pTunnelQuantityMax,
             unit: t("of %1", data.i2pTunnelQuantityMax), restart: true,
-            hint: N_("Parallel tunnels per destination. Lower it on a thin uplink.")
+            hint: N_("Lower it on a slow connection")
         });
 
-        var wiring = section(form, N_("Where it stands"));
+        var wiring = section(form, N_("Connections"));
         var listen = endpointRow(wiring, N_("Listens on"), data.listen,
-            N_("The private channel the facade and the node reach it on. Never public."), true);
-        var gatewaysAt = endpointRow(wiring, N_("Gateways reach it on"), data.gatewayListen,
-            N_("This deployment's gateways carry their users' streams to the server here, without"
-                + " I2P. Never public."), true);
+            N_("The facade and the node connect here. Not public."), true);
+        var gatewaysAt = endpointRow(wiring, N_("Gateway socket"), data.gatewayListen,
+            N_("Gateways of this deployment connect here without I2P. Not public."), true);
         var node = fieldRow(wiring, N_("Service node"), data.serviceNode, {
-            placeholder: "http://127.0.0.1:8421", restart: true,
-            hint: N_("The node this server reports to")
+            placeholder: "http://127.0.0.1:8421", restart: true
         });
-        readOnlyRow(wiring, N_("Fingerprint"), data.fingerprint,
-            N_("This server's identity. Clients pin it."));
+        readOnlyRow(wiring, N_("Fingerprint"), data.fingerprint);
         readOnlyRow(wiring, N_("State"), data.stateDirectory);
         readOnlyRow(wiring, N_("Version"), data.version);
 
         var footer = saveFooter(form,
-            N_("The log levels apply now; everything else is written for the next start"),
+            N_("Logging applies now, the rest after a restart"),
             function () {
                 var body = {
                     logLevel: level(),
@@ -1314,25 +1305,18 @@
                 facade.error || facade.address, tags);
         });
         form.appendChild(list);
-        form.appendChild(element("p", "hint", t("Each facade reports its own address. The panel"
-            + " writes them into the descriptor, in the order of Settings, Panel, whenever that"
-            + " list is saved or a facade gets a new address")));
     }
 
     function renderFacadePage(form, name, data) {
         itemHead(form, "facades", N_("all facades"), name);
-        var address = section(form, N_("Its address"));
-        var shown = readOnlyRow(address, N_("Address"), data.address,
-            N_("Its I2P destination, minted at its first start"));
+        var address = section(form, N_("Address"));
+        var shown = readOnlyRow(address, "I2P", data.address);
         var said = element("div");
         address.appendChild(said);
-        controls(address, N_("Replaces the key and restarts the facade. The"
-            + " descriptor and any gateway route to the old address follow by themselves; a"
-            + " client that knows only the old address loses the server until it is given the"
-            + " new link")).appendChild(actionButton(N_("New address"), "btn-danger",
+        controls(address, N_("Replaces the facade key. Clients with only the old address lose the server"
+            + " until they get the new link.")).appendChild(actionButton(N_("New address"), "btn-danger",
             function (done) {
-            if (!window.confirm(t("Give %1 a new address? Clients that know only the"
-                + " old one lose the server until they are given the new link.", name))) {
+            if (!window.confirm(t("Give %1 a new address? Clients with only the old address lose the server until they get the new link.", name))) {
                 done();
                 return;
             }
@@ -1361,44 +1345,39 @@
                 });
         }));
 
-        var talk = section(form, N_("What the facade says"));
+        var talk = section(form, N_("Logs"));
         var level = chipRow(talk, N_("Log level"), N_("Applies at once"),
-            kLogLevels.map(function (level) { return { value: level, label: level }; }),
+            kLogLevels.map(function (level) { return { value: level, label: level, raw: true }; }),
             data.logLevel || "info");
 
         var sockets = section(form, N_("Sockets"));
         var listen = endpointRow(sockets, "API", data.listen,
-            N_("What its I2P address relays to. Keep it on loopback."), true);
+            N_("Not public"), true);
         var ops = endpointRow(sockets, N_("Operator"), data.opsListen,
-            N_("The private socket this page is talking to: health, settings, restart. Never"
-            + " published to clients."), true);
+            N_("This panel connects here. Not public."), true);
         var direct = endpointRow(sockets, N_("Direct"), data.directListen,
-            N_("What the I2P address serves, over TLS, for a gateway given a route here. Empty:"
-            + " not opened."), true);
+            N_("For gateways with a route to this facade, over TLS. Empty: off."), true);
 
-        var backends = section(form, N_("What it forwards to"));
-        var messaging = endpointRow(backends, N_("Messaging server"), data.messaging,
-            N_("The messaging tunnel and the server card go here"), true);
-        var serviceNode = endpointRow(backends, N_("Service node"), data.serviceNode,
-            N_("The account tunnel and the node card go here"), true);
+        var backends = section(form, N_("Backends"));
+        var messaging = endpointRow(backends, N_("Messaging server"), data.messaging, "", true);
+        var serviceNode = endpointRow(backends, N_("Service node"), data.serviceNode, "", true);
 
-        var i2p = section(form, N_("Its I2P address"));
+        var i2p = section(form, N_("I2P"));
         var privacy = chipRow(i2p, N_("Privacy"),
-            N_("Hops each tunnel takes: minimal is one, max is three"),
-            kPrivacyLevels.map(function (level) { return { value: level, label: level }; }),
+            N_("Hops in each tunnel: minimal is one, max is three"),
+            kPrivacyLevels.map(function (level) { return { value: level, label: level, raw: true }; }),
             data.i2pPrivacy || "max", { restart: true });
         var tunnels = fieldRow(i2p, N_("Tunnels"), data.i2pTunnelQuantity, {
             type: "number", narrow: true, min: 1, max: data.i2pTunnelQuantityMax,
             unit: t("of %1", data.i2pTunnelQuantityMax), restart: true
         });
 
-        var facts = section(form, N_("What this facade is"));
-        readOnlyRow(facts, N_("State"), data.stateDirectory,
-            N_("Where its keys live, so its address survives a restart"));
+        var facts = section(form, N_("About"));
+        readOnlyRow(facts, N_("State"), data.stateDirectory);
         readOnlyRow(facts, N_("Version"), data.version);
 
         var footer = saveFooter(form,
-            N_("The log level applies now; everything else is written for the next start"),
+            N_("Logging applies now, the rest after a restart"),
             function () {
                 var request = {
                     method: "PUT",
@@ -1461,36 +1440,34 @@
     function renderGatewayPage(form, name, data) {
         itemHead(form, "gateways", N_("all gateways"), name);
         var tunnels = section(form, N_("Tunnels"));
-        var privacy = chipRow(tunnels, N_("Privacy"), t("Hops each tunnel takes, for every client"
-            + " of this gateway: minimal is one, max is three. Call media is always %1.",
+        var privacy = chipRow(tunnels, N_("Privacy"), t("Hops in each tunnel: minimal is one, max is three. Calls always use %1.",
             data.callPrivacy),
-            kPrivacyLevels.map(function (level) { return { value: level, label: level }; }),
+            kPrivacyLevels.map(function (level) { return { value: level, label: level, raw: true }; }),
             data.i2pPrivacy || "minimal", { restart: true });
         var quantity = fieldRow(tunnels, N_("Tunnels"), data.i2pTunnelQuantity, {
             type: "number", narrow: true, min: 1, max: data.i2pTunnelQuantityMax,
             unit: t("of %1", data.i2pTunnelQuantityMax), restart: true,
-            hint: N_("Per destination. Lower it on a thin uplink.")
+            hint: N_("Lower it on a slow connection")
         });
 
         var pools = section(form, N_("Warm pools"));
         var streamPool = fieldRow(pools, N_("Streams"), data.streamPool, {
             type: "number", narrow: true, min: 0, max: data.poolMax,
             unit: t("of %1", data.poolMax), restart: true,
-            hint: N_("Unpublished destinations kept built with the tunnels above: what a facade"
-                + " link, a lookup or a file takes. 0 builds each on demand.")
+            hint: N_("Built in advance for connections, lookups and files. 0 builds them on demand.")
         });
         var callPool = fieldRow(pools, N_("Calls"), data.callPool, {
             type: "number", narrow: true, min: 0, max: data.poolMax,
             unit: t("of %1", data.poolMax), restart: true,
-            hint: N_("Destinations kept built for call media")
+            hint: N_("Built in advance for calls")
         });
         var watchPool = fieldRow(pools, N_("Watching"), data.watchPool, {
             type: "number", narrow: true, min: 0, max: data.poolMax,
             unit: t("of %1", data.poolMax), restart: true,
-            hint: N_("Destinations kept built for watching presence")
+            hint: N_("Built in advance for online status")
         });
 
-        var routes = section(form, N_("Without I2P"));
+        var routes = section(form, N_("Routes without I2P"));
         readOnlyRow(routes, N_("Server"),
             data.server ? data.server.host + ":" + data.server.port : "");
         if (!data.direct.length) {
@@ -1500,21 +1477,19 @@
             readOnlyRow(routes, index === 0 ? N_("Facades") : "",
                 route.dest + " -> " + route.host + ":" + route.port);
         });
-        routes.appendChild(element("p", "hint", t("Written by the panel from this deployment's"
-            + " server and facades")));
 
         var clients = section(form, N_("Clients"));
         var publicAddress = fieldRow(clients, N_("Public address"), data.publicAddress, {
             placeholder: "https://gateway.example",
-            hint: N_("Where the TLS front answers clients, with no path")
+            hint: N_("The HTTPS address clients connect to, without a path")
         });
         var linkRow = readOnlyRow(clients, N_("Link"), data.link,
-            N_("What a client is given. It carries the secret path and the token"));
+            N_("Give it only to your users"));
         if (data.link) {
             shareButtons(linkRow, data.link);
         }
 
-        var facts = section(form, N_("What this gateway is"));
+        var facts = section(form, N_("About"));
         readOnlyRow(facts, N_("State"), data.stateDirectory);
         readOnlyRow(facts, N_("Version"), data.version);
 
@@ -1526,7 +1501,7 @@
             return value;
         }
 
-        var footer = saveFooter(form, N_("Written for the next start: the pools are built then"),
+        var footer = saveFooter(form, N_("Applies after a restart"),
             function () {
                 return {
                     method: "PUT",
@@ -1546,24 +1521,22 @@
     }
 
     function renderPanelTab(form, data) {
-        var who = section(form, N_("Who may sign in"));
+        var who = section(form, N_("Access"));
         var admins = textareaBlock(who, N_("Administrators"), (data.admins || []).join("\n"),
             N_("52-character fingerprint"),
-            N_("One fingerprint per line, as the Signature window in the client shows it. The last"
-            + " one cannot be removed."));
+            N_("One fingerprint per line. The last one cannot be removed."));
 
         var consumer = data.consumer || {};
-        var signing = section(form, N_("What an administrator sees before signing in"));
+        var signing = section(form, N_("Sign-in"));
         var name = fieldRow(signing, N_("Name"), consumer.name, {
             limit: kConsumerNameMax, placeholder: N_("Bazarish admin panel"),
-            hint: N_("Shown in the client's window before you sign a login for this panel")
+            hint: N_("Shown in the app before you sign in here")
         });
         var places = textareaBlock(signing, N_("Addresses"), (consumer.place || []).join("\n"),
             "http://host:port",
-            N_("One per line, as you have them in the address bar when you sign in here"));
+            N_("Panel addresses, one per line"));
         var role = fieldRow(signing, N_("Role"), consumer.role, {
-            limit: kConsumerRoleMax, placeholder: N_("Administrator"),
-            hint: N_("What signing in here opens")
+            limit: kConsumerRoleMax, placeholder: N_("Administrator")
         });
 
         var serviceBlock = section(form, N_("Services this panel manages"));
@@ -1600,7 +1573,7 @@
             pinRow.appendChild(element("span", "control-label", t("TLS pin")));
             var pin = element("input", "field");
             pin.type = "text";
-            pin.placeholder = t("the socket pin it prints at start, 64 hex");
+            pin.placeholder = t("TLS pin from the service's log");
             pin.value = service ? (service.pin || "") : "";
             pinRow.appendChild(pin);
             wrap.appendChild(pinRow);
@@ -1644,26 +1617,21 @@
             serviceBlock.appendChild(addRow);
         });
         serviceBlock.appendChild(element("p", "hint",
-            t("Each service must list this panel's fingerprint as an operator. Its address is"
-            + " the operator socket its opsListen opens. Names are unique in a deployment, which"
-            + " holds one server-core and one service-node; facades and gateways may be many,"
-            + " and the facades' order is the order a client tries them in.")));
+            t("Each service must list this panel's fingerprint as an operator. Clients try"
+                + " facades in the listed order.")));
 
-        var where = section(form, N_("Where the panel listens"));
-        var listen = endpointRow(where, N_("Listens on"), data.listen,
-            N_("The socket this page is served on"), true);
+        var where = section(form, N_("Socket"));
+        var listen = endpointRow(where, N_("Listens on"), data.listen, "", true);
 
-        var facts = section(form, N_("What this panel is"));
-        readOnlyRow(facts, N_("Fingerprint"), data.fingerprint,
-            N_("The key the panel signs its calls with"));
-        readOnlyRow(facts, N_("Config file"), data.configPath,
-            N_("Where everything on this page is written back"));
+        var facts = section(form, N_("About"));
+        readOnlyRow(facts, N_("Fingerprint"), data.fingerprint);
+        readOnlyRow(facts, N_("Config file"), data.configPath);
         readOnlyRow(facts, N_("State"), data.stateDir);
         readOnlyRow(facts, N_("Web files"), data.assetsDir);
         readOnlyRow(facts, N_("Version"), data.version);
 
         var footer = saveFooter(form,
-            N_("Applies now, except the listener, which the panel picks up when it restarts"),
+            N_("Applies now. Sockets change after a restart."),
             function () {
                 var list = linesOf(admins);
                 if (list.length === 0) {
@@ -1691,8 +1659,7 @@
                     if (entry.kind.value === "server-core" || entry.kind.value === "service-node") {
                         var single = entry.fleet + "\n" + entry.kind.value;
                         if (singles[single]) {
-                            throw new Error(t("%1 already has a %2: a second server is a"
-                                + " deployment of its own", entry.fleet, entry.kind.value));
+                            throw new Error(t("%1 already has a %2", entry.fleet, entry.kind.value));
                         }
                         singles[single] = true;
                     }

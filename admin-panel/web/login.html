@@ -9,23 +9,30 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body class="centred">
-<main class="sheet">
+<div class="sheet">
   <div class="sheet-head">
     <img class="wordmark" src="logo.svg" alt="bazarish" width="404" height="76">
     <div id="languageSlot"></div>
   </div>
   <p class="sheet-note" data-t="Admin">Admin</p>
-  {{error}}
-  <p class="panel-note" data-t="Sign this challenge with your account's key in Bazarish and paste the signature back">Sign this challenge with your account's key in Bazarish and paste the signature back</p>
-  <p class="field-label" data-t="Challenge">Challenge</p>
-  <pre class="copy">{{challenge}}</pre>
-  <form method="post" action="/login">
-    <input type="hidden" name="challenge" value="{{challenge}}">
-    <label class="field-label" for="blob" data-t="Signature">Signature</label>
-    <textarea class="field" id="blob" name="blob" required autofocus></textarea>
-    <button class="btn" type="submit" data-t="Sign in">Sign in</button>
-  </form>
-</main>
+  <main class="sheet-body">
+    <section class="panel-box">
+      <p class="view-title" data-t="Sign in">Sign in</p>
+      {{error}}
+      <p class="panel-note" data-t="Sign this challenge with your account's key in Bazarish and paste the signature back">Sign this challenge with your account's key in Bazarish and paste the signature back</p>
+      <p class="field-label" data-t="Challenge">Challenge</p>
+      <pre class="copy">{{challenge}}</pre>
+      <form method="post" action="/login">
+        <input type="hidden" name="challenge" value="{{challenge}}">
+        <label class="field-label" for="blob" data-t="Signature">Signature</label>
+        <textarea class="field" id="blob" name="blob" required autofocus></textarea>
+        <button class="btn" type="submit" data-t="Sign in">Sign in</button>
+      </form>
+    </section>
+  </main>
+  <footer class="colophon"><span data-t="Control panel of a Bazarish messenger server">Control panel of a Bazarish messenger server</span>
+    <span><a href="https://bazarish.org">bazarish.org</a> &middot; <a href="http://bazarish.i2p">bazarish.i2p</a></span></footer>
+</div>
 <script src="messages.js" defer></script>
 <script src="i18n.js" defer></script>
 <script src="copy.js" defer></script>

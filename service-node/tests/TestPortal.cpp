@@ -238,7 +238,7 @@ void testWebFlow()
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     CHECK(page.status == 200);
-    CHECK(page.body.find("sign in with your key") != std::string::npos);
+    CHECK(page.body.find("is-plain\">Sign in<") != std::string::npos);
 
     for (const char* const code : {"en", "ru", "es", "zh", "ar"}) {
         const http::ClientResponse drawn

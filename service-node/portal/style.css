@@ -139,6 +139,10 @@ body {
     content: "/";
 }
 
+.panel-title.is-plain::before {
+    content: none;
+}
+
 .panel-note,
 .muted {
     margin: 0.6rem 0 0;
@@ -824,4 +828,8 @@ body {
 .lang-one:focus-visible {
     outline: none;
     box-shadow: 0 0 0 2px var(--bz-surface-2), 0 0 0 4px var(--bz-key);
+}
+
+.signin-note {
+    font-size: 0.78rem;
 }

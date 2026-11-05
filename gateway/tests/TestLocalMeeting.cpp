@@ -25,6 +25,7 @@ namespace {
 constexpr const char* kPath = "/2b8e61a0d7c4";
 constexpr const char* kToken = "a-third-static-token";
 constexpr int kWaitSeconds = 20;
+constexpr int kGoneAnswerSeconds = 2;
 constexpr const char* kServerDest = "fkc4nkqn6k2bwrqsgbabnkyx4g5s2cp3nvnrdnkqxz4bzcbzrfaa.b32.i2p";
 
 i2p::RouterConfig borrowedFrom(const int port)
@@ -205,6 +206,16 @@ int main()
     reader.join();
 
     CHECK(gateway.refusals() == 0);
+
+    const auto asked = std::chrono::steady_clock::now();
+    bool reached = false;
+    try {
+        reached = his->connect(host, std::chrono::seconds(kWaitSeconds)) != nullptr;
+    } catch (const std::exception&) {
+    }
+    CHECK(!reached);
+    CHECK(std::chrono::steady_clock::now() - asked < std::chrono::seconds(kGoneAnswerSeconds));
+    CHECK(gateway.refusals() == 1);
 
     i2p::EndpointConfig toServer;
     toServer.privacy = i2p::Privacy::eMinimal;

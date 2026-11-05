@@ -136,6 +136,8 @@ private:
     std::optional<DirectRoute> directFor(const std::string& host) const;
     std::shared_ptr<EndpointEntry> localFor(
         const std::string& host, std::shared_ptr<Session>& owner) const;
+    void unpublishLocked(const EndpointEntry& entry);
+    bool goneHereLocked(const std::string& host);
     static bool readsLeaseSetOf(const EndpointEntry& from, const EndpointEntry& to);
     bool meetLocally(const std::shared_ptr<Session>& session,
         const std::shared_ptr<EndpointEntry>& from, std::uint32_t stream,
@@ -157,6 +159,7 @@ private:
     mutable auth::ReplayCache operatorReplays_;
     std::map<const http::Socket*, Connection> connections_;
     std::map<std::string, Local> published_;
+    std::map<std::string, std::chrono::steady_clock::time_point> goneHere_;
     mutable std::mutex directMutex_;
     std::vector<DirectRoute> direct_;
     mutable std::mutex linkMutex_;

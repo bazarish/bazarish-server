@@ -29,6 +29,8 @@ constexpr std::size_t kDecoyPageBytes = 32 * 1024;
 constexpr std::size_t kSocketMessageBytes = kMaxFrameBytes;
 
 constexpr std::chrono::seconds kReplayGrace{5};
+// A closed address's lease set is still found this long: i2pd's TUNNEL_EXPIRATION_TIMEOUT.
+constexpr std::chrono::seconds kGoneHereMemory{660};
 
 constexpr i2p::Privacy kCallPrivacy = i2p::Privacy::eMinimal;
 
@@ -528,7 +530,7 @@ void Gateway::retire(const std::shared_ptr<Session>& session)
         for (const auto& [id, endpoint] : session->endpoints) {
             (void)id;
             publishedGone = publishedGone || endpoint->published;
-            published_.erase(endpoint->host);
+            unpublishLocked(*endpoint);
             endpoint->running.store(false);
             endpoints.push_back(endpoint);
         }
@@ -844,6 +846,20 @@ std::shared_ptr<EndpointEntry> Gateway::localFor(
     return entry;
 }
 
+void Gateway::unpublishLocked(const EndpointEntry& entry)
+{
+    if (published_.erase(entry.host) > 0 && entry.identity.empty()) {
+        goneHere_[entry.host] = std::chrono::steady_clock::now() + kGoneHereMemory;
+    }
+}
+
+bool Gateway::goneHereLocked(const std::string& host)
+{
+    const auto now = std::chrono::steady_clock::now();
+    std::erase_if(goneHere_, [now](const auto& gone) { return gone.second <= now; });
+    return goneHere_.count(host) > 0;
+}
+
 void Gateway::onEndpointCreate(const std::shared_ptr<Session>& session,
     const http::SocketPtr& socket, const Frame& frame)
 {
@@ -1046,7 +1062,7 @@ std::shared_ptr<EndpointEntry> Gateway::stopEndpoint(
         }
         entry->running.store(false);
         session->endpoints.erase(id);
-        published_.erase(entry->host);
+        unpublishLocked(*entry);
         for (auto at = session->streams.begin(); at != session->streams.end();) {
             if (at->second->endpoint == id) {
                 orphans.push_back(at->second);
@@ -1083,6 +1099,7 @@ void Gateway::onRawSend(const std::shared_ptr<Session>& session, const http::Soc
     std::shared_ptr<Session> peerSession;
     std::shared_ptr<EndpointEntry> peer;
     http::SocketPtr peerLane;
+    bool gone = false;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
         from = endpointOf(*session, frame.ref);
@@ -1101,6 +1118,10 @@ void Gateway::onRawSend(const std::shared_ptr<Session>& session, const http::Soc
         if (peer != nullptr) {
             peerLane = peer->socket;
         }
+        gone = peer == nullptr && goneHereLocked(sent.host);
+    }
+    if (gone) {
+        return;
     }
     if (peer != nullptr) {
         from->localRoute.store(true);
@@ -1186,6 +1207,11 @@ void Gateway::onStreamOpen(const std::shared_ptr<Session>& session,
         to = localFor(host, owner);
         if (to != nullptr && to->raw) {
             to = nullptr;
+        }
+        if (to == nullptr && goneHereLocked(host)) {
+            session->dialling.erase(frame.ref);
+            fail(socket, frame.ref, Fault::eUnreachable, "that destination closed on this gateway");
+            return;
         }
     }
     if (to != nullptr && meetLocally(session, from, frame.ref, owner, to, socket)) {

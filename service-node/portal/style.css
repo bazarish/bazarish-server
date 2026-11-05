@@ -625,6 +625,24 @@ body {
     width: auto;
 }
 
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+}
+
+.brand-mark {
+    flex: 0 0 auto;
+    height: 1.75rem;
+    width: auto;
+    fill: none;
+    stroke: var(--bz-ink-dim);
+    stroke-width: 1.1;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    overflow: visible;
+}
+
 .masthead-note {
     margin: 0.75rem 0 0;
     color: var(--bz-ink-dim);

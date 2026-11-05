@@ -600,6 +600,24 @@ body.centred {
     width: auto;
 }
 
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+}
+
+.brand-mark {
+    flex: 0 0 auto;
+    height: 1.75rem;
+    width: auto;
+    fill: none;
+    stroke: var(--bz-ink-dim);
+    stroke-width: 1.1;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    overflow: visible;
+}
+
 .sidebar-note {
     margin: 0.6rem 0 0.2rem;
     color: var(--bz-ink-faint);

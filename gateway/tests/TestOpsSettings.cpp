@@ -188,6 +188,7 @@ int main()
         {"streamPool", kWantedStreamPool},
         {"callPool", kWantedCallPool},
         {"watchPool", kWantedWatchPool},
+        {"publicAddress", "https://gate.example"},
         {"direct",
             {{{"dest", kServerDest}, {"host", "127.0.0.1"}, {"port", listenerPort},
                 {"pin", server.pin}}}},
@@ -198,6 +199,13 @@ int main()
         = askOps(settings.opsPort, pin, "PUT", "/settings", &operatorIdentity, wanted.dump());
     CHECK(changed.status == 200);
     CHECK(nlohmann::json::parse(changed.body).at("streamPool") == kWantedStreamPool);
+    CHECK(nlohmann::json::parse(changed.body).at("link")
+        == std::string("https://bazari.sh/#gateway?v=1&url=https://gate.example") + kPath
+            + "&token=" + kToken);
+    CHECK(askOps(settings.opsPort, pin, "PUT", "/settings", &operatorIdentity,
+              nlohmann::json{{"publicAddress", "https://gate.example/path"}}.dump())
+              .status
+        == 400);
 
     const Settings written = Settings::from(ConfigView(ConfigFile(configPath).read()));
     CHECK(written.tunnelPrivacy == i2p::Privacy::eMax);

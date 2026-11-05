@@ -2,6 +2,7 @@
 #include "Settings.hpp"
 
 #include <bazarish/I2p.hpp>
+#include <bazarish/Links.hpp>
 #include <bazarish/PrivateFile.hpp>
 
 #include <optional>
@@ -20,6 +21,11 @@ constexpr const char* kNginxNotFound = "<html>\r\n"
                                        "</body>\r\n"
                                        "</html>\r\n";
 
+constexpr const char* kSecureScheme = "https://";
+constexpr const char* kPlainScheme = "http://";
+// A path, a query or anything a link's query cannot carry ends the authority.
+constexpr const char* kNotInAuthority = "/?#& \t\r\n";
+
 std::size_t poolDepth(const ConfigView& config, const std::string& path, const std::size_t fallback)
 {
     const std::int64_t depth
@@ -32,6 +38,32 @@ std::size_t poolDepth(const ConfigView& config, const std::string& path, const s
 }
 
 }  // namespace
+
+std::string publicAddressFrom(const std::string& text)
+{
+    if (text.empty()) {
+        return text;
+    }
+    std::string rest;
+    for (const char* const scheme : {kSecureScheme, kPlainScheme}) {
+        if (text.rfind(scheme, 0) == 0) {
+            rest = text.substr(std::string(scheme).size());
+        }
+    }
+    if (rest.empty() || rest.find_first_of(kNotInAuthority) != std::string::npos) {
+        throw std::invalid_argument("\"publicAddress\" is https://host or https://host:port, "
+                                    "with no path");
+    }
+    return text;
+}
+
+std::string clientLink(const Settings& settings)
+{
+    if (settings.publicAddress.empty()) {
+        return {};
+    }
+    return gatewayLink(settings.publicAddress + settings.basePath, settings.token);
+}
 
 std::vector<DirectRoute> directRoutesFrom(const nlohmann::json& list)
 {
@@ -83,6 +115,7 @@ Settings Settings::from(const ConfigView& config)
     if (settings.token.empty()) {
         throw std::runtime_error("\"token\" is mandatory");
     }
+    settings.publicAddress = publicAddressFrom(config.text("publicAddress"));
     settings.stateDir = std::filesystem::path(config.text("state"));
     if (settings.stateDir.empty()) {
         throw std::runtime_error("\"state\" is mandatory: the router keeps everything under it");

@@ -36,6 +36,7 @@ One file, given with `--config`. `config.example.json` is a starting point.
 | `listen` | Host and port. The front reaches it here; clients never do |
 | `basePath` | The path the gateway answers at. Mandatory |
 | `token` | The token every request to that path must carry. Mandatory |
+| `publicAddress` | Where the front answers clients, `https://host[:port]` with no path. Only builds the link the admin panel shows |
 | `state` | Where the router keeps its netDb, keys and tunnels |
 | `reseed` | su3 archives a router with no peers starts from. Empty leaves the engine its built-in hosts |
 | `decoy.minBytes`, `decoy.maxBytes` | The length of a decoy answer, drawn between them |
@@ -92,13 +93,16 @@ server {
 
 ## Giving someone the address
 
-One string carries both halves of getting in:
+One Bazarish link carries both halves of getting in:
 
 ```
-https://gateway.example/<basePath>#<token>
+https://bazari.sh/#gateway?v=1&url=https://gateway.example<basePath>&token=<token>
 ```
 
-The client takes it in its settings and checks it before keeping it.
+The client takes it in its settings, or from a message: tapping the link asks
+before putting the gateway into the settings, and the client checks it before
+keeping it. With `publicAddress` set (`https://gateway.example`, no path), the
+admin panel shows this link for the gateway.
 
 ## Health
 

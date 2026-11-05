@@ -95,7 +95,7 @@ bounded, and only the secret is lasting:
 | Subprotocol | `Sec-WebSocket-Protocol: bazarish-gateway/1` |
 | Frames | Binary only. A text frame closes the socket with 1003 |
 | Server authentication | The client pins the SHA-256 of the server's SPKI. The SNI is whatever the client's configuration says, and the gateway accepts any |
-| Client authentication | A secret URL **and** a static token in the `X-Bazarish-Gateway` header. Both, or nothing |
+| Client authentication | A secret URL **and** a static token in the `X-Bazarish-Gateway` header. Both, or nothing. A client is given both in one link, `https://bazari.sh/#gateway?v=1&url=<secret URL>&token=<token>` |
 | Session | The cookie of a session to rejoin, in `X-Bazarish-Session`. Absent on a first connection |
 | Keepalive | The gateway pings every `kKeepalive`; no pong within `kPongTimeout` drops the socket |
 

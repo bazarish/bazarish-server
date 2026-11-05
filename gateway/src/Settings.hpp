@@ -26,6 +26,8 @@ struct Settings {
     int listenPort = 0;
     std::string basePath;
     std::string token;
+    // Where clients reach the front: "https://host[:port]", no path. Empty: not told yet.
+    std::string publicAddress;
     std::filesystem::path stateDir;
     std::vector<std::string> reseedUrls;
     std::size_t decoyMinBytes = kDecoyMinBytes;
@@ -49,6 +51,8 @@ struct Settings {
 };
 
 std::vector<DirectRoute> directRoutesFrom(const nlohmann::json& list);
+std::string publicAddressFrom(const std::string& text);
+std::string clientLink(const Settings& settings);
 std::optional<ServerLink> serverLinkFrom(const nlohmann::json& link);
 
 }  // namespace bazarish::gateway

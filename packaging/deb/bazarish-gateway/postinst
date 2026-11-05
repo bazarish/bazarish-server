@@ -48,8 +48,9 @@ CONFIG
 The Bazarish gateway runs on 127.0.0.1:$kPort. To finish:
 
 1. Put a TLS front before it: /usr/share/doc/bazarish-gateway/README.md
-2. Give clients https://<the front's name><basePath>#<token>, with basePath
-   and token from $kConfig.
+2. Give clients https://bazari.sh/#gateway?v=1&url=https://<the front's name><basePath>&token=<token>,
+   with basePath and token from $kConfig, or set the public address in the
+   admin panel, which then shows this link.
 NOTICE
     fi
 fi

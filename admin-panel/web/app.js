@@ -1372,6 +1372,19 @@
         routes.appendChild(element("p", "hint", "Written by the panel from this deployment's"
             + " server and facades"));
 
+        var clients = section(form, "Clients");
+        var publicAddress = fieldRow(clients, "Public address", data.publicAddress, {
+            placeholder: "https://gateway.example",
+            hint: "Where the TLS front answers clients, with no path"
+        });
+        var linkRow = readOnlyRow(clients, "Link", data.link,
+            "What a client is given. It carries the secret path and the token");
+        if (data.link) {
+            linkRow.appendChild(window.bazarishCopy.button("Copy", function () {
+                return data.link;
+            }));
+        }
+
         var facts = section(form, "What this gateway is");
         readOnlyRow(facts, "State", data.stateDirectory);
         readOnlyRow(facts, "Version", data.version);
@@ -1394,7 +1407,8 @@
                         i2pTunnelQuantity: count(quantity, "Tunnels", 1, data.i2pTunnelQuantityMax),
                         streamPool: count(streamPool, "The stream pool", 0, data.poolMax),
                         callPool: count(callPool, "The call pool", 0, data.poolMax),
-                        watchPool: count(watchPool, "The watch pool", 0, data.poolMax)
+                        watchPool: count(watchPool, "The watch pool", 0, data.poolMax),
+                        publicAddress: publicAddress.value.trim()
                     }
                 };
             });

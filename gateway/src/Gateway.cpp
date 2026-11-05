@@ -69,6 +69,8 @@ nlohmann::json editable(const Settings& written)
                 ? nlohmann::json{{"host", written.server->host}, {"port", written.server->port},
                     {"pin", written.server->pin}}
                 : nlohmann::json(nullptr)},
+        {"publicAddress", written.publicAddress},
+        {"link", clientLink(written)},
         {"stateDirectory", written.stateDir.string()},
         {"version", kBuildVersion},
     };
@@ -283,6 +285,11 @@ http::Response Gateway::settingsChanged(const http::Request& request)
                     "a pool holds between 0 and " + std::to_string(kMaxPoolDepth) + " destinations");
             }
             writes.push_back({{"pools", pool}, depth});
+        }
+        if (body.contains("publicAddress")) {
+            const std::string address
+                = publicAddressFrom(body.at("publicAddress").get<std::string>());
+            writes.push_back({{"publicAddress"}, address});
         }
         if (body.contains("direct")) {
             direct = directRoutesFrom(body.at("direct"));

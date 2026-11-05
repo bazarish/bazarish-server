@@ -64,6 +64,15 @@ int main()
     CHECK(bare.notFoundBody.find("404 Not Found") != std::string::npos);
 
     CHECK_THROWS(Settings::from(document(R"({"token": "t", "state": "/tmp/s"})")));
+    CHECK(Settings::from(document(R"({"basePath": "/p", "token": "t", "state": "/tmp/s",
+        "publicAddress": "https://gate.example:8443"})")).publicAddress
+        == "https://gate.example:8443");
+    for (const char* const wrong : {"gate.example", "https://", "https://gate.example/",
+             "https://gate.example/p", "https://gate.example?x", "ftp://gate.example"}) {
+        CHECK_THROWS(Settings::from(document(
+            std::string(R"({"basePath": "/p", "token": "t", "state": "/tmp/s", "publicAddress": ")")
+            + wrong + "\"}")));
+    }
     CHECK_THROWS(
         Settings::from(document(R"({"basePath": "", "token": "t", "state": "/tmp/s"})")));
     CHECK_THROWS(

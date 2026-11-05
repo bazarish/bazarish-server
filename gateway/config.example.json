@@ -3,6 +3,7 @@
 
     "basePath": "/CHANGE-ME-to-something-nobody-guesses",
     "token": "CHANGE-ME-to-a-long-random-string",
+    "publicAddress": "https://gateway.example",
 
     "state": "/var/lib/bazarish/gateway",
 

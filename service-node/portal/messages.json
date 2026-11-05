@@ -129,11 +129,11 @@
       "ar": "لا يمكن لهذا المفتاح التسجيل هنا"
     },
     "registered.title": {
-      "en": "registered",
-      "ru": "аккаунт создан",
-      "es": "cuenta creada",
-      "zh": "注册完成",
-      "ar": "تم التسجيل"
+      "en": "account",
+      "ru": "аккаунт",
+      "es": "cuenta",
+      "zh": "账号",
+      "ar": "الحساب"
     },
     "approval.note": {
       "en": "The operator approves accounts by hand. Connect Bazarish App now; the server starts serving the account once they do.",

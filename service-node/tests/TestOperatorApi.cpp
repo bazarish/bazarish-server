@@ -42,6 +42,8 @@ namespace http = bazarish::http;
 
 using Headers = std::map<std::string, std::string>;
 
+
+constexpr std::int64_t kHeldDelegationSeconds = 5 * 24 * 60 * 60;
 using bazarish::nowSeconds;
 
 Headers signedHeaders(const Identity& identity, const std::string& method, const std::string& path,
@@ -220,6 +222,8 @@ int main()
                   .status
             == 400);
 
+        const std::int64_t delegatedUntil = nowSeconds() + kHeldDelegationSeconds;
+        grants.setI2pTransient(served, delegatedUntil, nowSeconds());
         const http::ClientResponse held
             = call(opsPort, panel, "POST", "/v1/account/undelegate", body);
         CHECK(held.status == 200);
@@ -230,6 +234,10 @@ int main()
         CHECK(record.at("holdMessage").get<std::string>()
             == "Talk to the operator before this comes back.");
         CHECK(grants.peekApproval(served)->pending());
+        CHECK(record.at("transientExpires").get<std::int64_t>() == 0);
+        CHECK(record.at("heldUntil").get<std::int64_t>() == delegatedUntil);
+        CHECK(call(opsPort, panel, "POST", "/v1/account/undelegate", body).status == 200);
+        CHECK(grants.peekApproval(served)->heldUntil == delegatedUntil);
     }
 
     {

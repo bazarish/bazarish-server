@@ -161,6 +161,7 @@ std::optional<GrantStore::Approval> GrantStore::peekApproval(const std::string& 
     result.requestedAt = entry.at("requestedAt").get<std::int64_t>();
     result.approvedAt = entry.at("approvedAt").get<std::int64_t>();
     result.message = entry.value("message", std::string());
+    result.heldUntil = entry.value("heldUntil", std::int64_t{0});
     return result;
 }
 
@@ -182,10 +183,12 @@ void GrantStore::approve(const std::string& user, const std::int64_t now)
     }
     entry["approvedAt"] = now;
     entry["message"] = "";
+    entry.erase("heldUntil");
     writeFileAtomic(path, body.dump());
 }
 
-void GrantStore::hold(const std::string& user, const std::string& message, const std::int64_t now)
+void GrantStore::hold(const std::string& user, const std::string& message, const std::int64_t now,
+    const std::int64_t delegatedUntil)
 {
     requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
@@ -197,6 +200,9 @@ void GrantStore::hold(const std::string& user, const std::string& message, const
     }
     entry["approvedAt"] = 0;
     entry["message"] = message;
+    if (delegatedUntil != 0) {
+        entry["heldUntil"] = delegatedUntil;
+    }
     writeFileAtomic(path, body.dump());
 }
 

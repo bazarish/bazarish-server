@@ -250,6 +250,7 @@ nlohmann::json AccountApi::userRecord(
         {"banned", ban.has_value()},
         {"banReason", ban.has_value() ? ban->reason : std::string()},
         {"holdMessage", approval.has_value() ? approval->message : std::string()},
+        {"heldUntil", approval.has_value() ? approval->heldUntil : 0},
         {"quotaBytes",
             held.has_value() ? held->quotaBytes
                              : (grant.has_value() ? grant->quotaBytes
@@ -344,8 +345,9 @@ void AccountApi::setupOpsRoutes()
                 respondError(response, 404, ErrorCode::eAccountUnknown, "no such account");
                 return;
             }
+            const std::optional<GrantStore::Transient> transient = grants_.peekTransient(user);
             revokeDestination(user);
-            grants_.hold(user, message, nowSeconds());
+            grants_.hold(user, message, nowSeconds(), transient.has_value() ? transient->expires : 0);
             respondJson(response, userRecord(user, grants_.peekApproval(user)));
         })));
 

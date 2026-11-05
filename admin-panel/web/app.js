@@ -229,6 +229,10 @@
             && user.transientExpires * kSecondsPerMs > Date.now();
     }
 
+    function isHeld(user) {
+        return Boolean(user.heldUntil) && user.heldUntil * kSecondsPerMs > Date.now();
+    }
+
     function stateTags(user) {
         var tags = element("span", "row-tags");
         if (user.banned) {
@@ -244,6 +248,8 @@
         }
         if (isDelegated(user)) {
             tags.appendChild(element("span", "tag is-live", t("delegated")));
+        } else if (isHeld(user)) {
+            tags.appendChild(element("span", "tag is-pending", t("out of service")));
         } else if (user.dest) {
             tags.appendChild(element("span", "tag is-pending", t("lapsed")));
         } else {
@@ -316,6 +322,7 @@
             }, t("Copy the address")) : null));
         facts.appendChild(fact(N_("delegation"),
             isDelegated(user) ? t("until %1", humanDate(user.transientExpires))
+                : isHeld(user) ? t("out of service, until %1", humanDate(user.heldUntil))
                 : (user.delegatedAt ? t("lapsed, last %1", humanDate(user.delegatedAt))
                     : t("none"))));
         var mailbox = fact(N_("mailbox"), "...");

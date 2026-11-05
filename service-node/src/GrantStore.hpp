@@ -40,6 +40,7 @@ public:
         std::int64_t requestedAt = 0;
         std::int64_t approvedAt = 0;
         std::string message;
+        std::int64_t heldUntil = 0;
 
         bool pending() const { return approvedAt == 0; }
     };
@@ -50,7 +51,8 @@ public:
 
     void approve(const std::string& user, std::int64_t now);
 
-    void hold(const std::string& user, const std::string& message, std::int64_t now);
+    void hold(const std::string& user, const std::string& message, std::int64_t now,
+        std::int64_t delegatedUntil);
 
     std::vector<std::string> allUsers() const;
 

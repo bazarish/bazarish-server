@@ -635,14 +635,14 @@
     }
 
     var kSettingsTabs = [
+        { id: "panel", label: "Panel" },
         { id: "registration", label: "Registration" },
         { id: "portal", label: "Portal" },
         { id: "addresses", label: "Addresses" },
         { id: "accounts", label: "Accounts" },
         { id: "server", label: "Server" },
         { id: "facades", label: "Facades" },
-        { id: "gateways", label: "Gateways" },
-        { id: "panel", label: "Panel" }
+        { id: "gateways", label: "Gateways" }
     ];
     var kLogLevels = ["error", "warn", "info", "debug"];
     var kServiceKinds = ["server-core", "service-node", "facade", "gateway"];
@@ -650,6 +650,12 @@
     var kRestartWaitMs = 10000;
     var settingsTab = kSettingsTabs[0].id;
     var settingsItem = "";
+
+    function restartBadge() {
+        var badge = element("span", "badge-restart", "restart");
+        badge.title = "Takes effect at the next start of the service";
+        return badge;
+    }
 
     function fieldRow(block, label, value, spec) {
         var options = spec || {};
@@ -675,7 +681,7 @@
             row.appendChild(element("span", "unit", options.unit));
         }
         if (options.restart) {
-            row.appendChild(element("span", "badge-restart", "restart"));
+            row.appendChild(restartBadge());
         }
         return input;
     }
@@ -704,7 +710,7 @@
         port.value = value.port ? String(value.port) : "";
         row.appendChild(port);
         if (restart) {
-            row.appendChild(element("span", "badge-restart", "restart"));
+            row.appendChild(restartBadge());
         }
         return { host: host, port: port };
     }
@@ -733,7 +739,7 @@
             row.appendChild(chip);
         });
         if (options.restart) {
-            row.appendChild(element("span", "badge-restart", "restart"));
+            row.appendChild(restartBadge());
         }
         return function () { return picked; };
     }
@@ -1478,6 +1484,11 @@
             var entry = { fleet: fleetName, name: name, kind: kind, url: url, pin: pin,
                 dropped: false };
             drop.addEventListener("click", function () {
+                var named = entry.name.value.trim() || "this service";
+                if (!window.confirm("Remove " + named + " from the panel? It is dropped when the"
+                    + " list is saved.")) {
+                    return;
+                }
                 entry.dropped = true;
                 wrap.remove();
             });

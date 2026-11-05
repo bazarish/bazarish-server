@@ -793,14 +793,15 @@
         return one.replace(/\/+$/, "") === other.replace(/\/+$/, "");
     }
 
-    // The portal's links, each of which can also be one of the reseeds it serves.
+    // The portal's addresses, each of which can also be one of the reseeds it serves.
     function linkList(block, links, reseeds) {
-        block.appendChild(element("p", "field-label", t("Links")));
+        block.appendChild(element("p", "field-label", t("Addresses")));
         var wrap = element("div", "link-list");
-        var list = element("div", "link-list");
+        var list = element("div", "link-rows");
         wrap.appendChild(list);
-        controls(block, N_("Shown by a client to a person who has no account here. The portal"
-            + " serves the reseed at each of them.")).appendChild(wrap);
+        controls(block, N_("A client shows them to a person with no account here, and a user"
+            + " compares them with the address bar before signing. The portal serves the reseed"
+            + " at each of them.")).appendChild(wrap);
         var rows = [];
         function addRow(address) {
             var row = element("div", "link-row");
@@ -813,7 +814,7 @@
             reseed.type = "checkbox";
             reseed.checked = reseeds.some(function (held) { return sameUrl(held, address); });
             label.appendChild(reseed);
-            label.appendChild(document.createTextNode(" " + t("Add to reseeds")));
+            label.appendChild(document.createTextNode(t("Add to reseeds")));
             var drop = element("button", "chip", t("remove"));
             drop.type = "button";
             var entry = { url: url, reseed: reseed, dropped: false };
@@ -837,7 +838,7 @@
             rows.push(entry);
         }
         links.forEach(addRow);
-        var add = element("button", "chip", t("add link"));
+        var add = element("button", "chip link-add", t("add address"));
         add.type = "button";
         add.addEventListener("click", function () { addRow(""); });
         wrap.appendChild(add);
@@ -1063,16 +1064,19 @@
             limit: kConsumerNameMax, placeholder: N_("The name of this site"),
             hint: N_("Shown in the client's window before a user signs a login for this portal")
         });
-        var places = textareaBlock(signing, N_("Addresses"), (consumer.place || []).join("\n"),
-            "http://host:port",
-            N_("One per line. A user compares these with their address bar before signing."));
+        var addresses = (consumer.place || []).slice();
+        (data.portalLinks || []).forEach(function (link) {
+            if (!addresses.some(function (held) { return sameUrl(held, link); })) {
+                addresses.push(link);
+            }
+        });
+        var links = linkList(signing, addresses, data.reseeds || []);
         var role = fieldRow(signing, N_("Role"), consumer.role, {
             limit: kConsumerRoleMax, placeholder: N_("Account owner"),
             hint: N_("Whose account the signature is for")
         });
 
         var reach = section(form, N_("Where the portal answers"));
-        var links = linkList(reach, data.portalLinks || [], data.reseeds || []);
         var listen = endpointRow(reach, N_("Listens on"), data.portalListen,
             N_("The socket the portal binds. It serves the reseed too."), true);
 
@@ -1080,7 +1084,7 @@
             N_("The words apply to the next challenge; the listener needs a restart"),
             function () {
                 var signer = {
-                    name: name.value.trim(), place: linesOf(places), role: role.value.trim()
+                    name: name.value.trim(), place: links.addresses(), role: role.value.trim()
                 };
                 var missing = Object.keys(signer).filter(function (key) {
                     return signer[key].length === 0;

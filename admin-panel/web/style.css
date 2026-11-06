@@ -1343,3 +1343,22 @@ body.centred {
 .sheet .step-note {
     font-size: 0.78rem;
 }
+
+.signin-code .qr-code {
+    width: min(100%, 16rem);
+    margin: 0 0 1rem;
+    padding: 0.6rem;
+    background: #ffffff;
+    border-radius: var(--bz-radius-sm);
+}
+
+.signin-code .qr-code svg {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.signin-code + .panel-note,
+.signin-code .panel-note {
+    margin-top: 0.6rem;
+}

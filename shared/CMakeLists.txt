@@ -2,6 +2,7 @@
 # What the servers share and the client has no use for.
 add_library(bazarish_server_shared STATIC
     Health.cpp
+    LoginRelay.cpp
     RateLimiter.cpp
     Restart.cpp
     SessionStore.cpp

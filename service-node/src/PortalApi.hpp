@@ -2,6 +2,7 @@
 #pragma once
 
 #include "GrantStore.hpp"
+#include "LoginMailbox.hpp"
 #include "Messages.hpp"
 #include "NodeSettings.hpp"
 #include "OperatorPush.hpp"
@@ -33,6 +34,7 @@ struct PortalApiOptions {
     std::function<std::string()> fetchReseedArchive;
     std::filesystem::path assetsDirectory;
     std::shared_ptr<NodeSettings> settings;
+    std::shared_ptr<LoginMailbox> logins;
 
     std::function<std::optional<MailboxUsage>(const std::string& user)> accountUsage;
 
@@ -60,7 +62,8 @@ private:
     void setupRoutes();
     void setupWebRoutes();
     std::string homePage(const bazarish::http::Request& request, const std::string& user,
-        const std::string& error);
+        const std::string& error, bazarish::http::Response& response);
+    std::string signInPanel(const std::string& error, bazarish::http::Response& response);
     std::string language(const bazarish::http::Request& request) const;
     std::string languageSwitch(const std::string& lang, const std::string& here) const;
     std::string page(const bazarish::http::Request& request, const std::string& title,

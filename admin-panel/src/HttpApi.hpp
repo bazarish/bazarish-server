@@ -57,6 +57,9 @@ private:
         const std::string& fleet, const std::string& kind) const;
     std::optional<ServiceEntry> serviceNamed(
         const std::string& fleet, const std::string& name) const;
+    std::string loginFacade(const ServiceEntry& node);
+    std::string loginForm(const std::string& error, bazarish::http::Response& response);
+
     void proxyToNode(const std::string& fleet, bazarish::http::Response& response,
         const std::string& method, const std::string& path, const std::string& body);
 

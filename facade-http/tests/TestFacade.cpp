@@ -3,6 +3,7 @@
 #include "FacadeAddress.hpp"
 #include "Load.hpp"
 
+#include <LoginRelay.hpp>
 #include <bazarish/HttpClient.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <nlohmann/json.hpp>
@@ -265,6 +266,27 @@ int main()
         CHECK(call(facadePort, "GET", "/n").status == 404);
         CHECK(call(facadePort, "POST", "/v1/node/card", {}, "{}").status == 404);
         CHECK(call(facadePort, "GET", "/t").status == 404);
+
+        const std::string nonce(bazarish::loginrelay::kNonceChars, 'a');
+        const http::ClientResponse callback
+            = call(facadePort, "POST", bazarish::loginrelay::kCallbackPath, {}, "{}");
+        CHECK(callback.status == 200);
+        CHECK(nlohmann::json::parse(callback.body).at("backend") == "service-node");
+        const http::ClientResponse challenge
+            = call(facadePort, "GET", std::string(bazarish::loginrelay::kChallengePrefix) + nonce);
+        CHECK(challenge.status == 200);
+        CHECK(nlohmann::json::parse(challenge.body).at("backend") == "service-node");
+        for (const auto& [method, path] : std::initializer_list<std::pair<std::string, std::string>>{
+                 {"GET", bazarish::loginrelay::kCallbackPath},
+                 {"POST", std::string(bazarish::loginrelay::kCallbackPath) + "/" + nonce},
+                 {"POST", std::string(bazarish::loginrelay::kChallengePrefix) + nonce},
+                 {"GET", "/login/c/" + nonce.substr(1)},
+                 {"GET", "/login/c/" + nonce + "a"},
+                 {"GET", "/login/c/" + std::string(bazarish::loginrelay::kNonceChars, 'A')},
+                 {"GET", "/login/c/" + nonce + "/x"},
+                 {"POST", "/login"}}) {
+            CHECK(call(facadePort, method, path, {}, "{}").status == 404);
+        }
     }
 
     for (const auto& [method, path] : std::initializer_list<std::pair<const char*, const char*>>{

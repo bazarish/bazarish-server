@@ -3,6 +3,7 @@
     "use strict";
 
     var kFeedbackMs = 1600;
+    var kSignInPollMs = 2000;
 
     function copy(text) {
         if (navigator.clipboard && window.isSecureContext) {
@@ -69,6 +70,35 @@
             event.preventDefault();
             close();
         });
+    }
+
+    function watchSignIn(block) {
+        if (!window.fetch) {
+            return;
+        }
+        var timer = window.setInterval(function () {
+            window.fetch(block.dataset.signWait, {credentials: "same-origin"})
+                .then(function (answer) {
+                    return answer.ok ? answer.json() : null;
+                })
+                .then(function (state) {
+                    if (!state || state.state === "waiting") {
+                        return;
+                    }
+                    window.clearInterval(timer);
+                    if (state.state === "signedIn") {
+                        window.location.assign("/");
+                        return;
+                    }
+                    block.querySelector("[data-sign-expired]").hidden = false;
+                }, function () {
+                });
+        }, kSignInPollMs);
+    }
+
+    var waiting = document.querySelectorAll("[data-sign-wait]");
+    for (var k = 0; k < waiting.length; ++k) {
+        watchSignIn(waiting[k]);
     }
 
     var openers = document.querySelectorAll("a.btn-qr");

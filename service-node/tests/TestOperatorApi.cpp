@@ -3,6 +3,8 @@
 
 #include "SubscriptionStore.hpp"
 
+#include <LoginRelay.hpp>
+#include <bazarish/LoginChallenge.hpp>
 #include <bazarish/Clock.hpp>
 #include <bazarish/Auth.hpp>
 #include <bazarish/Certificates.hpp>
@@ -116,6 +118,7 @@ int main()
     initial.defaultQuotaBytes = kQuota;
     const auto settings = std::make_shared<NodeSettings>(configPath, initial);
     options.settings = settings;
+    options.logins = std::make_shared<LoginMailbox>();
 
     AccountApi api(store, grants, options);
     const int port = api.bind("127.0.0.1", 0);
@@ -344,6 +347,31 @@ int main()
         CHECK(call(opsPort, panel, "PUT", "/v1/account/settings", plainSeed).status == 400);
         CHECK(settings->get().reseeds == std::vector<std::string>{"https://seed.example"});
         CHECK(settings->get().portalLinks == std::vector<std::string>{"https://portal.example"});
+    }
+
+    {
+        LoginChallenge issuer("panel-secret",
+            LoginConsumer{"Bazarish admin panel", {"https://panel.example"}, "Administrator"});
+        const std::string challenge = issuer.issue(nowSeconds());
+        const std::string nonce = loginrelay::nonceOf(challenge);
+        const std::string expect
+            = nlohmann::json{{"challenge", challenge}, {"token", "browser"}}.dump();
+        CHECK(call(opsPort, stranger, "POST", "/v1/login/expect", expect).status == 403);
+        CHECK(call(opsPort, panel, "POST", "/v1/login/expect",
+                  nlohmann::json{{"challenge", challenge}}.dump()).status == 400);
+        CHECK(call(opsPort, panel, "POST", "/v1/login/expect", expect).status == 200);
+        const auto claim = [&](const Identity& who, const std::string& token) {
+            return call(opsPort, who, "POST", "/v1/login/claim",
+                nlohmann::json{{"nonce", nonce}, {"token", token}}.dump());
+        };
+        CHECK(claim(stranger, "browser").status == 403);
+        CHECK(nlohmann::json::parse(claim(panel, "other").body).at("state") == "gone");
+        CHECK(nlohmann::json::parse(claim(panel, "browser").body).at("state") == "waiting");
+        CHECK(options.logins->deliver(nonce, challenge, "blob", nowSeconds()));
+        const nlohmann::json taken = nlohmann::json::parse(claim(panel, "browser").body);
+        CHECK(taken.at("state") == "signed");
+        CHECK(taken.at("challenge") == challenge && taken.at("blob") == "blob");
+        CHECK(nlohmann::json::parse(claim(panel, "browser").body).at("state") == "gone");
     }
 
     api.stop();

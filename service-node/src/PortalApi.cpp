@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #include "PortalApi.hpp"
 
+#include <LoginRelay.hpp>
 #include <QrSvg.hpp>
 
 #include <bazarish/ServerDescriptor.hpp>
@@ -8,6 +9,11 @@
 #include <bazarish/HttpServer.hpp>
 #include <bazarish/Clock.hpp>
 #include <bazarish/Log.hpp>
+#include <bazarish/Bytes.hpp>
+#include <bazarish/Crypto.hpp>
+#include <bazarish/I2pAddress.hpp>
+
+#include <nlohmann/json.hpp>
 
 #include <functional>
 
@@ -43,6 +49,13 @@ void sendHtml(http::Response& response, const std::string& html, const int statu
     response.body = html;
 }
 
+void sendJson(http::Response& response, const nlohmann::json& body)
+{
+    response.contentType = "application/json";
+    response.headers["Cache-Control"] = "no-store";
+    response.body = body.dump();
+}
+
 void redirectTo(http::Response& response, const std::string& location)
 {
     response.status = 303;
@@ -51,6 +64,9 @@ void redirectTo(http::Response& response, const std::string& location)
 
 const char* const kSessionCookie = "session";
 const char* const kCookieAttributes = "; HttpOnly; SameSite=Strict; Path=/";
+const char* const kSignInCookie = "signin";
+const char* const kSignInCookieAttributes = "; HttpOnly; SameSite=Strict; Path=/login";
+constexpr std::size_t kSignInTokenBytes = 16;
 
 void setSessionCookie(http::Response& response, const std::string& token)
 {
@@ -215,7 +231,7 @@ void PortalApi::setupWebRoutes()
             grants_.grantSubscription(user, settings().defaultQuotaBytes,
                 nowSeconds());
         }
-        sendHtml(response, homePage(request, user, std::string()));
+        sendHtml(response, homePage(request, user, std::string(), response));
     }));
 
     http_->post("/login", filled([this](const http::Request& request, http::Response& response) {
@@ -227,9 +243,26 @@ void PortalApi::setupWebRoutes()
         } catch (const std::exception& error) {
             bazarish::log::debug("portal sign-in refused: {}", error.what());
             sendHtml(response,
-                homePage(request, std::string(), "{{t.signin.failed}}"),
+                homePage(request, std::string(), "{{t.signin.failed}}", response),
                 401);
         }
+    }));
+
+    http_->get("/login/wait", filled([this](const http::Request& request, http::Response& response) {
+        const std::int64_t now = nowSeconds();
+        const LoginMailbox::Claim claim
+            = options_.logins->claim(request.query("nonce"), request.cookie(kSignInCookie), now);
+        std::string state = claim.state == LoginMailbox::State::eWaiting ? "waiting" : "gone";
+        if (claim.state == LoginMailbox::State::eSigned) {
+            try {
+                setSessionCookie(
+                    response, session_.issue(login().verify(claim.challenge, claim.blob, now), now));
+                state = "signedIn";
+            } catch (const std::exception& error) {
+                bazarish::log::debug("portal sign-in refused: {}", error.what());
+            }
+        }
+        sendJson(response, {{"state", state}});
     }));
 
     http_->post("/logout", filled([](const http::Request&, http::Response& response) {
@@ -324,16 +357,42 @@ std::map<std::string, std::string> PortalApi::accountValues(const std::string& u
     };
 }
 
-std::string PortalApi::homePage(
-    const http::Request& request, const std::string& user, const std::string& error)
+std::string PortalApi::signInPanel(const std::string& error, http::Response& response)
+{
+    const std::int64_t now = nowSeconds();
+    const std::vector<std::string> facades = settings().facades;
+    if (facades.empty() || !isB32I2pHost(facades.front())) {
+        return assets_.render("signin.html",
+            {
+                {"challenge", htmlEscape(login().issue(now))},
+                {"error", notice(error, "is-error")},
+                {"scan", std::string()},
+            });
+    }
+    const std::string& facade = facades.front();
+    const std::string challenge = login().issue(now, loginrelay::callbackUrl(facade));
+    const std::string nonce = loginrelay::nonceOf(challenge);
+    const std::string token = toHex(randomBytes(kSignInTokenBytes));
+    options_.logins->expect(challenge, token, now);
+    response.headers["Set-Cookie"] = std::string(kSignInCookie) + "=" + token + kSignInCookieAttributes;
+    return assets_.render("signin.html",
+        {
+            {"challenge", htmlEscape(challenge)},
+            {"error", notice(error, "is-error")},
+            {"scan",
+                assets_.render("signin-scan.html",
+                    {
+                        {"qr", bazarish::qr::svg(loginrelay::challengeLink(facade, nonce))},
+                        {"nonce", nonce},
+                    })},
+        });
+}
+
+std::string PortalApi::homePage(const http::Request& request, const std::string& user,
+    const std::string& error, http::Response& response)
 {
     if (user.empty()) {
-        return page(request, "{{t.signin.action}}", std::string(),
-            assets_.render("signin.html",
-                {
-                    {"challenge", htmlEscape(login().issue(nowSeconds()))},
-                    {"error", notice(error, "is-error")},
-                }));
+        return page(request, "{{t.signin.action}}", std::string(), signInPanel(error, response));
     }
 
     const std::string session

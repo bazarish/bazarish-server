@@ -271,6 +271,8 @@ int main(const int argc, const char** argv)
     options.version = bazarish::kBuildVersion;
     options.operatorFingerprints = nodeConfig.operators;
     options.settings = settings;
+    const auto logins = std::make_shared<bazarish::service::LoginMailbox>();
+    options.logins = logins;
     options.tlsCertificate = credential.certificate.string();
     options.tlsKey = credential.key.string();
     options.opsClientPins = nodeConfig.opsClients;
@@ -337,6 +339,7 @@ int main(const int argc, const char** argv)
         portalOptions.sessionSecret = bazarish::toHex(bazarish::randomBytes(kPortalSecretBytes));
         portalOptions.assetsDirectory = fs::path(nodeConfig.portalAssets);
         portalOptions.settings = settings;
+        portalOptions.logins = logins;
         portalOptions.accountUsage = [&operatorPush](const std::string& user) {
             return operatorPush.accountUsage(user);
         };

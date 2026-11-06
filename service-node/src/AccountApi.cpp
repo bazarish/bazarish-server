@@ -9,6 +9,7 @@
 #include <bazarish/ServerDescriptor.hpp>
 #include <bazarish/Errors.hpp>
 #include <Health.hpp>
+#include <LoginRelay.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <bazarish/I2p.hpp>
 #include <bazarish/Limits.hpp>
@@ -59,6 +60,19 @@ std::vector<std::string> normalizedUrls(const std::vector<std::string>& urls)
         }
     }
     return out;
+}
+
+std::string loginStateName(const bazarish::service::LoginMailbox::State state)
+{
+    switch (state) {
+    case bazarish::service::LoginMailbox::State::eWaiting:
+        return "waiting";
+    case bazarish::service::LoginMailbox::State::eSigned:
+        return "signed";
+    case bazarish::service::LoginMailbox::State::eGone:
+        return "gone";
+    }
+    throw std::logic_error("an unknown login state");
 }
 
 Bytes bodyBytes(const http::Request& request)
@@ -284,6 +298,28 @@ void AccountApi::setupOpsRoutes()
             }
         };
     };
+
+    ops_->post("/v1/login/expect",
+        filled(operatorOnly([this](const http::Request& request, http::Response& response) {
+            const nlohmann::json body = nlohmann::json::parse(request.body);
+            options_.logins->expect(body.at("challenge").get<std::string>(),
+                body.at("token").get<std::string>(), nowSeconds());
+            respondJson(response, {{"ok", true}});
+        })));
+
+    ops_->post("/v1/login/claim",
+        filled(operatorOnly([this](const http::Request& request, http::Response& response) {
+            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const LoginMailbox::Claim claim = options_.logins->claim(
+                body.at("nonce").get<std::string>(), body.at("token").get<std::string>(),
+                nowSeconds());
+            respondJson(response,
+                {
+                    {"state", loginStateName(claim.state)},
+                    {"challenge", claim.challenge},
+                    {"blob", claim.blob},
+                });
+        })));
 
     ops_->get("/healthz",
         filled(operatorOnly([this](const http::Request&, http::Response& response) {
@@ -613,6 +649,48 @@ void AccountApi::setupRoutes()
             response.contentType = "application/octet-stream";
             response.body
                 = std::string(options_.nodeCardDer.begin(), options_.nodeCardDer.end());
+        }));
+
+    http_->post(loginrelay::kCallbackPath,
+        filled([this](const http::Request& request, http::Response& response) {
+            const nlohmann::json body = nlohmann::json::parse(request.body, nullptr, false);
+            if (body.is_discarded() || !body.is_object() || !body.contains("challenge")
+                || !body.contains("blob") || !body.at("challenge").is_string()
+                || !body.at("blob").is_string()) {
+                respondError(response, 400, ErrorCode::eRequestFailed,
+                    "challenge and blob expected");
+                return;
+            }
+            const std::string challenge = body.at("challenge").get<std::string>();
+            const std::string blob = body.at("blob").get<std::string>();
+            const std::int64_t now = nowSeconds();
+            std::string nonce;
+            try {
+                nonce = loginrelay::nonceOf(challenge);
+                (void)verifyLoginBlob(blob, now, challenge);
+            } catch (const std::exception& error) {
+                respondError(response, 403, ErrorCode::eRequestFailed, error.what());
+                return;
+            }
+            if (!options_.logins->deliver(nonce, challenge, blob, now)) {
+                respondError(response, 404, ErrorCode::eRequestFailed,
+                    "no sign-in waits for this challenge");
+                return;
+            }
+            respondJson(response, {{"ok", true}});
+        }));
+
+    http_->get(std::string(loginrelay::kChallengePrefix) + "([0-9a-f]+)",
+        filled([this](const http::Request& request, http::Response& response) {
+            const std::string challenge
+                = options_.logins->challengeOf(request.captures.at(0), nowSeconds());
+            if (challenge.empty()) {
+                respondError(response, 404, ErrorCode::eRequestFailed,
+                    "no sign-in waits with this challenge");
+                return;
+            }
+            response.contentType = "text/plain; charset=utf-8";
+            response.body = challenge;
         }));
 
     http_->routeAsync("POST", std::string(bazarish::tunnel::kNodeTunnelPath),

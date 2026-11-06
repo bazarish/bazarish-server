@@ -16,7 +16,7 @@ class AdminAuth {
 public:
     explicit AdminAuth(std::shared_ptr<PanelSettings> settings);
 
-    std::string issueChallenge(std::int64_t now);
+    std::string issueChallenge(std::int64_t now, const std::string& callback = {});
 
     std::string verify(const std::string& challenge, const std::string& blob, std::int64_t now);
 

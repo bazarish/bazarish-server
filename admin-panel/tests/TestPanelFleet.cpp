@@ -15,11 +15,13 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -151,6 +153,19 @@ int main()
         described = nlohmann::json::parse(request.body).at("facades");
         return json({{"ok", true}});
     });
+    nlohmann::json expected;
+    nlohmann::json claimed = {{"state", "waiting"}, {"challenge", ""}, {"blob", ""}};
+    nlohmann::json askedClaim;
+    node->post("/v1/login/expect", [&](const http::Request& request) {
+        const std::lock_guard<std::mutex> lock(guard);
+        expected = nlohmann::json::parse(request.body);
+        return json({{"ok", true}});
+    });
+    node->post("/v1/login/claim", [&](const http::Request& request) {
+        const std::lock_guard<std::mutex> lock(guard);
+        askedClaim = nlohmann::json::parse(request.body);
+        return json(claimed);
+    });
     const int nodePort = node->start();
 
     std::string facadeAddress = kOldAddress;
@@ -280,6 +295,83 @@ int main()
     Panel stranger = panel;
     stranger.cookie = "not-a-session";
     CHECK(stranger.ask("GET", "/api/facades?fleet=home").status == 401);
+
+    {
+        const std::string facadeHost = std::string(52, 'f') + ".b32.i2p";
+        {
+            const std::lock_guard<std::mutex> lock(guard);
+            described = nlohmann::json::array({facadeHost});
+        }
+        http::ClientRequest page;
+        page.method = "GET";
+        page.target = "/login";
+        const http::ClientResponse shown = http::request("127.0.0.1", panel.port, page, {});
+        CHECK(shown.status == 200);
+        CHECK(shown.body.find("class=\"qr-code\"><svg") != std::string::npos);
+        const std::size_t start = shown.body.find(kChallengeField)
+            + std::char_traits<char>::length(kChallengeField);
+        const std::string challenge = shown.body.substr(start, shown.body.find('"', start) - start);
+        const std::optional<service::LoginCallback> callback = service::readLoginCallback(challenge);
+        CHECK(callback.has_value() && callback->host == facadeHost);
+        std::string token;
+        for (const auto& [name, value] : shown.headers) {
+            if (value.rfind("adminsignin=", 0) == 0) {
+                token = value.substr(std::strlen("adminsignin="), value.find(';') - std::strlen("adminsignin="));
+                CHECK(value.find("Path=/login") != std::string::npos);
+            }
+        }
+        CHECK(!token.empty());
+        const std::string nonce
+            = nlohmann::json::parse(service::decodeLoginChallenge(challenge)).at("nonce").get<std::string>();
+        {
+            const std::lock_guard<std::mutex> lock(guard);
+            CHECK(expected.at("challenge") == challenge);
+            CHECK(expected.at("token") == token);
+        }
+        const auto wait = [&](const std::string& cookie) {
+            http::ClientRequest asked;
+            asked.method = "GET";
+            asked.target = "/login/wait?nonce=" + nonce;
+            asked.headers = {{"Cookie", "adminsignin=" + cookie}};
+            return http::request("127.0.0.1", panel.port, asked, {});
+        };
+        CHECK(nlohmann::json::parse(wait(token).body).at("state") == "waiting");
+        {
+            const std::lock_guard<std::mutex> lock(guard);
+            CHECK(askedClaim.at("nonce") == nonce);
+            CHECK(askedClaim.at("token") == token);
+            claimed = {{"state", "signed"}, {"challenge", challenge},
+                {"blob", service::signLoginBlob(admin,
+                             static_cast<std::int64_t>(std::time(nullptr)), challenge)}};
+        }
+        const http::ClientResponse entered = wait(token);
+        CHECK(nlohmann::json::parse(entered.body).at("state") == "signedIn");
+        std::string session;
+        for (const auto& [name, value] : entered.headers) {
+            if (value.rfind("adminsession=", 0) == 0) {
+                session = value.substr(std::strlen("adminsession="), value.find(';') - std::strlen("adminsession="));
+            }
+        }
+        Panel scanned{panel.port, session};
+        CHECK(scanned.ask("GET", "/api/panel").status == 200);
+
+        const http::ClientResponse again = http::request("127.0.0.1", panel.port, page, {});
+        const std::size_t from = again.body.find(kChallengeField)
+            + std::char_traits<char>::length(kChallengeField);
+        const std::string other = again.body.substr(from, again.body.find('"', from) - from);
+        {
+            const std::lock_guard<std::mutex> lock(guard);
+            claimed = {{"state", "signed"}, {"challenge", other},
+                {"blob", service::signLoginBlob(Identity::generate(),
+                             static_cast<std::int64_t>(std::time(nullptr)), other)}};
+        }
+        CHECK(nlohmann::json::parse(wait(token).body).at("state") == "gone");
+        {
+            const std::lock_guard<std::mutex> lock(guard);
+            claimed = {{"state", "waiting"}, {"challenge", ""}, {"blob", ""}};
+            described = nlohmann::json::array();
+        }
+    }
 
     api.stop();
     serverThread.join();

@@ -246,6 +246,20 @@
       "es": "sin datos",
       "zh": "未知",
       "ar": "غير معروف"
+    },
+    "signin.scan": {
+      "en": "Scan the code in the Bazarish app",
+      "ru": "Отсканируйте код в приложении Bazarish",
+      "es": "Escanea el código con la app de Bazarish",
+      "zh": "在 Bazarish 应用中扫描此码",
+      "ar": "امسح الرمز في تطبيق Bazarish"
+    },
+    "signin.expired": {
+      "en": "The challenge has expired, reload the page",
+      "ru": "Запрос устарел, обновите страницу",
+      "es": "El desafío ha caducado, recarga la página",
+      "zh": "质询已过期，请刷新页面",
+      "ar": "انتهت صلاحية الطلب، أعد تحميل الصفحة"
     }
   }
 }

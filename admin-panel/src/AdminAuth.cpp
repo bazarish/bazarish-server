@@ -31,9 +31,9 @@ service::LoginChallenge& AdminAuth::challenges()
     return challenges_;
 }
 
-std::string AdminAuth::issueChallenge(const std::int64_t now)
+std::string AdminAuth::issueChallenge(const std::int64_t now, const std::string& callback)
 {
-    return challenges().issue(now);
+    return challenges().issue(now, callback);
 }
 
 std::string AdminAuth::verify(

@@ -833,3 +833,11 @@ body {
 .signin-note {
     font-size: 0.78rem;
 }
+
+.signin-code .qr-code {
+    width: min(100%, 16rem);
+    margin-top: 1rem;
+    padding: 0.6rem;
+    background: #ffffff;
+    border-radius: var(--bz-radius-sm);
+}

@@ -3,13 +3,16 @@
 The HTTP facade for the [Bazarish](https://github.com/bazarish/docs-main)
 messenger: the "last mile" between a client and the server infrastructure.
 
-It has two backends and forwards exactly four requests to them; everything else
+It has two backends and forwards exactly six requests to them; everything else
 gets the same bare 404:
 
 - `POST /t` and `GET /v1/server/card` go to the messaging server: the sealed
   tunnel of the mailbox calls and the signed card whose key seals it.
 - `POST /n` and `GET /v1/node/card` go to the service node: the same for the
   account calls.
+- `POST /login/callback` and `GET /login/c/<nonce>` go to the service node: a
+  sign-in by code at the portal or the admin panel, whose callback names this
+  facade.
 
 Inside a tunnel the method, path and headers are encrypted, so the facade cannot
 tell a message from a mailbox poll; it learns only which backend a frame is for.

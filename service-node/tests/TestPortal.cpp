@@ -3,6 +3,8 @@
 #include "PortalApi.hpp"
 #include "SubscriptionStore.hpp"
 
+#include <LoginRelay.hpp>
+
 #include <bazarish/Portal.hpp>
 #include <bazarish/ServerDescriptor.hpp>
 #include <bazarish/WebAssets.hpp>
@@ -115,6 +117,7 @@ void testPortalDiscovery()
     options.settings = std::make_shared<NodeSettings>(configPath, values);
     options.forgetMailbox = [](const std::string&) { return true; };
     options.publishQuota = [](const std::string&, std::uint64_t) {};
+    options.logins = std::make_shared<LoginMailbox>();
 
     AccountApi api(store, grants, options);
     const int port = api.bind("127.0.0.1", 0);
@@ -146,6 +149,38 @@ void testPortalDiscovery()
     CHECK(!open.at("registration").at("requiresApproval").get<bool>());
     CHECK(open.at("message").get<std::string>().empty());
     CHECK(open.at("registration").at("message").get<std::string>().empty());
+
+    {
+        LoginChallenge panel("panel-secret",
+            LoginConsumer{"Bazarish admin panel", {"https://panel.example"}, "Administrator"});
+        const std::string facade = std::string(52, 'f') + ".b32.i2p";
+        const std::string challenge = panel.issue(now(), loginrelay::callbackUrl(facade));
+        const std::string nonce = loginrelay::nonceOf(challenge);
+        const Identity signer = Identity::generate();
+        const auto deliver = [&](const std::string& sent, const std::string& blob) {
+            return call(port, "POST", loginrelay::kCallbackPath, {},
+                nlohmann::json{{"challenge", sent}, {"blob", blob}}.dump())
+                .status;
+        };
+        const std::string path = std::string(loginrelay::kChallengePrefix) + nonce;
+        CHECK(call(port, "GET", path).status == 404);
+        CHECK(deliver(challenge, signLoginBlob(signer, now(), challenge)) == 404);
+
+        options.logins->expect(challenge, "token", now());
+        const http::ClientResponse fetched = call(port, "GET", path);
+        CHECK(fetched.status == 200);
+        CHECK(fetched.body == challenge);
+        CHECK(call(port, "POST", loginrelay::kCallbackPath, {}, "{\"challenge\": 1}").status == 400);
+        CHECK(call(port, "POST", loginrelay::kCallbackPath, {}, "not json").status == 400);
+        CHECK(deliver(challenge, "not a blob") == 403);
+        CHECK(deliver(challenge, signLoginBlob(signer, now(), panel.issue(now()))) == 403);
+        CHECK(options.logins->claim(nonce, "token", now()).state == LoginMailbox::State::eWaiting);
+        CHECK(deliver(challenge, signLoginBlob(signer, now(), challenge)) == 200);
+        CHECK(deliver(challenge, signLoginBlob(signer, now(), challenge)) == 404);
+        const LoginMailbox::Claim claim = options.logins->claim(nonce, "token", now());
+        CHECK(claim.state == LoginMailbox::State::eSigned);
+        CHECK(panel.verify(claim.challenge, claim.blob, now()) == signer.fingerprint());
+    }
     CHECK(open.at("links").size() == 2);
 
     api.stop();
@@ -211,7 +246,11 @@ void testWebFlow()
     options.challengeSecret = toHex(randomBytes(kSecretBytes));
     options.sessionSecret = toHex(randomBytes(kSecretBytes));
     options.assetsDirectory = BAZARISH_PORTAL_ASSETS_DIR;
-    options.settings = std::make_shared<NodeSettings>(fs::path(), values);
+    const fs::path nodeConfig = root / "service-node.json";
+    fs::create_directories(root);
+    std::ofstream(nodeConfig) << "{}";
+    options.settings = std::make_shared<NodeSettings>(nodeConfig, values);
+    options.logins = std::make_shared<LoginMailbox>();
     const std::string descriptor
         = encodeServerDescriptor({options.serverFingerprint, values.facades, values.reseeds});
 
@@ -277,6 +316,57 @@ void testWebFlow()
     CHECK(script.contentType.find("javascript") != std::string::npos);
 
     CHECK(style.body.find("--bz-key: #14e2ff") != std::string::npos);
+
+    CHECK(page.body.find("data-sign-wait") == std::string::npos);
+    CHECK(page.headers.count("set-cookie") == 0);
+    {
+        const std::string facade = std::string(52, 'f') + ".b32.i2p";
+        NodeSettings::Values withFacade = values;
+        withFacade.facades = {facade};
+        options.settings->set(withFacade);
+
+        const http::ClientResponse shown = call(port, "GET", "/");
+        CHECK(shown.status == 200);
+        CHECK(shown.body.find("class=\"qr-code\"><svg") != std::string::npos);
+        const std::string scanned = between(shown.body, "<pre class=\"copy\">", "</pre>");
+        const std::optional<LoginCallback> callback = readLoginCallback(scanned);
+        CHECK(callback.has_value() && callback->host == facade && callback->path == "/login/callback");
+        const std::string nonce = loginrelay::nonceOf(scanned);
+        CHECK(shown.body.find("data-sign-wait=\"/login/wait?nonce=" + nonce + "\"") != std::string::npos);
+        const std::string token = between(shown.headers.at("set-cookie") + ";", "signin=", ";");
+        CHECK(shown.headers.at("set-cookie").find("Path=/login") != std::string::npos);
+        const auto wait = [&](const std::string& cookie) {
+            return nlohmann::json::parse(call(port, "GET", "/login/wait?nonce=" + nonce,
+                {{"Cookie", "signin=" + cookie}}).body).at("state").get<std::string>();
+        };
+        CHECK(wait(token) == "waiting");
+        CHECK(options.logins->challengeOf(nonce, now()) == scanned);
+        CHECK(options.logins->deliver(nonce, scanned, signLoginBlob(identity, now(), scanned), now()));
+        CHECK(wait(toHex(randomBytes(kSecretBytes))) == "gone");
+        const http::ClientResponse claimed = call(port, "GET", "/login/wait?nonce=" + nonce,
+            {{"Cookie", "signin=" + token}});
+        CHECK(nlohmann::json::parse(claimed.body).at("state") == "signedIn");
+        const std::string scannedSession
+            = between(claimed.headers.at("set-cookie") + ";", "session=", ";");
+        CHECK(call(port, "GET", "/", {{"Cookie", "session=" + scannedSession}}).body.find(
+                  identity.fingerprint())
+            != std::string::npos);
+        CHECK(wait(token) == "gone");
+
+        const http::ClientResponse forged = call(port, "GET", "/");
+        const std::string other = between(forged.body, "<pre class=\"copy\">", "</pre>");
+        const std::string otherToken = between(forged.headers.at("set-cookie") + ";", "signin=", ";");
+        const std::string otherNonce = loginrelay::nonceOf(other);
+        nlohmann::json edited = nlohmann::json::parse(decodeLoginChallenge(other));
+        edited["callback"] = "http://" + std::string(52, 'e') + ".b32.i2p/login/callback";
+        const std::string moved = encodeLoginChallenge(edited.dump());
+        CHECK(!options.logins->deliver(otherNonce, moved, signLoginBlob(identity, now(), moved), now()));
+        CHECK(options.logins->deliver(otherNonce, other, "not a blob", now()));
+        CHECK(nlohmann::json::parse(call(port, "GET", "/login/wait?nonce=" + otherNonce,
+                  {{"Cookie", "signin=" + otherToken}}).body).at("state") == "gone");
+
+        options.settings->set(values);
+    }
 
     const std::string challenge = between(page.body, "<pre class=\"copy\">", "</pre>");
     const std::string blob = signLoginBlob(identity, now(), challenge);

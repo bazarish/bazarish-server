@@ -1,17 +1,20 @@
 // Bazarish project (c) 2026
 #include "HttpApi.hpp"
 
+#include <LoginRelay.hpp>
 #include <QrSvg.hpp>
 
 #include "FleetSync.hpp"
 #include "ServiceClient.hpp"
 
 #include <bazarish/Address.hpp>
+#include <bazarish/Bytes.hpp>
 #include <bazarish/Certificates.hpp>
 #include <bazarish/Clock.hpp>
 #include <bazarish/ConfigFile.hpp>
 #include <bazarish/Crypto.hpp>
 #include <bazarish/HttpServer.hpp>
+#include <bazarish/I2pAddress.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/WebAssets.hpp>
 
@@ -35,6 +38,12 @@ using bazarish::http::filled;
 
 const char* const kCookieName = "adminsession";
 const char* const kCookieAttributes = "; HttpOnly; SameSite=Strict; Path=/";
+const char* const kSignInCookie = "adminsignin";
+const char* const kSignInCookieAttributes = "; HttpOnly; SameSite=Strict; Path=/login";
+constexpr std::size_t kSignInTokenBytes = 16;
+const char* const kLoginExpectPath = "/v1/login/expect";
+const char* const kLoginClaimPath = "/v1/login/claim";
+const char* const kNodeSettingsPath = "/v1/account/settings";
 
 void setSessionCookie(http::Response& response, const std::string& token)
 {
@@ -240,6 +249,60 @@ std::optional<ServiceEntry> HttpApi::serviceOfKind(
     return std::nullopt;
 }
 
+std::string HttpApi::loginFacade(const ServiceEntry& node)
+{
+    const JsonResult settings
+        = callJson(node, identity_, credential_, "GET", kNodeSettingsPath);
+    if (!settings.ok) {
+        bazarish::log::warn("sign-in shows no code: the service node did not answer ({})",
+            failureText(settings));
+        return {};
+    }
+    const nlohmann::json facades = nlohmann::json::parse(settings.body).at("facades");
+    if (facades.empty() || !isB32I2pHost(facades.front().get<std::string>())) {
+        return {};
+    }
+    return facades.front().get<std::string>();
+}
+
+std::string HttpApi::loginForm(const std::string& error, http::Response& response)
+{
+    const std::int64_t now = nowSeconds();
+    const std::optional<ServiceEntry> node = serviceOfKind(std::string(), kServiceNodeKind);
+    const std::string facade = node.has_value() ? loginFacade(*node) : std::string();
+    std::string scan;
+    std::string challenge;
+    if (!facade.empty()) {
+        challenge = auth_.issueChallenge(now, loginrelay::callbackUrl(facade));
+        const std::string token = toHex(randomBytes(kSignInTokenBytes));
+        const JsonResult expected = callJson(*node, identity_, credential_, "POST",
+            kLoginExpectPath, nlohmann::json{{"challenge", challenge}, {"token", token}}.dump());
+        if (expected.ok) {
+            response.headers["Set-Cookie"]
+                = std::string(kSignInCookie) + "=" + token + kSignInCookieAttributes;
+            const std::string nonce = loginrelay::nonceOf(challenge);
+            scan = assets_.render("signin-scan.html",
+                {
+                    {"qr", bazarish::qr::svg(loginrelay::challengeLink(facade, nonce))},
+                    {"nonce", nonce},
+                });
+        } else {
+            bazarish::log::warn("sign-in shows no code: the service node refused it ({})",
+                failureText(expected));
+            challenge.clear();
+        }
+    }
+    if (challenge.empty()) {
+        challenge = auth_.issueChallenge(now);
+    }
+    return assets_.render("login.html",
+        {
+            {"challenge", challenge},
+            {"error", notice(error)},
+            {"scan", scan},
+        });
+}
+
 void HttpApi::proxyToNode(const std::string& fleet, http::Response& response,
     const std::string& method, const std::string& path, const std::string& body)
 {
@@ -268,14 +331,6 @@ void HttpApi::registerRoutes()
 
     const auto signedIn = [this](const http::Request& request) {
         return sessions_.valid(request.cookie(kCookieName), nowSeconds());
-    };
-
-    const auto loginPage = [this](const std::string& error) {
-        return assets_.render("login.html",
-            {
-                {"challenge", auth_.issueChallenge(nowSeconds())},
-                {"error", notice(error)},
-            });
     };
 
     const auto setupPage = [this](const std::string& error) {
@@ -329,7 +384,7 @@ void HttpApi::registerRoutes()
         }
     }));
 
-    http_->get("/login", filled([this, signedIn, loginPage](
+    http_->get("/login", filled([this, signedIn](
                              const http::Request& request, http::Response& response) {
         if (settings_->unclaimed()) {
             redirectTo(response, "/setup");
@@ -339,10 +394,40 @@ void HttpApi::registerRoutes()
             redirectTo(response, "/");
             return;
         }
-        sendHtml(response, loginPage(std::string()));
+        sendHtml(response, loginForm(std::string(), response));
     }));
 
-    http_->post("/login", filled([this, loginPage](
+    http_->get("/login/wait", filled([this](const http::Request& request, http::Response& response) {
+        const std::optional<ServiceEntry> node = serviceOfKind(std::string(), kServiceNodeKind);
+        if (!node.has_value()) {
+            sendJson(response, nlohmann::json{{"state", "gone"}}.dump());
+            return;
+        }
+        const JsonResult claimed = callJson(*node, identity_, credential_, "POST", kLoginClaimPath,
+            nlohmann::json{{"nonce", request.query("nonce")},
+                {"token", request.cookie(kSignInCookie)}}
+                .dump());
+        if (!claimed.ok) {
+            sendError(response, 502, failureText(claimed));
+            return;
+        }
+        const nlohmann::json claim = nlohmann::json::parse(claimed.body);
+        std::string state = claim.at("state").get<std::string>();
+        if (state == "signed") {
+            try {
+                auth_.login(claim.at("challenge").get<std::string>(),
+                    claim.at("blob").get<std::string>(), nowSeconds());
+                setSessionCookie(response, sessions_.create(nowSeconds()));
+                state = "signedIn";
+            } catch (const std::exception& error) {
+                bazarish::log::warn("panel sign-in refused: {}", error.what());
+                state = "gone";
+            }
+        }
+        sendJson(response, nlohmann::json{{"state", state}}.dump());
+    }));
+
+    http_->post("/login", filled([this](
                               const http::Request& request, http::Response& response) {
         if (settings_->unclaimed()) {
             redirectTo(response, "/setup");
@@ -354,7 +439,7 @@ void HttpApi::registerRoutes()
             redirectTo(response, "/");
         } catch (const std::exception& error) {
             bazarish::log::warn("panel sign-in refused: {}", error.what());
-            sendHtml(response, loginPage(error.what()), 401);
+            sendHtml(response, loginForm(error.what(), response), 401);
         }
     }));
 

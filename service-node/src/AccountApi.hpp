@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #pragma once
 
+#include "LoginMailbox.hpp"
 #include "GrantStore.hpp"
 #include "NodeSettings.hpp"
 #include "OperatorPush.hpp"
@@ -46,6 +47,7 @@ struct AccountApiOptions {
 
 
     std::shared_ptr<NodeSettings> settings;
+    std::shared_ptr<LoginMailbox> logins;
     std::string tlsCertificate;
     std::string tlsKey;
     std::vector<std::string> opsClientPins;

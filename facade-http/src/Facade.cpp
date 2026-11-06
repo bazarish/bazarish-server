@@ -12,6 +12,7 @@
 #include <bazarish/Log.hpp>
 #include <bazarish/Tunnel.hpp>
 #include <Health.hpp>
+#include <LoginRelay.hpp>
 
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
@@ -50,6 +51,10 @@ const Upstream* upstreamFor(const FacadeOptions& options, const bazarish::http::
     }
     if ((tunnel && path == bazarish::tunnel::kNodeTunnelPath)
         || (card && path == bazarish::tunnel::kNodeCardPath)) {
+        return &options.serviceNode;
+    }
+    if ((tunnel && path == loginrelay::kCallbackPath)
+        || (card && loginrelay::nonceAfter(path, loginrelay::kChallengePrefix))) {
         return &options.serviceNode;
     }
     return nullptr;

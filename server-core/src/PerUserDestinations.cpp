@@ -6,6 +6,7 @@
 #include <bazarish/Address.hpp>
 #include <bazarish/Clock.hpp>
 #include <bazarish/Crypto.hpp>
+#include <bazarish/JsonRead.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/PrivateFile.hpp>
 #include <nlohmann/json.hpp>
@@ -38,7 +39,7 @@ nlohmann::json readRecord(const std::filesystem::path& path)
     std::ifstream in(path, std::ios::binary);
     const std::string text(
         (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    return nlohmann::json::parse(text);
+    return bazarish::parseJson(text);
 }
 
 std::string addressOfTransient(const std::string& transientB64)
@@ -51,25 +52,12 @@ std::string addressOfTransient(const std::string& transientB64)
     }
 }
 
-bool lapsedAt(const std::int64_t expiresUnix, const std::int64_t now)
-{
-    return expiresUnix > 0 && now + kLapseLeadSeconds >= expiresUnix;
-}
-
-void requireUsableDelegation(const std::string& transientB64, const std::int64_t expiresUnix)
+void requireUsableDelegation(
+    const std::string& transientB64, const std::int64_t expiresUnix, const std::int64_t now)
 {
     const bazarish::i2p::Keys keys = bazarish::i2p::Keys::fromBlob(fromBase64(transientB64));
-    if (!keys.isOffline()) {
-        throw std::runtime_error("delegation carries the destination's own signing key");
-    }
-    if (keys.b33OfflineKeyDays() < 1) {
-        throw std::runtime_error("delegation carries no b33 offline keys");
-    }
-    const std::int64_t expires = keys.transientExpires();
-    if (expires != expiresUnix) {
-        throw std::runtime_error("delegation runs out at " + std::to_string(expires)
-            + ", not at the declared " + std::to_string(expiresUnix));
-    }
+    bazarish::i2p::requireUsableDelegation(keys, now);
+    bazarish::i2p::requireDelegationEnds(keys, expiresUnix);
 }
 
 Key accountKey(const std::string& pem, const char* const what)
@@ -114,13 +102,11 @@ SignAckFn signAckWith(std::shared_ptr<Key> signingKey)
 }  // namespace
 
 PerUserDestinations::PerUserDestinations(bazarish::i2p::Router* const router,
-    DeliveryEngine& engine, std::filesystem::path stateDir, const bazarish::i2p::Privacy privacy,
-    const int tunnelQuantity)
+    DeliveryEngine& engine, std::filesystem::path stateDir, const bazarish::i2p::Privacy privacy)
     : router_(router)
     , engine_(engine)
     , stateDir_(std::move(stateDir))
     , privacy_(privacy)
-    , tunnelQuantity_(tunnelQuantity)
 {
 }
 
@@ -239,7 +225,7 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
                 const bazarish::i2p::Keys keys
                     = bazarish::i2p::Keys::fromBlob(fromBase64(transientB64));
                 auto endpoint = router_->createEndpoint(bazarish::i2p::EndpointConfig{
-                    keys, privacy_, tunnelQuantity_, true});
+                    keys, privacy_, bazarish::i2p::kServerTunnelQuantity, true});
                 {
                     const std::lock_guard<std::mutex> lock(mutex_);
                     raw->endpoint = endpoint;
@@ -348,7 +334,7 @@ PerUserDestinations::Assignment PerUserDestinations::provision(const std::string
     const std::string& transientB64, const std::int64_t expiresUnix,
     const std::string& sealingKeyPem, const std::string& signingKeyPem)
 {
-    requireUsableDelegation(transientB64, expiresUnix);
+    requireUsableDelegation(transientB64, expiresUnix, nowSeconds());
     const Key sealing = accountKey(sealingKeyPem, "the serving key");
     const Key signing = accountKey(signingKeyPem, "the signing key");
     requireServingKeys(sealing, signing);
@@ -388,7 +374,7 @@ std::size_t PerUserDestinations::sweepExpired(const std::int64_t now)
     {
         const std::lock_guard<std::mutex> lock(mutex_);
         for (const auto& [userFp, dest] : dests_) {
-            if (lapsedAt(dest->expiresUnix, now)) {
+            if (bazarish::i2p::delegationLapsed(dest->expiresUnix, now)) {
                 lapsed.push_back(userFp);
             }
         }
@@ -476,11 +462,11 @@ void PerUserDestinations::reloadLocked(const std::int64_t now)
         try {
             const nlohmann::json record = readRecord(entry.path());
             const std::int64_t expiresUnix = record.at("expiresUnix").get<std::int64_t>();
-            if (lapsedAt(expiresUnix, now)) {
+            if (bazarish::i2p::delegationLapsed(expiresUnix, now)) {
                 continue;
             }
             const std::string transientB64 = record.at("transient").get<std::string>();
-            requireUsableDelegation(transientB64, expiresUnix);
+            requireUsableDelegation(transientB64, expiresUnix, now);
             bringUp(entry.path().filename().string(), transientB64, expiresUnix,
                 record.at("sealingKey").get<std::string>(),
                 record.at("signingKey").get<std::string>());
@@ -576,8 +562,9 @@ std::chrono::seconds PerUserDestinations::nextSweepInLocked(const std::int64_t n
     for (const auto& [userFp, dest] : dests_) {
         (void)userFp;
         if (dest->expiresUnix > 0) {
-            due = std::min(due, std::chrono::seconds(std::max<std::int64_t>(
-                                    0, dest->expiresUnix - kLapseLeadSeconds - now)));
+            const std::int64_t downAt
+                = dest->expiresUnix - bazarish::i2p::kDelegationLapseLeadSeconds;
+            due = std::min(due, std::chrono::seconds(std::max<std::int64_t>(0, downAt - now)));
         }
     }
     return due;

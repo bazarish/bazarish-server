@@ -16,7 +16,6 @@ const char* const kLogLevelKey = "logLevel";
 const char* const kI2pKey = "i2p";
 const char* const kI2pLogKey = "log";
 const char* const kI2pPrivacyKey = "privacy";
-const char* const kI2pTunnelsKey = "tunnelQuantity";
 const char* const kListenKey = "listen";
 const char* const kHostKey = "host";
 const char* const kPortKey = "port";
@@ -52,8 +51,6 @@ void ServerSettings::persist(const Values& values) const
     setIfChanged(file, {kLogLevelKey}, values.logLevel, values_.logLevel);
     setIfChanged(file, {kI2pKey, kI2pLogKey}, values.i2pLog, values_.i2pLog);
     setIfChanged(file, {kI2pKey, kI2pPrivacyKey}, values.i2pPrivacy, values_.i2pPrivacy);
-    setIfChanged(
-        file, {kI2pKey, kI2pTunnelsKey}, values.i2pTunnelQuantity, values_.i2pTunnelQuantity);
     setIfChanged(file, {kListenKey, kHostKey}, values.listenHost, values_.listenHost);
     setIfChanged(file, {kListenKey, kPortKey}, values.listenPort, values_.listenPort);
     setIfChanged(

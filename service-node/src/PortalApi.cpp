@@ -63,9 +63,9 @@ void redirectTo(http::Response& response, const std::string& location)
 }
 
 const char* const kSessionCookie = "session";
-const char* const kCookieAttributes = "; HttpOnly; SameSite=Strict; Path=/";
+const char* const kCookieAttributes = "; HttpOnly; Secure; SameSite=Strict; Path=/";
 const char* const kSignInCookie = "signin";
-const char* const kSignInCookieAttributes = "; HttpOnly; SameSite=Strict; Path=/login";
+const char* const kSignInCookieAttributes = "; HttpOnly; Secure; SameSite=Strict; Path=/login";
 constexpr std::size_t kSignInTokenBytes = 16;
 
 void setSessionCookie(http::Response& response, const std::string& token)
@@ -205,7 +205,7 @@ void PortalApi::setupWebRoutes()
         });
     }
 
-    http_->get("/lang/([a-z-]+)", [this](const http::Request& request) {
+    http_->get("/lang/{lang}", [this](const http::Request& request) {
         http::Response answer;
         const std::string asked = request.captures.at(0);
         if (messages_.knows(asked)) {
@@ -265,7 +265,8 @@ void PortalApi::setupWebRoutes()
         sendJson(response, {{"state", state}});
     }));
 
-    http_->post("/logout", filled([](const http::Request&, http::Response& response) {
+    http_->post("/logout", filled([this](const http::Request& request, http::Response& response) {
+        session_.revoke(request.cookie(kSessionCookie), nowSeconds());
         clearSessionCookie(response);
         redirectTo(response, "/");
     }));
@@ -284,6 +285,7 @@ void PortalApi::setupWebRoutes()
             return;
         }
         options_.deleteAccount(user);
+        session_.revoke(request.cookie(kSessionCookie), nowSeconds());
         clearSessionCookie(response);
         redirectTo(response, "/");
     }));

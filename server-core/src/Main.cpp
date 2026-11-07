@@ -4,10 +4,10 @@
 #include "EventGate.hpp"
 #include "GatewayLink.hpp"
 #include "HttpApi.hpp"
+#include "NodeCards.hpp"
 #include "PerUserDestinations.hpp"
 
 #include <BuildVersion.hpp>
-#include <bazarish/Auth.hpp>
 #include <bazarish/Certificates.hpp>
 #include <bazarish/Clock.hpp>
 #include <bazarish/ConfigFile.hpp>
@@ -27,8 +27,6 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
-#include <mutex>
-#include <map>
 #include <optional>
 #include <string>
 
@@ -39,9 +37,6 @@ namespace fs = std::filesystem;
 constexpr const char* kDefaultHost = "127.0.0.1";
 constexpr int kDefaultPort = 8420;
 constexpr int kDefaultOpsPort = 8428;
-constexpr int kServiceNodeTimeoutSeconds = 5;
-constexpr std::int64_t kCardCacheSeconds = 60;
-constexpr int kDefaultTunnelQuantity = 5;
 
 void printUsage()
 {
@@ -104,6 +99,10 @@ int main(const int argc, const char** argv)
     const std::vector<std::string> operatorFingerprints = config.list("operators");
     const std::string serviceNodeUrl = config.text("serviceNode.url");
     const std::string serviceNodePin = config.text("serviceNode.pin");
+    if (serviceNodeUrl.empty() || serviceNodePin.empty()) {
+        std::fprintf(stderr, "config: serviceNode.url and serviceNode.pin are required\n");
+        return 1;
+    }
     const std::vector<std::string> opsClientPins = config.list("opsClients");
     const std::optional<bazarish::ConfigView::Endpoint> gatewayListen
         = config.endpoint("gatewayListen");
@@ -117,13 +116,6 @@ int main(const int argc, const char** argv)
             return 2;
         }
         privacy = *parsed;
-    }
-    const int tunnelQuantity = static_cast<int>(
-        config.number("i2p.tunnelQuantity", kDefaultTunnelQuantity));
-    if (tunnelQuantity < 1 || tunnelQuantity > bazarish::i2p::kMaxTunnelQuantity) {
-        std::fprintf(stderr, "config: i2p.tunnelQuantity is between 1 and %d\n",
-            bazarish::i2p::kMaxTunnelQuantity);
-        return 2;
     }
     bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
     if (const std::string level = config.text("logLevel"); !level.empty()) {
@@ -158,6 +150,10 @@ int main(const int argc, const char** argv)
     std::printf("server socket pin: %s\n", credential.pin.c_str());
     std::fflush(stdout);
 
+    const bazarish::http::Url serviceNode = bazarish::http::parseUrl(serviceNodeUrl);
+    bazarish::server::NodeCards nodeCards(
+        {serviceNode.host, serviceNode.port, serviceNode.tls, serviceNodePin}, identity);
+
     std::unique_ptr<bazarish::i2p::Router> router;
     std::unique_ptr<bazarish::server::PerUserDestinations> perUserDests;
     std::unique_ptr<bazarish::server::GatewayLink> gatewayLink;
@@ -176,58 +172,10 @@ int main(const int argc, const char** argv)
         routerConfig.role = bazarish::i2p::Role::eServer;
         router = std::make_unique<bazarish::i2p::Router>(routerConfig);
 
-        bazarish::server::GetCardFn getCard;
-        if (!serviceNodeUrl.empty()) {
-            struct CardCache {
-                std::mutex mutex;
-                std::map<std::string, std::pair<std::int64_t, bazarish::Bytes>> entries;
-            };
-            const auto cache = std::make_shared<CardCache>();
-            getCard = [serviceNodeUrl, serviceNodePin, identity, cache](
-                          const std::string& fp) -> std::optional<bazarish::Bytes> {
-                const std::string& key = fp;
-                const std::int64_t now = nowSeconds();
-                {
-                    const std::lock_guard<std::mutex> lock(cache->mutex);
-                    const auto found = cache->entries.find(key);
-                    if (found != cache->entries.end()
-                        && now - found->second.first < kCardCacheSeconds) {
-                        return found->second.second;
-                    }
-                }
-                const bazarish::http::Url node = bazarish::http::parseUrl(serviceNodeUrl);
-                bazarish::http::ClientRequest lookup;
-                lookup.method = "GET";
-                lookup.target = "/v1/account/card?user=" + fp;
-                lookup.headers = bazarish::auth::signRequest(
-                    *identity, now, "GET", "/v1/account/card", {});
-                bazarish::http::ClientOptions options;
-                options.tls = node.tls;
-                options.pin = serviceNodePin;
-                options.connectTimeout = std::chrono::seconds(kServiceNodeTimeoutSeconds);
-                options.readTimeout = std::chrono::seconds(kServiceNodeTimeoutSeconds);
-                options.writeTimeout = std::chrono::seconds(kServiceNodeTimeoutSeconds);
-                const bazarish::http::ClientResponse res
-                    = bazarish::http::request(node.host, node.port, lookup, options);
-                if (res.status != 200) {
-                    return std::nullopt;
-                }
-                try {
-                    const nlohmann::json body = nlohmann::json::parse(res.body);
-                    bazarish::Bytes card
-                        = bazarish::fromBase64(body.at("card").get<std::string>());
-                    const std::lock_guard<std::mutex> lock(cache->mutex);
-                    cache->entries[key] = {now, card};
-                    return card;
-                } catch (const std::exception&) {
-                    return std::nullopt;
-                }
-            };
-        }
-
         perUserDests = std::make_unique<bazarish::server::PerUserDestinations>(
-            router.get(), engine, stateDir, privacy, tunnelQuantity);
-        perUserDests->setGetCard(getCard);
+            router.get(), engine, stateDir, privacy);
+        perUserDests->setGetCard(
+            [&nodeCards](const std::string& user) { return nodeCards.card(user); });
         if (gatewayLink) {
             perUserDests->setServedChanged(
                 [link = gatewayLink.get()]() { link->servedChanged(); });
@@ -288,15 +236,18 @@ int main(const int argc, const char** argv)
                 user, transientB64, expiresUnix, sealingKeyPem, signingKeyPem);
             return {served.dest, served.state};
         };
-        httpOptions.forgetI2pDest = [&perUserDests](const std::string& user) {
+        httpOptions.forgetI2pDest = [&perUserDests, &nodeCards](const std::string& user) {
+            nodeCards.forget(user);
             perUserDests->forget(user);
+        };
+        httpOptions.accountKnown = [&nodeCards](const std::string& user) {
+            return nodeCards.card(user).has_value();
         };
     }
     bazarish::server::ServerSettings::Values settingValues;
     settingValues.logLevel = config.text("logLevel").empty() ? "info" : config.text("logLevel");
     settingValues.i2pLog = i2pLog;
     settingValues.i2pPrivacy = bazarish::i2p::privacyName(privacy);
-    settingValues.i2pTunnelQuantity = tunnelQuantity;
     settingValues.listenHost = host;
     settingValues.listenPort = port;
     settingValues.serviceNodeUrl = serviceNodeUrl;

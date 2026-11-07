@@ -69,9 +69,9 @@ int main()
     }
 
     const Bytes answer = {0x03, 0x00, 0x00, 0x00, 0x04};
-    CHECK(second->answered(4) == nullptr);
+    CHECK(!second->answered(4).has_value());
     second->remember(4, answer);
-    CHECK(second->answered(4) != nullptr);
+    CHECK(second->answered(4).has_value());
     CHECK(*second->answered(4) == answer);
     second->remember(4, Bytes{0xFF});
     CHECK(*second->answered(4) == answer);
@@ -79,8 +79,8 @@ int main()
     for (std::uint32_t ref = 100; ref < 300; ++ref) {
         second->remember(ref, Bytes{static_cast<unsigned char>(ref & 0xFF)});
     }
-    CHECK(second->answered(4) == nullptr);
-    CHECK(second->answered(299) != nullptr);
+    CHECK(!second->answered(4).has_value());
+    CHECK(second->answered(299).has_value());
 
     store.close(second->cookie());
     CHECK(store.size() == 0);

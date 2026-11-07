@@ -24,7 +24,7 @@ const char* kWhole = R"({
     "decoy": { "minBytes": 2048, "maxBytes": 4096 },
     "serverName": "caddy",
     "sessionTtlSeconds": 120,
-    "i2p": { "privacy": "max", "tunnelQuantity": 5 },
+    "i2p": { "privacy": "max" },
     "pools": { "stream": 0, "call": 7, "watch": 3 }
 })";
 
@@ -43,7 +43,6 @@ int main()
     CHECK(whole.serverName == "caddy");
     CHECK(whole.sessionTtlSeconds == 120);
     CHECK(whole.tunnelPrivacy == i2p::Privacy::eMax);
-    CHECK(whole.tunnelQuantity == 5);
     CHECK(whole.streamPool == 0);
     CHECK(whole.callPool == 7);
     CHECK(whole.watchPool == 3);
@@ -57,7 +56,6 @@ int main()
     CHECK(bare.sessionTtlSeconds == kSessionTtl.count());
     CHECK(bare.serverName == "nginx");
     CHECK(bare.tunnelPrivacy == i2p::Privacy::eMinimal);
-    CHECK(bare.tunnelQuantity == i2p::kDefaultTunnelQuantity);
     CHECK(bare.streamPool == kDefaultStreamPool);
     CHECK(bare.callPool == kDefaultCallPool);
     CHECK(bare.watchPool == kDefaultWatchPool);
@@ -68,7 +66,8 @@ int main()
         "publicAddress": "https://gate.example:8443"})")).publicAddress
         == "https://gate.example:8443");
     for (const char* const wrong : {"gate.example", "https://", "https://gate.example/",
-             "https://gate.example/p", "https://gate.example?x", "ftp://gate.example"}) {
+             "https://gate.example/p", "https://gate.example?x", "ftp://gate.example",
+             "http://gate.example"}) {
         CHECK_THROWS(Settings::from(document(
             std::string(R"({"basePath": "/p", "token": "t", "state": "/tmp/s", "publicAddress": ")")
             + wrong + "\"}")));
@@ -95,12 +94,6 @@ int main()
     })")));
     CHECK_THROWS(Settings::from(document(R"({
         "basePath": "/s", "token": "t", "state": "/t", "i2p": { "privacy": "short" }
-    })")));
-    CHECK_THROWS(Settings::from(document(R"({
-        "basePath": "/s", "token": "t", "state": "/t", "i2p": { "tunnelQuantity": 0 }
-    })")));
-    CHECK_THROWS(Settings::from(document(R"({
-        "basePath": "/s", "token": "t", "state": "/t", "i2p": { "tunnelQuantity": 17 }
     })")));
 
     CHECK_THROWS(Settings::from(document(R"({

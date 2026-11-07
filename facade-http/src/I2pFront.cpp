@@ -1,5 +1,6 @@
 // Bazarish project (c) 2026
 #include "I2pFront.hpp"
+#include "Relay.hpp"
 
 #include <bazarish/Log.hpp>
 
@@ -12,7 +13,6 @@
 
 #include <algorithm>
 #include <atomic>
-#include <array>
 #include <chrono>
 #include <exception>
 #include <iterator>
@@ -23,11 +23,8 @@ namespace bazarish::facade {
 namespace {
 
 constexpr int kAcceptTimeoutSeconds = 30;
-constexpr std::size_t kPumpBufferBytes = 32 * 1024;
 constexpr int kReadyWaitSeconds = 300;
 constexpr int kReadyPollSeconds = 1;
-constexpr int kDrainMillis = 60000;
-constexpr int kDrainPollMillis = 50;
 constexpr std::size_t kMaxRelaysInFlight = 256;
 
 int connectLocal(const std::string& host, const int port)
@@ -45,57 +42,6 @@ int connectLocal(const std::string& host, const int port)
         return -1;
     }
     return fd;
-}
-
-void relay(std::unique_ptr<bazarish::i2p::Stream> stream, const int fd)
-{
-    std::size_t fromClient = 0;
-    std::size_t toClient = 0;
-    std::atomic<bool> clientClosed{false};
-    std::thread inbound([&stream, fd, &fromClient, &clientClosed]() {
-        std::array<char, kPumpBufferBytes> buffer{};
-        while (true) {
-            const std::size_t read = stream->readSome(buffer.data(), buffer.size());
-            if (read == 0) {
-                break;
-            }
-            fromClient += read;
-            std::size_t written = 0;
-            while (written < read) {
-                const ssize_t n = ::write(fd, buffer.data() + written, read - written);
-                if (n <= 0) {
-                    ::shutdown(fd, SHUT_WR);
-                    return;
-                }
-                written += static_cast<std::size_t>(n);
-            }
-        }
-        clientClosed = true;
-        ::shutdown(fd, SHUT_WR);
-    });
-
-    std::array<char, kPumpBufferBytes> buffer{};
-    while (true) {
-        const ssize_t n = ::read(fd, buffer.data(), buffer.size());
-        if (n <= 0) {
-            break;
-        }
-        try {
-            stream->writeAll(buffer.data(), static_cast<std::size_t>(n));
-            toClient += static_cast<std::size_t>(n);
-        } catch (const std::exception& error) {
-            bazarish::log::debug("i2p relay: write to client failed: {}", error.what());
-            break;
-        }
-    }
-    for (int waited = 0; !clientClosed && waited < kDrainMillis; waited += kDrainPollMillis) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(kDrainPollMillis));
-    }
-    stream->close();
-    ::shutdown(fd, SHUT_RD);
-    inbound.join();
-    ::close(fd);
-    bazarish::log::debug("i2p relay done: {} bytes in, {} bytes out", fromClient, toClient);
 }
 
 }  // namespace
@@ -180,7 +126,7 @@ void I2pFront::acceptLoop()
         }
         relays_.fetch_add(1);
         std::thread([this, held = std::move(stream), fd]() mutable {
-            relay(std::move(held), fd);
+            relay(*held, fd);
             relays_.fetch_sub(1);
         }).detach();
     }

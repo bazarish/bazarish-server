@@ -12,6 +12,7 @@
 #include <Health.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <bazarish/I2p.hpp>
+#include <bazarish/JsonRead.hpp>
 #include <bazarish/Limits.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/Pass.hpp>
@@ -92,7 +93,23 @@ HttpApi::HttpApi(Storage& storage, const HttpApiOptions options)
     , tunnel_(options_.sealingKey)
     , startedAt_(nowSeconds())
 {
+    if (!options_.accountKnown) {
+        throw std::invalid_argument("the mailbox serves only the accounts its node knows");
+    }
     janitorThread_ = std::thread([this]() { expiredSweepLoop(); });
+}
+
+std::optional<bazarish::http::Response> HttpApi::admitted(
+    const bazarish::http::Request& request, std::string& user)
+{
+    if (std::optional<bazarish::http::Response> refused = tunnel_.authenticate(request, &user);
+        refused.has_value()) {
+        return refused;
+    }
+    if (!options_.accountKnown(user)) {
+        return errorResponse(404, ErrorCode::eAccountUnknown, "this server serves no such account");
+    }
+    return std::nullopt;
 }
 
 HttpApi::~HttpApi()
@@ -252,8 +269,6 @@ void HttpApi::setupOpsRoutes()
                 {"logLevel", values.logLevel},
                 {"i2pLog", values.i2pLog},
                 {"i2pPrivacy", values.i2pPrivacy},
-                {"i2pTunnelQuantity", values.i2pTunnelQuantity},
-                {"i2pTunnelQuantityMax", bazarish::i2p::kMaxTunnelQuantity},
                 {"listen", {{"host", values.listenHost}, {"port", values.listenPort}}},
                 {"serviceNode", values.serviceNodeUrl},
                 {"gatewayListen", values.gatewayListenHost.empty()
@@ -271,7 +286,7 @@ void HttpApi::setupOpsRoutes()
         operatorOnly([this](const bazarish::http::Request& request) {
             ServerSettings::Values values = options_.settings->get();
             {
-                const nlohmann::json body = nlohmann::json::parse(request.body);
+                const nlohmann::json body = bazarish::parseJson(request.body);
                 if (body.contains("logLevel")) {
                     const std::string level = body.at("logLevel").get<std::string>();
                     if (!bazarish::log::levelFromString(level).has_value()) {
@@ -288,14 +303,6 @@ void HttpApi::setupOpsRoutes()
                         throw std::invalid_argument("not a privacy level: " + named);
                     }
                     values.i2pPrivacy = named;
-                }
-                if (body.contains("i2pTunnelQuantity")) {
-                    const int quantity = body.at("i2pTunnelQuantity").get<int>();
-                    if (quantity < 1 || quantity > bazarish::i2p::kMaxTunnelQuantity) {
-                        throw std::invalid_argument("a destination carries between 1 and "
-                            + std::to_string(bazarish::i2p::kMaxTunnelQuantity) + " tunnels");
-                    }
-                    values.i2pTunnelQuantity = quantity;
                 }
                 readEndpointInto(body, "listen", values.listenHost, values.listenPort);
                 if (body.contains("serviceNode")) {
@@ -352,7 +359,7 @@ void HttpApi::setupOpsRoutes()
 
     ops_->put("/v1/messaging/quota",
         operatorOnly([&store](const bazarish::http::Request& request) {
-            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const nlohmann::json body = bazarish::parseJson(request.body);
             store.setUserQuota(body.at("user").get<std::string>(),
                 body.at("quotaBytes").get<std::uint64_t>());
             return jsonResponse({{"ok", true}});
@@ -360,7 +367,7 @@ void HttpApi::setupOpsRoutes()
 
     ops_->put("/v1/messaging/i2p-dest",
         operatorOnly([this](const bazarish::http::Request& request) {
-            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const nlohmann::json body = bazarish::parseJson(request.body);
             const std::string user = body.at("user").get<std::string>();
             const std::string transient = body.value("transient", std::string());
             if (transient.empty()) {
@@ -380,7 +387,7 @@ void HttpApi::setupOpsRoutes()
 
     ops_->post("/v1/messaging/node-card",
         operatorOnly([this](const bazarish::http::Request& request) {
-            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const nlohmann::json body = bazarish::parseJson(request.body);
             const Key sealing
                 = Key::fromPublicDer(fromBase64(body.at("sealingKey").get<std::string>()));
             const Bytes card = ServerCard::issue(
@@ -412,8 +419,7 @@ void HttpApi::setupRoutes()
         return [this, handler](
                    const bazarish::http::Request& request) -> bazarish::http::Response {
             std::string user;
-            if (const std::optional<bazarish::http::Response> refused
-                = tunnel_.authenticate(request, &user);
+            if (const std::optional<bazarish::http::Response> refused = admitted(request, user);
                 refused.has_value()) {
                 return *refused;
             }
@@ -448,8 +454,7 @@ void HttpApi::setupRoutes()
             const bazarish::http::Request& request,
             bazarish::http::Responder respond) -> std::optional<bazarish::http::Response> {
             std::string user;
-            const std::optional<bazarish::http::Response> refused
-                = tunnel_.authenticate(request, &user);
+            const std::optional<bazarish::http::Response> refused = admitted(request, user);
             if (refused.has_value()) {
                 return *refused;
             }
@@ -493,7 +498,7 @@ void HttpApi::setupRoutes()
     http_->post("/v1/messaging/clients",
         authenticated([&store](const bazarish::http::Request& request,
                           const std::string& user) -> bazarish::http::Response {
-            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const nlohmann::json body = bazarish::parseJson(request.body);
             store.registerClient(user, body.at("clientId").get<std::string>());
             return jsonResponse({{"ok", true}});
         }));
@@ -510,7 +515,7 @@ void HttpApi::setupRoutes()
             return jsonResponse({{"clients", clients}});
         }));
 
-    http_->del(R"(/v1/messaging/clients/([a-z0-9_-]+))",
+    http_->del("/v1/messaging/clients/{id}",
         authenticated([&store](const bazarish::http::Request& request,
                           const std::string& user) -> bazarish::http::Response {
             store.unregisterClient(user, request.captures.at(0));
@@ -541,7 +546,7 @@ void HttpApi::setupRoutes()
                 return clientUnregistered();
             }
             const std::vector<Bytes> handles
-                = passHandles(nlohmann::json::parse(request.body));
+                = passHandles(bazarish::parseJson(request.body));
             std::set<std::string> added;
             for (const Bytes& handle : handles) {
                 if (!store.hasPass(user, handle)) {
@@ -563,7 +568,7 @@ void HttpApi::setupRoutes()
                 return clientUnregistered();
             }
             const std::size_t dropped
-                = store.revokePasses(user, passHandles(nlohmann::json::parse(request.body)));
+                = store.revokePasses(user, passHandles(bazarish::parseJson(request.body)));
             bazarish::log::info(
                 "revoked {} delivery pass(es) for {}", dropped, bazarish::log::redact(user));
             return jsonResponse({{"revoked", dropped}});
@@ -586,7 +591,7 @@ void HttpApi::setupRoutes()
             if (clientId.empty()) {
                 return clientUnregistered();
             }
-            const nlohmann::json asked = nlohmann::json::parse(request.body).at("ids");
+            const nlohmann::json asked = bazarish::parseJson(request.body).at("ids");
             if (!asked.is_array() || asked.empty()) {
                 throw std::invalid_argument("a fetch names the items it takes");
             }
@@ -615,7 +620,7 @@ void HttpApi::setupRoutes()
             if (clientId.empty()) {
                 return clientUnregistered();
             }
-            const nlohmann::json ids = nlohmann::json::parse(request.body).at("ids");
+            const nlohmann::json ids = bazarish::parseJson(request.body).at("ids");
             if (!ids.is_array() || ids.size() > bazarish::kMaxAckIdsPerRequest) {
                 throw std::invalid_argument("an ack names at most "
                     + std::to_string(bazarish::kMaxAckIdsPerRequest) + " items");
@@ -634,7 +639,7 @@ void HttpApi::setupRoutes()
             if (caller.empty()) {
                 return clientUnregistered();
             }
-            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const nlohmann::json body = bazarish::parseJson(request.body);
             const std::string deliveryId = body.at("deliveryId").get<std::string>();
             const Bytes payload = fromBase64(body.at("payload").get<std::string>());
             if (payload.size() > bazarish::kMaxMessagePayloadBytes) {

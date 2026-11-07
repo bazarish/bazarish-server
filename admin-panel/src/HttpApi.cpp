@@ -15,6 +15,7 @@
 #include <bazarish/Crypto.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <bazarish/I2pAddress.hpp>
+#include <bazarish/JsonRead.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/WebAssets.hpp>
 
@@ -258,7 +259,7 @@ std::string HttpApi::loginFacade(const ServiceEntry& node)
             failureText(settings));
         return {};
     }
-    const nlohmann::json facades = nlohmann::json::parse(settings.body).at("facades");
+    const nlohmann::json facades = bazarish::parseJson(settings.body).at("facades");
     if (facades.empty() || !isB32I2pHost(facades.front().get<std::string>())) {
         return {};
     }
@@ -411,7 +412,7 @@ void HttpApi::registerRoutes()
             sendError(response, 502, failureText(claimed));
             return;
         }
-        const nlohmann::json claim = nlohmann::json::parse(claimed.body);
+        const nlohmann::json claim = bazarish::parseJson(claimed.body);
         std::string state = claim.at("state").get<std::string>();
         if (state == "signed") {
             try {
@@ -538,19 +539,19 @@ void HttpApi::registerRoutes()
     }));
 
     http_->post("/api/qr", api([](const http::Request& request, http::Response& response) {
-        const nlohmann::json body = nlohmann::json::parse(request.body);
+        const nlohmann::json body = bazarish::parseJson(request.body);
         sendJson(response, nlohmann::json{{"svg", qr::svg(body.at("text").get<std::string>())}}.dump());
     }));
 
     http_->post("/api/approve", api([this](const http::Request& request, http::Response& response) {
-        const nlohmann::json body = nlohmann::json::parse(request.body);
+        const nlohmann::json body = bazarish::parseJson(request.body);
         proxyToNode(request.query("fleet"), response, "POST", "/v1/account/approve",
             nlohmann::json{{"user", body.at("user")}}.dump());
     }));
 
     http_->post("/api/undelegate", api([this](
                                        const http::Request& request, http::Response& response) {
-        const nlohmann::json body = nlohmann::json::parse(request.body);
+        const nlohmann::json body = bazarish::parseJson(request.body);
         proxyToNode(request.query("fleet"), response, "POST", "/v1/account/undelegate",
             nlohmann::json{{"user", body.at("user")},
                 {"message", body.value("message", std::string())}}
@@ -558,20 +559,20 @@ void HttpApi::registerRoutes()
     }));
 
     http_->post("/api/delete", api([this](const http::Request& request, http::Response& response) {
-        const nlohmann::json body = nlohmann::json::parse(request.body);
+        const nlohmann::json body = bazarish::parseJson(request.body);
         proxyToNode(request.query("fleet"), response, "DELETE",
             "/v1/account/user?user=" + urlEncoded(body.at("user").get<std::string>()), {});
     }));
 
     http_->post("/api/ban", api([this](const http::Request& request, http::Response& response) {
-        const nlohmann::json body = nlohmann::json::parse(request.body);
+        const nlohmann::json body = bazarish::parseJson(request.body);
         proxyToNode(request.query("fleet"), response, "POST", "/v1/account/ban",
             nlohmann::json{{"user", body.at("user")}, {"reason", body.value("reason", std::string())}}
                 .dump());
     }));
 
     http_->post("/api/unban", api([this](const http::Request& request, http::Response& response) {
-        const nlohmann::json body = nlohmann::json::parse(request.body);
+        const nlohmann::json body = bazarish::parseJson(request.body);
         proxyToNode(request.query("fleet"), response, "POST", "/v1/account/unban",
             nlohmann::json{{"user", body.at("user")}}.dump());
     }));
@@ -610,7 +611,7 @@ void HttpApi::registerRoutes()
             sendJson(response, settings.body, settings.status == 0 ? 502 : settings.status);
             return;
         }
-        nlohmann::json merged = nlohmann::json::parse(settings.body);
+        nlohmann::json merged = bazarish::parseJson(settings.body);
         merged["diskUsedBytes"] = nullptr;
         merged["diskError"] = "no server-core configured in this panel";
         if (const std::optional<ServiceEntry> core
@@ -619,7 +620,7 @@ void HttpApi::registerRoutes()
             const JsonResult disk
                 = callJson(*core, identity_, credential_, "GET", "/v1/messaging/storage");
             if (disk.ok) {
-                merged["diskUsedBytes"] = nlohmann::json::parse(disk.body).at("usedBytes");
+                merged["diskUsedBytes"] = bazarish::parseJson(disk.body).at("usedBytes");
                 merged["diskError"] = "";
             } else {
                 bazarish::log::warn("storage usage unavailable: {}", disk.error);
@@ -674,7 +675,7 @@ void HttpApi::registerRoutes()
             sendJson(response, result.body, result.status);
             return;
         }
-        nlohmann::json answer = nlohmann::json::parse(result.body);
+        nlohmann::json answer = bazarish::parseJson(result.body);
         answer["gatewayLinkErrors"] = linkErrorsOf(linkGateways(*fleet, identity_, credential_));
         sendJson(response, answer.dump(), result.status);
     };
@@ -693,7 +694,7 @@ void HttpApi::registerRoutes()
             const JsonResult shown
                 = callJson(*node, identity_, credential_, "GET", "/v1/account/settings");
             if (shown.ok) {
-                described = nlohmann::json::parse(shown.body).value(
+                described = bazarish::parseJson(shown.body).value(
                     "facades", nlohmann::json::array());
                 describedError.clear();
             } else {
@@ -742,7 +743,7 @@ void HttpApi::registerRoutes()
             sendError(response, minted.status == 0 ? 502 : minted.status, failureText(minted));
             return;
         }
-        const nlohmann::json answer = nlohmann::json::parse(minted.body);
+        const nlohmann::json answer = bazarish::parseJson(minted.body);
         const std::string address = answer.at("address").get<std::string>();
         const std::string previous = answer.at("previousAddress").get<std::string>();
         bazarish::log::info("facade {} has a new address", facade->name);
@@ -810,7 +811,7 @@ void HttpApi::registerRoutes()
 
     http_->put("/api/panel", api([this](const http::Request& request, http::Response& response) {
         try {
-            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const nlohmann::json body = bazarish::parseJson(request.body);
             Config panel = settings_->get();
             if (body.contains("admins")) {
                 std::vector<std::string> admins;
@@ -892,7 +893,7 @@ void HttpApi::registerRoutes()
     }));
 
     http_->put("/api/quota", api([this](const http::Request& request, http::Response& response) {
-        const nlohmann::json body = nlohmann::json::parse(request.body);
+        const nlohmann::json body = bazarish::parseJson(request.body);
         proxyToNode(request.query("fleet"), response, "PUT", "/v1/account/quota",
             nlohmann::json{{"user", body.at("user")}, {"quotaBytes", body.at("quotaBytes")}}
                 .dump());

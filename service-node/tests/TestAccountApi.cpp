@@ -7,12 +7,14 @@
 #include <bazarish/Certificates.hpp>
 #include <bazarish/Descriptor.hpp>
 #include <bazarish/Hybrid.hpp>
+#include <bazarish/I2p.hpp>
 #include <bazarish/Crypto.hpp>
 #include <bazarish/Tunnel.hpp>
 
 #include <bazarish/HttpClient.hpp>
 #include <nlohmann/json.hpp>
 
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -37,6 +39,7 @@ namespace {
 constexpr const char* kServedDest = "servedaddressb33";
 constexpr const char* kSealingPem = "sealing-pem";
 constexpr const char* kSigningPem = "signing-pem";
+constexpr int kDelegationDays = 7;
 constexpr std::size_t kSessionSecretBytes = 32;
 constexpr std::size_t kSessionIdChars = 32;
 
@@ -248,12 +251,14 @@ int main()
     }
 
     {
-        const std::string keyless = nlohmann::json{{"transient", "user-transient-b64"},
-            {"expiresUnix", now + 7 * 24 * 3600}}
-                                        .dump();
-        const std::string body = nlohmann::json{{"transient", "user-transient-b64"},
-            {"expiresUnix", now + 7 * 24 * 3600}, {"sealingKey", kSealingPem},
-            {"signingKey", kSigningPem}}
+        const bazarish::i2p::Keys master = bazarish::i2p::Keys::generate();
+        const bazarish::i2p::Keys delegation = master.issueTransient(kDelegationDays);
+        const std::string transient = toBase64(delegation.blob());
+        const std::int64_t expires = delegation.transientExpires();
+        const std::string keyless
+            = nlohmann::json{{"transient", transient}, {"expiresUnix", expires}}.dump();
+        const std::string body = nlohmann::json{{"transient", transient}, {"expiresUnix", expires},
+            {"sealingKey", kSealingPem}, {"signingKey", kSigningPem}}
                                      .dump();
         const http::ClientResponse stranger = call(port, "POST", "/v1/account/i2p-dest",
             makeHeaders(mallory, "POST", "/v1/account/i2p-dest", body), body);
@@ -264,6 +269,29 @@ int main()
             makeHeaders(alice, "POST", "/v1/account/i2p-dest", keyless), keyless);
         CHECK(withoutKeys.status == 400);
         CHECK(pubCalls == 0);
+        {
+            const Bytes full = delegation.blob();
+            const Bytes oneDay = master.issueTransient(1).blob();
+            const std::size_t perDay = (full.size() - oneDay.size()) / (kDelegationDays - 1);
+            const Bytes todayOnly(full.begin(),
+                full.end() - static_cast<std::ptrdiff_t>(perDay * (kDelegationDays - 1)));
+            const std::string forged = nlohmann::json{{"transient", toBase64(todayOnly)},
+                {"expiresUnix", expires}, {"sealingKey", kSealingPem}, {"signingKey", kSigningPem}}
+                                           .dump();
+            CHECK(call(port, "POST", "/v1/account/i2p-dest",
+                      makeHeaders(alice, "POST", "/v1/account/i2p-dest", forged), forged)
+                      .status
+                == 400);
+            const std::string misdated
+                = nlohmann::json{{"transient", transient}, {"expiresUnix", expires + 1},
+                    {"sealingKey", kSealingPem}, {"signingKey", kSigningPem}}
+                      .dump();
+            CHECK(call(port, "POST", "/v1/account/i2p-dest",
+                      makeHeaders(alice, "POST", "/v1/account/i2p-dest", misdated), misdated)
+                      .status
+                == 400);
+            CHECK(pubCalls == 0);
+        }
 
         CHECK(!grants.peekApproval(alice.fingerprint())->pending());
         const http::ClientResponse ok = call(port, "POST", "/v1/account/i2p-dest",
@@ -271,8 +299,8 @@ int main()
         CHECK(ok.status == 200);
         CHECK(pubCalls == 1);
         CHECK(pubUser == alice.fingerprint());
-        CHECK(pubTransient == "user-transient-b64");
-        CHECK(pubExpires == now + 7 * 24 * 3600);
+        CHECK(pubTransient == transient);
+        CHECK(pubExpires == expires);
         CHECK(pubKeys.sealingPem == kSealingPem);
         CHECK(pubKeys.signingPem == kSigningPem);
         const std::int64_t delegatedAt = store.getAccount(alice.fingerprint())->delegatedAt;
@@ -288,7 +316,7 @@ int main()
                 makeHeaders(alice, "GET", "/v1/account/i2p-status", {}));
             CHECK(status.status == 200);
             const nlohmann::json reply = nlohmann::json::parse(status.body);
-            CHECK(reply.at("transientExpires") == now + 7 * 24 * 3600);
+            CHECK(reply.at("transientExpires") == expires);
             pubAccepts = true;
         }
 

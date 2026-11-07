@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #include "GatewayLink.hpp"
 
+#include <bazarish/JsonRead.hpp>
 #include <bazarish/Log.hpp>
 
 #include <boost/asio/io_context.hpp>
@@ -182,7 +183,7 @@ void GatewayLink::handle(const int family, const int socket)
     }
     try {
         pipe->closeAfter(kHandshake);
-        const nlohmann::json asked = nlohmann::json::parse(pipe->readLine(kMaxPrefaceBytes));
+        const nlohmann::json asked = bazarish::parseJson(pipe->readLine(kMaxPrefaceBytes));
         if (asked.value("watch", false)) {
             pipe->keepOpen();
             watch(pipe);

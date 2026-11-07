@@ -12,7 +12,7 @@ class ContactSources {
 public:
     explicit ContactSources(std::int64_t memorySeconds);
 
-    bool admit(const std::string& source, std::int64_t now);
+    bool admit(const std::string& owner, const std::string& source, std::int64_t now);
 
 private:
     void sweep(std::int64_t now);

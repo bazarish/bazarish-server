@@ -3,6 +3,7 @@
 
 #include "ServiceClient.hpp"
 
+#include <bazarish/JsonRead.hpp>
 #include <bazarish/Tls.hpp>
 
 #include <nlohmann/json.hpp>
@@ -32,7 +33,7 @@ FacadeReport reportOf(const ServiceEntry& facade, const Identity& identity,
         return report;
     }
     try {
-        report.address = nlohmann::json::parse(shown.body).value("address", std::string());
+        report.address = bazarish::parseJson(shown.body).value("address", std::string());
     } catch (const std::exception& error) {
         report.error = error.what();
         return report;
@@ -157,7 +158,7 @@ GatewayLinking linkGateways(
             linking.error = "server-core did not show its settings: " + failureText(shown);
             return linking;
         }
-        const nlohmann::json settings = nlohmann::json::parse(shown.body);
+        const nlohmann::json settings = bazarish::parseJson(shown.body);
         if (settings.value("gateways", nlohmann::json::array()) != pins) {
             const JsonResult written = callJson(service, identity, credential, "PUT",
                 kServerSettingsPath, nlohmann::json{{"gateways", pins}}.dump());
@@ -182,7 +183,7 @@ GatewayLinking linkGateways(
                 + failureText(shown) + "), so the gateways were left as they were";
             return linking;
         }
-        const nlohmann::json settings = nlohmann::json::parse(shown.body);
+        const nlohmann::json settings = bazarish::parseJson(shown.body);
         const nlohmann::json listen = settings.value("directListen", nlohmann::json());
         const std::string address = settings.value("address", std::string());
         if (!listening(listen) || address.empty()) {
@@ -204,7 +205,7 @@ GatewayLinking linkGateways(
             linking.gateways.push_back(std::move(result));
             continue;
         }
-        const nlohmann::json settings = nlohmann::json::parse(shown.body);
+        const nlohmann::json settings = bazarish::parseJson(shown.body);
         if (settings.value("server", nlohmann::json()) != server
             || settings.value("direct", nlohmann::json::array()) != direct) {
             const JsonResult written = callJson(service, identity, credential, "PUT",
@@ -240,7 +241,7 @@ std::vector<GatewayRepoint> repointGateways(const std::vector<Fleet>& fleets,
             }
             nlohmann::json direct;
             try {
-                direct = nlohmann::json::parse(shown.body).at("direct");
+                direct = bazarish::parseJson(shown.body).at("direct");
             } catch (const std::exception& error) {
                 result.error = error.what();
                 results.push_back(std::move(result));

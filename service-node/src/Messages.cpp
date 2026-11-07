@@ -2,6 +2,7 @@
 #include "Messages.hpp"
 
 #include <bazarish/Clock.hpp>
+#include <bazarish/JsonRead.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -32,7 +33,7 @@ Messages::Messages(const std::filesystem::path& catalog)
     if (!in) {
         throw std::runtime_error("cannot open the message catalog " + catalog.string());
     }
-    const nlohmann::json doc = nlohmann::json::parse(in);
+    const nlohmann::json doc = bazarish::parseJson(in);
 
     std::set<std::string> codes;
     for (const nlohmann::json& one : doc.at("languages")) {

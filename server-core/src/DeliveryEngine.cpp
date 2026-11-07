@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #include "DeliveryEngine.hpp"
 
+#include <bazarish/JsonRead.hpp>
 #include <bazarish/Log.hpp>
 
 #include <bazarish/Address.hpp>
@@ -52,7 +53,7 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
     Bytes pass;
     try {
         const Bytes plain = hybrid::unseal(sealed, sealingKey);
-        const nlohmann::json inner = nlohmann::json::parse(plain.begin(), plain.end());
+        const nlohmann::json inner = bazarish::parseJson(plain);
         deliveryClass = inner.at("class").get<std::string>();
         mailbox = inner.at("mailbox").get<std::string>();
         deliveryId = inner.at("deliveryId").get<std::string>();
@@ -113,7 +114,7 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
             "a message may carry at most " + std::to_string(kMaxMessagePayloadBytes) + " bytes");
     }
 
-    if (deliveryClass == kContactDeliveryClass && !contactSources_.admit(peer, now)) {
+    if (deliveryClass == kContactDeliveryClass && !contactSources_.admit(owner, peer, now)) {
         return fail(ErrorCode::eContactRateLimited,
             "this address has already sent a contact request; a request comes from an address "
             "of its own");

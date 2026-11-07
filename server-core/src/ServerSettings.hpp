@@ -15,7 +15,6 @@ public:
         std::string logLevel;
         bool i2pLog = false;
         std::string i2pPrivacy;
-        int i2pTunnelQuantity = 0;
         std::string listenHost;
         int listenPort = 0;
         std::string serviceNodeUrl;

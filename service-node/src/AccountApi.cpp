@@ -4,6 +4,7 @@
 #include <bazarish/Auth.hpp>
 #include <bazarish/Clock.hpp>
 #include <bazarish/ConfigFile.hpp>
+#include <bazarish/JsonRead.hpp>
 #include <bazarish/Tunnel.hpp>
 #include <bazarish/Certificates.hpp>
 #include <bazarish/ServerDescriptor.hpp>
@@ -301,7 +302,7 @@ void AccountApi::setupOpsRoutes()
 
     ops_->post("/v1/login/expect",
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
-            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const nlohmann::json body = bazarish::parseJson(request.body);
             options_.logins->expect(body.at("challenge").get<std::string>(),
                 body.at("token").get<std::string>(), nowSeconds());
             respondJson(response, {{"ok", true}});
@@ -309,7 +310,7 @@ void AccountApi::setupOpsRoutes()
 
     ops_->post("/v1/login/claim",
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
-            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const nlohmann::json body = bazarish::parseJson(request.body);
             const LoginMailbox::Claim claim = options_.logins->claim(
                 body.at("nonce").get<std::string>(), body.at("token").get<std::string>(),
                 nowSeconds());
@@ -371,7 +372,7 @@ void AccountApi::setupOpsRoutes()
 
     ops_->post("/v1/account/undelegate",
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
-            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const nlohmann::json body = bazarish::parseJson(request.body);
             const std::string user = body.at("user").get<std::string>();
             const std::string message = body.value("message", std::string());
             if (message.empty()) {
@@ -401,7 +402,7 @@ void AccountApi::setupOpsRoutes()
 
     ops_->post("/v1/account/ban",
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
-            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const nlohmann::json body = bazarish::parseJson(request.body);
             const std::string user = body.at("user").get<std::string>();
             const std::string reason = body.value("reason", std::string());
             deleteAccount(user);
@@ -412,7 +413,7 @@ void AccountApi::setupOpsRoutes()
 
     ops_->post("/v1/account/unban",
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
-            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const nlohmann::json body = bazarish::parseJson(request.body);
             const std::string user = body.at("user").get<std::string>();
             grants_.unban(user);
             respondJson(response, {{"ok", true}});
@@ -465,7 +466,7 @@ void AccountApi::setupOpsRoutes()
 
     ops_->put("/v1/account/settings",
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
-            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const nlohmann::json body = bazarish::parseJson(request.body);
             NodeSettings::Values values = settings();
             if (body.contains("requireApproval")) {
                 values.requireApproval = body.at("requireApproval").get<bool>();
@@ -604,7 +605,7 @@ void AccountApi::setupOpsRoutes()
 
     ops_->put("/v1/account/quota",
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
-            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const nlohmann::json body = bazarish::parseJson(request.body);
             const std::string user = body.at("user").get<std::string>();
             const auto quotaBytes = body.at("quotaBytes").get<std::uint64_t>();
             const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
@@ -630,7 +631,7 @@ void AccountApi::setupOpsRoutes()
 
     ops_->post("/v1/account/approve",
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
-            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const nlohmann::json body = bazarish::parseJson(request.body);
             const std::string user = body.at("user").get<std::string>();
             if (!grants_.peekApproval(user).has_value()) {
                 respondError(response, 404, ErrorCode::eAccountUnknown, "no such account");
@@ -653,7 +654,7 @@ void AccountApi::setupRoutes()
 
     http_->post(loginrelay::kCallbackPath,
         filled([this](const http::Request& request, http::Response& response) {
-            const nlohmann::json body = nlohmann::json::parse(request.body, nullptr, false);
+            const nlohmann::json body = bazarish::parseJsonOrDiscarded(request.body);
             if (body.is_discarded() || !body.is_object() || !body.contains("challenge")
                 || !body.contains("blob") || !body.at("challenge").is_string()
                 || !body.at("blob").is_string()) {
@@ -680,7 +681,7 @@ void AccountApi::setupRoutes()
             respondJson(response, {{"ok", true}});
         }));
 
-    http_->get(std::string(loginrelay::kChallengePrefix) + "([0-9a-f]+)",
+    http_->get(std::string(loginrelay::kChallengePrefix) + "{hex}",
         filled([this](const http::Request& request, http::Response& response) {
             const std::string challenge
                 = options_.logins->challengeOf(request.captures.at(0), nowSeconds());
@@ -707,6 +708,11 @@ void AccountApi::setupRoutes()
                 = tunnel_.authenticate(request, &user);
                 refused.has_value()) {
                 response = *refused;
+                return;
+            }
+            if (options_.admitsUser && !options_.admitsUser(user)) {
+                respondError(response, 403, ErrorCode::eRequestFailed,
+                    "this node serves only its own accounts");
                 return;
             }
             try {
@@ -739,7 +745,7 @@ void AccountApi::setupRoutes()
     clientRoute("POST", "/v1/account/card",
         [this](const http::Request& request, http::Response& response,
                           const std::string& user) {
-            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const nlohmann::json body = bazarish::parseJson(request.body);
             const Bytes der = fromBase64(body.at("card").get<std::string>());
 
             ContactCard card;
@@ -849,7 +855,7 @@ void AccountApi::setupRoutes()
                         : settings().registrationMessage);
                 return;
             }
-            const nlohmann::json body = nlohmann::json::parse(request.body);
+            const nlohmann::json body = bazarish::parseJson(request.body);
             const std::string transient = body.value("transient", std::string());
             const std::int64_t expiresUnix
                 = transient.empty() ? 0 : body.at("expiresUnix").get<std::int64_t>();
@@ -863,6 +869,16 @@ void AccountApi::setupRoutes()
                 respondError(response, 400, ErrorCode::eRequestFailed,
                     "this delegation has already run out");
                 return;
+            }
+            if (!transient.empty()) {
+                try {
+                    const i2p::Keys delegation = i2p::Keys::fromBlob(fromBase64(transient));
+                    i2p::requireUsableDelegation(delegation, now);
+                    i2p::requireDelegationEnds(delegation, expiresUnix);
+                } catch (const std::exception& error) {
+                    respondError(response, 400, ErrorCode::eRequestFailed, error.what());
+                    return;
+                }
             }
             const AddressKeys keys{body.value("sealingKey", std::string()),
                 body.value("signingKey", std::string())};
@@ -919,7 +935,10 @@ void AccountApi::setupRoutes()
                 bazarish::log::warn("account record of {} is unreadable: {}", log::redact(user),
                     error.what());
             }
-            const bool known = account.has_value() && !account->card.empty();
+            const std::optional<GrantStore::Approval> approval
+                = user.empty() ? std::nullopt : grants_.peekApproval(user);
+            const bool known = account.has_value() && !account->card.empty()
+                && !(approval.has_value() && approval->pending());
             if (!known) {
                 respondError(response, 404, ErrorCode::eAccountUnknown,
                     "no card for that account");

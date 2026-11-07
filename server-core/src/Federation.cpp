@@ -1,5 +1,6 @@
 // Bazarish project (c) 2026
 #include "Federation.hpp"
+#include <bazarish/JsonRead.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/Errors.hpp>
 #include <bazarish/Limits.hpp>
@@ -19,7 +20,7 @@ void federationServeFrame(const std::string& headerLine,
     const std::int64_t now, const Key& sealingKey, const std::string& owner,
     const GetCardFn& getCard, const SignAckFn& signAck, const std::string& peer)
 {
-    const nlohmann::json header = nlohmann::json::parse(headerLine);
+    const nlohmann::json header = bazarish::parseJson(headerLine);
     const std::string op = header.at("op").get<std::string>();
 
     if (op == "deliver") {
@@ -49,7 +50,7 @@ void federationServeFrame(const std::string& headerLine,
     if (op == "card") {
         if (getCard) {
             const Bytes queryBytes = fromBase64(header.at("sealed").get<std::string>());
-            const CardFetchQuery query = cardFetchQueryFromJson(nlohmann::json::parse(queryBytes));
+            const CardFetchQuery query = cardFetchQueryFromJson(bazarish::parseJson(queryBytes));
             if (query.fingerprint != owner) {
                 writeReply(
                     nlohmann::json({{"ok", false}, {"errorCode", "CARD_UNKNOWN"}}).dump());

@@ -2,6 +2,7 @@
 #include "OperatorPush.hpp"
 
 #include <bazarish/Auth.hpp>
+#include <bazarish/JsonRead.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Crypto.hpp>
@@ -110,7 +111,7 @@ std::optional<MailboxUsage> OperatorPush::accountUsage(
         return std::nullopt;
     }
     try {
-        const nlohmann::json body = nlohmann::json::parse(response.body);
+        const nlohmann::json body = bazarish::parseJson(response.body);
         MailboxUsage usage;
         usage.usedBytes = body.at("usedBytes").get<std::uint64_t>();
         usage.quotaBytes = body.at("quotaBytes").get<std::uint64_t>();
@@ -221,7 +222,7 @@ std::optional<Bytes> OperatorPush::nodeCard(const Bytes& sealingPublicKeyDer) co
         return std::nullopt;
     }
     try {
-        return fromBase64(nlohmann::json::parse(*answer).at("card").get<std::string>());
+        return fromBase64(bazarish::parseJson(*answer).at("card").get<std::string>());
     } catch (const std::exception& error) {
         bazarish::log::warn("the messaging server's answer with the node card is unreadable: {}",
             error.what());
@@ -251,7 +252,7 @@ std::optional<ServedDestination> OperatorPush::publish(const std::string& user,
         return std::nullopt;
     }
     try {
-        const nlohmann::json served = nlohmann::json::parse(*answer);
+        const nlohmann::json served = bazarish::parseJson(*answer);
         return ServedDestination{served.value("dest", std::string())};
     } catch (const std::exception& error) {
         bazarish::log::warn("the messaging server's answer about the destination of {} is "

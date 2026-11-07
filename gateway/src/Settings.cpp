@@ -22,7 +22,6 @@ constexpr const char* kNginxNotFound = "<html>\r\n"
                                        "</html>\r\n";
 
 constexpr const char* kSecureScheme = "https://";
-constexpr const char* kPlainScheme = "http://";
 // A path, a query or anything a link's query cannot carry ends the authority.
 constexpr const char* kNotInAuthority = "/?#& \t\r\n";
 
@@ -45,10 +44,8 @@ std::string publicAddressFrom(const std::string& text)
         return text;
     }
     std::string rest;
-    for (const char* const scheme : {kSecureScheme, kPlainScheme}) {
-        if (text.rfind(scheme, 0) == 0) {
-            rest = text.substr(std::string(scheme).size());
-        }
+    if (text.rfind(kSecureScheme, 0) == 0) {
+        rest = text.substr(std::string(kSecureScheme).size());
     }
     if (rest.empty() || rest.find_first_of(kNotInAuthority) != std::string::npos) {
         throw std::invalid_argument("\"publicAddress\" is https://host or https://host:port, "
@@ -163,12 +160,6 @@ Settings Settings::from(const ConfigView& config)
             throw std::runtime_error("\"i2p.privacy\" is minimal, middle or max");
         }
         settings.tunnelPrivacy = *privacy;
-    }
-    settings.tunnelQuantity = static_cast<int>(
-        config.number("i2p.tunnelQuantity", i2p::kDefaultTunnelQuantity));
-    if (settings.tunnelQuantity < 1 || settings.tunnelQuantity > i2p::kMaxTunnelQuantity) {
-        throw std::runtime_error("\"i2p.tunnelQuantity\" is between 1 and "
-            + std::to_string(i2p::kMaxTunnelQuantity));
     }
 
     settings.streamPool = poolDepth(config, "pools.stream", kDefaultStreamPool);

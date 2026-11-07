@@ -375,6 +375,7 @@ void testWebFlow()
     CHECK(signedIn.status == 303);
     const std::string cookie = between(signedIn.headers.at("set-cookie") + ";", "session=", ";");
     CHECK(!cookie.empty());
+    CHECK(signedIn.headers.at("set-cookie").find("; Secure;") != std::string::npos);
 
     const http::ClientResponse asked = call(port, "GET", "/", {{"Cookie", "session=" + cookie}});
     CHECK(asked.status == 200);
@@ -411,6 +412,9 @@ void testWebFlow()
         CHECK(done.status == 303);
         CHECK(deleted == identity.fingerprint());
         CHECK(!grants.peekSubscription(identity.fingerprint()).has_value());
+        CHECK(call(port, "GET", "/", {{"Cookie", "session=" + cookie}})
+                  .body.find(identity.fingerprint())
+            == std::string::npos);
     }
 
     {

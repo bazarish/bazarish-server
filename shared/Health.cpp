@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #include "Health.hpp"
 
+#include <bazarish/JsonRead.hpp>
+
 #include <nlohmann/json.hpp>
 
 #ifdef _WIN32
@@ -71,7 +73,7 @@ std::string reportJson(const std::string& service, const std::string& version,
         {"ramPeakBytes", memory.peak},
     };
     if (!extrasJson.empty()) {
-        report.update(nlohmann::json::parse(extrasJson));
+        report.update(bazarish::parseJson(extrasJson));
     }
     return report.dump();
 }

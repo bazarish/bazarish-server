@@ -95,7 +95,7 @@ bounded, and only the secret is lasting:
 | Subprotocol | `Sec-WebSocket-Protocol: bazarish-gateway/1` |
 | Frames | Binary only. A text frame closes the socket with 1003 |
 | Server authentication | The client pins the SHA-256 of the server's SPKI. The SNI is whatever the client's configuration says, and the gateway accepts any |
-| Client authentication | A secret URL **and** a static token in the `X-Bazarish-Gateway` header. Both, or nothing. A client is given both in one link, `https://bazari.sh/#gateway?v=1&url=<secret URL>&token=<token>` |
+| Client authentication | A secret URL **and** a static token in the `X-Bazarish-Gateway` header. Both, or nothing. A client is given both in one link, `https://bazari.sh/#gateway?v=1&url=<secret URL>&token=<token>`; the URL is `https://`, and a client refuses any other |
 | Session | The cookie of a session to rejoin, in `X-Bazarish-Session`. Absent on a first connection |
 | Keepalive | The gateway pings every `kKeepalive`; no pong within `kPongTimeout` drops the socket |
 
@@ -541,9 +541,9 @@ stutters behind a file transfer and one that does not.
 ### The tunnels are the gateway's
 
 A client on a gateway does not choose how its tunnels are built: how long they
-are and how many a destination keeps are the gateway's own settings,
-`i2p.privacy` and `i2p.tunnelQuantity` in its configuration, one for everyone it
-serves (minimal and 3 unless set). `endpoint-create` says what a destination is
+are is the gateway's own setting, `i2p.privacy` in its configuration, one for
+everyone it serves (minimal unless set), and a destination keeps three tunnels
+each way, the same as a client's own, which is not a setting. `endpoint-create` says what a destination is
 for and nothing about its tunnels. The exception is
 fixed rather than configured: a realtime `raw` destination carries a call's media
 and is always built with one hop each way, because a voice that waits for three
@@ -662,7 +662,10 @@ something.
 
 ## Streams
 
-`stream-open` carries the caller's whole deadline, not a per-attempt timeout.
+`stream-open` carries the caller's whole deadline, not a per-attempt timeout,
+and no longer than `kMaxDialDeadline`; a longer one is a `bad-frame`. A session
+holds at most `kMaxDialsPerSession` dials at once, `kMaxEndpointsPerSession`
+destinations and `kMaxStreamsPerSession` streams; one more is `refused`.
 The gateway re-issues the dial every `kDialRetryDelay` until that deadline, and
 only a failure that is not "unreachable" is terminal. This is the SAM backend's
 lesson, learned against a live router and not against a fake: a LeaseSet that is
@@ -974,6 +977,10 @@ Both sides agree, so there is nothing to refuse.
 | `kControlGapMax` | 2 s | The longest wait before the next control socket, and therefore the longest a message can sit at the gateway. The break is the client's own doing and must not be felt; what an observer sees is how many connections there were and how long each lived, not the dead time between them, so a short gap costs the cover nothing |
 | `kStreamWindowBytes` | 262144 | The in-flight allowance per stream per direction. It is also the retained buffer a reconnect replays from, and the most an unaccepted inbound stream can cost the gateway |
 | `kDialRetryDelay` | 2 s | How often a dial is re-issued while the deadline holds, matching the SAM backend |
+| `kMaxDialDeadline` | 90 s | The longest dial a client makes, a file or a pairing. A dial is a thread at the gateway, so its life is bounded |
+| `kMaxDialsPerSession` | 64 | Dials one session has under way at once |
+| `kMaxEndpointsPerSession` | 256 | Destinations one session holds: each is tunnels at the gateway |
+| `kMaxStreamsPerSession` | 1024 | Streams one session holds, dialled and accepted together |
 | `kInboundQueue` | 8 | Unaccepted inbound streams per endpoint before the client resets the oldest |
 | `kDatagramQueue` | 64 | Received datagrams held per endpoint, at either end |
 | `kKeepalive` | 30 s | How often the gateway pings |

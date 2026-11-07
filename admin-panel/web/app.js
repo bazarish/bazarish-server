@@ -1224,11 +1224,6 @@
             N_("Hops in each tunnel: minimal is one, max is three"),
             kPrivacyLevels.map(function (name) { return { value: name, label: name, raw: true }; }),
             data.i2pPrivacy || "max", { restart: true });
-        var tunnels = fieldRow(i2p, N_("Tunnels per address"), data.i2pTunnelQuantity, {
-            type: "number", narrow: true, min: 1, max: data.i2pTunnelQuantityMax,
-            unit: t("of %1", data.i2pTunnelQuantityMax), restart: true,
-            hint: N_("Lower it on a slow connection")
-        });
 
         var wiring = section(form, N_("Connections"));
         var listen = endpointRow(wiring, N_("Listens on"), data.listen,
@@ -1249,7 +1244,6 @@
                     logLevel: level(),
                     i2pLog: i2pLog(),
                     i2pPrivacy: privacy(),
-                    i2pTunnelQuantity: Math.round(Number(tunnels.value) || 0),
                     listen: {
                         host: listen.host.value.trim(),
                         port: portRead(listen.port, N_("The messaging server"))
@@ -1451,11 +1445,6 @@
             data.callPrivacy),
             kPrivacyLevels.map(function (level) { return { value: level, label: level, raw: true }; }),
             data.i2pPrivacy || "minimal", { restart: true });
-        var quantity = fieldRow(tunnels, N_("Tunnels"), data.i2pTunnelQuantity, {
-            type: "number", narrow: true, min: 1, max: data.i2pTunnelQuantityMax,
-            unit: t("of %1", data.i2pTunnelQuantityMax), restart: true,
-            hint: N_("Lower it on a slow connection")
-        });
 
         var pools = section(form, N_("Warm pools"));
         var streamPool = fieldRow(pools, N_("Streams"), data.streamPool, {
@@ -1515,8 +1504,6 @@
                     path: withFleet("/api/service-settings?service=" + encodeURIComponent(name)),
                     body: {
                         i2pPrivacy: privacy(),
-                        i2pTunnelQuantity: count(quantity, N_("Tunnels"), 1,
-                            data.i2pTunnelQuantityMax),
                         streamPool: count(streamPool, N_("The stream pool"), 0, data.poolMax),
                         callPool: count(callPool, N_("The call pool"), 0, data.poolMax),
                         watchPool: count(watchPool, N_("The watch pool"), 0, data.poolMax),

@@ -55,10 +55,13 @@ void Session::remember(const std::uint32_t ref, Bytes answer)
     }
 }
 
-const Bytes* Session::answered(const std::uint32_t ref) const
+std::optional<Bytes> Session::answered(const std::uint32_t ref) const
 {
     const auto found = answers_.find(ref);
-    return found == answers_.end() ? nullptr : &found->second;
+    if (found == answers_.end()) {
+        return std::nullopt;
+    }
+    return found->second;
 }
 
 SessionStore::SessionStore(const std::int64_t ttlSeconds)

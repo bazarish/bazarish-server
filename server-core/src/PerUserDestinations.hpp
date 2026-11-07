@@ -24,13 +24,10 @@
 
 namespace bazarish::server {
 
-// A destination outliving its day keys cannot sign its lease set, and that brings the router down.
-inline constexpr std::int64_t kLapseLeadSeconds = 60;
-
 class PerUserDestinations {
 public:
     PerUserDestinations(bazarish::i2p::Router* router, DeliveryEngine& engine,
-        std::filesystem::path stateDir, bazarish::i2p::Privacy privacy, int tunnelQuantity);
+        std::filesystem::path stateDir, bazarish::i2p::Privacy privacy);
     ~PerUserDestinations();
 
     PerUserDestinations(const PerUserDestinations&) = delete;
@@ -99,7 +96,6 @@ private:
     DeliveryEngine& engine_;
     const std::filesystem::path stateDir_;
     const bazarish::i2p::Privacy privacy_;
-    const int tunnelQuantity_;
     GetCardFn getCard_;
     std::function<void()> servedChanged_;
     mutable std::mutex mutex_;

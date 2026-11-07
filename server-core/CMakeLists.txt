@@ -34,6 +34,7 @@ add_library(bazarish_server_lib STATIC
     src/GatewayLink.cpp
     src/EventGate.cpp
     src/HttpApi.cpp
+    src/NodeCards.cpp
     src/ServerSettings.cpp
 )
 target_include_directories(bazarish_server_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)

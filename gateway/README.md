@@ -41,7 +41,7 @@ One file, given with `--config`. `config.example.json` is a starting point.
 | `reseed` | su3 archives a router with no peers starts from. Empty leaves the engine its built-in hosts |
 | `decoy.minBytes`, `decoy.maxBytes` | The length of a decoy answer, drawn between them |
 | `sessionTtlSeconds` | How long a session outlives its last socket |
-| `i2p.privacy`, `i2p.tunnelQuantity` | How long the tunnels of every client's destinations are and how many each keeps: one setting for everyone, since a client on a gateway sets none. `minimal` and 3 unless given; call media is always one hop and six tunnels each way, its path picked by measured round trip |
+| `i2p.privacy` | How long the tunnels of every client's destinations are: one setting for everyone, since a client on a gateway sets none. `minimal` unless given. Each destination keeps three tunnels each way, the client's own count, and that is not a setting; call media is always one hop and six tunnels each way, its path picked by measured round trip |
 | `pools.stream`, `pools.call`, `pools.watch` | How many destinations are kept built ahead of asking: unpublished stream destinations with the tunnels above, call-media destinations, and published datagram destinations for watching presence. 4, 2 and 2 unless given, at most 16; 0 builds every one on demand |
 | `server` | The server-core this gateway is linked to: the `host` and `port` of its `gatewayListen` and the `pin` it presents. Every destination it serves is then reached without I2P. Written by the admin panel; left out, there is no link |
 | `direct` | The facades reached without I2P: `dest`, the `host` and `port` of the facade's `directListen`, and the `pin` it presents. Written by the admin panel |
@@ -118,7 +118,7 @@ health report; the log says when the router has its tunnels.
 
 The same socket, with the same signature, carries `GET`/`PUT /settings` and
 `POST /restart`. `/settings` shows and writes into the config file the tunnels
-(`i2pPrivacy`, `i2pTunnelQuantity`), the three pools (`streamPool`, `callPool`, `watchPool`), the
+(`i2pPrivacy`), the three pools (`streamPool`, `callPool`, `watchPool`), the
 `server` link and the `direct` routes; it never shows the path or the token. The
 link and the routes apply at once; the tunnels and the pools at the next start,
 since the pools are built then. `POST /restart` exits with code 90, which a unit with `Restart=on-failure`

@@ -6,8 +6,11 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -69,8 +72,14 @@ int main()
     const std::int64_t shortExpiry = shortTerm.transientExpires();
     const std::int64_t longExpiry = longTerm.transientExpires();
     const std::int64_t movedAwayExpiry = otherMaster.transientExpires();
-    CHECK(shortTerm.b33OfflineKeyDays() == kShortTermDays);
-    CHECK(longTerm.b33OfflineKeyDays() == kLongTermDays);
+    const std::int64_t today = static_cast<std::int64_t>(std::time(nullptr));
+    CHECK(shortTerm.b33OfflineKeysCover(today, shortExpiry));
+    CHECK(longTerm.b33OfflineKeysCover(today, longExpiry));
+    const Bytes longBlob = longTerm.blob();
+    const Bytes oneDayBlob = master.issueTransient(1).blob();
+    const std::size_t perDay = (longBlob.size() - oneDayBlob.size()) / (kLongTermDays - 1);
+    const std::string todayOnly = toBase64(Bytes(
+        longBlob.begin(), longBlob.end() - static_cast<std::ptrdiff_t>(perDay * (kLongTermDays - 1))));
     CHECK(longExpiry > shortExpiry);
 
     const Key sealingA = Key::generateSealing();
@@ -85,8 +94,7 @@ int main()
     };
 
     {
-        PerUserDestinations guard(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal,
-            bazarish::i2p::kDefaultTunnelQuantity);
+        PerUserDestinations guard(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
         const auto refused = [](const auto& call) {
             try {
                 call();
@@ -103,6 +111,9 @@ int main()
         CHECK(refused([&] {
             guard.provision(alice, toBase64(master.blob()), shortExpiry, sealingPem, signingPem);
         }));
+        CHECK(refused([&] {
+            guard.provision(alice, todayOnly, longExpiry, sealingPem, signingPem);
+        }));
         CHECK(refused([&] { guard.provision(alice, transientA, shortExpiry, "", ""); }));
         CHECK(refused([&] {
             guard.provision(alice, transientA, shortExpiry, signingPem, signingPem);
@@ -118,8 +129,7 @@ int main()
     }
 
     {
-        PerUserDestinations dests(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal,
-            bazarish::i2p::kDefaultTunnelQuantity);
+        PerUserDestinations dests(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
 
         const PerUserDestinations::Assignment served = dests.provision(
             alice, transientA, shortExpiry, sealingA.privatePem(), signingA.privatePem());
@@ -165,15 +175,13 @@ int main()
 
     const std::string bob = toBase32(Bytes(32, 0x02));
     {
-        PerUserDestinations writer(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal,
-            bazarish::i2p::kDefaultTunnelQuantity);
+        PerUserDestinations writer(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
         writer.provision(alice, transientB, longExpiry, sealingA.privatePem(), signingA.privatePem());
         writer.provision(bob, transientA, shortExpiry, sealingB.privatePem(), signingB.privatePem());
     }
     {
-        PerUserDestinations reloaded(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal,
-            bazarish::i2p::kDefaultTunnelQuantity);
-        reloaded.reloadPersisted(shortExpiry - kLapseLeadSeconds);
+        PerUserDestinations reloaded(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
+        reloaded.reloadPersisted(shortExpiry - bazarish::i2p::kDelegationLapseLeadSeconds);
         CHECK(reloaded.size() == 1);
         CHECK(reloaded.assignmentFor(alice, shortExpiry - 1).sealingKey->publicDer()
             == sealingA.publicDer());
@@ -182,11 +190,10 @@ int main()
     }
 
     {
-        PerUserDestinations dests(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal,
-            bazarish::i2p::kDefaultTunnelQuantity);
+        PerUserDestinations dests(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal);
         dests.provision(alice, transientA, shortExpiry, sealingA.privatePem(), signingA.privatePem());
         CHECK(dests.size() == 1);
-        const std::int64_t goesDownAt = shortExpiry - kLapseLeadSeconds;
+        const std::int64_t goesDownAt = shortExpiry - bazarish::i2p::kDelegationLapseLeadSeconds;
         constexpr std::int64_t kAhead = 30;
         CHECK(dests.nextSweepIn(goesDownAt - kAhead) == std::chrono::seconds(kAhead));
         CHECK(dests.nextSweepIn(goesDownAt) == std::chrono::seconds(0));

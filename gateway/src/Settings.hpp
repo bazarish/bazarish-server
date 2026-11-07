@@ -42,7 +42,6 @@ struct Settings {
     std::vector<std::string> opsClients;
     std::int64_t sessionTtlSeconds = kSessionTtl.count();
     i2p::Privacy tunnelPrivacy = i2p::Privacy::eMinimal;
-    int tunnelQuantity = i2p::kDefaultTunnelQuantity;
     std::size_t streamPool = kDefaultStreamPool;
     std::size_t callPool = kDefaultCallPool;
     std::size_t watchPool = kDefaultWatchPool;

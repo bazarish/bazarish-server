@@ -334,6 +334,17 @@ int main()
     CHECK(gateway.dials() == 1);
     CHECK(gateway.refusals() == refusedBefore);
     {
+        constexpr std::uint32_t kTooLongRef = 18;
+        const nlohmann::json tooLong = {{"endpoint", 8}, {"host", "anything.b32.i2p"},
+            {"deadline", kMaxDialDeadline.count() + 1}};
+        send(*asking.socket, encodeJson(FrameType::eStreamOpen, kTooLongRef, tooLong));
+        const Frame refusedLong = receive(*asking.socket);
+        CHECK(refusedLong.type == FrameType::eError);
+        CHECK(refusedLong.ref == kTooLongRef);
+        CHECK(bodyJson(refusedLong)["code"] == "bad-frame");
+        CHECK(gateway.dials() == 1);
+    }
+    {
         const i2p::Keys presence = i2p::Keys::generate();
         const nlohmann::json readers = nlohmann::json::array(
             {standardToI2pBase64(toBase64(Key::generateX25519().rawPublic()))});

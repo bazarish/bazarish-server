@@ -12,12 +12,14 @@ ContactSources::ContactSources(const std::int64_t memorySeconds)
 {
 }
 
-bool ContactSources::admit(const std::string& source, const std::int64_t now)
+bool ContactSources::admit(
+    const std::string& owner, const std::string& source, const std::int64_t now)
 {
     if (source.empty()) {
         return true;
     }
-    const std::string key = toHex(sha256(Bytes(source.begin(), source.end())));
+    const std::string pair = owner + '\n' + source;
+    const std::string key = toHex(sha256(Bytes(pair.begin(), pair.end())));
     const std::lock_guard<std::mutex> lock(mutex_);
     if (now - sweptAt_ >= kSecondsPerHour) {
         sweep(now);

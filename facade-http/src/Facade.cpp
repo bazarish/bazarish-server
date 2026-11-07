@@ -9,6 +9,7 @@
 #include <bazarish/HttpClient.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <bazarish/I2p.hpp>
+#include <bazarish/JsonRead.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/Tunnel.hpp>
 #include <Health.hpp>
@@ -205,7 +206,7 @@ void Facade::setupRoutes(bazarish::http::Server& server)
     };
 
     for (const char* const method : {"GET", "POST", "PUT", "DELETE"}) {
-        server.routeAsync(method, "(.*)", handler);
+        server.routeAsync(method, "*", handler);
     }
 }
 
@@ -232,7 +233,7 @@ void Facade::setupOpsRoutes()
 
     ops_->get("/healthz", operatorOnly([this](const bazarish::http::Request&) {
         const Load::Sample sample = load_.sample(nowSeconds());
-        nlohmann::json report = nlohmann::json::parse(
+        nlohmann::json report = bazarish::parseJson(
             health::reportJson("facade", options_.version, startedAt_, nowSeconds()));
         report["requestsLastMinute"] = sample.lastMinute;
         report["requestsLastHour"] = sample.lastHour;
@@ -265,7 +266,7 @@ void Facade::setupOpsRoutes()
 
     ops_->put("/settings", operatorOnly([this](const bazarish::http::Request& request) {
         FacadeSettings::Values values = options_.settings->get();
-        const nlohmann::json body = nlohmann::json::parse(request.body);
+        const nlohmann::json body = bazarish::parseJson(request.body);
         if (body.contains("logLevel")) {
             const std::string level = body.at("logLevel").get<std::string>();
             if (!bazarish::log::levelFromString(level).has_value()) {

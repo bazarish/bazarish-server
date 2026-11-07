@@ -75,7 +75,6 @@ int main(const int argc, const char** argv)
     config.gatewayPort = address->port;
     config.gatewayPath = address->path;
     config.gatewayToken = address->token;
-    config.gatewayTls = address->tls;
     config.gatewayPin = reached.pin;
     i2p::Router router(config);
     router.start();

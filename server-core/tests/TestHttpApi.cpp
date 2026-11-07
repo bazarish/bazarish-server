@@ -120,7 +120,6 @@ int main()
     bazarish::server::ServerSettings::Values initialSettings;
     initialSettings.logLevel = "info";
     initialSettings.i2pPrivacy = "max";
-    initialSettings.i2pTunnelQuantity = 16;
     initialSettings.listenHost = "127.0.0.1";
     initialSettings.listenPort = 8420;
     initialSettings.serviceNodeUrl = "http://127.0.0.1:8421";
@@ -148,6 +147,9 @@ int main()
         return {serverDest, "building"};
     };
     httpOptions.forgetI2pDest = [&](const std::string& user) { forgottenUser = user; };
+    const Identity stranger = Identity::generate();
+    httpOptions.accountKnown
+        = [&stranger](const std::string& user) { return user != stranger.fingerprint(); };
     httpOptions.reseedSample = [](std::size_t) { return std::vector<Bytes>{}; };
     int restarts = 0;
     httpOptions.requestRestart = [&restarts]() { ++restarts; };
@@ -169,6 +171,19 @@ int main()
         const http::ClientResponse result
             = call(port, "POST", "/v1/messaging/clients", {}, "{}");
         CHECK(result.status == 401);
+    }
+
+    {
+        const std::string body = nlohmann::json{{"clientId", "strangerdev"}}.dump();
+        const http::ClientResponse result = call(port, "POST", "/v1/messaging/clients",
+            makeHeaders(stranger, "POST", "/v1/messaging/clients", body, ""), body);
+        CHECK(result.status == 404);
+        CHECK(nlohmann::json::parse(result.body).at("error").at("code") == "ACCOUNT_UNKNOWN");
+        CHECK(storage.listClients(stranger.fingerprint()).empty());
+        CHECK(call(port, "GET", "/v1/messaging/events",
+                  makeHeaders(stranger, "GET", "/v1/messaging/events", "", "strangerdev"))
+                  .status
+            == 404);
     }
 
     for (const auto& [identity, clientId] :
@@ -540,34 +555,26 @@ int main()
             = call(opsPort, "GET", path, makeHeaders(operatorIdentity, "GET", path, {}, {}));
         CHECK(shown.status == 200);
         const nlohmann::json values = nlohmann::json::parse(shown.body);
-        CHECK(values.at("i2pTunnelQuantity").get<int>() == 16);
+        CHECK(!values.contains("i2pTunnelQuantity"));
         CHECK(values.at("i2pPrivacy").get<std::string>() == "max");
-        CHECK(values.at("i2pTunnelQuantityMax").get<int>() == bazarish::i2p::kMaxTunnelQuantity);
 
         const std::string body = nlohmann::json{{"logLevel", "debug"},
-            {"i2pPrivacy", "middle"}, {"i2pTunnelQuantity", 8}}
+            {"i2pPrivacy", "middle"}}
                                      .dump();
         CHECK(call(opsPort, "PUT", path, makeHeaders(operatorIdentity, "PUT", path, body, {}), body)
                   .status
             == 200);
         CHECK(bazarish::log::level() == bazarish::log::Level::eDebug);
-        CHECK(serverSettings->get().i2pTunnelQuantity == 8);
 
         std::ifstream written(configPath);
         const nlohmann::json onDisk = nlohmann::json::parse(written);
         CHECK(onDisk.at("logLevel").get<std::string>() == "debug");
         CHECK(onDisk.at("i2p").at("privacy").get<std::string>() == "middle");
-        CHECK(onDisk.at("i2p").at("tunnelQuantity").get<int>() == 8);
         CHECK(onDisk.at("state").get<std::string>() == "/var/lib/bazarish/server-core");
 
         const std::string nonsense = nlohmann::json{{"i2pPrivacy", "invisible"}}.dump();
         CHECK(call(opsPort, "PUT", path,
                   makeHeaders(operatorIdentity, "PUT", path, nonsense, {}), nonsense)
-                  .status
-            == 400);
-        const std::string tooMany = nlohmann::json{{"i2pTunnelQuantity", 99}}.dump();
-        CHECK(call(opsPort, "PUT", path,
-                  makeHeaders(operatorIdentity, "PUT", path, tooMany, {}), tooMany)
                   .status
             == 400);
         const std::string moved = nlohmann::json{{"serviceNode", "https://127.0.0.1:9421"}}.dump();

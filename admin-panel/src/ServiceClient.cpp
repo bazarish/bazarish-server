@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #include "ServiceClient.hpp"
 
+#include <bazarish/JsonRead.hpp>
 #include <bazarish/Tls.hpp>
 
 #include <bazarish/Clock.hpp>
@@ -62,7 +63,7 @@ std::string errorMessage(const bazarish::http::ClientResponse& result)
         return result.error;
     }
     try {
-        const nlohmann::json body = nlohmann::json::parse(result.body);
+        const nlohmann::json body = bazarish::parseJson(result.body);
         if (body.contains("error") && body.at("error").contains("message")) {
             return body.at("error").at("message").get<std::string>();
         }
@@ -96,7 +97,7 @@ HealthResult probeHealth(const ServiceEntry& service, const Identity& identity,
         return out;
     }
     try {
-        const nlohmann::json body = nlohmann::json::parse(result.body);
+        const nlohmann::json body = bazarish::parseJson(result.body);
         out.version = body.value("version", std::string());
         out.uptime = body.value("uptime", static_cast<std::int64_t>(0));
         out.ramBytes = body.value("ramBytes", static_cast<std::uint64_t>(0));
@@ -139,7 +140,7 @@ std::string failureText(const JsonResult& result)
         return result.error;
     }
     try {
-        const nlohmann::json body = nlohmann::json::parse(result.body);
+        const nlohmann::json body = bazarish::parseJson(result.body);
         const nlohmann::json& error = body.at("error");
         if (error.is_string()) {
             return error.get<std::string>();

@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #include "LoginRelay.hpp"
 
+#include <bazarish/JsonRead.hpp>
 #include <bazarish/Links.hpp>
 #include <bazarish/Portal.hpp>
 
@@ -27,7 +28,7 @@ std::optional<std::string> nonceAfter(const std::string& path, const std::string
 
 std::string nonceOf(const std::string& challenge)
 {
-    return nlohmann::json::parse(service::decodeLoginChallenge(challenge))
+    return bazarish::parseJson(service::decodeLoginChallenge(challenge))
         .at("nonce")
         .get<std::string>();
 }

@@ -44,6 +44,8 @@ struct AccountApiOptions {
     std::function<bool(const std::string& user)> forgetMailbox;
 
     std::function<void(const std::string& user, std::uint64_t quotaBytes)> publishQuota;
+    // A private node, such as a bot's own: a signer outside this set is refused. Empty: a public node.
+    std::function<bool(const std::string& user)> admitsUser;
 
 
     std::shared_ptr<NodeSettings> settings;

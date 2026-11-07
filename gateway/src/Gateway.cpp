@@ -8,6 +8,7 @@
 #include <Health.hpp>
 #include <bazarish/Hmac.hpp>
 #include <bazarish/I2pAddress.hpp>
+#include <bazarish/JsonRead.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/Tls.hpp>
 
@@ -16,6 +17,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -57,8 +59,6 @@ nlohmann::json editable(const Settings& written)
     }
     return {
         {"i2pPrivacy", std::string(i2p::privacyName(written.tunnelPrivacy))},
-        {"i2pTunnelQuantity", written.tunnelQuantity},
-        {"i2pTunnelQuantityMax", i2p::kMaxTunnelQuantity},
         {"callPrivacy", std::string(i2p::privacyName(kCallPrivacy))},
         {"streamPool", written.streamPool},
         {"callPool", written.callPool},
@@ -79,8 +79,6 @@ nlohmann::json editable(const Settings& written)
 constexpr std::size_t kLeaseSetKeyBytes = 32;
 constexpr std::int64_t kDelegationAskLeadSeconds = 600;
 constexpr std::int64_t kDelegationAskEverySeconds = 60;
-// As server-core: a destination never outlives its delegation and goes down a minute before.
-constexpr std::int64_t kDelegationLapseLeadSeconds = 60;
 
 Bytes fromI2pBase64(const std::string& text)
 {
@@ -90,9 +88,7 @@ Bytes fromI2pBase64(const std::string& text)
 i2p::Keys delegationIn(const nlohmann::json& text)
 {
     i2p::Keys keys = i2p::Keys::fromBlob(fromI2pBase64(text.get<std::string>()));
-    if (!keys.isOffline() || keys.b33OfflineKeyDays() < 1) {
-        throw std::invalid_argument("a presence address comes as a delegation for today, never its master key");
-    }
+    i2p::requireUsableDelegation(keys, nowSeconds());
     return keys;
 }
 
@@ -258,21 +254,13 @@ http::Response Gateway::settingsChanged(const http::Request& request)
     std::optional<std::vector<DirectRoute>> direct;
     std::optional<std::optional<ServerLink>> link;
     try {
-        const nlohmann::json body = nlohmann::json::parse(request.body);
+        const nlohmann::json body = bazarish::parseJson(request.body);
         if (body.contains("i2pPrivacy")) {
             const std::string named = body.at("i2pPrivacy").get<std::string>();
             if (!i2p::privacyFromString(named).has_value()) {
                 throw std::invalid_argument("not a privacy level: " + named);
             }
             writes.push_back({{"i2p", "privacy"}, named});
-        }
-        if (body.contains("i2pTunnelQuantity")) {
-            const int quantity = body.at("i2pTunnelQuantity").get<int>();
-            if (quantity < 1 || quantity > i2p::kMaxTunnelQuantity) {
-                throw std::invalid_argument("a destination carries between 1 and "
-                    + std::to_string(i2p::kMaxTunnelQuantity) + " tunnels");
-            }
-            writes.push_back({{"i2p", "tunnelQuantity"}, quantity});
         }
         for (const char* const pool : {"stream", "call", "watch"}) {
             const std::string key = std::string(pool) + "Pool";
@@ -378,7 +366,7 @@ int Gateway::start()
         return decoy();
     };
     for (const char* method : {"GET", "POST", "PUT", "DELETE", "HEAD"}) {
-        server_.route(method, "(.*)", answer);
+        server_.route(method, "*", answer);
     }
     streamPool_ = std::make_unique<DestinationPool>(
         router_, shapeOf(false, false, false), settings_.streamPool);
@@ -421,7 +409,12 @@ void Gateway::bindOps()
 
 void Gateway::stop()
 {
-    if (running_.exchange(false) && status_.joinable()) {
+    const bool wasRunning = running_.exchange(false);
+    {
+        const std::lock_guard<std::mutex> lock(dialMutex_);
+    }
+    dialDone_.notify_all();
+    if (wasRunning && status_.joinable()) {
         status_.join();
     }
     {
@@ -441,6 +434,10 @@ void Gateway::stop()
     }
     for (const std::shared_ptr<Session>& session : held) {
         retire(session);
+    }
+    {
+        std::unique_lock<std::mutex> lock(dialMutex_);
+        dialDone_.wait(lock, [this]() { return dialsRunning_ == 0; });
     }
     if (streamPool_) {
         streamPool_->stop();
@@ -474,7 +471,7 @@ i2p::EndpointConfig Gateway::shapeOf(const bool raw, const bool published, const
     const bool call = raw && realtime;
     config.traffic = raw ? i2p::Traffic::eRaw : i2p::Traffic::eStream;
     config.privacy = call ? kCallPrivacy : settings_.tunnelPrivacy;
-    config.tunnelQuantity = call ? i2p::kCallTunnelQuantity : settings_.tunnelQuantity;
+    config.tunnelQuantity = call ? i2p::kCallTunnelQuantity : i2p::kDefaultTunnelQuantity;
     config.published = published;
     config.realtime = realtime;
     config.label = raw ? "raw" : "stream";
@@ -547,6 +544,7 @@ void Gateway::retire(const std::shared_ptr<Session>& session)
         }
         session->endpoints.clear();
         session->streams.clear();
+        session->retired = true;
     }
     for (const std::shared_ptr<StreamEntry>& stream : streams) {
         orphan(stream);
@@ -554,17 +552,13 @@ void Gateway::retire(const std::shared_ptr<Session>& session)
         if (stream->stream) {
             stream->stream->close();
         }
-        if (stream->reader.joinable()) {
-            stream->reader.join();
-        }
+        joinTaken(stream->reader);
     }
     for (const std::shared_ptr<EndpointEntry>& endpoint : endpoints) {
         if (endpoint->endpoint) {
             endpoint->endpoint->stop();
         }
-        if (endpoint->worker.joinable()) {
-            endpoint->worker.join();
-        }
+        joinTaken(endpoint->worker);
     }
     if (publishedGone) {
         dropUnrouted();
@@ -696,7 +690,12 @@ void Gateway::onFrame(const http::SocketPtr& socket, const Frame& frame)
         return;
     }
     if (frame.type == FrameType::eEndpointCreate || frame.type == FrameType::eStreamOpen) {
-        if (const Bytes* const already = session->answered(frame.ref); already != nullptr) {
+        std::optional<Bytes> already;
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            already = session->answered(frame.ref);
+        }
+        if (already.has_value()) {
             socket->send(*already);
             return;
         }
@@ -890,11 +889,21 @@ void Gateway::onEndpointCreate(const std::shared_ptr<Session>& session,
     bool routable = false;
     bool local = false;
     std::size_t servedHere = 0;
+    bool full = false;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
         if (session->endpoints.count(frame.ref) > 0) {
             return;
         }
+        full = session->retired || session->endpoints.size() >= kMaxEndpointsPerSession;
+    }
+    if (full) {
+        fail(socket, frame.ref, Fault::eRefused,
+            "this session holds as many destinations as it may");
+        return;
+    }
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
         entry = std::make_shared<EndpointEntry>();
         entry->id = frame.ref;
         entry->raw = kind == "raw";
@@ -951,10 +960,32 @@ void Gateway::onEndpointCreate(const std::shared_ptr<Session>& session,
         }
     }
 
-    if (entry->raw) {
-        entry->worker = std::thread([this, session, entry]() { datagramLoop(session, entry); });
-    } else if (entry->published) {
-        entry->worker = std::thread([this, session, entry]() { acceptLoop(session, entry); });
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        if (!entry->running.load()) {
+            return;
+        }
+        try {
+            if (entry->raw) {
+                entry->worker
+                    = std::thread([this, session, entry]() { datagramLoop(session, entry); });
+            } else if (entry->published) {
+                entry->worker
+                    = std::thread([this, session, entry]() { acceptLoop(session, entry); });
+            }
+            return;
+        } catch (const std::system_error& error) {
+            bazarish::log::warn("gateway: no thread for a destination: {}", error.what());
+            unpublishLocked(*entry);
+            entry->running.store(false);
+            session->endpoints.erase(entry->id);
+        }
+    }
+    if (entry->endpoint) {
+        entry->endpoint->stop();
+    }
+    if (const http::SocketPtr out = answerOn(*session, socket)) {
+        out->send(encode(FrameType::eEndpointLost, entry->id));
     }
 }
 
@@ -1012,7 +1043,7 @@ void Gateway::lapseDelegations(const std::int64_t now)
                 if (expires == 0) {
                     continue;
                 }
-                if (now >= expires - kDelegationLapseLeadSeconds) {
+                if (i2p::delegationLapsed(expires, now)) {
                     lapsed.emplace_back(session, id);
                 } else if (now >= expires - kDelegationAskLeadSeconds && session->control
                     && now - entry->delegationAskedAt >= kDelegationAskEverySeconds) {
@@ -1088,13 +1119,9 @@ std::shared_ptr<EndpointEntry> Gateway::stopEndpoint(
         if (stranded->stream) {
             stranded->stream->close();
         }
-        if (stranded->reader.joinable()) {
-            stranded->reader.join();
-        }
+        joinTaken(stranded->reader);
     }
-    if (entry->worker.joinable()) {
-        entry->worker.join();
-    }
+    joinTaken(entry->worker);
     return entry;
 }
 
@@ -1178,7 +1205,7 @@ void Gateway::onStreamOpen(const std::shared_ptr<Session>& session,
     const std::uint32_t endpointId = body.value("endpoint", 0U);
     const std::string host = body.value("host", std::string());
     const std::chrono::seconds deadline(body.value("deadline", 0));
-    if (host.empty() || deadline.count() <= 0) {
+    if (host.empty() || deadline.count() <= 0 || deadline > kMaxDialDeadline) {
         fail(socket, frame.ref, Fault::eBadFrame, "a dial names a host and a deadline");
         return;
     }
@@ -1205,6 +1232,11 @@ void Gateway::onStreamOpen(const std::shared_ptr<Session>& session,
         if (session->dialling.count(frame.ref) > 0) {
             return;
         }
+        if (session->retired || session->dialling.size() >= kMaxDialsPerSession
+            || session->streams.size() >= kMaxStreamsPerSession) {
+            fail(socket, frame.ref, Fault::eRefused, "this session has as many streams as it may");
+            return;
+        }
         session->dialling.insert(frame.ref);
     }
     std::shared_ptr<Session> owner;
@@ -1227,10 +1259,34 @@ void Gateway::onStreamOpen(const std::shared_ptr<Session>& session,
         return;
     }
 
-    ++dials_;
-    std::thread([this, session, from, ref = frame.ref, host, deadline, socket]() {
-        dial(session, from, ref, host, deadline, socket);
-    }).detach();
+    {
+        const std::lock_guard<std::mutex> lock(dialMutex_);
+        ++dialsRunning_;
+    }
+    try {
+        std::thread([this, session, from, ref = frame.ref, host, deadline, socket]() {
+            dial(session, from, ref, host, deadline, socket);
+            dialFinished();
+        }).detach();
+        ++dials_;
+    } catch (const std::system_error& error) {
+        bazarish::log::warn("gateway: no thread for a dial: {}", error.what());
+        dialFinished();
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            session->dialling.erase(frame.ref);
+        }
+        fail(socket, frame.ref, Fault::eRefused, "the gateway has no room for another dial");
+    }
+}
+
+void Gateway::dialFinished()
+{
+    {
+        const std::lock_guard<std::mutex> lock(dialMutex_);
+        --dialsRunning_;
+    }
+    dialDone_.notify_all();
 }
 
 std::optional<DirectRoute> Gateway::directFor(const std::string& host) const
@@ -1254,7 +1310,7 @@ void Gateway::dial(const std::shared_ptr<Session>& session,
         = route.has_value() ? std::nullopt : serverFor(host);
     const bool bypass = route.has_value() || server.has_value();
     std::unique_ptr<Conduit> opened;
-    while (std::chrono::steady_clock::now() < until && from->running.load()
+    while (std::chrono::steady_clock::now() < until && from->running.load() && running_.load()
         && (bypass || from->endpoint != nullptr)) {
         const auto left = std::max(std::chrono::duration_cast<std::chrono::seconds>(
                                        until - std::chrono::steady_clock::now()),
@@ -1275,7 +1331,8 @@ void Gateway::dial(const std::shared_ptr<Session>& session,
         if (opened != nullptr) {
             break;
         }
-        std::this_thread::sleep_for(kDialRetryDelay);
+        std::unique_lock<std::mutex> lock(dialMutex_);
+        dialDone_.wait_for(lock, kDialRetryDelay, [this]() { return !running_.load(); });
     }
     if (opened == nullptr) {
         const Bytes answer = encodeJson(
@@ -1303,6 +1360,10 @@ void Gateway::dial(const std::shared_ptr<Session>& session,
     {
         const std::lock_guard<std::mutex> lock(mutex_);
         session->dialling.erase(stream);
+        if (session->retired) {
+            entry->stream->close();
+            return;
+        }
         session->streams.emplace(stream, entry);
         const Bytes answer = encode(FrameType::eStreamOpened, stream);
         session->remember(stream, answer);
@@ -1310,7 +1371,43 @@ void Gateway::dial(const std::shared_ptr<Session>& session,
             out->send(answer);
         }
     }
-    entry->reader = std::thread([this, session, entry]() { readLoop(session, entry); });
+    bool reading = false;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        reading = !entry->running.load() || startReaderLocked(session, entry);
+    }
+    if (!reading) {
+        endWithoutReader(session, entry, answerTo);
+    }
+}
+
+bool Gateway::startReaderLocked(
+    const std::shared_ptr<Session>& session, const std::shared_ptr<StreamEntry>& entry)
+{
+    try {
+        entry->reader = std::thread([this, session, entry]() { readLoop(session, entry); });
+        return true;
+    } catch (const std::system_error& error) {
+        bazarish::log::warn("gateway: no thread for a stream: {}", error.what());
+        session->streams.erase(entry->id);
+        return false;
+    }
+}
+
+void Gateway::endWithoutReader(const std::shared_ptr<Session>& session,
+    const std::shared_ptr<StreamEntry>& entry, const http::SocketPtr& answerTo)
+{
+    entry->running.store(false);
+    entry->stream->close();
+    http::SocketPtr out;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        out = answerOn(*session, answerTo);
+    }
+    if (out) {
+        out->send(encodeJson(
+            FrameType::eStreamReset, entry->id, {{"code", faultName(Fault::eRefused)}}));
+    }
 }
 
 // The check an encrypted lease set makes in I2P: only a holder of a reader's secret gets in.
@@ -1416,13 +1513,22 @@ void Gateway::acceptLoop(
         std::shared_ptr<StreamEntry> inbound = std::make_shared<StreamEntry>();
         inbound->endpoint = entry->id;
         inbound->stream = overI2p(std::move(caller));
+        bool full = false;
         {
             const std::lock_guard<std::mutex> lock(mutex_);
-            if (!entry->running.load()) {
+            if (!entry->running.load() || session->retired) {
                 break;
             }
-            inbound->id = session->ids().next();
-            session->streams.emplace(inbound->id, inbound);
+            full = session->streams.size() >= kMaxStreamsPerSession;
+            if (!full) {
+                inbound->id = session->ids().next();
+                session->streams.emplace(inbound->id, inbound);
+            }
+        }
+        if (full) {
+            bazarish::log::info("gateway: an inbound stream refused: the session is full");
+            inbound->stream->close();
+            continue;
         }
         http::SocketPtr control;
         while (entry->running.load()) {
@@ -1445,7 +1551,14 @@ void Gateway::acceptLoop(
         }
         control->send(encodeJson(FrameType::eStreamInbound, inbound->id,
             {{"endpoint", entry->id}, {"peer", peer}}));
-        inbound->reader = std::thread([this, session, inbound]() { readLoop(session, inbound); });
+        bool reading = false;
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            reading = !inbound->running.load() || startReaderLocked(session, inbound);
+        }
+        if (!reading) {
+            endWithoutReader(session, inbound, control);
+        }
     }
 }
 
@@ -1498,9 +1611,15 @@ void Gateway::onStreamData(const std::shared_ptr<Session>& session,
     const http::SocketPtr& socket, const Frame& frame)
 {
     std::shared_ptr<StreamEntry> entry;
+    std::shared_ptr<StreamEntry> peer;
+    std::shared_ptr<Session> theirs;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
         entry = streamOf(*session, frame.ref);
+        if (entry != nullptr) {
+            peer = entry->peer.lock();
+            theirs = entry->peerSession.lock();
+        }
     }
     if (entry == nullptr) {
         fail(socket, frame.ref, Fault::eUnknownId, "no such stream on this session");
@@ -1508,8 +1627,6 @@ void Gateway::onStreamData(const std::shared_ptr<Session>& session,
     }
     entry->book.tookIn(frame.body.size());
 
-    const std::shared_ptr<StreamEntry> peer = entry->peer.lock();
-    const std::shared_ptr<Session> theirs = entry->peerSession.lock();
     if (peer != nullptr && theirs != nullptr) {
         {
             const std::lock_guard<std::mutex> lock(mutex_);
@@ -1525,7 +1642,11 @@ void Gateway::onStreamData(const std::shared_ptr<Session>& session,
     }
     entry->stream->writeAll(frame.body.data(), frame.body.size());
     entry->book.consumed(frame.body.size());
-    const http::SocketPtr out = outletFor(*session, *entry);
+    http::SocketPtr out;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        out = outletFor(*session, *entry);
+    }
     if (out) {
         out->send(encodeCredit(entry->id, entry->book.consumedTotal()));
     }
@@ -1535,16 +1656,18 @@ void Gateway::onStreamCredit(const std::shared_ptr<Session>& session,
     const http::SocketPtr& socket, const Frame& frame)
 {
     std::shared_ptr<StreamEntry> entry;
+    bool paired = false;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
         entry = streamOf(*session, frame.ref);
+        paired = entry != nullptr && !entry->peer.expired();
     }
     if (entry == nullptr) {
         fail(socket, frame.ref, Fault::eUnknownId, "no such stream on this session");
         return;
     }
     entry->book.peerCredited(decodeCredit(frame));
-    if (!entry->peer.expired()) {
+    if (paired) {
         pump(session, entry);
     }
 }
@@ -1552,41 +1675,55 @@ void Gateway::onStreamCredit(const std::shared_ptr<Session>& session,
 void Gateway::onStreamEnd(const std::shared_ptr<Session>& session, const Frame& frame)
 {
     std::shared_ptr<StreamEntry> entry;
+    std::shared_ptr<StreamEntry> peer;
+    std::shared_ptr<Session> theirs;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
         entry = streamOf(*session, frame.ref);
         if (entry != nullptr) {
             session->streams.erase(frame.ref);
+            peer = entry->peer.lock();
+            theirs = entry->peerSession.lock();
+            if (peer != nullptr && theirs != nullptr) {
+                peer->endAfterDrain = true;
+                peer->peer.reset();
+            }
         }
     }
     if (entry == nullptr) {
         return;
     }
     entry->book.peerFinished();
-
-    const std::shared_ptr<StreamEntry> peer = entry->peer.lock();
-    const std::shared_ptr<Session> theirs = entry->peerSession.lock();
     if (peer != nullptr && theirs != nullptr) {
-        {
-            const std::lock_guard<std::mutex> lock(mutex_);
-            peer->endAfterDrain = true;
-            peer->peer.reset();
-        }
         pump(theirs, peer);
         return;
     }
     teardown(session, entry, Fault::eClosed);
 }
 
-void Gateway::orphan(const std::shared_ptr<StreamEntry>& entry)
+void Gateway::joinTaken(std::thread& slot)
 {
-    const std::shared_ptr<StreamEntry> peer = entry->peer.lock();
-    const std::shared_ptr<Session> theirs = entry->peerSession.lock();
-    if (peer == nullptr || theirs == nullptr) {
-        return;
-    }
+    std::thread taken;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
+        taken = std::move(slot);
+    }
+    if (taken.joinable()) {
+        taken.join();
+    }
+}
+
+void Gateway::orphan(const std::shared_ptr<StreamEntry>& entry)
+{
+    std::shared_ptr<StreamEntry> peer;
+    std::shared_ptr<Session> theirs;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        peer = entry->peer.lock();
+        theirs = entry->peerSession.lock();
+        if (peer == nullptr || theirs == nullptr) {
+            return;
+        }
         peer->endAfterDrain = true;
         peer->peer.reset();
     }
@@ -1600,9 +1737,7 @@ void Gateway::teardown(const std::shared_ptr<Session>&,
     if (entry->stream) {
         entry->stream->close();
     }
-    if (entry->reader.joinable()) {
-        entry->reader.join();
-    }
+    joinTaken(entry->reader);
 }
 
 void Gateway::onResume(const std::shared_ptr<Session>& session,
@@ -1865,7 +2000,7 @@ void Gateway::linkLoop()
             lastFailure.clear();
             for (;;) {
                 const nlohmann::json listed
-                    = nlohmann::json::parse(pipe->readLine(kMaxServedListBytes));
+                    = bazarish::parseJson(pipe->readLine(kMaxServedListBytes));
                 std::set<std::string> served;
                 for (const nlohmann::json& dest : listed.at("dests")) {
                     served.insert(dest.get<std::string>());

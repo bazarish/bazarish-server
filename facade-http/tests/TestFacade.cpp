@@ -87,7 +87,7 @@ void installBackend(http::Server& server, const std::string& name)
         return response;
     };
     for (const char* const method : {"GET", "POST", "PUT", "DELETE"}) {
-        server.route(method, "(.*)", echo);
+        server.route(method, "*", echo);
     }
 }
 

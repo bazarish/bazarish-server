@@ -354,22 +354,26 @@ int main()
         CHECK(roundTrip(engine, first, payload, firstTo, source).delivered);
         CHECK(roundTrip(engine, first, payload, firstTo, source).delivered);
 
-        const std::string secondTo = toBase32(Bytes(32, 0x81));
-        const Bytes second = request(secondTo, "source-second");
-        const FederationDeliverResult refused = roundTrip(engine, second, payload, secondTo, source);
+        const FederationDeliverResult refused = roundTrip(
+            engine, request(firstTo, "source-again"), payload, firstTo, source);
         CHECK(!refused.delivered);
         CHECK(refused.errorCode == "CONTACT_RATE_LIMITED");
-        CHECK(roundTrip(engine, second, payload, secondTo, "another.b32.i2p").delivered);
+        CHECK(roundTrip(engine, request(firstTo, "source-elsewhere"), payload, firstTo,
+            "another.b32.i2p")
+                  .delivered);
 
-        const std::string thirdTo = toBase32(Bytes(32, 0x82));
-        const Bytes third = request(thirdTo, "source-third");
+        const std::string secondTo = toBase32(Bytes(32, 0x81));
+        CHECK(roundTrip(engine, request(secondTo, "source-second"), payload, secondTo, source)
+                  .delivered);
+
+        const Bytes later = request(firstTo, "source-later");
         CHECK(!engine
-                   .deliver(third, payload, kNow + kContactSourceMemorySeconds - 1, servingKey(),
-                       thirdTo, source)
+                   .deliver(later, payload, kNow + kContactSourceMemorySeconds - 1, servingKey(),
+                       firstTo, source)
                    .delivered);
         CHECK(engine
-                  .deliver(third, payload, kNow + kContactSourceMemorySeconds, servingKey(),
-                      thirdTo, source)
+                  .deliver(later, payload, kNow + kContactSourceMemorySeconds, servingKey(),
+                      firstTo, source)
                   .delivered);
         CHECK(roundTrip(engine, makeSealed(sealingPublic, "content", alice, "source-mail", pass),
             payload, alice, source)

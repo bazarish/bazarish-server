@@ -138,7 +138,7 @@ int main()
     DiskStorage storage(root / "storage");
     DeliveryEngine engine(storage, DeliveryEngineOptions{});
     PerUserDestinations dests(
-        nullptr, engine, root / "dests", i2p::Privacy::eMinimal, i2p::kDefaultTunnelQuantity);
+        nullptr, engine, root / "dests", i2p::Privacy::eMinimal);
 
     const tls::Credential server = tls::selfSigned(root / "server");
     const tls::Credential gateway = tls::selfSigned(root / "gateway");

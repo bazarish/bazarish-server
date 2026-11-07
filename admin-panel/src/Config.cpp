@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #include "Config.hpp"
 
+#include <bazarish/JsonRead.hpp>
 #include <bazarish/PrivateFile.hpp>
 
 #include <nlohmann/json.hpp>
@@ -65,7 +66,7 @@ nlohmann::json fleetsJson(const std::vector<Fleet>& fleets)
 
 Config Config::fromJson(const std::string& text)
 {
-    const nlohmann::json json = nlohmann::json::parse(text, nullptr, true, true);
+    const nlohmann::json json = bazarish::parseJsonWithComments(text);
 
     Config config;
     if (json.contains("admin")) {

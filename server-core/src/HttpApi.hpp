@@ -15,6 +15,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -43,6 +44,7 @@ struct HttpApiOptions {
         const std::string& sealingKeyPem, const std::string& signingKeyPem)>
         provisionI2pDest;
     std::function<void(const std::string& user)> forgetI2pDest;
+    std::function<bool(const std::string& user)> accountKnown;
     AssignDestinationFn assignDestination;
 
     std::function<std::vector<Bytes>(std::size_t count)> reseedSample;
@@ -72,6 +74,8 @@ public:
 
 private:
     void wakeUser(const std::string& user);
+    std::optional<bazarish::http::Response> admitted(
+        const bazarish::http::Request& request, std::string& user);
 
     void setupRoutes();
     void setupOpsRoutes();

@@ -11,6 +11,7 @@
 #include <deque>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -32,13 +33,14 @@ public:
     bool expired(std::int64_t now, std::int64_t ttlSeconds) const;
 
     void remember(std::uint32_t ref, Bytes answer);
-    const Bytes* answered(std::uint32_t ref) const;
+    std::optional<Bytes> answered(std::uint32_t ref) const;
 
     http::SocketPtr control;
     std::chrono::steady_clock::time_point replayDue{};
     std::map<std::uint32_t, std::shared_ptr<EndpointEntry>> endpoints;
     std::map<std::uint32_t, std::shared_ptr<StreamEntry>> streams;
     std::set<std::uint32_t> dialling;
+    bool retired = false;
 
 private:
     std::string cookie_;

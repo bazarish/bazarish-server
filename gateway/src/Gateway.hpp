@@ -107,6 +107,11 @@ private:
     void afterReplay(const std::shared_ptr<Session>& session);
     http::SocketPtr laneFor(const Session& session, const Frame& frame) const;
 
+    void dialFinished();
+    bool startReaderLocked(
+        const std::shared_ptr<Session>& session, const std::shared_ptr<StreamEntry>& entry);
+    void endWithoutReader(const std::shared_ptr<Session>& session,
+        const std::shared_ptr<StreamEntry>& entry, const http::SocketPtr& answerTo);
     void acceptLoop(const std::shared_ptr<Session>& session,
         const std::shared_ptr<EndpointEntry>& entry);
     void datagramLoop(const std::shared_ptr<Session>& session,
@@ -126,6 +131,7 @@ private:
         const std::shared_ptr<Session>& session, std::uint32_t id);
     void teardown(const std::shared_ptr<Session>& session,
         const std::shared_ptr<StreamEntry>& entry, Fault fault);
+    void joinTaken(std::thread& slot);
     void orphan(const std::shared_ptr<StreamEntry>& entry);
     void retire(const std::shared_ptr<Session>& session);
 
@@ -173,6 +179,9 @@ private:
     std::atomic<std::size_t> rejoins_{0};
     std::atomic<std::size_t> refused_{0};
     std::atomic<std::size_t> dials_{0};
+    std::mutex dialMutex_;
+    std::condition_variable dialDone_;
+    std::size_t dialsRunning_ = 0;
     std::int64_t startedAt_ = 0;
     std::atomic<bool> running_{false};
 };

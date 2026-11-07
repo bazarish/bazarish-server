@@ -407,8 +407,8 @@ int main(const int argc, const char** argv)
     } else {
         bazarish::log::error(
             "failed to listen on {}:{}", nodeConfig.listen.host, nodeConfig.listen.port);
+        stopEverything();
     }
-    stopEverything();
     sweeper.join();
     if (!bound) {
         return restart.requested() ? bazarish::kRestartExitCode : 1;

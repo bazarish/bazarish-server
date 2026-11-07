@@ -8,6 +8,7 @@
 #include <bazarish/Crypto.hpp>
 
 #include <bazarish/HttpClient.hpp>
+#include <bazarish/I2p.hpp>
 #include <nlohmann/json.hpp>
 
 #include <cstdio>
@@ -32,6 +33,8 @@ using namespace bazarish::service;
 namespace {
 
 namespace http = bazarish::http;
+
+constexpr int kDelegationDays = 7;
 
 using Headers = std::map<std::string, std::string>;
 
@@ -118,10 +121,12 @@ int main()
     CHECK(port > 0);
     std::thread serverThread([&api]() { api.wait(); });
 
-    const std::string transientBody
-        = nlohmann::json{{"transient", "t-b64"}, {"expiresUnix", now + 7 * 24 * 3600},
-            {"sealingKey", "sealing-pem"}, {"signingKey", "signing-pem"}}
-              .dump();
+    const bazarish::i2p::Keys delegation
+        = bazarish::i2p::Keys::generate().issueTransient(kDelegationDays);
+    const std::string transientBody = nlohmann::json{{"transient", toBase64(delegation.blob())},
+        {"expiresUnix", delegation.transientExpires()}, {"sealingKey", "sealing-pem"},
+        {"signingKey", "signing-pem"}}
+                                          .dump();
 
     {
         grants.grantSubscription(
@@ -135,6 +140,13 @@ int main()
         CHECK(reply.at("approval") == "pending");
         CHECK(reply.at("registrationMessage") == kHoldMessage);
     }
+
+    const auto cardServed = [&]() {
+        return call(port, "GET", "/v1/account/card?user=" + alice.fingerprint(),
+            makeHeaders(serverIdentity, "GET", "/v1/account/card", ""))
+            .status;
+    };
+    CHECK(cardServed() == 404);
 
     {
         const http::ClientResponse result = call(port, "POST", "/v1/account/i2p-dest",
@@ -166,6 +178,7 @@ int main()
         const http::ClientResponse result = call(opsPort, "POST", "/v1/account/approve",
             makeHeaders(panel, "POST", "/v1/account/approve", body), body);
         CHECK(result.status == 200);
+        CHECK(cardServed() == 200);
     }
 
     {

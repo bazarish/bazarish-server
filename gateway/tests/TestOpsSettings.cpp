@@ -34,7 +34,6 @@ constexpr int kWaitSeconds = 20;
 constexpr std::size_t kStreamPool = 1;
 constexpr std::size_t kCallPool = 0;
 constexpr std::size_t kWatchPool = 1;
-constexpr int kWantedQuantity = 5;
 constexpr int kWantedStreamPool = 3;
 constexpr int kWantedCallPool = 2;
 constexpr int kWantedWatchPool = 4;
@@ -118,7 +117,7 @@ int main()
             {"basePath", kPath},
             {"token", kToken},
             {"state", (root / "state").string()},
-            {"i2p", {{"privacy", "minimal"}, {"tunnelQuantity", i2p::kDefaultTunnelQuantity}}},
+            {"i2p", {{"privacy", "minimal"}}},
             {"pools", {{"stream", kStreamPool}, {"call", kCallPool}, {"watch", kWatchPool}}},
         }.dump(2);
     }
@@ -169,8 +168,7 @@ int main()
     CHECK(before.at("watchPool") == kWatchPool);
     CHECK(before.at("direct").empty());
 
-    for (const nlohmann::json& wrong : {nlohmann::json{{"i2pTunnelQuantity", 0}},
-             nlohmann::json{{"streamPool", kMaxPoolDepth + 1}},
+    for (const nlohmann::json& wrong : {nlohmann::json{{"streamPool", kMaxPoolDepth + 1}},
              nlohmann::json{{"callPool", -1}}, nlohmann::json{{"watchPool", -1}},
              nlohmann::json{{"i2pPrivacy", "short"}},
              nlohmann::json{{"i2pPrivacy", "max"},
@@ -184,7 +182,6 @@ int main()
 
     const nlohmann::json wanted = {
         {"i2pPrivacy", "max"},
-        {"i2pTunnelQuantity", kWantedQuantity},
         {"streamPool", kWantedStreamPool},
         {"callPool", kWantedCallPool},
         {"watchPool", kWantedWatchPool},
@@ -209,7 +206,6 @@ int main()
 
     const Settings written = Settings::from(ConfigView(ConfigFile(configPath).read()));
     CHECK(written.tunnelPrivacy == i2p::Privacy::eMax);
-    CHECK(written.tunnelQuantity == kWantedQuantity);
     CHECK(written.streamPool == static_cast<std::size_t>(kWantedStreamPool));
     CHECK(written.callPool == static_cast<std::size_t>(kWantedCallPool));
     CHECK(written.watchPool == static_cast<std::size_t>(kWantedWatchPool));

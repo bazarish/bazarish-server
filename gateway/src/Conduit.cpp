@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #include "Conduit.hpp"
 
+#include <bazarish/JsonRead.hpp>
+
 #include <TlsPipe.hpp>
 
 #include <nlohmann/json.hpp>
@@ -82,7 +84,7 @@ std::unique_ptr<Conduit> overServer(const ServerLink& server, const tls::Credent
         = server::TlsPipe::dial(server.host, server.port, server.pin, deadline, &own);
     const std::string preface = nlohmann::json({{"to", to}, {"from", from}}).dump() + "\n";
     pipe->writeAll(preface.data(), preface.size());
-    if (!nlohmann::json::parse(pipe->readLine(kMaxAnswerBytes)).value("ok", false)) {
+    if (!bazarish::parseJson(pipe->readLine(kMaxAnswerBytes)).value("ok", false)) {
         throw std::runtime_error("the server does not serve " + to);
     }
     return std::make_unique<TlsConduit>(std::move(pipe));

@@ -94,7 +94,7 @@ bounded, and only the secret is lasting:
 | Transport | One WebSocket, over `https` or plain `http`, to a host named by a name, an IPv4 address or an `[IPv6]` address. TLS, where there is any, is cover: its certificate is not checked |
 | Frames | Binary only. A text frame closes the socket with 1003 |
 | Server authentication | The gateway's own hybrid key. The link carries its fingerprint, and the gateway proves it in the handshake (The channel, below) |
-| Client authentication | The secret path. A client is given the gateway in one link, `https://bazari.sh/#gateway?v=2&url=<secret URL>&fp=<fingerprint>` |
+| Client authentication | The secret path. A client is given the gateway in one link, `https://bazari.sh/#gateway?v=1&url=<secret URL>&fp=<fingerprint>` |
 | Headers | None of this protocol's own: the upgrade is any upgrade |
 | Keepalive | The gateway pings every `kKeepalive`; no pong within `kPongTimeout` drops the socket |
 
@@ -396,7 +396,7 @@ endpoint's identifier is the `ref` of its `endpoint-create`.
 
 | Type | Name | From | `ref` | Body |
 |---|---|---|---|---|
-| 0x01 | `hello` | client | request | `{"version": 2}` |
+| 0x01 | `hello` | client | request | `{"version": 1}` |
 | 0x02 | `ready` | gateway | echo | the session, below |
 | 0x03 | `ok` | gateway | echo | `{}`, or the operation's answer |
 | 0x04 | `error` | gateway | echo | `{"code": "...", "message": "..."}` |
@@ -428,7 +428,7 @@ The client sends `hello` as its first frame. The gateway answers `ready`:
 
 ```json
 {
-  "version": 2,
+  "version": 1,
   "i2pd": "3.0.0",
   "capabilities": { "routerCounters": false, "destinationCounters": true,
                     "netDbSample": false, "proxy": false, "offlineKeys": false,

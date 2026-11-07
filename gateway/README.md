@@ -92,7 +92,7 @@ server {
 One Bazarish link carries where the gateway is and which key it holds:
 
 ```
-https://bazari.sh/#gateway?v=2&url=https://gateway.example<basePath>&fp=<fingerprint>
+https://bazari.sh/#gateway?v=1&url=https://gateway.example<basePath>&fp=<fingerprint>
 ```
 
 The client takes it in its settings, or from a message: tapping the link asks

@@ -194,7 +194,7 @@ int main()
     CHECK(changed.status == 200);
     CHECK(nlohmann::json::parse(changed.body).at("streamPool") == kWantedStreamPool);
     CHECK(nlohmann::json::parse(changed.body).at("link")
-        == std::string("https://bazari.sh/#gateway?v=2&url=https://gate.example") + kPath
+        == std::string("https://bazari.sh/#gateway?v=1&url=https://gate.example") + kPath
             + "&fp=" + gateway.fingerprint());
     CHECK(askOps(settings.opsPort, pin, "PUT", "/settings", &operatorIdentity,
               nlohmann::json{{"publicAddress", "https://gate.example/path"}}.dump())

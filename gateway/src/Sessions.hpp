@@ -2,6 +2,7 @@
 #pragma once
 
 #include "Flows.hpp"
+#include <bazarish/GatewayChannel.hpp>
 #include <bazarish/GatewayProtocol.hpp>
 
 #include <bazarish/Bytes.hpp>
@@ -41,6 +42,10 @@ public:
     std::map<std::uint32_t, std::shared_ptr<StreamEntry>> streams;
     std::set<std::uint32_t> dialling;
     bool retired = false;
+    Bytes key;
+    std::set<std::string> tickets;
+
+    std::vector<Bytes> issueTickets(std::size_t count);
 
 private:
     std::string cookie_;
@@ -56,7 +61,8 @@ public:
     explicit SessionStore(std::int64_t ttlSeconds = kSessionTtl.count());
 
     std::shared_ptr<Session> open(std::int64_t now);
-    std::shared_ptr<Session> find(const std::string& cookie, std::int64_t now) const;
+    // The live session a ticket was issued by; the ticket itself stays until it is spent.
+    std::shared_ptr<Session> holding(const Bytes& ticket, std::int64_t now) const;
     void close(const std::string& cookie);
 
     std::vector<std::shared_ptr<Session>> sweep(std::int64_t now);

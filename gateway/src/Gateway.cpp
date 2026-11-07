@@ -6,6 +6,7 @@
 #include <bazarish/Clock.hpp>
 #include <bazarish/Crypto.hpp>
 #include <Health.hpp>
+#include <StateIdentity.hpp>
 #include <bazarish/Hmac.hpp>
 #include <bazarish/I2pAddress.hpp>
 #include <bazarish/JsonRead.hpp>
@@ -28,7 +29,7 @@ namespace {
 
 constexpr std::size_t kDecoyPageBytes = 32 * 1024;
 
-constexpr std::size_t kSocketMessageBytes = kMaxFrameBytes;
+constexpr std::size_t kSocketMessageBytes = gateway::kMaxRecordBytes;
 
 constexpr std::chrono::seconds kReplayGrace{5};
 // A closed address's lease set is still found this long: i2pd's TUNNEL_EXPIRATION_TIMEOUT.
@@ -50,7 +51,7 @@ Settings writtenSettings(const std::filesystem::path& configPath)
     return Settings::from(ConfigView(ConfigFile(configPath).read()));
 }
 
-nlohmann::json editable(const Settings& written)
+nlohmann::json editable(const Settings& written, const std::string& fingerprint)
 {
     nlohmann::json direct = nlohmann::json::array();
     for (const DirectRoute& route : written.direct) {
@@ -70,7 +71,7 @@ nlohmann::json editable(const Settings& written)
                     {"pin", written.server->pin}}
                 : nlohmann::json(nullptr)},
         {"publicAddress", written.publicAddress},
-        {"link", clientLink(written)},
+        {"link", clientLink(written, fingerprint)},
         {"stateDirectory", written.stateDir.string()},
         {"version", kBuildVersion},
     };
@@ -146,6 +147,10 @@ Gateway::Gateway(Settings settings, i2p::Router& router, OpsControl control)
     : settings_(std::move(settings))
     , control_(std::move(control))
     , router_(router)
+    , identity_(server::loadOrCreateIdentity(settings_.stateDir))
+    , sealing_(server::loadOrCreateSealingKey(settings_.stateDir))
+    , card_(gateway::issueCard(identity_, sealing_))
+    , cover_(identity_.fingerprint())
     , server_([&]() {
         http::Server::Options options;
         options.host = settings_.listenHost;
@@ -182,10 +187,7 @@ http::Response Gateway::notFound() const
 
 bool Gateway::admitted(const http::Request& request) const
 {
-    if (request.path != settings_.basePath) {
-        return false;
-    }
-    return service::constantTimeEqual(request.header(kTokenHeader), settings_.token);
+    return request.path == settings_.basePath;
 }
 
 std::optional<http::Response> Gateway::operatorRefusal(const http::Request& request) const
@@ -238,7 +240,8 @@ http::Response Gateway::settingsShown(const http::Request& request) const
     if (control_.configPath.empty()) {
         return opsRefusal(503, "this gateway was started without a config file to write to");
     }
-    return {200, "application/json", {}, editable(writtenSettings(control_.configPath)).dump()};
+    return {200, "application/json", {}, editable(
+        writtenSettings(control_.configPath), identity_.fingerprint()).dump()};
 }
 
 http::Response Gateway::settingsChanged(const http::Request& request)
@@ -306,7 +309,8 @@ http::Response Gateway::settingsChanged(const http::Request& request)
     if (link.has_value()) {
         setServerLink(std::move(*link));
     }
-    return {200, "application/json", {}, editable(writtenSettings(control_.configPath)).dump()};
+    return {200, "application/json", {}, editable(
+        writtenSettings(control_.configPath), identity_.fingerprint()).dump()};
 }
 
 http::Response Gateway::restart(const http::Request& request)
@@ -339,7 +343,6 @@ http::Response Gateway::decoy() const
 int Gateway::start()
 {
     http::SocketRoutes routes;
-    routes.subprotocol = kSubprotocol;
     routes.maxMessageBytes = kSocketMessageBytes;
     routes.idleTimeout = kKeepalive + kPongTimeout;
     routes.admit = [this](const http::Request& request) -> std::optional<http::Response> {
@@ -348,15 +351,12 @@ int Gateway::start()
         }
         return std::nullopt;
     };
-    routes.opened
-        = [this](const http::SocketPtr& socket, const http::Request& request) {
-              socketOpened(socket, request);
+    routes.opened = [this](const http::SocketPtr& raw, const http::Request&) { rawOpened(raw); };
+    routes.message
+        = [this](const http::SocketPtr& raw, const std::vector<unsigned char>& message) {
+              rawMessage(raw, message);
           };
-    routes.message = [this](const http::SocketPtr& socket,
-                         const std::vector<unsigned char>& message) {
-        socketMessage(socket, message);
-    };
-    routes.closed = [this](const http::SocketPtr& socket) { socketClosed(socket); };
+    routes.closed = [this](const http::SocketPtr& raw) { rawClosed(raw); };
     server_.upgrade(settings_.basePath, std::move(routes));
 
     const http::Handler answer = [this](const http::Request& request) {
@@ -376,6 +376,7 @@ int Gateway::start()
         settings_.watchPool, DestinationPool::Use::eWatching);
     bindOps();
     const int bound = server_.start();
+    bazarish::log::info("gateway: its fingerprint, which a link carries: {}", identity_.fingerprint());
     running_.store(true);
     status_ = std::thread([this]() { statusLoop(); });
     link_ = std::thread([this]() { linkLoop(); });
@@ -488,30 +489,147 @@ std::shared_ptr<i2p::Endpoint> Gateway::endpointFor(const i2p::EndpointConfig& c
     return router_.createEndpoint(config);
 }
 
-void Gateway::socketOpened(const http::SocketPtr& socket, const http::Request& request)
+void Gateway::rawOpened(const http::SocketPtr& raw)
+{
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        openings_[raw.get()] = 0;
+    }
+    const Bytes card = cover_.seal(gateway::padded(card_));
+    raw->send(std::vector<unsigned char>(card.begin(), card.end()));
+}
+
+void Gateway::rawMessage(const http::SocketPtr& raw, const std::vector<unsigned char>& message)
+{
+    std::shared_ptr<gateway::ChannelSocket> channel;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        const auto found = channels_.find(raw.get());
+        if (found != channels_.end()) {
+            channel = found->second;
+        }
+    }
+    if (channel == nullptr) {
+        handshake(raw, Bytes(message.begin(), message.end()));
+        return;
+    }
+    const std::optional<Bytes> opened = channel->openRecord(Bytes(message.begin(), message.end()));
+    if (!opened.has_value()) {
+        bazarish::log::debug("gateway: a record that does not open; the socket is closed");
+        raw->close();
+        return;
+    }
+    socketMessage(channel, std::vector<unsigned char>(opened->begin(), opened->end()));
+}
+
+void Gateway::rawClosed(const http::SocketPtr& raw)
+{
+    std::shared_ptr<gateway::ChannelSocket> channel;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        openings_.erase(raw.get());
+        const auto found = channels_.find(raw.get());
+        if (found != channels_.end()) {
+            channel = found->second;
+            channels_.erase(found);
+        }
+    }
+    if (channel != nullptr) {
+        socketClosed(channel);
+    }
+}
+
+void Gateway::handshake(const http::SocketPtr& raw, const Bytes& message)
 {
     const std::int64_t now = nowSeconds();
-    const std::string cookie = request.header(kSessionHeader);
+    const Bytes ticket = gateway::ticketOf(message);
+    std::shared_ptr<Session> held;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        held = sessions_.holding(ticket, now);
+    }
+    if (held != nullptr) {
+        const std::shared_ptr<gateway::Records> records
+            = std::make_shared<gateway::Records>(held->key, ticket, gateway::Side::eGateway);
+        const std::optional<Bytes> opened = records->open(gateway::joinRecordOf(message));
+        bool spent = false;
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            spent = opened.has_value() && !held->retired && held->tickets.erase(std::string(ticket.begin(), ticket.end())) > 0;
+        }
+        if (spent) {
+            const Bytes joined = gateway::makeJoined(*records);
+            raw->send(std::vector<unsigned char>(joined.begin(), joined.end()));
+            establish(raw, records, held, /*resumed=*/true);
+            return;
+        }
+    }
+    if (const std::optional<Key> client = gateway::openHello(cover_, message, sealing_)) {
+        gateway::Welcome welcome;
+        welcome.sessionKey = randomBytes(gateway::kSessionKeyBytes);
+        welcome.salt = randomBytes(gateway::kTicketBytes);
+        std::shared_ptr<Session> fresh;
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            fresh = sessions_.open(now);
+            fresh->key = welcome.sessionKey;
+            welcome.tickets = fresh->issueTickets(gateway::kTicketsHeld);
+        }
+        const Bytes answer = gateway::makeWelcome(cover_, welcome, *client, identity_);
+        raw->send(std::vector<unsigned char>(answer.begin(), answer.end()));
+        establish(raw,
+            std::make_shared<gateway::Records>(
+                welcome.sessionKey, welcome.salt, gateway::Side::eGateway),
+            fresh, /*resumed=*/false);
+        return;
+    }
+    bool again = false;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        const auto found = openings_.find(raw.get());
+        again = found != openings_.end() && found->second++ == 0;
+    }
+    if (!again) {
+        ++refused_;
+        raw->close();
+        return;
+    }
+    const Bytes refused = gateway::refusedJoin();
+    raw->send(std::vector<unsigned char>(refused.begin(), refused.end()));
+}
+
+void Gateway::establish(const http::SocketPtr& raw, std::shared_ptr<gateway::Records> records,
+    const std::shared_ptr<Session>& session, const bool resumed)
+{
+    const std::shared_ptr<gateway::ChannelSocket> channel
+        = std::make_shared<gateway::ChannelSocket>(raw, std::move(records));
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        openings_.erase(raw.get());
+        channels_[raw.get()] = channel;
+    }
+    bindSession(channel, session, resumed);
+}
+
+void Gateway::bindSession(
+    const http::SocketPtr& socket, const std::shared_ptr<Session>& session, const bool resumed)
+{
+    const std::int64_t now = nowSeconds();
     bool full = false;
     std::vector<std::shared_ptr<Session>> swept;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
         swept = sessions_.sweep(now);
         Connection connection;
-        if (!cookie.empty()) {
-            connection.session = sessions_.find(cookie, now);
-            connection.resumed = connection.session != nullptr;
-        }
-        if (connection.session == nullptr) {
-            connection.session = sessions_.open(now);
-        }
-        if (connection.resumed) {
+        connection.session = session;
+        connection.resumed = resumed;
+        if (resumed) {
             ++rejoins_;
         }
-        if (connection.session->full()) {
+        if (session->full()) {
             full = true;
         } else {
-            connection.session->addSocket();
+            session->addSocket();
             connections_.emplace(socket.get(), connection);
         }
     }
@@ -522,6 +640,22 @@ void Gateway::socketOpened(const http::SocketPtr& socket, const http::Request& r
         fail(socket, 0, Fault::eRefused, "this session holds as many sockets as it may");
         socket->close();
     }
+}
+
+void Gateway::topUpTickets(const std::shared_ptr<Session>& session, const http::SocketPtr& socket)
+{
+    nlohmann::json tickets = nlohmann::json::array();
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        const std::size_t held = session->tickets.size();
+        if (held >= gateway::kTicketsHeld) {
+            return;
+        }
+        for (const Bytes& ticket : session->issueTickets(gateway::kTicketsHeld - held)) {
+            tickets.push_back(toBase64(ticket));
+        }
+    }
+    socket->send(encodeJson(FrameType::eTickets, 0, {{"tickets", tickets}}));
 }
 
 void Gateway::retire(const std::shared_ptr<Session>& session)
@@ -731,7 +865,8 @@ void Gateway::onHello(const http::SocketPtr& socket, const Frame& frame)
     const nlohmann::json body = bodyJson(frame);
     const int version = body.value("version", 0);
     if (version != kProtocolVersion) {
-        fail(socket, frame.ref, Fault::eVersion, "this gateway speaks version 1");
+        fail(socket, frame.ref, Fault::eVersion,
+            "this gateway speaks version " + std::to_string(kProtocolVersion));
         socket->close();
         return;
     }
@@ -786,11 +921,11 @@ void Gateway::onHello(const http::SocketPtr& socket, const Frame& frame)
         {"capabilities",
             {{"routerCounters", false}, {"destinationCounters", true}, {"netDbSample", false},
                 {"proxy", false}, {"offlineKeys", false}, {"warmPool", true}}},
-        {"session", connection.session->cookie()},
         {"resumed", connection.resumed},
         {"endpoints", endpoints},
         {"streams", streams},
     };
+    topUpTickets(connection.session, socket);
     socket->send(encodeJson(FrameType::eReady, frame.ref, ready));
 }
 
@@ -1801,6 +1936,7 @@ void Gateway::onAttach(const http::SocketPtr& socket, const Frame& frame)
             stream->socket = socket;
         }
     }
+    topUpTickets(session, socket);
     if (endpoint != nullptr) {
         socket->send(encodeJson(FrameType::eOk, frame.ref, nlohmann::json::object()));
         return;

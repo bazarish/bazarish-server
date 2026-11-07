@@ -18,7 +18,6 @@ ConfigView document(const std::string& text)
 const char* kWhole = R"({
     "listen": { "host": "0.0.0.0", "port": 8431 },
     "basePath": "/f3a9c2e1b7d4",
-    "token": "a-long-random-string",
     "state": "/var/lib/bazarish-gateway",
     "reseed": ["https://reseed.example/i2pseeds.su3"],
     "decoy": { "minBytes": 2048, "maxBytes": 4096 },
@@ -36,7 +35,6 @@ int main()
     CHECK(whole.listenHost == "0.0.0.0");
     CHECK(whole.listenPort == 8431);
     CHECK(whole.basePath == "/f3a9c2e1b7d4");
-    CHECK(whole.token == "a-long-random-string");
     CHECK(whole.reseedUrls.size() == 1);
     CHECK(whole.decoyMinBytes == 2048);
     CHECK(whole.decoyMaxBytes == 4096);
@@ -48,7 +46,7 @@ int main()
     CHECK(whole.watchPool == 3);
 
     const Settings bare = Settings::from(document(R"({
-        "basePath": "/secret", "token": "t", "state": "/tmp/s"
+        "basePath": "/secret", "state": "/tmp/s"
     })"));
     CHECK(bare.listenHost == "127.0.0.1");
     CHECK(bare.decoyMinBytes == kDecoyMinBytes);
@@ -61,56 +59,56 @@ int main()
     CHECK(bare.watchPool == kDefaultWatchPool);
     CHECK(bare.notFoundBody.find("404 Not Found") != std::string::npos);
 
-    CHECK_THROWS(Settings::from(document(R"({"token": "t", "state": "/tmp/s"})")));
-    CHECK(Settings::from(document(R"({"basePath": "/p", "token": "t", "state": "/tmp/s",
+    CHECK_THROWS(Settings::from(document(R"({"state": "/tmp/s"})")));
+    CHECK(Settings::from(document(R"({"basePath": "/p", "state": "/tmp/s",
         "publicAddress": "https://gate.example:8443"})")).publicAddress
         == "https://gate.example:8443");
+    CHECK(Settings::from(document(R"({"basePath": "/p", "state": "/tmp/s",
+        "publicAddress": "http://[2001:db8::5]:8080"})")).publicAddress
+        == "http://[2001:db8::5]:8080");
     for (const char* const wrong : {"gate.example", "https://", "https://gate.example/",
-             "https://gate.example/p", "https://gate.example?x", "ftp://gate.example",
-             "http://gate.example"}) {
+             "https://gate.example/p", "https://gate.example?x", "ftp://gate.example"}) {
         CHECK_THROWS(Settings::from(document(
-            std::string(R"({"basePath": "/p", "token": "t", "state": "/tmp/s", "publicAddress": ")")
+            std::string(R"({"basePath": "/p", "state": "/tmp/s", "publicAddress": ")")
             + wrong + "\"}")));
     }
     CHECK_THROWS(
-        Settings::from(document(R"({"basePath": "", "token": "t", "state": "/tmp/s"})")));
+        Settings::from(document(R"({"basePath": "", "state": "/tmp/s"})")));
     CHECK_THROWS(
-        Settings::from(document(R"({"basePath": "secret", "token": "t", "state": "/tmp/s"})")));
-    CHECK_THROWS(Settings::from(document(R"({"basePath": "/s", "state": "/tmp/s"})")));
-    CHECK_THROWS(Settings::from(document(R"({"basePath": "/s", "token": "", "state": "/t"})")));
+        Settings::from(document(R"({"basePath": "secret", "state": "/tmp/s"})")));
     CHECK_THROWS(Settings::from(document(
-        R"({"basePath": "/s", "token": "t", "state": "/t", "reseed": ["http://seed.example/"]})")));
-    CHECK_THROWS(Settings::from(document(R"({"basePath": "/s", "token": "t"})")));
+        R"({"basePath": "/s", "state": "/t", "reseed": ["http://seed.example/"]})")));
+    CHECK_THROWS(Settings::from(document(R"({"basePath": "/s"})")));
 
     CHECK_THROWS(Settings::from(document(R"({
-        "basePath": "/s", "token": "t", "state": "/t",
+        "basePath": "/s", "state": "/t",
         "decoy": { "minBytes": 4096, "maxBytes": 1024 }
     })")));
     CHECK_THROWS(Settings::from(document(R"({
-        "basePath": "/s", "token": "t", "state": "/t", "decoy": { "minBytes": 0 }
+        "basePath": "/s", "state": "/t", "decoy": { "minBytes": 0 }
     })")));
     CHECK_THROWS(Settings::from(document(R"({
-        "basePath": "/s", "token": "t", "state": "/t", "sessionTtlSeconds": 0
+        "basePath": "/s", "state": "/t", "sessionTtlSeconds": 0
     })")));
     CHECK_THROWS(Settings::from(document(R"({
-        "basePath": "/s", "token": "t", "state": "/t", "i2p": { "privacy": "short" }
+        "basePath": "/s", "state": "/t", "i2p": { "privacy": "short" }
     })")));
 
     CHECK_THROWS(Settings::from(document(R"({
-        "basePath": "/s", "token": "t", "state": "/t", "notFound": "/no/such/page.html"
+        "basePath": "/s", "state": "/t", "notFound": "/no/such/page.html"
     })")));
     CHECK_THROWS(Settings::from(document(R"({
-        "basePath": "/s", "token": "t", "state": "/t", "pools": { "stream": -1 }
+        "basePath": "/s", "state": "/t", "pools": { "stream": -1 }
     })")));
     CHECK_THROWS(Settings::from(document(R"({
-        "basePath": "/s", "token": "t", "state": "/t", "pools": { "call": 17 }
+        "basePath": "/s", "state": "/t", "pools": { "call": 17 }
     })")));
     CHECK_THROWS(Settings::from(document(R"({
-        "basePath": "/s", "token": "t", "state": "/t", "pools": { "watch": 17 }
+        "basePath": "/s", "state": "/t", "pools": { "watch": 17 }
     })")));
 
     const Settings routed = Settings::from(document(R"({
-        "basePath": "/s", "token": "t", "state": "/t",
+        "basePath": "/s", "state": "/t",
         "direct": [{"dest": "alpha.b32.i2p", "host": "10.0.0.2", "port": 8418, "pin": "ab12"}]
     })"));
     CHECK(routed.direct.size() == 1);
@@ -120,11 +118,11 @@ int main()
     CHECK(routed.direct.front().pin == "ab12");
 
     CHECK_THROWS(Settings::from(document(R"({
-        "basePath": "/s", "token": "t", "state": "/t",
+        "basePath": "/s", "state": "/t",
         "direct": [{"dest": "alpha.b32.i2p", "host": "10.0.0.2", "port": 8418}]
     })")));
     CHECK_THROWS(Settings::from(document(R"({
-        "basePath": "/s", "token": "t", "state": "/t",
+        "basePath": "/s", "state": "/t",
         "direct": [{"host": "10.0.0.2", "port": 8418, "pin": "ab12"}]
     })")));
 

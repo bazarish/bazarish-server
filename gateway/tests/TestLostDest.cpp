@@ -19,17 +19,16 @@ using namespace bazarish::gateway;
 namespace {
 
 constexpr const char* kPath = "/4f7a0c93e6b1";
-constexpr const char* kToken = "a-fourth-static-token";
 constexpr int kWaitSeconds = 20;
 
-i2p::RouterConfig borrowedFrom(const int port)
+i2p::RouterConfig borrowedFrom(const int port, const std::string& fingerprint)
 {
     i2p::RouterConfig config;
     config.backend = i2p::Backend::eGateway;
     config.gatewayHost = "127.0.0.1";
     config.gatewayPort = port;
     config.gatewayPath = kPath;
-    config.gatewayToken = kToken;
+    config.gatewayFingerprint = fingerprint;
     config.gatewayTls = false;
     return config;
 }
@@ -59,7 +58,6 @@ int main()
     settings.listenHost = "127.0.0.1";
     settings.listenPort = 0;
     settings.basePath = kPath;
-    settings.token = kToken;
     settings.stateDir = root / "state";
     settings.notFoundBody = "<html>nothing</html>";
 
@@ -69,7 +67,7 @@ int main()
     const int port = first->start();
     CHECK(port > 0);
 
-    i2p::Router client(borrowedFrom(port));
+    i2p::Router client(borrowedFrom(port, first->fingerprint()));
     client.start();
 
     i2p::EndpointConfig wanted;

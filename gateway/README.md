@@ -1,8 +1,9 @@
 # Bazarish - gateway
 
 A host that runs the I2P router for a Bazarish client, so the client does not.
-The client switches its own router off and reaches this over one pinned-TLS
-WebSocket per flow; nothing above the transport changes.
+The client switches its own router off and reaches this over one WebSocket per
+flow, in a channel sealed to the gateway's own key; nothing above the transport
+changes.
 
 The operator sees every destination its clients dial and holds the keys of the
 destinations it mints for them. `PROTOCOL.md` is the authority for the wire and
@@ -24,8 +25,8 @@ ctest --test-dir build-gateway
 ```
 
 On Debian 13 the gateway is also a package of its own, `bazarish-gateway`. Its
-first install writes `/etc/bazarish/gateway.json` with a fresh path and token and
-starts the daemon.
+first install writes `/etc/bazarish/gateway.json` with a fresh path and starts
+the daemon.
 
 ## Configuring
 
@@ -35,9 +36,8 @@ One file, given with `--config`. `config.example.json` is a starting point.
 |---|---|
 | `listen` | Host and port. The front reaches it here; clients never do |
 | `basePath` | The path the gateway answers at. Mandatory |
-| `token` | The token every request to that path must carry. Mandatory |
-| `publicAddress` | Where the front answers clients, `https://host[:port]` with no path. Only builds the link the admin panel shows |
-| `state` | Where the router keeps its netDb, keys and tunnels |
+| `publicAddress` | Where the front answers clients, `http(s)://host[:port]` with no path; the host may be an IPv4 or `[IPv6]` address. Only builds the link the admin panel shows |
+| `state` | Where the router keeps its netDb, keys and tunnels, and the gateway its own identity and sealing key |
 | `reseed` | su3 archives a router with no peers starts from. Empty leaves the engine its built-in hosts |
 | `decoy.minBytes`, `decoy.maxBytes` | The length of a decoy answer, drawn between them |
 | `sessionTtlSeconds` | How long a session outlives its last socket |
@@ -51,25 +51,24 @@ One file, given with `--config`. `config.example.json` is a starting point.
 | `serverName` | The `Server` header on the 404 |
 | `notFound` | A file whose contents are that 404. Empty serves nginx's own page |
 
-Make the path and the token from the system's random source, and keep the file
-to the daemon:
+Make the path from the system's random source, and keep the file to the daemon:
 
 ```
 head -c 18 /dev/urandom | base64 | tr -d '=+/' | head -c 24    # basePath
-head -c 32 /dev/urandom | base64 | tr -d '=+/' | head -c 43    # token
 chmod 600 /etc/bazarish/gateway.json
 ```
+
+The gateway makes its identity and sealing key in `state` on its first start and
+logs its fingerprint; the link carries that fingerprint.
 
 ## The front
 
 The daemon speaks HTTP on its own socket. TLS, the public address and the cover
 site belong to the front it listens behind, and that front can be anything - a
-site, a holding page, a `proxy_pass` to somebody else's.
-
-A request without the token falls through to the cover, so the secret path
-answers exactly like every other path on the host. Checking the token at the
-front as well keeps unauthorised requests off the daemon; the gateway answers
-for its own admission either way.
+site, a holding page, a `proxy_pass` to somebody else's. TLS is cover only: the
+client does not check the certificate, the channel inside the socket is what
+proves the gateway, so a self-signed certificate or plain `http` on an address
+serves as well.
 
 ```nginx
 map $http_upgrade $upgrade { default upgrade; "" close; }
@@ -78,8 +77,6 @@ server {
     server_name gateway.example;
 
     location = /<basePath> {
-        if ($http_x_bazarish_gateway != "<token>") { return 418; }
-        error_page 418 = @cover;
         proxy_pass http://127.0.0.1:8431;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
@@ -87,16 +84,15 @@ server {
         proxy_read_timeout 3600s;
     }
     location / { proxy_pass https://cover.example; }
-    location @cover { proxy_pass https://cover.example; }
 }
 ```
 
 ## Giving someone the address
 
-One Bazarish link carries both halves of getting in:
+One Bazarish link carries where the gateway is and which key it holds:
 
 ```
-https://bazari.sh/#gateway?v=1&url=https://gateway.example<basePath>&token=<token>
+https://bazari.sh/#gateway?v=2&url=https://gateway.example<basePath>&fp=<fingerprint>
 ```
 
 The client takes it in its settings, or from a message: tapping the link asks
@@ -119,7 +115,7 @@ health report; the log says when the router has its tunnels.
 The same socket, with the same signature, carries `GET`/`PUT /settings` and
 `POST /restart`. `/settings` shows and writes into the config file the tunnels
 (`i2pPrivacy`), the three pools (`streamPool`, `callPool`, `watchPool`), the
-`server` link and the `direct` routes; it never shows the path or the token. The
+`server` link and the `direct` routes; it never shows the path. The
 link and the routes apply at once; the tunnels and the pools at the next start,
 since the pools are built then. `POST /restart` exits with code 90, which a unit with `Restart=on-failure`
 brings back.

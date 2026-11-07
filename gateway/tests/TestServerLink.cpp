@@ -30,7 +30,6 @@ namespace fs = std::filesystem;
 namespace {
 
 constexpr const char* kPath = "/5d1c0e93b2a7";
-constexpr const char* kToken = "a-server-link-token";
 constexpr int kWaitSeconds = 20;
 constexpr std::chrono::seconds kShortWait{1};
 constexpr std::chrono::milliseconds kPoll{20};
@@ -39,14 +38,14 @@ constexpr std::size_t kEchoBytes = 256;
 constexpr const char* kUserDest = "ykmtx5g3h4var6o4n4tw6k2fqsmszqwzkj2abdmax7avtiqyeskwb2zi.b32.i2p";
 constexpr const char* kOtherDest = "r4obpwh2bvnmfiaks7oramvjbpv4ldf6ezxmbl3xiqhrmjcjqj6tapv2.b32.i2p";
 
-i2p::RouterConfig borrowedFrom(const int port)
+i2p::RouterConfig borrowedFrom(const int port, const std::string& fingerprint)
 {
     i2p::RouterConfig config;
     config.backend = i2p::Backend::eGateway;
     config.gatewayHost = "127.0.0.1";
     config.gatewayPort = port;
     config.gatewayPath = kPath;
-    config.gatewayToken = kToken;
+    config.gatewayFingerprint = fingerprint;
     config.gatewayTls = false;
     return config;
 }
@@ -109,7 +108,6 @@ int main()
     settings.listenHost = "127.0.0.1";
     settings.listenPort = 0;
     settings.basePath = kPath;
-    settings.token = kToken;
     settings.stateDir = root / "state";
     settings.notFoundBody = "<html>nothing</html>";
 
@@ -154,7 +152,7 @@ int main()
     Gateway gateway(settings, engine);
     const int port = gateway.start();
     CHECK(port > 0);
-    i2p::Router alice(borrowedFrom(port));
+    i2p::Router alice(borrowedFrom(port, gateway.fingerprint()));
     alice.start();
 
     std::shared_ptr<i2p::Endpoint> lease;

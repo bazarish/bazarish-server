@@ -1,6 +1,6 @@
 #!/bin/sh
 # Bazarish project (c) 2026
-# A purge leaves gateway.json and /var/lib/bazarish: clients were given its path and token.
+# A purge leaves gateway.json and /var/lib/bazarish: clients were given its path and its key.
 set -e
 
 if [ "$1" = "purge" ]; then

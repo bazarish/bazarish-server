@@ -50,7 +50,7 @@ bool routedByGateway(const i2p::Router& router, const i2p::Endpoint& endpoint)
 int main(const int argc, const char** argv)
 {
     if (argc != 2 && argc != 3) {
-        std::printf("usage: gateway_smoke https://host[:port]/<path>#<token> [host to dial]\n");
+        std::printf("usage: gateway_smoke http(s)://host[:port]/<path>#<fingerprint> [host to dial]\n");
         return 2;
     }
     const std::optional<client::GatewayAddress> address
@@ -62,20 +62,20 @@ int main(const int argc, const char** argv)
     std::printf("[smoke] %s:%d, path %s\n", address->host.c_str(), address->port,
         address->path.c_str());
 
-    const client::GatewayCheck reached = client::checkGateway(address.value(), std::string());
+    const client::GatewayCheck reached = client::checkGateway(address.value());
     if (!reached.ok) {
         std::printf("[smoke] not reachable: %s\n", reached.error.c_str());
         return 1;
     }
-    std::printf("[smoke] answers a decoy; its key is %s\n", reached.pin.c_str());
+    std::printf("[smoke] its card carries the key the address names\n");
 
     i2p::RouterConfig config;
     config.backend = i2p::Backend::eGateway;
     config.gatewayHost = address->host;
     config.gatewayPort = address->port;
     config.gatewayPath = address->path;
-    config.gatewayToken = address->token;
-    config.gatewayPin = reached.pin;
+    config.gatewayFingerprint = address->fingerprint;
+    config.gatewayTls = address->tls;
     i2p::Router router(config);
     router.start();
     std::printf("[smoke] session open, counters %s\n",

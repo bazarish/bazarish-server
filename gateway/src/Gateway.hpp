@@ -1,12 +1,14 @@
 // Bazarish project (c) 2026
 #pragma once
 
+#include <bazarish/GatewayChannel.hpp>
 #include <bazarish/GatewayProtocol.hpp>
 #include "DestinationPool.hpp"
 #include "Sessions.hpp"
 #include "Settings.hpp"
 
 #include <bazarish/Auth.hpp>
+#include <bazarish/Crypto.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <bazarish/I2p.hpp>
 #include <bazarish/WebSocket.hpp>
@@ -49,6 +51,8 @@ public:
     std::size_t rejoins() const { return rejoins_.load(); }
     std::size_t refusals() const { return refused_.load(); }
     std::size_t dials() const { return dials_.load(); }
+    // What a link to this gateway carries to name it.
+    std::string fingerprint() const { return identity_.fingerprint(); }
     std::size_t pooled() const;
     // Asks for a fresh presence delegation near its end and stops an address that outlives one.
     void lapseDelegations(std::int64_t now);
@@ -64,7 +68,15 @@ private:
     http::Response restart(const http::Request& request);
     void bindOps();
 
-    void socketOpened(const http::SocketPtr& socket, const http::Request& request);
+    void rawOpened(const http::SocketPtr& raw);
+    void rawMessage(const http::SocketPtr& raw, const std::vector<unsigned char>& message);
+    void rawClosed(const http::SocketPtr& raw);
+    void handshake(const http::SocketPtr& raw, const Bytes& message);
+    void establish(const http::SocketPtr& raw, std::shared_ptr<gateway::Records> records,
+        const std::shared_ptr<Session>& session, bool resumed);
+    void bindSession(const http::SocketPtr& socket, const std::shared_ptr<Session>& session,
+        bool resumed);
+    void topUpTickets(const std::shared_ptr<Session>& session, const http::SocketPtr& socket);
     void socketMessage(const http::SocketPtr& socket, const std::vector<unsigned char>& message);
     void socketClosed(const http::SocketPtr& socket);
 
@@ -155,6 +167,10 @@ private:
     Settings settings_;
     OpsControl control_;
     i2p::Router& router_;
+    const Identity identity_;
+    const Key sealing_;
+    const Bytes card_;
+    const gateway::Cover cover_;
     http::Server server_;
     std::unique_ptr<http::Server> ops_;
     std::unique_ptr<DestinationPool> streamPool_;
@@ -164,6 +180,9 @@ private:
     mutable std::mutex mutex_;
     mutable auth::ReplayCache operatorReplays_;
     std::map<const http::Socket*, Connection> connections_;
+    // A raw socket that has not yet joined a session or made one, and how often it missed.
+    std::map<const http::Socket*, int> openings_;
+    std::map<const http::Socket*, std::shared_ptr<gateway::ChannelSocket>> channels_;
     std::map<std::string, Local> published_;
     std::map<std::string, std::chrono::steady_clock::time_point> goneHere_;
     mutable std::mutex directMutex_;

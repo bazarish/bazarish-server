@@ -22,6 +22,7 @@ constexpr const char* kNginxNotFound = "<html>\r\n"
                                        "</html>\r\n";
 
 constexpr const char* kSecureScheme = "https://";
+constexpr const char* kPlainScheme = "http://";
 // A path, a query or anything a link's query cannot carry ends the authority.
 constexpr const char* kNotInAuthority = "/?#& \t\r\n";
 
@@ -44,22 +45,24 @@ std::string publicAddressFrom(const std::string& text)
         return text;
     }
     std::string rest;
-    if (text.rfind(kSecureScheme, 0) == 0) {
-        rest = text.substr(std::string(kSecureScheme).size());
+    for (const char* const scheme : {kSecureScheme, kPlainScheme}) {
+        if (text.rfind(scheme, 0) == 0) {
+            rest = text.substr(std::string(scheme).size());
+        }
     }
     if (rest.empty() || rest.find_first_of(kNotInAuthority) != std::string::npos) {
-        throw std::invalid_argument("\"publicAddress\" is https://host or https://host:port, "
+        throw std::invalid_argument("\"publicAddress\" is http(s)://host or http(s)://host:port, "
                                     "with no path");
     }
     return text;
 }
 
-std::string clientLink(const Settings& settings)
+std::string clientLink(const Settings& settings, const std::string& fingerprint)
 {
     if (settings.publicAddress.empty()) {
         return {};
     }
-    return gatewayLink(settings.publicAddress + settings.basePath, settings.token);
+    return gatewayLink(settings.publicAddress + settings.basePath, fingerprint);
 }
 
 std::vector<DirectRoute> directRoutesFrom(const nlohmann::json& list)
@@ -107,10 +110,6 @@ Settings Settings::from(const ConfigView& config)
     settings.basePath = config.text("basePath");
     if (settings.basePath.empty() || settings.basePath.front() != '/') {
         throw std::runtime_error("\"basePath\" is mandatory and starts with a slash");
-    }
-    settings.token = config.text("token");
-    if (settings.token.empty()) {
-        throw std::runtime_error("\"token\" is mandatory");
     }
     settings.publicAddress = publicAddressFrom(config.text("publicAddress"));
     settings.stateDir = std::filesystem::path(config.text("state"));

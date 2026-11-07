@@ -64,6 +64,16 @@ std::optional<Bytes> Session::answered(const std::uint32_t ref) const
     return found->second;
 }
 
+std::vector<Bytes> Session::issueTickets(const std::size_t count)
+{
+    std::vector<Bytes> issued;
+    for (std::size_t i = 0; i < count; ++i) {
+        issued.push_back(randomBytes(kTicketBytes));
+        tickets.insert(std::string(issued.back().begin(), issued.back().end()));
+    }
+    return issued;
+}
+
 SessionStore::SessionStore(const std::int64_t ttlSeconds)
     : ttlSeconds_(ttlSeconds)
 {
@@ -77,17 +87,16 @@ std::shared_ptr<Session> SessionStore::open(const std::int64_t now)
     return session;
 }
 
-std::shared_ptr<Session> SessionStore::find(
-    const std::string& cookie, const std::int64_t now) const
+std::shared_ptr<Session> SessionStore::holding(const Bytes& ticket, const std::int64_t now) const
 {
-    const auto found = sessions_.find(cookie);
-    if (found == sessions_.end()) {
-        return nullptr;
+    for (const auto& [cookie, session] : sessions_) {
+        (void)cookie;
+        if (session->tickets.count(std::string(ticket.begin(), ticket.end())) > 0
+            && !session->expired(now, ttlSeconds_)) {
+            return session;
+        }
     }
-    if (found->second->expired(now, ttlSeconds_)) {
-        return nullptr;
-    }
-    return found->second;
+    return nullptr;
 }
 
 void SessionStore::close(const std::string& cookie)

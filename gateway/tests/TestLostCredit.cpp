@@ -23,7 +23,6 @@ using namespace bazarish::gateway;
 namespace {
 
 constexpr const char* kPath = "/8a1d6f04c9b2";
-constexpr const char* kToken = "a-sixth-static-token";
 constexpr int kWaitSeconds = 30;
 constexpr std::size_t kWindows = 3;
 constexpr std::size_t kTotalBytes = kWindows * kStreamWindowBytes;
@@ -31,14 +30,14 @@ constexpr std::size_t kReadChunk = 16 * 1024;
 constexpr std::chrono::milliseconds kSettled{500};
 constexpr std::chrono::milliseconds kLook{20};
 
-i2p::RouterConfig borrowedFrom(const int port)
+i2p::RouterConfig borrowedFrom(const int port, const std::string& fingerprint)
 {
     i2p::RouterConfig config;
     config.backend = i2p::Backend::eGateway;
     config.gatewayHost = "127.0.0.1";
     config.gatewayPort = port;
     config.gatewayPath = kPath;
-    config.gatewayToken = kToken;
+    config.gatewayFingerprint = fingerprint;
     config.gatewayTls = false;
     config.gatewayControlMinLife = std::chrono::seconds(600);
     config.gatewayControlMaxLife = std::chrono::seconds(600);
@@ -91,7 +90,6 @@ int main()
     settings.listenHost = "127.0.0.1";
     settings.listenPort = 0;
     settings.basePath = kPath;
-    settings.token = kToken;
     settings.stateDir = root / "state";
     settings.notFoundBody = "<html>nothing</html>";
 
@@ -101,8 +99,8 @@ int main()
     CHECK(port > 0);
 
     Relay relay(port);
-    i2p::Router sender(borrowedFrom(relay.port()));
-    i2p::Router receiver(borrowedFrom(port));
+    i2p::Router sender(borrowedFrom(relay.port(), gateway.fingerprint()));
+    i2p::Router receiver(borrowedFrom(port, gateway.fingerprint()));
     sender.start();
     receiver.start();
 

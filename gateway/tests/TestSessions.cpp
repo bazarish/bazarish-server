@@ -25,8 +25,10 @@ int main()
     CHECK(first->cookie() != second->cookie());
     CHECK(!first->cookie().empty());
     CHECK(store.size() == 2);
-    CHECK(store.find(first->cookie(), kStart) == first);
-    CHECK(store.find("not-a-cookie", kStart) == nullptr);
+    const std::vector<Bytes> tickets = first->issueTickets(kTicketsHeld);
+    CHECK(tickets.size() == kTicketsHeld);
+    CHECK(store.holding(tickets.front(), kStart) == first);
+    CHECK(store.holding(randomBytes(kTicketBytes), kStart) == nullptr);
 
     first->addSocket();
     CHECK(first->sockets() == 1);
@@ -40,7 +42,7 @@ int main()
     CHECK(!first->expired(kStart + 2 + kTtl - 1, kTtl));
     CHECK(first->expired(kStart + 2 + kTtl, kTtl));
 
-    CHECK(store.find(first->cookie(), kStart + 2 + kTtl) == nullptr);
+    CHECK(store.holding(tickets.back(), kStart + 2 + kTtl) == nullptr);
     CHECK(store.size() == 2);
 
     second->addSocket();
@@ -48,7 +50,8 @@ int main()
     CHECK(gone.size() == 1);
     CHECK(gone.front() == first);
     CHECK(store.size() == 1);
-    CHECK(store.find(second->cookie(), kStart + 2 + kTtl) == second);
+    const std::vector<Bytes> secondTickets = second->issueTickets(1);
+    CHECK(store.holding(secondTickets.front(), kStart + 2 + kTtl) == second);
 
     CHECK(!second->full());
     while (second->sockets() < kMaxSocketsPerSession) {
@@ -84,7 +87,7 @@ int main()
 
     store.close(second->cookie());
     CHECK(store.size() == 0);
-    CHECK(store.find(second->cookie(), kStart) == nullptr);
+    CHECK(store.holding(secondTickets.front(), kStart) == nullptr);
 
     std::printf("TestSessions ok\n");
     return 0;

@@ -3,6 +3,7 @@
 
 #include <bazarish/Clock.hpp>
 #include <bazarish/Crypto.hpp>
+#include <bazarish/GatewayChannel.hpp>
 #include <bazarish/I2pAddress.hpp>
 #include <bazarish/HttpClient.hpp>
 #include <bazarish/Tls.hpp>
@@ -19,6 +20,7 @@
 #include <boost/beast/websocket.hpp>
 
 #include <chrono>
+#include <deque>
 #include <filesystem>
 #include <memory>
 #include <set>
@@ -37,7 +39,6 @@ using namespace bazarish::gateway;
 namespace {
 
 constexpr const char* kPath = "/f3a9c2e1b7d4";
-constexpr const char* kToken = "a-static-token";
 constexpr const char* kHealthPath = "/healthz";
 constexpr int kSweepGraceSeconds = 5;
 constexpr int kDialDeadlineSeconds = 4;
@@ -52,7 +53,7 @@ struct Answer {
 };
 
 Answer request(const int port, const std::string& method, const std::string& path,
-    const std::string& token, const auth::Headers& signed_ = {})
+    const auth::Headers& signed_ = {})
 {
     asio::io_context io;
     tcp::socket socket(io);
@@ -60,9 +61,6 @@ Answer request(const int port, const std::string& method, const std::string& pat
         static_cast<unsigned short>(port)));
     bhttp::request<bhttp::string_body> out{bhttp::string_to_verb(method), path, 11};
     out.set(bhttp::field::host, "127.0.0.1");
-    if (!token.empty()) {
-        out.set(kTokenHeader, token);
-    }
     for (const auto& [name, value] : signed_) {
         out.set(name, value);
     }
@@ -99,55 +97,99 @@ http::ClientResponse askOps(const int port, const std::string& pin,
     return http::request("127.0.0.1", port, out, options);
 }
 
-struct Dialled {
-    std::unique_ptr<websocket::stream<tcp::socket>> socket;
-    unsigned refusedWith = 0;
+// What a client keeps of its session: the key, and the tickets that join it again.
+struct Seat {
+    Bytes key;
+    std::deque<Bytes> tickets;
 };
 
-Dialled dial(asio::io_context& io, const int port, const std::string& token,
-    const std::string& cookie)
+struct Dialled {
+    std::unique_ptr<websocket::stream<tcp::socket>> socket;
+    std::shared_ptr<Records> records;
+    Seat* seat = nullptr;
+};
+
+Bytes readRaw(websocket::stream<tcp::socket>& socket)
+{
+    beast::flat_buffer buffer;
+    socket.read(buffer);
+    const auto* const begin = static_cast<const unsigned char*>(buffer.data().data());
+    return Bytes(begin, begin + buffer.size());
+}
+
+void writeRaw(websocket::stream<tcp::socket>& socket, const Bytes& message)
+{
+    socket.write(asio::buffer(message.data(), message.size()));
+}
+
+Dialled dial(asio::io_context& io, const int port, const std::string& fingerprint, Seat& seat,
+    const bool join)
 {
     tcp::socket raw(io);
     raw.connect(tcp::endpoint(asio::ip::make_address("127.0.0.1"),
         static_cast<unsigned short>(port)));
     auto stream = std::make_unique<websocket::stream<tcp::socket>>(std::move(raw));
-    stream->set_option(
-        websocket::stream_base::decorator([token, cookie](websocket::request_type& request) {
-            request.set(kTokenHeader, token);
-            if (!cookie.empty()) {
-                request.set(kSessionHeader, cookie);
-            }
-            request.set(bhttp::field::sec_websocket_protocol, kSubprotocol);
-        }));
-    websocket::response_type response;
-    boost::system::error_code error;
-    stream->handshake(response, "127.0.0.1", kPath, error);
+    stream->handshake("127.0.0.1", kPath);
+    stream->binary(true);
     Dialled out;
-    if (error) {
-        out.refusedWith = static_cast<unsigned>(response.result_int());
+    const Cover cover(fingerprint);
+    const std::optional<Bytes> card = cover.open(readRaw(*stream));
+    if (!card.has_value()) {
         return out;
     }
-    stream->binary(true);
+    const Key sealing = cardSealingKey(unpadded(*card), fingerprint);
+    if (join && !seat.tickets.empty()) {
+        const Bytes ticket = seat.tickets.front();
+        seat.tickets.pop_front();
+        const std::shared_ptr<Records> joining
+            = std::make_shared<Records>(seat.key, ticket, Side::eClient);
+        writeRaw(*stream, makeJoin(ticket, *joining));
+        const std::optional<Bytes> answer = joining->open(readRaw(*stream));
+        if (answer.has_value() && isJoined(*answer)) {
+            out.records = joining;
+        }
+    }
+    if (out.records == nullptr) {
+        const Hello hello = makeHello(cover, sealing);
+        writeRaw(*stream, hello.message);
+        const std::optional<Welcome> welcome
+            = openWelcome(cover, readRaw(*stream), hello.ephemeral, fingerprint);
+        CHECK(welcome.has_value());
+        seat.key = welcome->sessionKey;
+        seat.tickets.assign(welcome->tickets.begin(), welcome->tickets.end());
+        out.records = std::make_shared<Records>(welcome->sessionKey, welcome->salt, Side::eClient);
+    }
     out.socket = std::move(stream);
+    out.seat = &seat;
     return out;
 }
 
-void send(websocket::stream<tcp::socket>& socket, const Bytes& frame)
+void send(Dialled& dialled, const Bytes& frame)
 {
-    socket.write(asio::buffer(frame.data(), frame.size()));
+    writeRaw(*dialled.socket, dialled.records->seal(frame));
 }
 
-Frame receive(websocket::stream<tcp::socket>& socket)
+// The next frame that is not a refill of tickets, which are kept as a client keeps them.
+Frame receive(Dialled& dialled)
 {
-    beast::flat_buffer buffer;
-    socket.read(buffer);
-    return decode(buffer.data().data(), buffer.size());
+    while (true) {
+        const std::optional<Bytes> opened = dialled.records->open(readRaw(*dialled.socket));
+        CHECK(opened.has_value());
+        const Frame frame = decode(opened->data(), opened->size());
+        if (frame.type != FrameType::eTickets) {
+            return frame;
+        }
+        const nlohmann::json body = bodyJson(frame);
+        for (const nlohmann::json& ticket : body.at("tickets")) {
+            dialled.seat->tickets.push_back(fromBase64(ticket.get<std::string>()));
+        }
+    }
 }
 
-nlohmann::json greet(websocket::stream<tcp::socket>& socket, const int version = kProtocolVersion)
+nlohmann::json greet(Dialled& dialled, const int version = kProtocolVersion)
 {
-    send(socket, encodeJson(FrameType::eHello, 2, {{"version", version}}));
-    const Frame answer = receive(socket);
+    send(dialled, encodeJson(FrameType::eHello, 2, {{"version", version}}));
+    const Frame answer = receive(dialled);
     return {{"type", static_cast<int>(answer.type)}, {"ref", answer.ref},
         {"body", bodyJson(answer)}};
 }
@@ -165,7 +207,6 @@ int main()
     settings.listenHost = "127.0.0.1";
     settings.listenPort = 0;
     settings.basePath = kPath;
-    settings.token = kToken;
     settings.stateDir = root / "state";
     settings.decoyMinBytes = kDecoyLow;
     settings.decoyMaxBytes = kDecoyHigh;
@@ -187,17 +228,12 @@ int main()
     CHECK(stranger.body == settings.notFoundBody);
     CHECK(stranger.server == settings.serverName);
 
-    const Answer noToken = request(port, "GET", kPath, {});
-    const Answer wrongToken = request(port, "GET", kPath, "not-the-token");
-    const Answer deepPath = request(port, "GET", std::string(kPath) + "/more", kToken);
-    CHECK(noToken.body == stranger.body);
-    CHECK(noToken.status == stranger.status);
-    CHECK(noToken.contentType == stranger.contentType);
-    CHECK(wrongToken.body == stranger.body);
-    CHECK(wrongToken.status == stranger.status);
+    const Answer deepPath = request(port, "GET", std::string(kPath) + "/more");
     CHECK(deepPath.body == stranger.body);
+    CHECK(deepPath.status == stranger.status);
+    CHECK(deepPath.contentType == stranger.contentType);
 
-    CHECK(request(port, "GET", std::string(kPath) + kHealthPath, kToken).body == stranger.body);
+    CHECK(request(port, "GET", std::string(kPath) + kHealthPath).body == stranger.body);
 
     const std::string opsPin = tls::selfSigned(settings.stateDir).pin;
     CHECK(askOps(settings.opsPort, opsPin).status == 403);
@@ -216,8 +252,8 @@ int main()
     CHECK(report.contains("sockets"));
     CHECK(report["refused"] == 0);
 
-    const Answer decoyOne = request(port, "POST", kPath, kToken);
-    const Answer decoyTwo = request(port, "POST", kPath, kToken);
+    const Answer decoyOne = request(port, "POST", kPath);
+    const Answer decoyTwo = request(port, "POST", kPath);
     CHECK(decoyOne.status == 200);
     CHECK(decoyOne.body.size() >= kDecoyLow);
     CHECK(decoyOne.body.size() <= kDecoyHigh);
@@ -227,12 +263,16 @@ int main()
 
     asio::io_context io;
 
-    const Dialled refused = dial(io, port, "wrong-token", {});
+    Seat nobody;
+    const Dialled refused = dial(io, port, Identity::generate().fingerprint(), nobody, false);
     CHECK(refused.socket == nullptr);
 
-    Dialled first = dial(io, port, kToken, {});
+    const std::string fingerprint = gateway.fingerprint();
+    Seat seat;
+    Dialled first = dial(io, port, fingerprint, seat, false);
     CHECK(first.socket != nullptr);
-    const nlohmann::json ready = greet(*first.socket);
+    CHECK(seat.tickets.size() == kTicketsHeld);
+    const nlohmann::json ready = greet(first);
     CHECK(ready["type"] == static_cast<int>(FrameType::eReady));
     CHECK(ready["ref"] == 2);
     CHECK(ready["body"]["version"] == kProtocolVersion);
@@ -240,11 +280,10 @@ int main()
     CHECK(ready["body"]["capabilities"]["routerCounters"] == false);
     CHECK(ready["body"]["capabilities"]["proxy"] == false);
     CHECK(ready["body"]["capabilities"]["offlineKeys"] == false);
-    const std::string cookie = ready["body"]["session"];
-    CHECK(!cookie.empty());
+    CHECK(!ready["body"].contains("session"));
 
-    send(*first.socket, encodeJson(FrameType::eHello, 4, {{"version", kProtocolVersion}}));
-    const Frame twice = receive(*first.socket);
+    send(first, encodeJson(FrameType::eHello, 4, {{"version", kProtocolVersion}}));
+    const Frame twice = receive(first);
     CHECK(twice.type == FrameType::eError);
     CHECK(bodyJson(twice)["code"] == "bad-frame");
 
@@ -252,41 +291,47 @@ int main()
     first.socket->close(websocket::close_code::normal, ignored);
     first.socket.reset();
 
-    Dialled again = dial(io, port, kToken, cookie);
+    const Bytes sessionKey = seat.key;
+    Dialled again = dial(io, port, fingerprint, seat, true);
     CHECK(again.socket != nullptr);
-    const nlohmann::json resumed = greet(*again.socket);
+    CHECK(seat.key == sessionKey);
+    const nlohmann::json resumed = greet(again);
     CHECK(resumed["body"]["resumed"] == true);
-    CHECK(resumed["body"]["session"] == cookie);
+    CHECK(seat.tickets.size() == kTicketsHeld);
     again.socket->close(websocket::close_code::normal, ignored);
     again.socket.reset();
 
-    Dialled stale = dial(io, port, kToken, "a-cookie-from-nowhere");
+    Seat forged{randomBytes(kSessionKeyBytes), {randomBytes(kTicketBytes)}};
+    Dialled stale = dial(io, port, fingerprint, forged, true);
     CHECK(stale.socket != nullptr);
-    const nlohmann::json fresh = greet(*stale.socket);
+    CHECK(forged.key != sessionKey);
+    const nlohmann::json fresh = greet(stale);
     CHECK(fresh["body"]["resumed"] == false);
-    CHECK(fresh["body"]["session"] != cookie);
     stale.socket->close(websocket::close_code::normal, ignored);
     stale.socket.reset();
 
-    Dialled ancient = dial(io, port, kToken, {});
+    Seat older;
+    Dialled ancient = dial(io, port, fingerprint, older, false);
     CHECK(ancient.socket != nullptr);
-    const nlohmann::json refusal = greet(*ancient.socket, kProtocolVersion + 1);
+    const nlohmann::json refusal = greet(ancient, kProtocolVersion + 1);
     CHECK(refusal["type"] == static_cast<int>(FrameType::eError));
     CHECK(refusal["body"]["code"] == "version");
     ancient.socket.reset();
 
-    Dialled nonsense = dial(io, port, kToken, {});
+    Seat garbled;
+    Dialled nonsense = dial(io, port, fingerprint, garbled, false);
     CHECK(nonsense.socket != nullptr);
     const Bytes garbage = {0x7F, 0x00, 0x00, 0x00, 0x01};
-    send(*nonsense.socket, garbage);
-    const Frame complaint = receive(*nonsense.socket);
+    send(nonsense, garbage);
+    const Frame complaint = receive(nonsense);
     CHECK(complaint.type == FrameType::eError);
     CHECK(bodyJson(complaint)["code"] == "bad-frame");
     nonsense.socket.reset();
 
-    Dialled twiceOver = dial(io, port, kToken, {});
+    Seat twice2;
+    Dialled twiceOver = dial(io, port, fingerprint, twice2, false);
     CHECK(twiceOver.socket != nullptr);
-    (void)greet(*twiceOver.socket);
+    (void)greet(twiceOver);
 
     std::set<std::string> warm;
     for (const i2p::LocalDestination& destination : router.localDestinations()) {
@@ -295,20 +340,20 @@ int main()
     CHECK(warm.size() == gateway.pooled());
     const nlohmann::json ask = {{"kind", "stream"},
         {"published", false}, {"realtime", false}};
-    send(*twiceOver.socket, encodeJson(FrameType::eEndpointCreate, 6, ask));
-    const Frame once = receive(*twiceOver.socket);
+    send(twiceOver, encodeJson(FrameType::eEndpointCreate, 6, ask));
+    const Frame once = receive(twiceOver);
     CHECK(once.type == FrameType::eOk);
     CHECK(warm.count(bodyJson(once)["host"].get<std::string>()) == 1);
     CHECK(router.localDestinations().size() == gateway.pooled() + 1);
-    send(*twiceOver.socket, encodeJson(FrameType::eEndpointCreate, 6, ask));
-    const Frame repeat = receive(*twiceOver.socket);
+    send(twiceOver, encodeJson(FrameType::eEndpointCreate, 6, ask));
+    const Frame repeat = receive(twiceOver);
     CHECK(repeat.type == FrameType::eOk);
     CHECK(bodyJson(repeat)["host"] == bodyJson(once)["host"]);
     const std::size_t pooledBefore = gateway.pooled();
     const nlohmann::json watching = {{"kind", "raw"}, {"published", true}, {"realtime", false},
         {"readerKey", standardToI2pBase64(toBase64(Key::generateX25519().rawPrivate()))}};
-    send(*twiceOver.socket, encodeJson(FrameType::eEndpointCreate, 16, watching));
-    const Frame watcher = receive(*twiceOver.socket);
+    send(twiceOver, encodeJson(FrameType::eEndpointCreate, 16, watching));
+    const Frame watcher = receive(twiceOver);
     CHECK(watcher.type == FrameType::eOk);
     CHECK(warm.count(bodyJson(watcher)["host"].get<std::string>()) == 1);
     CHECK(gateway.pooled() == pooledBefore);
@@ -316,19 +361,20 @@ int main()
     twiceOver.socket.reset();
 
     const std::size_t refusedBefore = gateway.refusals();
-    Dialled asking = dial(io, port, kToken, {});
+    Seat askingSeat;
+    Dialled asking = dial(io, port, fingerprint, askingSeat, false);
     CHECK(asking.socket != nullptr);
-    (void)greet(*asking.socket);
-    send(*asking.socket,
+    (void)greet(asking);
+    send(asking,
         encodeJson(FrameType::eEndpointCreate, 8,
             {{"kind", "stream"},
                 {"published", false}, {"realtime", false}}));
-    CHECK(receive(*asking.socket).type == FrameType::eOk);
+    CHECK(receive(asking).type == FrameType::eOk);
     const nlohmann::json dialAsk = {{"endpoint", 8},
         {"host", "anything.b32.i2p"}, {"deadline", kDialDeadlineSeconds}};
-    send(*asking.socket, encodeJson(FrameType::eStreamOpen, 10, dialAsk));
-    send(*asking.socket, encodeJson(FrameType::eStreamOpen, 10, dialAsk));
-    const Frame dialled = receive(*asking.socket);
+    send(asking, encodeJson(FrameType::eStreamOpen, 10, dialAsk));
+    send(asking, encodeJson(FrameType::eStreamOpen, 10, dialAsk));
+    const Frame dialled = receive(asking);
     CHECK(dialled.type == FrameType::eStreamReset);
     CHECK(dialled.ref == 10);
     CHECK(gateway.dials() == 1);
@@ -337,8 +383,8 @@ int main()
         constexpr std::uint32_t kTooLongRef = 18;
         const nlohmann::json tooLong = {{"endpoint", 8}, {"host", "anything.b32.i2p"},
             {"deadline", kMaxDialDeadline.count() + 1}};
-        send(*asking.socket, encodeJson(FrameType::eStreamOpen, kTooLongRef, tooLong));
-        const Frame refusedLong = receive(*asking.socket);
+        send(asking, encodeJson(FrameType::eStreamOpen, kTooLongRef, tooLong));
+        const Frame refusedLong = receive(asking);
         CHECK(refusedLong.type == FrameType::eError);
         CHECK(refusedLong.ref == kTooLongRef);
         CHECK(bodyJson(refusedLong)["code"] == "bad-frame");
@@ -350,28 +396,30 @@ int main()
             {standardToI2pBase64(toBase64(Key::generateX25519().rawPublic()))});
         const nlohmann::json withMaster = {{"kind", "raw"}, {"published", true},
             {"keys", presence.privateBase64()}, {"readers", readers}};
-        send(*asking.socket, encodeJson(FrameType::eEndpointCreate, 12, withMaster));
-        const Frame refused = receive(*asking.socket);
+        send(asking, encodeJson(FrameType::eEndpointCreate, 12, withMaster));
+        const Frame refused = receive(asking);
         CHECK(refused.type == FrameType::eError);
         CHECK(bodyJson(refused)["code"] == "bad-frame");
         const nlohmann::json withDelegation = {{"kind", "raw"}, {"published", true},
             {"keys", presence.issueTransient(1).privateBase64()}, {"readers", readers}};
-        send(*asking.socket, encodeJson(FrameType::eEndpointCreate, 14, withDelegation));
-        const Frame made = receive(*asking.socket);
+        send(asking, encodeJson(FrameType::eEndpointCreate, 14, withDelegation));
+        const Frame made = receive(asking);
         CHECK(made.type == FrameType::eOk);
         CHECK(bodyJson(made)["host"] == i2p::routingHost(presence.publicBase64()));
     }
     asking.socket->close(websocket::close_code::normal, ignored);
     asking.socket.reset();
 
-    Dialled held = dial(io, port, kToken, {});
+    Seat heldSeat;
+    Dialled held = dial(io, port, fingerprint, heldSeat, false);
     CHECK(held.socket != nullptr);
-    const std::string doomed = greet(*held.socket)["body"]["session"];
-    send(*held.socket,
+    (void)greet(held);
+    Seat doomed = heldSeat;
+    send(held,
         encodeJson(FrameType::eEndpointCreate, 4,
             {{"kind", "stream"},
                 {"published", true}, {"realtime", false}}));
-    const Frame made = receive(*held.socket);
+    const Frame made = receive(held);
     CHECK(made.type == FrameType::eOk);
     CHECK(!bodyJson(made)["host"].get<std::string>().empty());
     held.socket->close(websocket::close_code::normal, ignored);
@@ -385,11 +433,12 @@ int main()
     }
     CHECK(router.localDestinations().size() == gateway.pooled());
 
-    Dialled after = dial(io, port, kToken, doomed);
+    const Bytes doomedKey = doomed.key;
+    Dialled after = dial(io, port, fingerprint, doomed, true);
     CHECK(after.socket != nullptr);
-    const nlohmann::json born = greet(*after.socket);
+    CHECK(doomed.key != doomedKey);
+    const nlohmann::json born = greet(after);
     CHECK(born["body"]["resumed"] == false);
-    CHECK(born["body"]["session"] != doomed);
     CHECK(born["body"]["endpoints"].empty());
     after.socket->close(websocket::close_code::normal, ignored);
     after.socket.reset();

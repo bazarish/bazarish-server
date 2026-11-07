@@ -18,19 +18,18 @@ using namespace bazarish::gateway;
 namespace {
 
 constexpr const char* kPath = "/7c1e93b52fa8";
-constexpr const char* kToken = "a-fourth-static-token";
 constexpr int kWaitSeconds = 60;
 constexpr std::size_t kPieceBytes = 32 * 1024;
 constexpr int kRounds = 8;
 
-i2p::RouterConfig borrowedFrom(const int port)
+i2p::RouterConfig borrowedFrom(const int port, const std::string& fingerprint)
 {
     i2p::RouterConfig config;
     config.backend = i2p::Backend::eGateway;
     config.gatewayHost = "127.0.0.1";
     config.gatewayPort = port;
     config.gatewayPath = kPath;
-    config.gatewayToken = kToken;
+    config.gatewayFingerprint = fingerprint;
     config.gatewayTls = false;
     config.gatewayDecoyMin = std::chrono::milliseconds(300);
     config.gatewayDecoyMax = std::chrono::milliseconds(600);
@@ -53,7 +52,6 @@ int main()
     settings.listenHost = "127.0.0.1";
     settings.listenPort = 0;
     settings.basePath = kPath;
-    settings.token = kToken;
     settings.stateDir = root / "state";
     settings.decoyMinBytes = 512;
     settings.decoyMaxBytes = 2048;
@@ -65,8 +63,8 @@ int main()
     const int port = gateway.start();
     CHECK(port > 0);
 
-    i2p::Router alice(borrowedFrom(port));
-    i2p::Router bob(borrowedFrom(port));
+    i2p::Router alice(borrowedFrom(port, gateway.fingerprint()));
+    i2p::Router bob(borrowedFrom(port, gateway.fingerprint()));
     alice.start();
     bob.start();
 

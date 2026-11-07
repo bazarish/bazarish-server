@@ -58,7 +58,7 @@ def change(name, edit):
         json.dump(config, file)
 change("admin-panel", lambda c: c.update(admin=["the-operator-who-claimed-it"]))
 change("service-node", lambda c: c.update(registration={"requireApproval": True}))
-change("gateway", lambda c: c.update(token="the-token-clients-were-given"))
+change("gateway", lambda c: c.update(basePath="/the-path-clients-were-given"))
 OPERATOR
 for state in /var/lib/bazarish/*/; do
     echo "$state" > "$state$kOperatorFile"

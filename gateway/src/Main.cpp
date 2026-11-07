@@ -36,15 +36,16 @@ void printUsage()
                 "       bazarish-gateway --version\n"
                 "\n"
                 "Runs an I2P router for clients that do not run one. A client\n"
-                "reaches it over one WebSocket per flow at a secret path,\n"
-                "carrying a static token; everything else on this listener is a\n"
-                "404 from one template.\n"
+                "reaches it over one WebSocket per flow at a secret path, in a\n"
+                "channel sealed to this gateway's key; everything else on this\n"
+                "listener is a 404 from one template.\n"
                 "\n"
-                "\"basePath\" and \"token\" are mandatory and have no defaults: a\n"
-                "gateway that came up without them would be one anybody could\n"
-                "walk into. TLS, the public address and the cover site belong to\n"
-                "the front this listens behind. \"operators\" names who may use\n"
-                "\"opsListen\": health, settings and restart. The README has the rest.\n",
+                "\"basePath\" is mandatory and has no default: a gateway that came\n"
+                "up without it would be one anybody could walk into. The key and\n"
+                "its fingerprint live in \"state\". TLS, the public address and\n"
+                "the cover site belong to the front this listens behind.\n"
+                "\"operators\" names who may use \"opsListen\": health, settings\n"
+                "and restart. The README has the rest.\n",
         bazarish::kBuildVersion);
 }
 

@@ -22,7 +22,6 @@ using namespace bazarish::gateway;
 namespace {
 
 constexpr const char* kPath = "/7c1e05a9d3b2";
-constexpr const char* kToken = "a-fifth-static-token";
 constexpr const char* kServerDest = "fkc4nkqn6k2bwrqsgbabnkyx4g5s2cp3nvnrdnkqxz4bzcbzrfaa.b32.i2p";
 constexpr int kWaitSeconds = 20;
 constexpr int kRequests = 30;
@@ -59,7 +58,6 @@ int main()
     settings.listenHost = "127.0.0.1";
     settings.listenPort = 0;
     settings.basePath = kPath;
-    settings.token = kToken;
     settings.stateDir = root / "state";
     settings.notFoundBody = "<html>nothing</html>";
     DirectRoute route;
@@ -79,7 +77,7 @@ int main()
     config.gatewayHost = "127.0.0.1";
     config.gatewayPort = port;
     config.gatewayPath = kPath;
-    config.gatewayToken = kToken;
+    config.gatewayFingerprint = gateway.fingerprint();
     config.gatewayTls = false;
     config.gatewayControlMinLife = std::chrono::seconds(1);
     config.gatewayControlMaxLife = std::chrono::seconds(1);

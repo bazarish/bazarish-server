@@ -6,7 +6,6 @@ set -e
 readonly kConfig=/etc/bazarish/gateway.json
 readonly kPort=8440
 readonly kPathBytes=16
-readonly kTokenBytes=32
 
 randomHex() {
     od -An -tx1 -N"$1" /dev/urandom | tr -d ' \n'
@@ -30,7 +29,6 @@ if [ "$1" = "configure" ]; then
 {
   "listen": {"host": "127.0.0.1", "port": $kPort},
   "basePath": "/$(randomHex $kPathBytes)",
-  "token": "$(randomHex $kTokenBytes)",
   "state": "/var/lib/bazarish/gateway"
 }
 CONFIG
@@ -48,9 +46,10 @@ CONFIG
 The Bazarish gateway runs on 127.0.0.1:$kPort. To finish:
 
 1. Put a TLS front before it: /usr/share/doc/bazarish-gateway/README.md
-2. Give clients https://bazari.sh/#gateway?v=1&url=https://<the front's name><basePath>&token=<token>,
-   with basePath and token from $kConfig, or set the public address in the
-   admin panel, which then shows this link.
+2. Give clients https://bazari.sh/#gateway?v=2&url=https://<the front's name><basePath>&fp=<fingerprint>,
+   with basePath from $kConfig and the fingerprint the gateway logs at start
+   (journalctl -u bazarish-gateway), or set the public address in the admin
+   panel, which then shows this link.
 NOTICE
     fi
 fi

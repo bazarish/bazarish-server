@@ -29,7 +29,6 @@ using namespace bazarish::gateway;
 namespace {
 
 constexpr const char* kPath = "/9d41f0c2a7e3";
-constexpr const char* kToken = "a-fourth-static-token";
 constexpr int kWaitSeconds = 20;
 constexpr std::size_t kStreamPool = 1;
 constexpr std::size_t kCallPool = 0;
@@ -47,14 +46,14 @@ int unusedPort()
     return door.local_endpoint().port();
 }
 
-i2p::RouterConfig borrowedFrom(const int port)
+i2p::RouterConfig borrowedFrom(const int port, const std::string& fingerprint)
 {
     i2p::RouterConfig config;
     config.backend = i2p::Backend::eGateway;
     config.gatewayHost = "127.0.0.1";
     config.gatewayPort = port;
     config.gatewayPath = kPath;
-    config.gatewayToken = kToken;
+    config.gatewayFingerprint = fingerprint;
     config.gatewayTls = false;
     return config;
 }
@@ -115,7 +114,6 @@ int main()
         std::ofstream config(configPath);
         config << nlohmann::json{
             {"basePath", kPath},
-            {"token", kToken},
             {"state", (root / "state").string()},
             {"i2p", {{"privacy", "minimal"}}},
             {"pools", {{"stream", kStreamPool}, {"call", kCallPool}, {"watch", kWatchPool}}},
@@ -158,7 +156,6 @@ int main()
     const http::ClientResponse shown
         = askOps(settings.opsPort, pin, "GET", "/settings", &operatorIdentity);
     CHECK(shown.status == 200);
-    CHECK(shown.body.find(kToken) == std::string::npos);
     CHECK(shown.body.find(kPath) == std::string::npos);
     const nlohmann::json before = nlohmann::json::parse(shown.body);
     CHECK(before.at("i2pPrivacy") == "minimal");
@@ -197,8 +194,8 @@ int main()
     CHECK(changed.status == 200);
     CHECK(nlohmann::json::parse(changed.body).at("streamPool") == kWantedStreamPool);
     CHECK(nlohmann::json::parse(changed.body).at("link")
-        == std::string("https://bazari.sh/#gateway?v=1&url=https://gate.example") + kPath
-            + "&token=" + kToken);
+        == std::string("https://bazari.sh/#gateway?v=2&url=https://gate.example") + kPath
+            + "&fp=" + gateway.fingerprint());
     CHECK(askOps(settings.opsPort, pin, "PUT", "/settings", &operatorIdentity,
               nlohmann::json{{"publicAddress", "https://gate.example/path"}}.dump())
               .status
@@ -211,11 +208,10 @@ int main()
     CHECK(written.watchPool == static_cast<std::size_t>(kWantedWatchPool));
     CHECK(written.direct.size() == 1);
     CHECK(written.direct.front().dest == kServerDest);
-    CHECK(written.token == kToken);
     CHECK(written.basePath == kPath);
     CHECK(gateway.pooled() == kStreamPool + kCallPool + kWatchPool);
 
-    i2p::Router bob(borrowedFrom(port));
+    i2p::Router bob(borrowedFrom(port, gateway.fingerprint()));
     bob.start();
     const std::shared_ptr<i2p::Endpoint> link = bob.createEndpoint(i2p::EndpointConfig{});
     const std::unique_ptr<i2p::Stream> card

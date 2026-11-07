@@ -91,45 +91,74 @@ bounded, and only the secret is lasting:
 
 | | |
 |---|---|
-| Transport | TLS 1.3, one WebSocket over it |
-| Subprotocol | `Sec-WebSocket-Protocol: bazarish-gateway/1` |
+| Transport | One WebSocket, over `https` or plain `http`, to a host named by a name, an IPv4 address or an `[IPv6]` address. TLS, where there is any, is cover: its certificate is not checked |
 | Frames | Binary only. A text frame closes the socket with 1003 |
-| Server authentication | The client pins the SHA-256 of the server's SPKI. The SNI is whatever the client's configuration says, and the gateway accepts any |
-| Client authentication | A secret URL **and** a static token in the `X-Bazarish-Gateway` header. Both, or nothing. A client is given both in one link, `https://bazari.sh/#gateway?v=1&url=<secret URL>&token=<token>`; the URL is `https://`, and a client refuses any other |
-| Session | The cookie of a session to rejoin, in `X-Bazarish-Session`. Absent on a first connection |
+| Server authentication | The gateway's own hybrid key. The link carries its fingerprint, and the gateway proves it in the handshake (The channel, below) |
+| Client authentication | The secret path. A client is given the gateway in one link, `https://bazari.sh/#gateway?v=2&url=<secret URL>&fp=<fingerprint>` |
+| Headers | None of this protocol's own: the upgrade is any upgrade |
 | Keepalive | The gateway pings every `kKeepalive`; no pong within `kPongTimeout` drops the socket |
 
 ### Getting in, and not getting in
 
-The gateway lives at a path nobody guesses and answers only requests carrying
-the token. Anything else - the wrong path, the right path with no token, the
-right path with the wrong token - gets the same 404 as everything else on the
-host, produced by the same handler in the same time. That last part is the whole
-point: a 404 that arrives faster, or later, or a byte shorter when the path
-happens to be right is an oracle, and an oracle turns a secret path into a
-search. The token is compared in constant time and the answer does not depend on
-how far the request got.
+The gateway lives at a path nobody guesses. Anything off that path gets the same
+404 as everything else on the host, produced by the same handler in the same
+time: a 404 that arrives faster, or later, or a byte shorter when the path is
+nearly right is an oracle, and an oracle turns a secret path into a search.
 
 **The gateway is answerable for this on its own.** It emits one 404, from one
-template, in one time, for every way a request can fail to be a request for it,
-and it does not rely on anything in front of it to have refused first. A daemon
-whose safety depends on somebody else's configuration being right is a daemon
-that is unsafe by default, and configurations are edited by people in a hurry.
-
-Checking the token at the front as well - nginx, Caddy - is a good idea and is
-recommended to operators: it keeps unauthorised requests off the daemon
-entirely, and it makes every 404 on the host come from one server. It is a
-recommendation and not a mechanism, and the gateway behaves the same whether or
-not anyone took it.
+template, in one time, for every request that is not on its path, and it does
+not rely on anything in front of it to have refused first. A daemon whose safety
+depends on somebody else's configuration being right is a daemon that is unsafe
+by default, and configurations are edited by people in a hurry.
 
 Everything that is not the gateway is the **operator's front**, and it can be
 whatever they like - a real site, a holding page, a `proxy_pass` to somebody
 else's site entirely. The gateway occupies one unguessable path on a host that
-is otherwise honestly whatever it claims to be, and that is a far better story
-than a host serving nothing at all.
+is otherwise honestly whatever it claims to be.
 
-The pin makes the TLS certificate an identity rather than a trust chain, so the
-gateway needs no CA-issued certificate and no real hostname.
+Over plain `http` the path is in the request line for anybody on the wire to
+read, and over `https` whose certificate nobody checks, for anybody who sits in
+the middle. The path lets its holder **use** the gateway, as a token did before
+it; it does not let anybody read a session, which the channel below keeps to the
+two ends.
+
+### The channel
+
+Every socket opens the same way, so a watcher cannot tell a new session from a
+returning one:
+
+1. **The card.** The gateway speaks first: its card - its sealing key, signed by
+   its identity - padded with a random number of bytes and sealed under a key
+   derived from the fingerprint in the link (`Cover`). Without the link the
+   bytes are noise; with it, the client checks the signature against the
+   fingerprint, and a card that is not the link's gateway's ends the socket
+   ("not the gateway the link names").
+2. **Joining a live session**, when the client holds one: a one-time **ticket**
+   the gateway issued, then a record under keys derived from the session key and
+   that ticket. The gateway answers a record that the client opens - or, for a
+   ticket it does not hold, noise of the same length, which the client cannot
+   open and takes for a session that is gone.
+3. **Or a new session:** the client makes a hybrid key for this session alone,
+   seals it to the card's key with random padding, and sends it. The gateway
+   answers, sealed to that key and signed by its identity: a fresh session key
+   (ChaCha20-Poly1305, 32 bytes), the salt of this socket and `kTicketsHeld`
+   tickets. A client whose join was refused does this on the same socket.
+
+From then on every message is a **record**: the frame of this protocol, whole,
+under ChaCha20-Poly1305 with keys derived (HKDF) from the session key, the
+socket's salt or ticket and the direction, the nonce being a count of records in
+that direction and never on the wire. Type, identifiers and session are inside;
+outside there is a length. A record that does not open closes the socket. A
+record is its frame and a 16-byte tag, so no WebSocket message is longer than
+`kMaxFrameBytes` + 16, the three messages of the handshake included.
+
+The session key belongs to the session and stays until the session ends. Every
+socket the client opens for it - the next control socket, a flow socket, a
+socket after a drop within `kSessionTtl` - joins with a ticket, and the gateway
+tops the tickets back up in a `tickets` frame after `ready` and after `attach`,
+so a ticket is never used twice and two sockets of one session share nothing a
+watcher can see. A session that has gone means a new handshake, a new key for
+the client's new session, and `"resumed": false`.
 
 ## Sessions
 
@@ -137,31 +166,25 @@ A socket is not a session. A session is what holds the destinations, and it
 outlives the socket that opened it, because the connection this protocol was
 written for is a phone's.
 
-- The static secret authorises. On a successful upgrade with no cookie, the
-  gateway creates a session and hands back a fresh **cookie** of
-  `kSessionCookieBytes` random bytes in the `ready` frame.
-- The client presents that cookie on every reconnect, **together with the
-  static secret**: the cookie names a session, it does not authorise one. A
-  cookie alone opens nothing.
+- A handshake makes a session, with its key and its first tickets (The channel,
+  above). The path is all that lets a client make one.
+- Every later socket of the session joins it with a ticket: the ticket names a
+  session and the record under it proves the session key, so a ticket alone
+  opens nothing.
 - While a socket is attached, the session does not expire. When the socket
-  drops, the session lives `kSessionTtl` longer, and a reconnect within
+  drops, the session lives `kSessionTtl` longer, and a socket joined within
   that window rejoins it with every destination and stream still standing.
 - A session that expires takes its destinations and streams with it, and its
-  cookie stops naming anything. The next connection gets a new session and a new
-  cookie, and the client treats it as a router that restarted.
-- A cookie presented for a session that does not exist is not an error: the
-  gateway opens a fresh session and says `"resumed": false`. The client then
-  knows, in one field, that everything it had is gone.
-- A second **main** socket presenting a live session's cookie replaces the one
-  there, which is closed. A socket that has not noticed it is dead must not be
-  able to hold a phone out of its own session. Flow sockets are additions, not
-  replacements.
-- The cookie lives in memory only. It is a credential with a five minute life,
-  and a credential like that has no business in a file.
+  tickets stop naming anything. The next socket is refused its join, makes a new
+  session with a new key, and the client treats it as a router that restarted.
+- A second **main** socket of a live session replaces the one there, which is
+  closed. A socket that has not noticed it is dead must not be able to hold a
+  phone out of its own session. Flow sockets are additions, not replacements.
+- The session key and the tickets live in memory only, at both ends.
 - A client that stops its router stops its destinations first, and drops the
-  cookie: the term a session gets is for a connection that broke, not for
-  somebody who has just turned I2P off and would not expect his addresses to
-  stay published and reachable for five minutes more.
+  session key and its tickets: the term a session gets is for a connection that
+  broke, not for somebody who has just turned I2P off and would not expect his
+  addresses to stay published and reachable for five minutes more.
 
 ## Sockets
 
@@ -185,8 +208,8 @@ network means it to, rather than between two streams inside one.
 
 ### Attaching
 
-A flow socket upgrades with the same secret and the same cookie, and its first
-frame is `attach` naming the flow: the endpoint id of a realtime destination, or
+A flow socket joins the session with a ticket, and its first frame is `attach`
+naming the flow: the endpoint id of a realtime destination, or
 the id of a stream. There is no second handshake and no second session. A socket
 that opens with `hello` is the main one; a socket that opens with `attach` is a
 flow's.
@@ -275,7 +298,8 @@ Two things are done about it, and both are in version 1.
 ### Decoy requests
 
 On a timer the client sends a decoy to the gateway: an ordinary request to the
-same secret URL, carrying the same token, with a body of random bytes. The
+same secret URL, with a body of random bytes and nothing else - no credential
+of any kind, so a decoy says nothing about who sent it. The
 gateway answers with random bytes of its own and the client throws them away.
 The next one follows after a delay drawn between `kDecoyMinDelay` and
 `kDecoyMaxDelay`.
@@ -288,8 +312,8 @@ has to resemble a host, so it is the gateway that chooses. The request's own
 length is drawn between `kDecoyRequestMinBytes` and `kDecoyRequestMaxBytes`,
 which keeps it the shape of a request rather than an upload.
 
-A decoy without the token, or off the secret URL, is a 404 like everything else,
-so the gateway is not a source of random bytes for whoever finds it.
+A decoy off the secret URL is a 404 like everything else, so the gateway is a
+source of random bytes only for whoever already holds its path.
 
 Both distributions are the operator's to set, and setting them to resemble what
 the front serves is what makes the two populations of traffic to one host look
@@ -308,7 +332,7 @@ see instead is a host being fetched from, at intervals, the way a host is
 fetched from.
 
 This rides the machinery that is already there for a phone: the reconnect is an
-ordinary rejoin by cookie, and the session outliving its socket is what makes a
+ordinary join by ticket, and the session outliving its socket is what makes a
 deliberate disconnect cost nothing. It is worth saying which way round this
 works - the gateway holds the long-lived things, the client's leg is
 intermittent. The held-open request that waits for mail is an I2P stream on the
@@ -372,12 +396,13 @@ endpoint's identifier is the `ref` of its `endpoint-create`.
 
 | Type | Name | From | `ref` | Body |
 |---|---|---|---|---|
-| 0x01 | `hello` | client | request | `{"version": 1}` |
+| 0x01 | `hello` | client | request | `{"version": 2}` |
 | 0x02 | `ready` | gateway | echo | the session, below |
 | 0x03 | `ok` | gateway | echo | `{}`, or the operation's answer |
 | 0x04 | `error` | gateway | echo | `{"code": "...", "message": "..."}` |
 | 0x05 | `resume` | client | echo | `{"streams": [{"id": n, "received": n}]}` |
 | 0x06 | `attach` | client | flow | `{"received": n}`, on a flow socket's first frame |
+| 0x07 | `tickets` | gateway | 0 | `{"tickets": ["<base64>", ...]}`, the session's tickets topped up |
 | 0x10 | `endpoint-create` | client | endpoint | `{"kind": "stream\|raw", "published": true, "realtime": false, "target": "<host>", "keys": "<i2p base64>", "readers": ["<i2p base64>"], "readerKey": "<i2p base64>"}`, `target`, `keys` with `readers`, and `readerKey` optional |
 | 0x11 | `endpoint-stop` | client | endpoint | `{}` |
 | 0x12 | `endpoint-status` | gateway | endpoint | `{"ready": true, "host": "<b33>.b32.i2p", "tunnelsIn": 3, "tunnelsOut": 3, "leaseSets": 2, "localRoute": false}` |
@@ -403,12 +428,11 @@ The client sends `hello` as its first frame. The gateway answers `ready`:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "i2pd": "3.0.0",
   "capabilities": { "routerCounters": false, "destinationCounters": true,
                     "netDbSample": false, "proxy": false, "offlineKeys": false,
                     "warmPool": true },
-  "session": "<cookie>",
   "resumed": true,
   "endpoints": [ { "id": 2, "kind": "stream", "ready": true,
                    "host": "<b33>.b32.i2p", "tunnelsIn": 3, "tunnelsOut": 3,
@@ -963,7 +987,9 @@ Both sides agree, so there is nothing to refuse.
 | Name | Value | Why this value |
 |---|---|---|
 | `kSessionTtl` | 300 s | How long a session outlives its socket. Long enough for a lift, a tunnel or a handover; short enough that an abandoned phone costs the gateway five minutes of tunnels |
-| `kSessionCookieBytes` | 32 | The session cookie, from the system's random source |
+| `kTicketBytes` | 16 | A ticket that joins a socket to a live session, from the system's random source |
+| `kTicketsHeld` | 8 | Tickets a client holds; the gateway tops them up after `ready` and after `attach` |
+| `kHandshakePadMin`, `kHandshakePadMax` | 64, 4096 | The random padding each message of the handshake carries, so the three have no fixed lengths |
 | `kMaxFrameBytes` | 16384 | A WebSocket message cannot be interleaved with another, so this is the longest anything can be held by one already going out. It matters most on the main socket, where a stream with no socket of its own shares with control |
 | `kMaxSocketsPerSession` | 16 | The main one, a call, and enough transfers that the link is the limit rather than the protocol |
 | `kDecoyMinDelay` | 500 ms | The shortest wait between decoy requests |
@@ -994,7 +1020,7 @@ Both sides agree, so there is nothing to refuse.
 ## What this asks of the client
 
 1. `Backend::eGateway` beside `eEmbedded` and `eSam`, and `RouterConfig` gains
-   the gateway's secret URL, its SPKI pin, its SNI and its token.
+   the gateway's secret URL, whether it is `https`, and its fingerprint.
 2. Nothing client-side mints a key for a destination but the presence address:
    elsewhere `EndpointConfig::keys` stays empty and the transport mints.
    `privateBlob()` and `publicBase64()` throw rather than answer with something

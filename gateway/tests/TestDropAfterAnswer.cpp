@@ -21,7 +21,6 @@ using namespace bazarish::gateway;
 namespace {
 
 constexpr const char* kPath = "/a41f7d2c9e60";
-constexpr const char* kToken = "a-seventh-static-token";
 constexpr const char* kServerDest = "fkc4nkqn6k2bwrqsgbabnkyx4g5s2cp3nvnrdnkqxz4bzcbzrfaa.b32.i2p";
 constexpr std::chrono::seconds kWait{10};
 constexpr int kExchanges = 400;
@@ -55,7 +54,6 @@ int main()
     settings.listenHost = "127.0.0.1";
     settings.listenPort = 0;
     settings.basePath = kPath;
-    settings.token = kToken;
     settings.stateDir = root / "state";
     settings.notFoundBody = "<html>nothing</html>";
     DirectRoute route;
@@ -75,7 +73,7 @@ int main()
     config.gatewayHost = "127.0.0.1";
     config.gatewayPort = port;
     config.gatewayPath = kPath;
-    config.gatewayToken = kToken;
+    config.gatewayFingerprint = gateway.fingerprint();
     config.gatewayTls = false;
     i2p::Router client(config);
     client.start();

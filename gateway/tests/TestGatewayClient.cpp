@@ -4,6 +4,7 @@
 #include "TestRouter.hpp"
 #include "TestUtil.hpp"
 
+#include <bazarish/GatewayChannel.hpp>
 #include <bazarish/WebSocketClient.hpp>
 
 #include <chrono>
@@ -19,7 +20,6 @@ using namespace bazarish::gateway;
 namespace {
 
 constexpr const char* kPath = "/9d1c4b7e2f60";
-constexpr const char* kToken = "another-static-token";
 
 struct Heard {
     std::mutex mutex;
@@ -44,19 +44,14 @@ struct Heard {
     }
 };
 
-http::SocketDial dialFor(const int port, const std::string& cookie)
+http::SocketDial dialFor(const int port)
 {
     http::SocketDial dial;
     dial.host = "127.0.0.1";
     dial.port = port;
     dial.path = kPath;
     dial.tls = false;
-    dial.subprotocol = kSubprotocol;
-    dial.maxMessageBytes = kMaxFrameBytes;
-    dial.headers[kTokenHeader] = kToken;
-    if (!cookie.empty()) {
-        dial.headers[kSessionHeader] = cookie;
-    }
+    dial.maxMessageBytes = kMaxRecordBytes;
     return dial;
 }
 
@@ -73,7 +68,6 @@ int main()
     settings.listenHost = "127.0.0.1";
     settings.listenPort = 0;
     settings.basePath = kPath;
-    settings.token = kToken;
     settings.stateDir = root / "state";
     settings.decoyMinBytes = 512;
     settings.decoyMaxBytes = 1024;
@@ -85,19 +79,25 @@ int main()
     const int port = gateway.start();
     CHECK(port > 0);
 
-    const http::Probe reached = http::probeHost(dialFor(port, {}), std::string("noise"));
+    const http::Probe reached = http::probeHost(dialFor(port), std::string("noise"));
     CHECK(reached.reached);
     CHECK(reached.status == 200);
 
-    http::SocketDial wrong = dialFor(port, {});
-    wrong.headers[kTokenHeader] = "not-the-token";
-    const http::Probe refused = http::probeHost(wrong, std::string("noise"));
+    http::SocketDial elsewhere = dialFor(port);
+    elsewhere.path = std::string(kPath) + "/elsewhere";
+    const http::Probe refused = http::probeHost(elsewhere, std::string("noise"));
     CHECK(refused.reached);
     CHECK(refused.status == 404);
 
+    const ChannelOpened wrongKey = openChannel(dialFor(port), Identity::generate().fingerprint(),
+        std::nullopt, [](const http::SocketPtr&, const std::vector<unsigned char>&) {},
+        [](const http::SocketPtr&) {});
+    CHECK(wrongKey.socket == nullptr);
+    CHECK(wrongKey.wrongGateway);
+
     Heard heard;
-    const http::SocketDialResult opened = http::openSocket(
-        dialFor(port, {}),
+    const ChannelOpened opened = openChannel(
+        dialFor(port), gateway.fingerprint(), std::nullopt,
         [&heard](const http::SocketPtr&, const std::vector<unsigned char>& message) {
             heard.note(decode(message.data(), message.size()));
         },
@@ -107,6 +107,7 @@ int main()
         });
     CHECK(opened.error.empty());
     CHECK(opened.socket != nullptr);
+    CHECK(opened.welcome.has_value());
 
     opened.socket->send(encodeJson(FrameType::eHello, 2, {{"version", kProtocolVersion}}));
     CHECK(heard.waitForCount(1));
@@ -116,24 +117,25 @@ int main()
     const nlohmann::json body = bodyJson(ready);
     CHECK(body["version"] == kProtocolVersion);
     CHECK(body["resumed"] == false);
-    const std::string cookie = body["session"];
-    CHECK(!cookie.empty());
 
     opened.socket->close();
     Heard second;
-    const http::SocketDialResult again = http::openSocket(
-        dialFor(port, cookie),
+    const ChannelOpened again = openChannel(dialFor(port), gateway.fingerprint(),
+        ChannelJoin{opened.welcome->sessionKey, opened.welcome->tickets.front()},
         [&second](const http::SocketPtr&, const std::vector<unsigned char>& message) {
-            second.note(decode(message.data(), message.size()));
+            const Frame frame = decode(message.data(), message.size());
+            if (frame.type != FrameType::eTickets) {
+                second.note(frame);
+            }
         },
-        nullptr);
+        [](const http::SocketPtr&) {});
     CHECK(again.error.empty());
     CHECK(again.socket != nullptr);
+    CHECK(!again.welcome.has_value());
     again.socket->send(encodeJson(FrameType::eHello, 2, {{"version", kProtocolVersion}}));
     CHECK(second.waitForCount(1));
     const nlohmann::json rejoined = bodyJson(second.frames.front());
     CHECK(rejoined["resumed"] == true);
-    CHECK(rejoined["session"] == cookie);
     again.socket->close();
 
     i2p::RouterConfig gatewayConfig;
@@ -141,7 +143,7 @@ int main()
     gatewayConfig.gatewayHost = "127.0.0.1";
     gatewayConfig.gatewayPort = port;
     gatewayConfig.gatewayPath = kPath;
-    gatewayConfig.gatewayToken = kToken;
+    gatewayConfig.gatewayFingerprint = gateway.fingerprint();
     gatewayConfig.gatewayTls = false;
     i2p::Router borrowed(gatewayConfig);
 

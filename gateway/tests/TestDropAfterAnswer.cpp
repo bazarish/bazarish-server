@@ -88,9 +88,9 @@ int main()
         CHECK(stream != nullptr);
         stream->setReadTimeout(kWait);
         const std::string ask = "GET /card HTTP/1.1\r\nHost: served\r\nConnection: close\r\n\r\n";
-        stream->writeAll(ask.data(), ask.size());
+        stream->writeAll(bazarish::viewOf(ask));
         std::string heard;
-        std::vector<char> buffer(4096);
+        std::vector<unsigned char> buffer(4096);
         try {
             for (;;) {
                 const std::size_t headers = heard.find(kHeaderEnd);
@@ -98,11 +98,11 @@ int main()
                     && heard.size() - headers - std::string(kHeaderEnd).size() >= kAnswerBytes) {
                     break;
                 }
-                const std::size_t got = stream->readSome(buffer.data(), buffer.size());
+                const std::size_t got = stream->readSome(buffer);
                 if (got == 0) {
                     break;
                 }
-                heard.append(buffer.data(), got);
+                heard.append(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(got));
             }
         } catch (const std::exception& error) {
             std::printf("exchange %d: %s after %zu bytes\n", exchange, error.what(), heard.size());

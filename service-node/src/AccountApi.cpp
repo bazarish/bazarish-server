@@ -718,13 +718,12 @@ void AccountApi::setupRoutes()
 
     const auto authenticated = [this](auto handler) {
         return [this, handler](const http::Request& request, http::Response& response) {
-            std::string user;
-            if (const std::optional<http::Response> refused
-                = tunnel_.authenticate(request, &user);
-                refused.has_value()) {
-                response = *refused;
+            const server::Caller caller = tunnel_.authenticate(request);
+            if (caller.refused.has_value()) {
+                response = *caller.refused;
                 return;
             }
+            const std::string& user = caller.user;
             if (options_.admitsUser && !options_.admitsUser(user)) {
                 respondError(response, 403, ErrorCode::eRequestFailed,
                     "this node serves only its own accounts");

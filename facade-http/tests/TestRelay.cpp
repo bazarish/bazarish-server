@@ -9,7 +9,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
-#include <cstring>
+#include <algorithm>
 #include <mutex>
 #include <thread>
 
@@ -20,16 +20,16 @@ constexpr auto kQuickerThanDrain = std::chrono::milliseconds(bazarish::facade::k
 
 class TalkativeStream {
 public:
-    std::size_t readSome(void* buffer, const std::size_t size)
+    std::size_t readSome(const bazarish::ByteBuffer buffer)
     {
         if (closed_.load()) {
             return 0;
         }
-        std::memset(buffer, kFiller, size);
-        return size;
+        std::fill(buffer.begin(), buffer.end(), kFiller);
+        return buffer.size();
     }
 
-    void writeAll(const void*, std::size_t) {}
+    void writeAll(bazarish::ByteView) {}
 
     void close() { closed_.store(true); }
 
@@ -39,14 +39,14 @@ private:
 
 class SilentStream {
 public:
-    std::size_t readSome(void*, std::size_t)
+    std::size_t readSome(bazarish::ByteBuffer)
     {
         std::unique_lock<std::mutex> lock(mutex_);
         closing_.wait(lock, [this]() { return closed_; });
         return 0;
     }
 
-    void writeAll(const void*, std::size_t) {}
+    void writeAll(bazarish::ByteView) {}
 
     void close()
     {

@@ -1,5 +1,6 @@
 // Bazarish project (c) 2026
 #include "HttpApi.hpp"
+#include "EventGate.hpp"
 
 #include "DiskStorage.hpp"
 
@@ -66,7 +67,8 @@ int main()
         = [](const std::string&) { return DestinationAssignment{"x.b32.i2p", "home"}; };
     options.accountKnown = [](const std::string&) { return true; };
 
-    HttpApi api(storage, options);
+    EventGate eventGate;
+    HttpApi api(storage, eventGate, options);
     const int port = api.bind("127.0.0.1", 0);
     CHECK(port > 0);
     std::thread serverThread([&api]() { api.wait(); });

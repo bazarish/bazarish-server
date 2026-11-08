@@ -94,7 +94,7 @@ int main()
     };
 
     {
-        PerUserDestinations guard(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal, {}, {});
+        PerUserDestinations guard(std::nullopt, engine, root, bazarish::i2p::Privacy::eMinimal, {}, {});
         const auto refused = [](const auto& call) {
             try {
                 call();
@@ -129,7 +129,7 @@ int main()
     }
 
     {
-        PerUserDestinations dests(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal, {}, {});
+        PerUserDestinations dests(std::nullopt, engine, root, bazarish::i2p::Privacy::eMinimal, {}, {});
 
         const PerUserDestinations::Assignment served = dests.provision(
             alice, transientA, shortExpiry, sealingA.privatePem(), signingA.privatePem());
@@ -175,12 +175,12 @@ int main()
 
     const std::string bob = toBase32(Bytes(32, 0x02));
     {
-        PerUserDestinations writer(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal, {}, {});
+        PerUserDestinations writer(std::nullopt, engine, root, bazarish::i2p::Privacy::eMinimal, {}, {});
         writer.provision(alice, transientB, longExpiry, sealingA.privatePem(), signingA.privatePem());
         writer.provision(bob, transientA, shortExpiry, sealingB.privatePem(), signingB.privatePem());
     }
     {
-        PerUserDestinations reloaded(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal, {}, {});
+        PerUserDestinations reloaded(std::nullopt, engine, root, bazarish::i2p::Privacy::eMinimal, {}, {});
         reloaded.reloadPersisted(shortExpiry - bazarish::i2p::kDelegationLapseLeadSeconds);
         CHECK(reloaded.size() == 1);
         CHECK(reloaded.assignmentFor(alice, shortExpiry - 1).sealingKey->publicDer()
@@ -190,7 +190,7 @@ int main()
     }
 
     {
-        PerUserDestinations dests(nullptr, engine, root, bazarish::i2p::Privacy::eMinimal, {}, {});
+        PerUserDestinations dests(std::nullopt, engine, root, bazarish::i2p::Privacy::eMinimal, {}, {});
         dests.provision(alice, transientA, shortExpiry, sealingA.privatePem(), signingA.privatePem());
         CHECK(dests.size() == 1);
         const std::int64_t goesDownAt = shortExpiry - bazarish::i2p::kDelegationLapseLeadSeconds;

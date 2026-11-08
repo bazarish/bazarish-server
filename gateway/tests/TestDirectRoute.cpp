@@ -44,12 +44,12 @@ int main()
     const std::unique_ptr<Conduit> pipe = overTls(route, std::chrono::seconds(5));
     const std::string ask
         = "GET /v1/server/card HTTP/1.1\r\nHost: served\r\nConnection: close\r\n\r\n";
-    pipe->writeAll(ask.data(), ask.size());
+    pipe->writeAll(bazarish::viewOf(ask));
 
     std::string heard;
     std::string buffer(1024, '\0');
     for (;;) {
-        const std::size_t got = pipe->readSome(buffer.data(), buffer.size());
+        const std::size_t got = pipe->readSome(bazarish::bufferOf(buffer));
         if (got == 0) {
             break;
         }

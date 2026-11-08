@@ -135,8 +135,7 @@ void TunnelFace::serve(
         });
 }
 
-std::optional<http::Response> TunnelFace::authenticate(
-    const http::Request& request, std::string* const outUser)
+Caller TunnelFace::authenticate(const http::Request& request)
 {
     const auth::Headers authHeaders = http::collectAuthHeaders(request);
     const std::string clientId = request.header(auth::kHeaderClient);
@@ -145,27 +144,28 @@ std::optional<http::Response> TunnelFace::authenticate(
         const std::optional<SessionStore::Session> session
             = sessions_.findByHandle(handle, nowSeconds());
         if (!session.has_value()) {
-            return errorResponse(401, ErrorCode::eSessionInvalid, "unknown or expired session");
+            return Caller{
+                {}, errorResponse(401, ErrorCode::eSessionInvalid, "unknown or expired session")};
         }
         try {
             const std::uint64_t seq = auth::verifyMac(authHeaders, session->key, nowSeconds(),
                 request.method, request.path, bodyBytes(request), clientId);
             if (!sessions_.acceptSeq(handle, seq, nowSeconds())) {
-                return errorResponse(401, ErrorCode::eSessionInvalid, "sequence replayed");
+                return Caller{
+                    {}, errorResponse(401, ErrorCode::eSessionInvalid, "sequence replayed")};
             }
         } catch (const std::exception& error) {
-            return errorResponse(401, ErrorCode::eSessionInvalid, error.what());
+            return Caller{{}, errorResponse(401, ErrorCode::eSessionInvalid, error.what())};
         }
-        *outUser = session->user;
-        return std::nullopt;
+        return Caller{session->user, std::nullopt};
     }
     try {
-        *outUser = auth::verifyRequest(authHeaders, nowSeconds(), request.method, request.path,
-            bodyBytes(request), replays_, clientId);
+        return Caller{auth::verifyRequest(authHeaders, nowSeconds(), request.method, request.path,
+                          bodyBytes(request), replays_, clientId),
+            std::nullopt};
     } catch (const std::exception& error) {
-        return errorResponse(401, ErrorCode::eRequestFailed, error.what());
+        return Caller{{}, errorResponse(401, ErrorCode::eRequestFailed, error.what())};
     }
-    return std::nullopt;
 }
 
 }  // namespace bazarish::server

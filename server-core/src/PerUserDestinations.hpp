@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -26,7 +27,9 @@ namespace bazarish::server {
 
 class PerUserDestinations {
 public:
-    PerUserDestinations(bazarish::i2p::Router* router, DeliveryEngine& engine,
+    // Without a router it only keeps the records.
+    PerUserDestinations(std::optional<std::reference_wrapper<bazarish::i2p::Router>> router,
+        DeliveryEngine& engine,
         std::filesystem::path stateDir, bazarish::i2p::Privacy privacy, GetCardFn getCard,
         std::function<void()> servedChanged);
     ~PerUserDestinations();
@@ -82,28 +85,28 @@ private:
     static Assignment assignedLocked(const Destination& destination, std::int64_t now);
     void announceServed() const;
     void reloadLocked(std::int64_t now);
-    void serveLoop(Destination* destination, const std::string& userFp);
+    void serveLoop(Destination& destination, const std::string& userFp);
     void startWatchdog();
     void watchStream(const std::shared_ptr<bazarish::i2p::Stream>& stream);
-    void unwatchStream(const bazarish::i2p::Stream* stream);
+    void unwatchStream(const std::shared_ptr<bazarish::i2p::Stream>& stream);
     void startSweeper();
     std::chrono::seconds nextSweepInLocked(std::int64_t now) const;
     std::filesystem::path pathFor(const std::string& userFp) const;
     std::filesystem::path destsDir() const;
 
-    bazarish::i2p::Router* const router_;
+    const std::optional<std::reference_wrapper<bazarish::i2p::Router>> router_;
     DeliveryEngine& engine_;
     const std::filesystem::path stateDir_;
     const bazarish::i2p::Privacy privacy_;
     const GetCardFn getCard_;
     const std::function<void()> servedChanged_;
     mutable std::mutex mutex_;
-    std::map<std::string, std::unique_ptr<Destination>> dests_;
+    std::map<std::string, std::shared_ptr<Destination>> dests_;
     std::thread sweeper_;
     std::condition_variable sweepDue_;
     std::thread watchdog_;
     std::mutex retiringMutex_;
-    std::vector<std::unique_ptr<Destination>> retiring_;
+    std::vector<std::shared_ptr<Destination>> retiring_;
     std::mutex watchMutex_;
     std::vector<std::pair<std::weak_ptr<bazarish::i2p::Stream>,
         std::chrono::steady_clock::time_point>>

@@ -99,7 +99,7 @@ int main()
     const ChannelOpened opened = openChannel(
         dialFor(port), gateway.fingerprint(), std::nullopt,
         [&heard](const http::SocketPtr&, const std::vector<unsigned char>& message) {
-            heard.note(decode(message.data(), message.size()));
+            heard.note(decode(message));
         },
         [&heard](const http::SocketPtr&) {
             const std::lock_guard<std::mutex> lock(heard.mutex);
@@ -123,7 +123,7 @@ int main()
     const ChannelOpened again = openChannel(dialFor(port), gateway.fingerprint(),
         ChannelJoin{opened.welcome->sessionKey, opened.welcome->tickets.front()},
         [&second](const http::SocketPtr&, const std::vector<unsigned char>& message) {
-            const Frame frame = decode(message.data(), message.size());
+            const Frame frame = decode(message);
             if (frame.type != FrameType::eTickets) {
                 second.note(frame);
             }

@@ -101,8 +101,8 @@ SignAckFn signAckWith(std::shared_ptr<Key> signingKey)
 
 }  // namespace
 
-PerUserDestinations::PerUserDestinations(bazarish::i2p::Router* const router,
-    DeliveryEngine& engine, std::filesystem::path stateDir, const bazarish::i2p::Privacy privacy,
+PerUserDestinations::PerUserDestinations(
+    const std::optional<std::reference_wrapper<bazarish::i2p::Router>> router, DeliveryEngine& engine, std::filesystem::path stateDir, const bazarish::i2p::Privacy privacy,
     GetCardFn getCard, std::function<void()> servedChanged)
     : router_(router)
     , engine_(engine)
@@ -149,7 +149,7 @@ PerUserDestinations::~PerUserDestinations()
 
 void PerUserDestinations::reapRetired()
 {
-    std::vector<std::unique_ptr<Destination>> retired;
+    std::vector<std::shared_ptr<Destination>> retired;
     {
         const std::lock_guard<std::mutex> lock(retiringMutex_);
         retired.swap(retiring_);
@@ -171,13 +171,13 @@ void PerUserDestinations::watchStream(const std::shared_ptr<bazarish::i2p::Strea
         std::chrono::steady_clock::now() + std::chrono::seconds(kServeDeadlineSeconds));
 }
 
-void PerUserDestinations::unwatchStream(const bazarish::i2p::Stream* const stream)
+void PerUserDestinations::unwatchStream(const std::shared_ptr<bazarish::i2p::Stream>& stream)
 {
     const std::lock_guard<std::mutex> lock(watchMutex_);
     watched_.erase(std::remove_if(watched_.begin(), watched_.end(),
-                       [stream](const auto& entry) {
+                       [&stream](const auto& entry) {
                            const std::shared_ptr<bazarish::i2p::Stream> held = entry.first.lock();
-                           return !held || held.get() == stream;
+                           return !held || held == stream;
                        }),
         watched_.end());
 }
@@ -218,37 +218,36 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
     const std::int64_t expiresUnix, const std::string& sealingKeyPem,
     const std::string& signingKeyPem)
 {
-    auto dest = std::make_unique<Destination>();
+    const auto dest = std::make_shared<Destination>();
     dest->transientB64 = transientB64;
     dest->expiresUnix = expiresUnix;
     dest->sealingKey = std::make_shared<Key>(Key::fromPrivatePem(sealingKeyPem));
     dest->signingKey = std::make_shared<Key>(Key::fromPrivatePem(signingKeyPem));
     dest->dest = addressOfTransient(transientB64);
     sweepDue_.notify_all();
-    Destination* const raw = dest.get();
-    if (router_ != nullptr) {
+    if (router_.has_value()) {
         for (std::size_t i = 1; i < kServeWorkers; ++i) {
-            raw->workers.emplace_back([this, raw, userFp]() { serveLoop(raw, userFp); });
+            dest->workers.emplace_back([this, dest, userFp]() { serveLoop(*dest, userFp); });
         }
-        raw->workers.emplace_back([this, raw, transientB64, userFp]() {
+        dest->workers.emplace_back([this, dest, transientB64, userFp]() {
             try {
                 const bazarish::i2p::Keys keys
                     = bazarish::i2p::Keys::fromBlob(fromBase64(transientB64));
-                auto endpoint = router_->createEndpoint(bazarish::i2p::EndpointConfig{
+                auto endpoint = router_->get().createEndpoint(bazarish::i2p::EndpointConfig{
                     keys, privacy_, bazarish::i2p::kServerTunnelQuantity, true});
                 {
                     const std::lock_guard<std::mutex> lock(mutex_);
-                    raw->endpoint = endpoint;
+                    dest->endpoint = endpoint;
                 }
                 bool up = false;
-                for (int waited = 0; waited < kPublishWaitSeconds && raw->running.load();
+                for (int waited = 0; waited < kPublishWaitSeconds && dest->running.load();
                      waited += kPublishPollSeconds) {
                     up = endpoint->waitReady(std::chrono::seconds(kPublishPollSeconds));
                     if (up) {
                         break;
                     }
                 }
-                if (!raw->running.load()) {
+                if (!dest->running.load()) {
                     endpoint->stop();
                     return;
                 }
@@ -261,23 +260,23 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
                         "keeps building, the account is unreachable until it has one",
                         bazarish::log::redact(userFp), kPublishWaitSeconds);
                 }
-                serveLoop(raw, userFp);
+                serveLoop(*dest, userFp);
             } catch (const std::exception& error) {
                 bazarish::log::warn("destination for {} is down: {}",
                     bazarish::log::redact(userFp), error.what());
             }
         });
     }
-    dests_[userFp] = std::move(dest);
+    dests_[userFp] = dest;
 }
 
-void PerUserDestinations::serveLoop(Destination* const raw, const std::string& userFp)
+void PerUserDestinations::serveLoop(Destination& destination, const std::string& userFp)
 {
     std::shared_ptr<bazarish::i2p::Endpoint> endpoint;
-    while (raw->running.load() && !endpoint) {
+    while (destination.running.load() && !endpoint) {
         {
             const std::lock_guard<std::mutex> lock(mutex_);
-            endpoint = raw->endpoint;
+            endpoint = destination.endpoint;
         }
         if (!endpoint) {
             std::this_thread::sleep_for(std::chrono::milliseconds(kEndpointPollMillis));
@@ -286,7 +285,7 @@ void PerUserDestinations::serveLoop(Destination* const raw, const std::string& u
     if (!endpoint) {
         return;
     }
-    while (raw->running.load()) {
+    while (destination.running.load()) {
         std::string peer;
         std::shared_ptr<bazarish::i2p::Stream> stream;
         try {
@@ -300,7 +299,7 @@ void PerUserDestinations::serveLoop(Destination* const raw, const std::string& u
         if (!stream) {
             continue;
         }
-        if (!raw->running.load()) {
+        if (!destination.running.load()) {
             stream->close();
             return;
         }
@@ -309,15 +308,15 @@ void PerUserDestinations::serveLoop(Destination* const raw, const std::string& u
             std::shared_ptr<Key> signingKey;
             {
                 const std::lock_guard<std::mutex> lock(mutex_);
-                serving = raw->sealingKey;
-                signingKey = raw->signingKey;
+                serving = destination.sealingKey;
+                signingKey = destination.signingKey;
             }
             watchStream(stream);
             federationServeOnce(*stream, engine_, nowSeconds(), peer, *serving, userFp,
                 getCard_, signAckWith(signingKey));
-            unwatchStream(stream.get());
+            unwatchStream(stream);
         } catch (const std::exception& error) {
-            unwatchStream(stream.get());
+            unwatchStream(stream);
             bazarish::log::warn("serving a user's destination failed: {}", error.what());
         }
     }

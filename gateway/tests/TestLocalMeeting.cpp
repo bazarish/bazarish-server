@@ -64,13 +64,13 @@ bool routedLocally(const i2p::Router& router, const std::string& host)
 std::string readAll(i2p::Stream& stream, const std::size_t expected)
 {
     std::string got;
-    std::vector<char> buffer(256);
+    std::vector<unsigned char> buffer(256);
     while (got.size() < expected) {
-        const std::size_t read = stream.readSome(buffer.data(), buffer.size());
+        const std::size_t read = stream.readSome(buffer);
         if (read == 0) {
             break;
         }
-        got.append(buffer.data(), read);
+        got.append(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(read));
     }
     return got;
 }
@@ -151,35 +151,35 @@ int main()
     CHECK(!caller.empty());
 
     const std::string noise = "media";
-    CHECK_THROWS(his->sendRawDatagram(host, noise.data(), noise.size()));
+    CHECK_THROWS(his->sendRawDatagram(host, bazarish::viewOf(noise)));
     CHECK_THROWS(hers->receiveRawDatagram(std::chrono::milliseconds(10)));
 
     const std::string question = "who is there";
-    out->writeAll(question.data(), question.size());
+    out->writeAll(bazarish::viewOf(question));
     CHECK(readAll(*in, question.size()) == question);
 
     const std::string answer = "somebody on the same gateway";
-    in->writeAll(answer.data(), answer.size());
+    in->writeAll(bazarish::viewOf(answer));
     CHECK(readAll(*out, answer.size()) == answer);
 
     std::string bulk;
     while (bulk.size() < 3 * kStreamWindowBytes) {
         bulk += "0123456789abcdef";
     }
-    out->writeAll(bulk.data(), bulk.size());
+    out->writeAll(bazarish::viewOf(bulk));
     CHECK(readAll(*in, bulk.size()) == bulk);
 
     const std::string last = "goodbye";
-    in->writeAll(last.data(), last.size());
+    in->writeAll(bazarish::viewOf(last));
     in->close();
     std::string tail;
-    std::vector<char> buffer(64);
+    std::vector<unsigned char> buffer(64);
     for (;;) {
-        const std::size_t read = out->readSome(buffer.data(), buffer.size());
+        const std::size_t read = out->readSome(buffer);
         if (read == 0) {
             break;
         }
-        tail.append(buffer.data(), read);
+        tail.append(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(read));
     }
     CHECK(tail == last);
 
@@ -192,9 +192,9 @@ int main()
     CHECK(taken != nullptr);
     std::atomic<bool> ended{false};
     std::thread reader([&]() {
-        std::vector<char> idle(64);
+        std::vector<unsigned char> idle(64);
         try {
-            (void)taken->readSome(idle.data(), idle.size());
+            (void)taken->readSome(idle);
         } catch (const std::exception&) {
         }
         ended.store(true);

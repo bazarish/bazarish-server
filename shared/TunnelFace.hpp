@@ -13,13 +13,19 @@
 
 namespace bazarish::server {
 
+struct Caller {
+    std::string user;
+    // Set when the request is not let in; the user is empty then.
+    std::optional<http::Response> refused;
+};
+
 class TunnelFace {
 public:
     explicit TunnelFace(std::shared_ptr<Key> sealingKey);
 
     void serve(const http::Request& request, http::Server& routes, http::Responder respond);
 
-    std::optional<http::Response> authenticate(const http::Request& request, std::string* outUser);
+    Caller authenticate(const http::Request& request);
 
 private:
     const std::shared_ptr<Key> sealingKey_;

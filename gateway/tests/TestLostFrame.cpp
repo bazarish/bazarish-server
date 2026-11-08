@@ -104,10 +104,10 @@ int main()
     std::atomic<std::size_t> received{0};
     in->setReadTimeout(std::chrono::seconds(kWaitSeconds));
     std::thread taking([&]() {
-        std::vector<char> buffer(kReadChunk);
+        std::vector<unsigned char> buffer(kReadChunk);
         try {
             while (received.load() < kTotalBytes) {
-                const std::size_t got = in->readSome(buffer.data(), buffer.size());
+                const std::size_t got = in->readSome(buffer);
                 if (got == 0) {
                     break;
                 }
@@ -122,7 +122,7 @@ int main()
     while (payload.size() < kTotalBytes) {
         payload += static_cast<char>('a' + payload.size() % 26);
     }
-    out->writeAll(payload.data(), payload.size());
+    out->writeAll(bazarish::viewOf(payload));
     CHECK(waitFor([&]() { return out->pendingBytes() == 0; }));
     CHECK(received.load() < kTotalBytes);
 

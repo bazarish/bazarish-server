@@ -29,7 +29,7 @@ constexpr std::size_t kMaxPrefaceBytes = 4096;
 void answer(TlsPipe& pipe, const bool ok)
 {
     const std::string line = nlohmann::json({{"ok", ok}}).dump() + "\n";
-    pipe.writeAll(line.data(), line.size());
+    pipe.writeAll(viewOf(line));
 }
 
 }  // namespace
@@ -241,7 +241,7 @@ void GatewayLink::watch(const std::shared_ptr<TlsPipe>& pipe)
             now = version_;
         }
         const std::string line = nlohmann::json({{"dests", listed_()}}).dump() + "\n";
-        pipe->writeAll(line.data(), line.size());
+        pipe->writeAll(viewOf(line));
         told = now;
     }
 }

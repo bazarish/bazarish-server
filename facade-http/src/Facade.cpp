@@ -41,24 +41,25 @@ std::string pathOf(const std::string& target)
     return target.substr(0, target.find('?'));
 }
 
-const Upstream* upstreamFor(const FacadeOptions& options, const bazarish::http::Request& request)
+std::optional<Upstream> upstreamFor(
+    const FacadeOptions& options, const bazarish::http::Request& request)
 {
     const std::string path = pathOf(request.target);
     const bool tunnel = request.method == "POST";
     const bool card = request.method == "GET";
     if ((tunnel && path == bazarish::tunnel::kTunnelPath)
         || (card && path == bazarish::tunnel::kServerCardPath)) {
-        return &options.messaging;
+        return options.messaging;
     }
     if ((tunnel && path == bazarish::tunnel::kNodeTunnelPath)
         || (card && path == bazarish::tunnel::kNodeCardPath)) {
-        return &options.serviceNode;
+        return options.serviceNode;
     }
     if ((tunnel && path == loginrelay::kCallbackPath)
         || (card && loginrelay::nonceAfter(path, loginrelay::kChallengePrefix))) {
-        return &options.serviceNode;
+        return options.serviceNode;
     }
-    return nullptr;
+    return std::nullopt;
 }
 
 bazarish::http::Response notFound()
@@ -171,8 +172,8 @@ void Facade::setupRoutes(bazarish::http::Server& server)
                              bazarish::http::Responder respond)
         -> std::optional<bazarish::http::Response> {
         load_.record(nowSeconds());
-        const Upstream* const upstream = upstreamFor(options_, request);
-        if (upstream == nullptr) {
+        const std::optional<Upstream> upstream = upstreamFor(options_, request);
+        if (!upstream.has_value()) {
             return notFound();
         }
         const auto inFlight = std::make_shared<Load::InFlight>(load_);

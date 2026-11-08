@@ -49,7 +49,6 @@ struct HttpApiOptions {
 
     std::function<std::vector<Bytes>(std::size_t count)> reseedSample;
     std::function<std::uint64_t()> diskUsage;
-    EventGate* eventGate = nullptr;
     std::shared_ptr<const Identity> identity;
     std::shared_ptr<Key> sealingKey;
     Bytes serverCardDer;
@@ -61,7 +60,7 @@ struct HttpApiOptions {
 
 class HttpApi {
 public:
-    HttpApi(Storage& storage, HttpApiOptions options);
+    HttpApi(Storage& storage, EventGate& eventGate, HttpApiOptions options);
     ~HttpApi();
 
     HttpApi(const HttpApi&) = delete;
@@ -88,6 +87,7 @@ private:
     std::int64_t reseedPackedAt_ = 0;
 
     Storage& storage_;
+    EventGate& eventGate_;
     const HttpApiOptions options_;
 
     std::unique_ptr<bazarish::http::Server> http_;

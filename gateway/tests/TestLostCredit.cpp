@@ -126,7 +126,7 @@ int main()
     while (payload.size() < kTotalBytes) {
         payload += static_cast<char>('a' + payload.size() % 26);
     }
-    out->writeAll(payload.data(), payload.size());
+    out->writeAll(bazarish::viewOf(payload));
     settle([&]() { return out->pendingBytes(); });
     CHECK(out->pendingBytes() >= kStreamWindowBytes);
 
@@ -138,10 +138,10 @@ int main()
     std::atomic<bool> ended{false};
     in->setReadTimeout(std::chrono::seconds(kWaitSeconds));
     std::thread reader([&]() {
-        std::vector<char> buffer(kReadChunk);
+        std::vector<unsigned char> buffer(kReadChunk);
         try {
             while (received.load() < kTotalBytes) {
-                const std::size_t got = in->readSome(buffer.data(), buffer.size());
+                const std::size_t got = in->readSome(buffer);
                 if (got == 0) {
                     break;
                 }

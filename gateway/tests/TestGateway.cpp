@@ -175,7 +175,7 @@ Frame receive(Dialled& dialled)
     while (true) {
         const std::optional<Bytes> opened = dialled.records->open(readRaw(*dialled.socket));
         CHECK(opened.has_value());
-        const Frame frame = decode(opened->data(), opened->size());
+        const Frame frame = decode(*opened);
         if (frame.type != FrameType::eTickets) {
             return frame;
         }

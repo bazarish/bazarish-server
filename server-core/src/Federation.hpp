@@ -48,7 +48,7 @@ void federationServeOnce(Stream& stream, DeliveryEngine& engine, const std::int6
             const std::size_t keep = std::min<std::size_t>(len, kMaxMessagePayloadBytes + 1);
             Bytes payload(keep);
             if (keep > 0) {
-                reader.read(payload.data(), keep);
+                reader.read(ByteBuffer(payload));
             }
             if (len > kMaxDiscardBytes) {
                 throw std::runtime_error("a delivery claiming " + std::to_string(len)
@@ -58,7 +58,7 @@ void federationServeOnce(Stream& stream, DeliveryEngine& engine, const std::int6
             std::array<unsigned char, kDiscardChunkBytes> sink{};
             while (left > 0) {
                 const std::size_t chunk = std::min<std::size_t>(left, sink.size());
-                reader.read(sink.data(), chunk);
+                reader.read(ByteBuffer(sink).first(chunk));
                 left -= chunk;
             }
             return payload;

@@ -1,5 +1,6 @@
 // Bazarish project (c) 2026
 #include "HttpApi.hpp"
+#include "EventGate.hpp"
 
 #include "DeliveryEngine.hpp"
 #include "DiskStorage.hpp"
@@ -157,7 +158,8 @@ int main()
     httpOptions.identity
         = std::make_shared<const Identity>(Identity::fromPrivatePem(serverIdentity.privatePem()));
 
-    HttpApi api(storage, httpOptions);
+    EventGate eventGate;
+    HttpApi api(storage, eventGate, httpOptions);
 
     const int port = api.bind("127.0.0.1", 0);
     const int opsPort = api.bindOps("127.0.0.1", 0);

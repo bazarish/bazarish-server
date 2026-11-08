@@ -71,9 +71,9 @@ std::unique_ptr<TlsPipe> streamTo(const int port, const tls::Credential& server,
     const tls::Credential& gateway, const std::string& to, const std::string& from)
 {
     std::unique_ptr<TlsPipe> pipe
-        = TlsPipe::dial("127.0.0.1", port, server.pin, kDeadline, &gateway);
+        = TlsPipe::dial("127.0.0.1", port, server.pin, kDeadline, gateway);
     const std::string preface = nlohmann::json({{"to", to}, {"from", from}}).dump() + "\n";
-    pipe->writeAll(preface.data(), preface.size());
+    pipe->writeAll(bazarish::viewOf(preface));
     return pipe;
 }
 
@@ -84,17 +84,13 @@ public:
     {
     }
 
-    std::size_t readSome(void* buffer, const std::size_t size)
-    {
-        return pipe_.readSome(buffer, size);
-    }
+    std::size_t readSome(const bazarish::ByteBuffer buffer) { return pipe_.readSome(buffer); }
 
-    void readExact(void* buffer, const std::size_t size)
+    void readExact(const bazarish::ByteBuffer buffer)
     {
-        auto* const at = static_cast<unsigned char*>(buffer);
         std::size_t done = 0;
-        while (done < size) {
-            const std::size_t got = pipe_.readSome(at + done, size - done);
+        while (done < buffer.size()) {
+            const std::size_t got = pipe_.readSome(buffer.subspan(done));
             if (got == 0) {
                 throw std::runtime_error("the server ended the stream early");
             }
@@ -102,7 +98,7 @@ public:
         }
     }
 
-    void writeAll(const void* data, const std::size_t size) { pipe_.writeAll(data, size); }
+    void writeAll(const bazarish::ByteView data) { pipe_.writeAll(data); }
 
 private:
     TlsPipe& pipe_;
@@ -138,7 +134,7 @@ int main()
     DiskStorage storage(root / "storage");
     DeliveryEngine engine(storage, DeliveryEngineOptions{});
     std::unique_ptr<GatewayLink> linked;
-    PerUserDestinations dests(nullptr, engine, root / "dests", i2p::Privacy::eMinimal, {},
+    PerUserDestinations dests(std::nullopt, engine, root / "dests", i2p::Privacy::eMinimal, {},
         [&linked]() { linked->servedChanged(); });
 
     const tls::Credential server = tls::selfSigned(root / "server");
@@ -166,14 +162,14 @@ int main()
 
     {
         const std::unique_ptr<TlsPipe> refused
-            = TlsPipe::dial("127.0.0.1", port, server.pin, kDeadline, &stranger);
-        refused->writeAll(kWatch.data(), kWatch.size());
+            = TlsPipe::dial("127.0.0.1", port, server.pin, kDeadline, stranger);
+        refused->writeAll(bazarish::viewOf(kWatch));
         CHECK(cutOff(*refused));
     }
 
     const std::unique_ptr<TlsPipe> watch
-        = TlsPipe::dial("127.0.0.1", port, server.pin, kDeadline, &gateway);
-    watch->writeAll(kWatch.data(), kWatch.size());
+        = TlsPipe::dial("127.0.0.1", port, server.pin, kDeadline, gateway);
+    watch->writeAll(bazarish::viewOf(kWatch));
     CHECK(listed(*watch) == std::vector<std::string>{aliceServed.dest});
 
     const PerUserDestinations::Assignment bobServed = provisioned(bob, bobKeys);

@@ -97,15 +97,15 @@ int main()
         stream->setReadTimeout(std::chrono::seconds(kWaitSeconds));
         const std::string ask = "GET /slow HTTP/1.1\r\nHost: served\r\nConnection: close\r\n\r\n";
         std::string heard;
-        std::vector<char> buffer(4096);
+        std::vector<unsigned char> buffer(4096);
         try {
-            stream->writeAll(ask.data(), ask.size());
+            stream->writeAll(bazarish::viewOf(ask));
             for (;;) {
-                const std::size_t got = stream->readSome(buffer.data(), buffer.size());
+                const std::size_t got = stream->readSome(buffer);
                 if (got == 0) {
                     break;
                 }
-                heard.append(buffer.data(), got);
+                heard.append(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(got));
             }
         } catch (const std::exception& error) {
             std::printf("request %d: %s after %zu bytes\n", request, error.what(), heard.size());

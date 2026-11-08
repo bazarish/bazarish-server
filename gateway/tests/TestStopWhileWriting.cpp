@@ -72,7 +72,7 @@ int main()
     const std::shared_ptr<i2p::Endpoint> hers = alice.createEndpoint(serving);
     const std::string host = hers->routingHost();
 
-    const std::vector<char> chunk(kChunkBytes, 'x');
+    const std::vector<unsigned char> chunk(kChunkBytes, 'x');
     for (int round = 0; round < kRounds; ++round) {
         i2p::EndpointConfig dialling;
         dialling.privacy = i2p::Privacy::eMinimal;
@@ -87,9 +87,9 @@ int main()
         CHECK(in != nullptr);
 
         std::thread reader([&]() {
-            std::vector<char> buffer(kChunkBytes);
+            std::vector<unsigned char> buffer(kChunkBytes);
             try {
-                while (in->readSome(buffer.data(), buffer.size()) > 0) {
+                while (in->readSome(buffer) > 0) {
                 }
             } catch (const std::exception&) {
             }
@@ -97,7 +97,7 @@ int main()
         std::thread writer([&]() {
             try {
                 for (;;) {
-                    out->writeAll(chunk.data(), chunk.size());
+                    out->writeAll(chunk);
                 }
             } catch (const std::exception&) {
             }

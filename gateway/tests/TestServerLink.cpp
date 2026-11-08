@@ -83,15 +83,15 @@ std::shared_ptr<i2p::Endpoint> leaseFor(i2p::Router& router, const std::string& 
 
 std::string echoed(i2p::Stream& stream, const std::string& said)
 {
-    stream.writeAll(said.data(), said.size());
+    stream.writeAll(bazarish::viewOf(said));
     std::string heard;
-    std::vector<char> buffer(kEchoBytes);
+    std::vector<unsigned char> buffer(kEchoBytes);
     while (heard.size() < said.size()) {
-        const std::size_t got = stream.readSome(buffer.data(), buffer.size());
+        const std::size_t got = stream.readSome(buffer);
         if (got == 0) {
             break;
         }
-        heard.append(buffer.data(), got);
+        heard.append(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(got));
     }
     return heard;
 }
@@ -128,13 +128,13 @@ int main()
                 const std::lock_guard<std::mutex> lock(mutex);
                 lastFrom = from;
             }
-            std::vector<char> buffer(kEchoBytes);
+            std::vector<unsigned char> buffer(kEchoBytes);
             for (;;) {
-                const std::size_t got = pipe.readSome(buffer.data(), buffer.size());
+                const std::size_t got = pipe.readSome(buffer);
                 if (got == 0) {
                     return true;
                 }
-                pipe.writeAll(buffer.data(), got);
+                pipe.writeAll(bazarish::ByteView(buffer).first(got));
             }
         });
     const int linkPort = link.start("127.0.0.1", 0);

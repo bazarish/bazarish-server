@@ -11,6 +11,7 @@
 #include <sys/socket.h>
 
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
@@ -70,13 +71,13 @@ private:
 std::string readAll(TlsPipe& pipe, const std::size_t want)
 {
     std::string out;
-    char buffer[kLineBytes];
+    std::array<unsigned char, kLineBytes> buffer{};
     while (out.size() < want) {
-        const std::size_t got = pipe.readSome(buffer, sizeof(buffer));
+        const std::size_t got = pipe.readSome(buffer);
         if (got == 0) {
             break;
         }
-        out.append(buffer, got);
+        out.append(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(got));
     }
     return out;
 }
@@ -96,18 +97,18 @@ int main()
     {
         std::future<std::unique_ptr<TlsPipe>> accepted = listener.next();
         const std::unique_ptr<TlsPipe> client
-            = TlsPipe::dial("127.0.0.1", listener.port(), server.pin, kDeadline, &gateway);
+            = TlsPipe::dial("127.0.0.1", listener.port(), server.pin, kDeadline, gateway);
         const std::unique_ptr<TlsPipe> served = accepted.get();
         CHECK(served->peerPin() == gateway.pin);
         CHECK(client->peerPin() == server.pin);
 
         const std::string sent = "{\"watch\": true}\nafter";
-        client->writeAll(sent.data(), sent.size());
+        client->writeAll(bazarish::viewOf(sent));
         CHECK(served->readLine(kLineBytes) == "{\"watch\": true}");
         CHECK(readAll(*served, std::string("after").size()) == "after");
 
         const std::string answer = "back";
-        served->writeAll(answer.data(), answer.size());
+        served->writeAll(bazarish::viewOf(answer));
         CHECK(readAll(*client, answer.size()) == answer);
 
         std::mutex mutex;
@@ -128,12 +129,12 @@ int main()
     {
         std::future<std::unique_ptr<TlsPipe>> accepted = listener.next();
         const std::unique_ptr<TlsPipe> client
-            = TlsPipe::dial("127.0.0.1", listener.port(), server.pin, kDeadline, &gateway);
+            = TlsPipe::dial("127.0.0.1", listener.port(), server.pin, kDeadline, gateway);
         const std::unique_ptr<TlsPipe> served = accepted.get();
         const auto started = std::chrono::steady_clock::now();
         served->closeAfter(kExpiry);
-        char byte = 0;
-        CHECK(client->readSome(&byte, 1) == 0);
+        std::array<unsigned char, 1> byte{};
+        CHECK(client->readSome(byte) == 0);
         CHECK(std::chrono::steady_clock::now() - started >= kExpiry);
     }
 
@@ -142,7 +143,7 @@ int main()
         bool refused = false;
         try {
             const std::unique_ptr<TlsPipe> client
-                = TlsPipe::dial("127.0.0.1", listener.port(), gateway.pin, kDeadline, &gateway);
+                = TlsPipe::dial("127.0.0.1", listener.port(), gateway.pin, kDeadline, gateway);
         } catch (const std::exception&) {
             refused = true;
         }
@@ -157,8 +158,8 @@ int main()
         bool refused = false;
         try {
             const std::unique_ptr<TlsPipe> served = accepted.get();
-            char byte = 0;
-            refused = anonymous->readSome(&byte, 1) == 0;
+            std::array<unsigned char, 1> byte{};
+            refused = anonymous->readSome(byte) == 0;
         } catch (const std::exception&) {
             refused = true;
         }

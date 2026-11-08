@@ -83,7 +83,7 @@ std::shared_ptr<i2p::Endpoint> mediaOn(i2p::Router& router)
 bool mediaFlows(i2p::Endpoint& from, i2p::Endpoint& to)
 {
     const std::string payload = "audio";
-    from.sendRawDatagram(to.routingHost(), payload.data(), payload.size());
+    from.sendRawDatagram(to.routingHost(), bazarish::viewOf(payload));
     const std::vector<std::uint8_t> got
         = to.receiveRawDatagram(std::chrono::milliseconds(3000));
     return got.size() == payload.size();
@@ -134,7 +134,7 @@ int main()
     CHECK_THROWS(his->accept(nobody, std::chrono::seconds(1)));
 
     const std::vector<std::uint8_t> oversize(kOversizeBytes, 'x');
-    his->sendRawDatagram(hers->routingHost(), oversize.data(), oversize.size());
+    his->sendRawDatagram(hers->routingHost(), oversize);
     CHECK(hers->receiveRawDatagram(std::chrono::milliseconds(500)).empty());
     CHECK(gateway.sockets() == 4);
     CHECK(mediaFlows(*his, *hers));
@@ -167,7 +167,7 @@ int main()
     const std::shared_ptr<i2p::Endpoint> presence = alice.createEndpoint(guarded);
     CHECK(presence->routingHost() == i2p::routingHost(own.publicBase64()));
     const std::string knock = "here";
-    his->sendRawDatagram(presence->routingHost(), knock.data(), knock.size());
+    his->sendRawDatagram(presence->routingHost(), bazarish::viewOf(knock));
     CHECK(presence->receiveRawDatagram(kNothingArrives).empty());
     CHECK(!routedLocally(alice, presence->routingHost()));
     const auto watcherWith = [&bob](const Bytes& secret) {
@@ -182,7 +182,7 @@ int main()
     CHECK(waitFor([&]() { return routedLocally(alice, presence->routingHost()); }));
     CHECK(mediaFlows(*presence, *reading));
     const std::shared_ptr<i2p::Endpoint> stranger = watcherWith(Key::generateX25519().rawPrivate());
-    stranger->sendRawDatagram(presence->routingHost(), knock.data(), knock.size());
+    stranger->sendRawDatagram(presence->routingHost(), bazarish::viewOf(knock));
     CHECK(presence->receiveRawDatagram(kNothingArrives).empty());
     reading->stop();
     stranger->stop();

@@ -15,8 +15,8 @@ class Conduit {
 public:
     virtual ~Conduit() = default;
 
-    virtual std::size_t readSome(void* buffer, std::size_t size) = 0;
-    virtual void writeAll(const void* data, std::size_t size) = 0;
+    virtual std::size_t readSome(ByteBuffer buffer) = 0;
+    virtual void writeAll(ByteView data) = 0;
     virtual void close() = 0;
 };
 

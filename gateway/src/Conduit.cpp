@@ -22,15 +22,9 @@ public:
     {
     }
 
-    std::size_t readSome(void* buffer, const std::size_t size) override
-    {
-        return stream_->readSome(buffer, size);
-    }
+    std::size_t readSome(const ByteBuffer buffer) override { return stream_->readSome(buffer); }
 
-    void writeAll(const void* data, const std::size_t size) override
-    {
-        stream_->writeAll(data, size);
-    }
+    void writeAll(const ByteView data) override { stream_->writeAll(data); }
 
     void close() override { stream_->close(); }
 
@@ -45,15 +39,9 @@ public:
     {
     }
 
-    std::size_t readSome(void* buffer, const std::size_t size) override
-    {
-        return pipe_->readSome(buffer, size);
-    }
+    std::size_t readSome(const ByteBuffer buffer) override { return pipe_->readSome(buffer); }
 
-    void writeAll(const void* data, const std::size_t size) override
-    {
-        pipe_->writeAll(data, size);
-    }
+    void writeAll(const ByteView data) override { pipe_->writeAll(data); }
 
     void close() override { pipe_->close(); }
 
@@ -81,9 +69,9 @@ std::unique_ptr<Conduit> overServer(const ServerLink& server, const tls::Credent
     const std::string& to, const std::string& from, const std::chrono::seconds deadline)
 {
     std::unique_ptr<server::TlsPipe> pipe
-        = server::TlsPipe::dial(server.host, server.port, server.pin, deadline, &own);
+        = server::TlsPipe::dial(server.host, server.port, server.pin, deadline, own);
     const std::string preface = nlohmann::json({{"to", to}, {"from", from}}).dump() + "\n";
-    pipe->writeAll(preface.data(), preface.size());
+    pipe->writeAll(viewOf(preface));
     if (!bazarish::parseJson(pipe->readLine(kMaxAnswerBytes)).value("ok", false)) {
         throw std::runtime_error("the server does not serve " + to);
     }

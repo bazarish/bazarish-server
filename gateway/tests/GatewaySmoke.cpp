@@ -157,7 +157,7 @@ int main(const int argc, const char** argv)
     constexpr std::chrono::milliseconds kBurstGap{50};
     const auto carries = [&audio](i2p::Endpoint& from, i2p::Endpoint& to) {
         for (int frame = 0; frame < kBurst; ++frame) {
-            from.sendRawDatagram(to.routingHost(), audio.data(), audio.size());
+            from.sendRawDatagram(to.routingHost(), bazarish::viewOf(audio));
             if (to.receiveRawDatagram(kBurstGap).size() == audio.size()) {
                 return true;
             }

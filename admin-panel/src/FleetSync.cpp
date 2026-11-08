@@ -10,6 +10,7 @@
 
 #include <exception>
 #include <future>
+#include <optional>
 #include <utility>
 
 namespace bazarish::admin {
@@ -96,13 +97,13 @@ std::vector<FacadeReport> facadeReports(
 std::string publishFacades(const Fleet& fleet, const Identity& identity,
     const tls::Credential& credential, const std::map<std::string, std::string>& known)
 {
-    const ServiceEntry* node = nullptr;
+    std::optional<ServiceEntry> node;
     for (const ServiceEntry& service : fleet.services) {
         if (service.kind == kServiceNodeKind) {
-            node = &service;
+            node = service;
         }
     }
-    if (node == nullptr) {
+    if (!node.has_value()) {
         return {};
     }
 

@@ -53,33 +53,33 @@ struct SocketStream {
     SocketStream(const SocketStream&) = delete;
     SocketStream& operator=(const SocketStream&) = delete;
 
-    std::size_t readSome(void* const buffer, const std::size_t size)
+    std::size_t readSome(const ByteBuffer buffer)
     {
-        const ssize_t got = ::read(fd, buffer, size);
+        const ssize_t got = ::read(fd, buffer.data(), buffer.size());
         if (got < 0) {
             throw std::runtime_error("socket read failed");
         }
         return static_cast<std::size_t>(got);
     }
 
-    void readExact(void* buffer, std::size_t size)
+    void readExact(const ByteBuffer buffer)
     {
-        auto* p = static_cast<char*>(buffer);
         std::size_t got = 0;
-        while (got < size) {
-            const ssize_t r = ::read(fd, p + got, size - got);
+        while (got < buffer.size()) {
+            const ByteBuffer rest = buffer.subspan(got);
+            const ssize_t r = ::read(fd, rest.data(), rest.size());
             if (r <= 0) {
                 throw std::runtime_error("short read");
             }
             got += static_cast<std::size_t>(r);
         }
     }
-    void writeAll(const void* data, std::size_t size)
+    void writeAll(const ByteView data)
     {
-        const auto* p = static_cast<const char*>(data);
         std::size_t off = 0;
-        while (off < size) {
-            const ssize_t w = ::write(fd, p + off, size - off);
+        while (off < data.size()) {
+            const ByteView rest = data.subspan(off);
+            const ssize_t w = ::write(fd, rest.data(), rest.size());
             if (w < 0) {
                 throw std::runtime_error("write error");
             }

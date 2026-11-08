@@ -174,7 +174,7 @@ int main(const int argc, const char** argv)
 
         // Weak: the link goes before the destinations, whose sweep may still tell it.
         const std::weak_ptr<bazarish::server::GatewayLink> told = gatewayLink;
-        perUserDests = std::make_unique<bazarish::server::PerUserDestinations>(router.get(),
+        perUserDests = std::make_unique<bazarish::server::PerUserDestinations>(std::ref(*router),
             engine, stateDir, privacy,
             [&nodeCards](const std::string& user) { return nodeCards.card(user); },
             [told]() {
@@ -203,7 +203,6 @@ int main(const int argc, const char** argv)
     bazarish::server::HttpApiOptions httpOptions;
     httpOptions.operatorFingerprints = operatorFingerprints;
     httpOptions.version = bazarish::kBuildVersion;
-    httpOptions.eventGate = &eventGate;
     httpOptions.defaultQuotaBytes = engineOptions.defaultQuotaBytes;
     httpOptions.reseedSample
         = [](const std::size_t count) { return bazarish::i2p::sampleRouterInfos(count); };
@@ -266,8 +265,7 @@ int main(const int argc, const char** argv)
     httpOptions.tlsCertificate = credential.certificate.string();
     httpOptions.tlsKey = credential.key.string();
     httpOptions.opsClientPins = opsClientPins;
-    httpOptions.gatewaysChanged = [link = gatewayLink.get()](
-                                      const std::vector<std::string>& gateways) {
+    httpOptions.gatewaysChanged = [link = gatewayLink](const std::vector<std::string>& gateways) {
         if (link != nullptr) {
             link->setGateways(gateways);
         }
@@ -275,7 +273,7 @@ int main(const int argc, const char** argv)
     const auto restartHook = std::make_shared<std::function<void()>>();
     httpOptions.requestRestart = [restartHook]() { (*restartHook)(); };
 
-    bazarish::server::HttpApi api(storage, httpOptions);
+    bazarish::server::HttpApi api(storage, eventGate, httpOptions);
 
     bazarish::RestartSwitch restart([&api]() { api.stop(); });
     *restartHook = [&restart]() { restart.request(); };

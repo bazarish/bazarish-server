@@ -206,10 +206,10 @@ http::Response Gateway::health(const http::Request& request) const
     std::size_t streams = 0;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
-        std::set<const Session*> seen;
+        std::set<std::shared_ptr<Session>> seen;
         for (const auto& [socket, connection] : connections_) {
             (void)socket;
-            if (!seen.insert(connection.session.get()).second) {
+            if (!seen.insert(connection.session).second) {
                 continue;
             }
             ++sessions;
@@ -478,9 +478,10 @@ i2p::EndpointConfig Gateway::shapeOf(const bool raw, const bool published, const
 
 std::shared_ptr<i2p::Endpoint> Gateway::endpointFor(const i2p::EndpointConfig& config)
 {
-    for (const std::unique_ptr<DestinationPool>* pool : {&streamPool_, &callPool_, &watchPool_}) {
-        if ((*pool)->fits(config)) {
-            return (*pool)->take(config);
+    for (const std::reference_wrapper<DestinationPool> pool :
+        {std::ref(*streamPool_), std::ref(*callPool_), std::ref(*watchPool_)}) {
+        if (pool.get().fits(config)) {
+            return pool.get().take(config);
         }
     }
     return router_.createEndpoint(config);
@@ -490,7 +491,7 @@ void Gateway::rawOpened(const http::SocketPtr& raw)
 {
     {
         const std::lock_guard<std::mutex> lock(mutex_);
-        openings_[raw.get()] = 0;
+        openings_[raw] = 0;
     }
     const Bytes card = cover_.seal(gateway::padded(card_));
     raw->send(std::vector<unsigned char>(card.begin(), card.end()));
@@ -501,7 +502,7 @@ void Gateway::rawMessage(const http::SocketPtr& raw, const std::vector<unsigned 
     std::shared_ptr<gateway::ChannelSocket> channel;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
-        const auto found = channels_.find(raw.get());
+        const auto found = channels_.find(raw);
         if (found != channels_.end()) {
             channel = found->second;
         }
@@ -524,8 +525,8 @@ void Gateway::rawClosed(const http::SocketPtr& raw)
     std::shared_ptr<gateway::ChannelSocket> channel;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
-        openings_.erase(raw.get());
-        const auto found = channels_.find(raw.get());
+        openings_.erase(raw);
+        const auto found = channels_.find(raw);
         if (found != channels_.end()) {
             channel = found->second;
             channels_.erase(found);
@@ -583,7 +584,7 @@ void Gateway::handshake(const http::SocketPtr& raw, const Bytes& message)
     bool again = false;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
-        const auto found = openings_.find(raw.get());
+        const auto found = openings_.find(raw);
         again = found != openings_.end() && found->second++ == 0;
     }
     if (!again) {
@@ -602,8 +603,8 @@ void Gateway::establish(const http::SocketPtr& raw, std::shared_ptr<gateway::Rec
         = std::make_shared<gateway::ChannelSocket>(raw, std::move(records));
     {
         const std::lock_guard<std::mutex> lock(mutex_);
-        openings_.erase(raw.get());
-        channels_[raw.get()] = channel;
+        openings_.erase(raw);
+        channels_[raw] = channel;
     }
     bindSession(channel, session, resumed);
 }
@@ -627,7 +628,7 @@ void Gateway::bindSession(
             full = true;
         } else {
             session->addSocket();
-            connections_.emplace(socket.get(), connection);
+            connections_.emplace(socket, connection);
         }
     }
     for (const std::shared_ptr<Session>& gone : swept) {
@@ -700,7 +701,7 @@ void Gateway::socketClosed(const http::SocketPtr& socket)
 {
     const std::int64_t now = nowSeconds();
     const std::lock_guard<std::mutex> lock(mutex_);
-    const auto found = connections_.find(socket.get());
+    const auto found = connections_.find(socket);
     if (found == connections_.end()) {
         return;
     }
@@ -736,7 +737,7 @@ void Gateway::socketMessage(
     const http::SocketPtr& socket, const std::vector<unsigned char>& message)
 {
     try {
-        onFrame(socket, decode(message.data(), message.size()));
+        onFrame(socket, decode(message));
     } catch (const ProtocolError& error) {
         fail(socket, 0, error.fault(), error.what());
         socket->close();
@@ -747,7 +748,7 @@ void Gateway::socketMessage(
     }
 }
 
-std::shared_ptr<Session> Gateway::sessionFor(const http::Socket* const socket) const
+std::shared_ptr<Session> Gateway::sessionFor(const http::SocketPtr& socket) const
 {
     const std::lock_guard<std::mutex> lock(mutex_);
     const auto found = connections_.find(socket);
@@ -814,7 +815,7 @@ void Gateway::onFrame(const http::SocketPtr& socket, const Frame& frame)
         onHello(socket, frame);
         return;
     }
-    const std::shared_ptr<Session> session = sessionFor(socket.get());
+    const std::shared_ptr<Session> session = sessionFor(socket);
     if (session == nullptr) {
         fail(socket, frame.ref, Fault::eUnknownId, "this socket belongs to no session");
         socket->close();
@@ -872,7 +873,7 @@ void Gateway::onHello(const http::SocketPtr& socket, const Frame& frame)
     http::SocketPtr replaced;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
-        const auto found = connections_.find(socket.get());
+        const auto found = connections_.find(socket);
         if (found == connections_.end()) {
             return;
         }
@@ -1311,7 +1312,7 @@ void Gateway::onRawSend(const std::shared_ptr<Session>& session, const http::Soc
         }
         return;
     }
-    from->endpoint->sendRawDatagram(sent.host, sent.payload.data(), sent.payload.size());
+    from->endpoint->sendRawDatagram(sent.host, sent.payload);
 }
 
 void Gateway::datagramLoop(
@@ -1630,8 +1631,9 @@ void Gateway::pump(
         if (piece == 0) {
             break;
         }
-        entry->book.wrote(entry->waiting.data(), piece);
-        out->send(encode(FrameType::eStreamData, entry->id, entry->waiting.data(), piece));
+        const ByteView chunk = ByteView(entry->waiting).first(piece);
+        entry->book.wrote(chunk);
+        out->send(encode(FrameType::eStreamData, entry->id, chunk));
         entry->waiting.erase(
             entry->waiting.begin(), entry->waiting.begin() + static_cast<std::ptrdiff_t>(piece));
         moved += piece;
@@ -1739,7 +1741,7 @@ void Gateway::readLoop(
         }
         std::size_t got = 0;
         try {
-            got = entry->stream->readSome(buffer.data(), room);
+            got = entry->stream->readSome(ByteBuffer(buffer).first(room));
         } catch (const std::exception& error) {
             bazarish::log::debug("gateway: a stream stopped reading: {}", error.what());
             break;
@@ -1797,7 +1799,7 @@ void Gateway::onStreamData(const std::shared_ptr<Session>& session,
         fail(socket, frame.ref, Fault::eClosed, "that stream's far side has gone");
         return;
     }
-    entry->stream->writeAll(frame.body.data(), frame.body.size());
+    entry->stream->writeAll(frame.body);
     entry->book.consumed(frame.body.size());
     http::SocketPtr out;
     {
@@ -1931,7 +1933,7 @@ void Gateway::onResume(const std::shared_ptr<Session>& session,
         }
         for (std::size_t at = 0; at < again.size(); at += kMaxBodyBytes) {
             const std::size_t piece = std::min(kMaxBodyBytes, again.size() - at);
-            out->send(encode(FrameType::eStreamData, id, again.data() + at, piece));
+            out->send(encode(FrameType::eStreamData, id, ByteView(again).subspan(at, piece)));
         }
     }
     afterReplay(session);
@@ -1940,7 +1942,7 @@ void Gateway::onResume(const std::shared_ptr<Session>& session,
 void Gateway::onAttach(const http::SocketPtr& socket, const Frame& frame)
 {
     const nlohmann::json body = bodyJson(frame);
-    const std::shared_ptr<Session> session = sessionFor(socket.get());
+    const std::shared_ptr<Session> session = sessionFor(socket);
     if (session == nullptr) {
         fail(socket, frame.ref, Fault::eUnknownId, "this socket belongs to no session");
         socket->close();
@@ -1952,7 +1954,7 @@ void Gateway::onAttach(const http::SocketPtr& socket, const Frame& frame)
     std::shared_ptr<StreamEntry> stream;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
-        connections_[socket.get()].flow = frame.ref;
+        connections_[socket].flow = frame.ref;
         endpoint = endpointOf(*session, frame.ref);
         stream = streamOf(*session, frame.ref);
         if (endpoint != nullptr) {
@@ -1975,7 +1977,8 @@ void Gateway::onAttach(const http::SocketPtr& socket, const Frame& frame)
     const Bytes again = stream->book.replay(received);
     for (std::size_t at = 0; at < again.size(); at += kMaxBodyBytes) {
         const std::size_t piece = std::min(kMaxBodyBytes, again.size() - at);
-        socket->send(encode(FrameType::eStreamData, stream->id, again.data() + at, piece));
+        socket->send(
+            encode(FrameType::eStreamData, stream->id, ByteView(again).subspan(at, piece)));
     }
 }
 
@@ -2008,11 +2011,11 @@ void Gateway::statusLoop()
         std::vector<std::pair<http::SocketPtr, Bytes>> outgoing;
         {
             const std::lock_guard<std::mutex> lock(mutex_);
-            std::set<const Session*> seen;
+            std::set<std::shared_ptr<Session>> seen;
             for (const auto& [socket, connection] : connections_) {
                 (void)socket;
                 const std::shared_ptr<Session>& session = connection.session;
-                if (!session->control || !seen.insert(session.get()).second) {
+                if (!session->control || !seen.insert(session).second) {
                     continue;
                 }
                 for (const auto& [id, entry] : session->endpoints) {
@@ -2151,7 +2154,7 @@ void Gateway::linkLoop()
         }
         try {
             const std::shared_ptr<server::TlsPipe> pipe
-                = server::TlsPipe::dial(link.host, link.port, link.pin, kServerHandshake, &own);
+                = server::TlsPipe::dial(link.host, link.port, link.pin, kServerHandshake, own);
             {
                 const std::lock_guard<std::mutex> lock(linkMutex_);
                 watch_ = pipe;
@@ -2160,7 +2163,7 @@ void Gateway::linkLoop()
                 }
             }
             const std::string ask = nlohmann::json({{"watch", true}}).dump() + "\n";
-            pipe->writeAll(ask.data(), ask.size());
+            pipe->writeAll(viewOf(ask));
             bazarish::log::info("gateway: linked to the server at {}:{}", link.host, link.port);
             lastFailure.clear();
             for (;;) {

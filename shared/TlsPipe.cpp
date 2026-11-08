@@ -39,15 +39,16 @@ constexpr std::size_t kChunkBytes = 16 * 1024;
 
 using Written = std::shared_ptr<std::promise<boost::system::error_code>>;
 
-ssl::context contextFor(const ssl::context::method method, const tls::Credential* const own)
+ssl::context contextFor(const ssl::context::method method,
+    const std::optional<std::reference_wrapper<const tls::Credential>>& own)
 {
     ssl::context context(method);
     if (SSL_CTX_set_min_proto_version(context.native_handle(), TLS1_3_VERSION) != 1) {
         throw std::runtime_error("tls pipe: TLS 1.3 cannot be required");
     }
-    if (own != nullptr) {
-        context.use_certificate_chain_file(own->certificate.string());
-        context.use_private_key_file(own->key.string(), ssl::context::pem);
+    if (own.has_value()) {
+        context.use_certificate_chain_file(own->get().certificate.string());
+        context.use_private_key_file(own->get().key.string(), ssl::context::pem);
     }
     return context;
 }
@@ -56,7 +57,8 @@ ssl::context contextFor(const ssl::context::method method, const tls::Credential
 
 // One thread owns the TLS stream: OpenSSL takes no concurrent reader and writer on one SSL.
 struct TlsPipe::Impl {
-    Impl(const ssl::context::method method, const tls::Credential* const own)
+    Impl(const ssl::context::method method,
+        const std::optional<std::reference_wrapper<const tls::Credential>>& own)
         : context(contextFor(method, own))
         , stream(io, context)
         , expiry(io)
@@ -164,43 +166,44 @@ TlsPipe::~TlsPipe()
 }
 
 std::unique_ptr<TlsPipe> TlsPipe::dial(const std::string& host, const int port,
-    const std::string& pin, const std::chrono::seconds deadline, const tls::Credential* const own)
+    const std::string& pin, const std::chrono::seconds deadline,
+    const std::optional<std::reference_wrapper<const tls::Credential>> own)
 {
     auto impl = std::make_unique<Impl>(ssl::context::tls_client, own);
     impl->stream.set_verify_mode(ssl::verify_none);
     tcp::resolver resolver(impl->io);
     const tcp::resolver::results_type found = resolver.resolve(host, std::to_string(port));
-    Impl* const raw = impl.get();
-    asio::async_connect(raw->stream.next_layer(), found,
-        [raw](const boost::system::error_code& code, const tcp::endpoint&) {
-            raw->failure = code;
+    Impl& raw = *impl;
+    asio::async_connect(raw.stream.next_layer(), found,
+        [&raw](const boost::system::error_code& code, const tcp::endpoint&) {
+            raw.failure = code;
         });
-    raw->finish(deadline, "connecting");
-    raw->failure = asio::error::would_block;
-    raw->stream.async_handshake(ssl::stream_base::client,
-        [raw](const boost::system::error_code& code) { raw->failure = code; });
-    raw->finish(deadline, "the handshake");
-    raw->peerPin = tls::pinOf(raw->stream.native_handle());
-    if (raw->peerPin != pin) {
+    raw.finish(deadline, "connecting");
+    raw.failure = asio::error::would_block;
+    raw.stream.async_handshake(ssl::stream_base::client,
+        [&raw](const boost::system::error_code& code) { raw.failure = code; });
+    raw.finish(deadline, "the handshake");
+    raw.peerPin = tls::pinOf(raw.stream.native_handle());
+    if (raw.peerPin != pin) {
         throw std::runtime_error("tls pipe: the key is not the pinned one");
     }
-    raw->begin();
+    raw.begin();
     return std::unique_ptr<TlsPipe>(new TlsPipe(std::move(impl)));
 }
 
 std::unique_ptr<TlsPipe> TlsPipe::serve(const int protocolFamily, const int socket,
     const tls::Credential& own, const std::chrono::seconds deadline)
 {
-    auto impl = std::make_unique<Impl>(ssl::context::tls_server, &own);
+    auto impl = std::make_unique<Impl>(ssl::context::tls_server, std::cref(own));
     impl->stream.set_verify_mode(ssl::verify_peer | ssl::verify_fail_if_no_peer_cert);
     impl->stream.set_verify_callback([](bool, ssl::verify_context&) { return true; });
     impl->stream.next_layer().assign(protocolFamily == AF_INET6 ? tcp::v6() : tcp::v4(), socket);
-    Impl* const raw = impl.get();
-    raw->stream.async_handshake(ssl::stream_base::server,
-        [raw](const boost::system::error_code& code) { raw->failure = code; });
-    raw->finish(deadline, "the handshake");
-    raw->peerPin = tls::pinOf(raw->stream.native_handle());
-    raw->begin();
+    Impl& raw = *impl;
+    raw.stream.async_handshake(ssl::stream_base::server,
+        [&raw](const boost::system::error_code& code) { raw.failure = code; });
+    raw.finish(deadline, "the handshake");
+    raw.peerPin = tls::pinOf(raw.stream.native_handle());
+    raw.begin();
     return std::unique_ptr<TlsPipe>(new TlsPipe(std::move(impl)));
 }
 
@@ -209,7 +212,7 @@ const std::string& TlsPipe::peerPin() const
     return impl_->peerPin;
 }
 
-std::size_t TlsPipe::readSome(void* const buffer, const std::size_t size)
+std::size_t TlsPipe::readSome(const ByteBuffer buffer)
 {
     std::unique_lock<std::mutex> lock(impl_->mutex);
     impl_->changed.wait(lock, [this]() { return !impl_->inbox.empty() || impl_->ended; });
@@ -219,9 +222,9 @@ std::size_t TlsPipe::readSome(void* const buffer, const std::size_t size)
         }
         return 0;
     }
-    const std::size_t got = std::min(size, impl_->inbox.size());
+    const std::size_t got = std::min(buffer.size(), impl_->inbox.size());
     std::copy(impl_->inbox.begin(), impl_->inbox.begin() + static_cast<std::ptrdiff_t>(got),
-        static_cast<unsigned char*>(buffer));
+        buffer.begin());
     impl_->inbox.erase(
         impl_->inbox.begin(), impl_->inbox.begin() + static_cast<std::ptrdiff_t>(got));
     return got;
@@ -247,24 +250,23 @@ std::string TlsPipe::readLine(const std::size_t maxBytes)
     }
 }
 
-void TlsPipe::writeAll(const void* const data, const std::size_t size)
+void TlsPipe::writeAll(const ByteView data)
 {
     if (impl_->closed.load()) {
         throw std::runtime_error("tls pipe: closed");
     }
-    const unsigned char* const at = static_cast<const unsigned char*>(data);
     auto written = std::make_shared<std::promise<boost::system::error_code>>();
     std::future<boost::system::error_code> done = written->get_future();
-    Impl* const impl = impl_.get();
-    asio::post(impl->io,
-        [impl, piece = std::vector<unsigned char>(at, at + size), written]() mutable {
-            if (impl->closed.load()) {
+    Impl& impl = *impl_;
+    asio::post(impl.io,
+        [&impl, piece = std::vector<unsigned char>(data.begin(), data.end()), written]() mutable {
+            if (impl.closed.load()) {
                 written->set_value(asio::error::operation_aborted);
                 return;
             }
-            impl->outbox.emplace_back(std::move(piece), std::move(written));
-            if (impl->outbox.size() == 1) {
-                impl->writeNext();
+            impl.outbox.emplace_back(std::move(piece), std::move(written));
+            if (impl.outbox.size() == 1) {
+                impl.writeNext();
             }
         });
     const boost::system::error_code failure = done.get();
@@ -278,21 +280,21 @@ void TlsPipe::close()
     if (impl_->closed.exchange(true)) {
         return;
     }
-    Impl* const impl = impl_.get();
-    asio::post(impl->io, [impl]() { impl->shut(); });
+    Impl& impl = *impl_;
+    asio::post(impl.io, [&impl]() { impl.shut(); });
 }
 
 void TlsPipe::closeAfter(const std::chrono::seconds wait)
 {
-    Impl* const impl = impl_.get();
-    asio::post(impl->io, [impl, wait]() {
-        if (impl->closed.load()) {
+    Impl& impl = *impl_;
+    asio::post(impl.io, [&impl, wait]() {
+        if (impl.closed.load()) {
             return;
         }
-        impl->expiry.expires_after(wait);
-        impl->expiry.async_wait([impl](const boost::system::error_code& code) {
-            if (!code && !impl->closed.exchange(true)) {
-                impl->shut();
+        impl.expiry.expires_after(wait);
+        impl.expiry.async_wait([&impl](const boost::system::error_code& code) {
+            if (!code && !impl.closed.exchange(true)) {
+                impl.shut();
             }
         });
     });
@@ -300,8 +302,8 @@ void TlsPipe::closeAfter(const std::chrono::seconds wait)
 
 void TlsPipe::keepOpen()
 {
-    Impl* const impl = impl_.get();
-    asio::post(impl->io, [impl]() { impl->expiry.cancel(); });
+    Impl& impl = *impl_;
+    asio::post(impl.io, [&impl]() { impl.expiry.cancel(); });
 }
 
 void TlsPipe::whenEnded(std::function<void()> ended)

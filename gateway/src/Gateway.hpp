@@ -113,7 +113,7 @@ private:
         std::uint32_t flow = 0;
     };
 
-    std::shared_ptr<Session> sessionFor(const http::Socket* socket) const;
+    std::shared_ptr<Session> sessionFor(const http::SocketPtr& socket) const;
     static http::SocketPtr outletFor(const Session& session, const StreamEntry& stream);
     static http::SocketPtr answerOn(const Session& session, const http::SocketPtr& asked);
     void replayDone(const std::shared_ptr<Session>& session);
@@ -181,10 +181,10 @@ private:
     SessionStore sessions_;
     mutable std::mutex mutex_;
     mutable auth::ReplayCache operatorReplays_;
-    std::map<const http::Socket*, Connection> connections_;
+    std::map<http::SocketPtr, Connection> connections_;
     // A raw socket that has not yet joined a session or made one, and how often it missed.
-    std::map<const http::Socket*, int> openings_;
-    std::map<const http::Socket*, std::shared_ptr<gateway::ChannelSocket>> channels_;
+    std::map<http::SocketPtr, int> openings_;
+    std::map<http::SocketPtr, std::shared_ptr<gateway::ChannelSocket>> channels_;
     std::map<std::string, Local> published_;
     std::map<std::string, std::chrono::steady_clock::time_point> goneHere_;
     mutable std::mutex directMutex_;

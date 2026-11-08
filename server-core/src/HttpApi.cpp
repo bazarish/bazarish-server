@@ -87,8 +87,9 @@ std::vector<Bytes> passHandles(const nlohmann::json& body)
 
 namespace bazarish::server {
 
-HttpApi::HttpApi(Storage& storage, const HttpApiOptions options)
+HttpApi::HttpApi(Storage& storage, EventGate& eventGate, const HttpApiOptions options)
     : storage_(storage)
+    , eventGate_(eventGate)
     , options_(options)
     , tunnel_(options_.sealingKey)
     , startedAt_(nowSeconds())
@@ -102,10 +103,11 @@ HttpApi::HttpApi(Storage& storage, const HttpApiOptions options)
 std::optional<bazarish::http::Response> HttpApi::admitted(
     const bazarish::http::Request& request, std::string& user)
 {
-    if (std::optional<bazarish::http::Response> refused = tunnel_.authenticate(request, &user);
-        refused.has_value()) {
-        return refused;
+    Caller caller = tunnel_.authenticate(request);
+    if (caller.refused.has_value()) {
+        return caller.refused;
     }
+    user = std::move(caller.user);
     if (!options_.accountKnown(user)) {
         return errorResponse(404, ErrorCode::eAccountUnknown, "this server serves no such account");
     }
@@ -205,7 +207,7 @@ void HttpApi::expiredSweepLoop()
 
 void HttpApi::wakeUser(const std::string& user)
 {
-    options_.eventGate->notify(user);
+    eventGate_.notify(user);
 }
 
 void HttpApi::setupOpsRoutes()
@@ -448,9 +450,8 @@ void HttpApi::setupRoutes()
             403, ErrorCode::eClientUnregistered, "client ID is not registered for this user");
     };
 
-    EventGate* const gate = options_.eventGate;
     http_->getAsync("/v1/messaging/events",
-        [this, &store, requireClient, clientUnregistered, gate](
+        [this, &store, requireClient, clientUnregistered](
             const bazarish::http::Request& request,
             bazarish::http::Responder respond) -> std::optional<bazarish::http::Response> {
             std::string user;
@@ -475,7 +476,7 @@ void HttpApi::setupRoutes()
                     bazarish::log::debug("bad wait '{}': {}", asked, error.what());
                 }
             }
-            gate->wait(http_->executor(), user, std::chrono::seconds(wait),
+            eventGate_.wait(http_->executor(), user, std::chrono::seconds(wait),
                 [&store, user, clientId, respond]() {
                     nlohmann::json items = nlohmann::json::array();
                     try {
@@ -487,7 +488,7 @@ void HttpApi::setupRoutes()
                 });
             try {
                 if (!pendingJson(store, user, clientId).empty()) {
-                    gate->notify(user);
+                    eventGate_.notify(user);
                 }
             } catch (const std::exception& error) {
                 bazarish::log::warn("event face re-check: {}", error.what());

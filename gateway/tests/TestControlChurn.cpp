@@ -92,21 +92,21 @@ int main()
         while (piece.size() < kPieceBytes) {
             piece += static_cast<char>('a' + (round % 26));
         }
-        out->writeAll(piece.data(), piece.size());
+        out->writeAll(bazarish::viewOf(piece));
         sent += piece;
         std::this_thread::sleep_for(std::chrono::milliseconds(1400));
     }
 
     std::string got;
-    std::vector<char> buffer(4096);
+    std::vector<unsigned char> buffer(4096);
     in->setReadTimeout(std::chrono::seconds(kWaitSeconds));
     try {
         while (got.size() < sent.size()) {
-            const std::size_t read = in->readSome(buffer.data(), buffer.size());
+            const std::size_t read = in->readSome(buffer);
             if (read == 0) {
                 break;
             }
-            got.append(buffer.data(), read);
+            got.append(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(read));
         }
     } catch (const std::exception& error) {
         std::printf("stalled: %s\n  got %zu of %zu, sender holds %zu, rejoins %zu,"

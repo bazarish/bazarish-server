@@ -18,14 +18,16 @@ public:
     std::vector<std::string> listClients(const std::string& user) override;
     bool isClientRegistered(const std::string& user, const std::string& clientId) override;
 
-    void registerPasses(const std::string& user, const std::vector<Bytes>& handles) override;
+    bool registerPasses(
+        const std::string& user, const std::vector<Bytes>& handles, std::size_t cap) override;
     bool hasPass(const std::string& user, const Bytes& handle) override;
     std::size_t passCount(const std::string& user) override;
     std::size_t revokePasses(const std::string& user, const std::vector<Bytes>& handles) override;
 
     PutResult putBlob(const std::string& user, const std::string& blobId, const Bytes& data,
         const std::string& deliveryClass, std::uint64_t quotaBytes, std::int64_t receivedAt,
-        const std::string& alreadyAcked = {}) override;
+        const std::string& alreadyAcked = {},
+        std::optional<std::size_t> heldLimit = std::nullopt) override;
     bool hasBlob(const std::string& user, const std::string& blobId) override;
     bool isPendingFor(const std::string& user, const std::string& blobId,
         const std::string& clientId) override;
@@ -52,6 +54,7 @@ private:
 
     std::filesystem::path userDir(const std::string& user) const;
     std::uint64_t usageLocked(const std::string& user) const;
+    std::size_t countHeldLocked(const std::string& user, const std::string& deliveryClass);
     void removeItem(const std::string& user, const std::string& blobId);
 
     std::filesystem::path root_;

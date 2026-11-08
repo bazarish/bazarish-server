@@ -126,8 +126,14 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
                 + " messages a minute - try again shortly");
     }
 
+    const std::optional<std::size_t> heldLimit = deliveryClass == kContactDeliveryClass
+        ? std::optional<std::size_t>(kMaxPendingContactRequests)
+        : std::nullopt;
     const Storage::PutResult result = storage_.putBlob(mailbox, deliveryId, payload, deliveryClass,
-        storage_.userQuota(mailbox, options_.defaultQuotaBytes), now);
+        storage_.userQuota(mailbox, options_.defaultQuotaBytes), now, {}, heldLimit);
+    if (result == Storage::PutResult::eClassFull) {
+        return fail(ErrorCode::eContactRateLimited, kContactsWaitingRefusal);
+    }
     if (result == Storage::PutResult::eQuotaExceeded) {
         if (deliveryClass == kContentDeliveryClass) {
             return fail(ErrorCode::eStorageFull, "recipient storage quota is exhausted");

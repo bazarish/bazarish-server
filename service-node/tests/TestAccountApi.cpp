@@ -14,11 +14,15 @@
 #include <bazarish/HttpClient.hpp>
 #include <nlohmann/json.hpp>
 
+#include <chrono>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <atomic>
 #include <filesystem>
+#include <functional>
+#include <future>
 #include <map>
 #include <thread>
 
@@ -40,6 +44,7 @@ constexpr const char* kServedDest = "servedaddressb33";
 constexpr const char* kSealingPem = "sealing-pem";
 constexpr const char* kSigningPem = "signing-pem";
 constexpr int kDelegationDays = 7;
+constexpr int kPollMs = 1;
 constexpr std::size_t kSessionSecretBytes = 32;
 constexpr std::size_t kSessionIdChars = 32;
 
@@ -117,9 +122,15 @@ int main()
     AddressKeys pubKeys;
     int pubCalls = 0;
     bool pubAccepts = true;
+    std::function<void(const std::string& user, const std::string& transient)> pubGate;
+    const Identity operatorIdentity = Identity::generate();
+    options.operatorFingerprints = {operatorIdentity.fingerprint()};
     options.publishI2pTransient = [&](const std::string& user, const std::string& transientB64,
                                       const std::int64_t expiresUnix, const AddressKeys& keys)
         -> std::optional<ServedDestination> {
+        if (pubGate) {
+            pubGate(user, transientB64);
+        }
         pubUser = user;
         pubTransient = transientB64;
         pubExpires = expiresUnix;
@@ -147,6 +158,8 @@ int main()
 
     const int port = api.bind("127.0.0.1", 0);
     CHECK(port > 0);
+    const int opsPort = api.bindOps("127.0.0.1", 0);
+    CHECK(opsPort > 0);
     std::thread serverThread([&api]() { api.wait(); });
 
     const Identity alice = Identity::generate();
@@ -410,6 +423,61 @@ int main()
             tunnel::open(Bytes(carried.body.begin(), carried.body.end()), tunnelKey));
         CHECK(answer.status == 200);
         CHECK(nlohmann::json::parse(answer.body).at("approval") == "approved");
+    }
+
+    {
+        const Identity ben = Identity::generate();
+        grants.recordRegistration(ben.fingerprint(), now, true);
+        const bazarish::i2p::Keys delegation
+            = bazarish::i2p::Keys::generate().issueTransient(kDelegationDays);
+        const std::string delegated = nlohmann::json{{"transient", toBase64(delegation.blob())},
+            {"expiresUnix", delegation.transientExpires()}, {"sealingKey", kSealingPem},
+            {"signingKey", kSigningPem}}
+                                          .dump();
+        std::promise<void> revoking;
+        std::promise<void> goOn;
+        std::promise<void> banned;
+        const std::shared_future<void> mayGoOn = goOn.get_future().share();
+        const std::shared_future<void> wasBanned = banned.get_future().share();
+        std::atomic<bool> revokeSeen{false};
+        std::atomic<bool> publishing{false};
+        pubGate = [&](const std::string& user, const std::string& transient) {
+            if (user != ben.fingerprint()) {
+                return;
+            }
+            if (transient.empty() && !revokeSeen.exchange(true)) {
+                revoking.set_value();
+                mayGoOn.wait();
+            } else if (!transient.empty()) {
+                publishing = true;
+                wasBanned.wait();
+            }
+        };
+        const std::string banBody = nlohmann::json{{"user", ben.fingerprint()}}.dump();
+        std::thread banning([&]() {
+            CHECK(call(opsPort, "POST", "/v1/account/ban",
+                      makeHeaders(operatorIdentity, "POST", "/v1/account/ban", banBody), banBody)
+                      .status
+                == 200);
+        });
+        revoking.get_future().wait();
+        std::atomic<int> delegatedStatus{0};
+        std::thread delegating([&]() {
+            delegatedStatus = call(port, "POST", "/v1/account/i2p-dest",
+                makeHeaders(ben, "POST", "/v1/account/i2p-dest", delegated), delegated)
+                                  .status;
+        });
+        while (!publishing.load() && options.userLocks->holders(ben.fingerprint()) < 2) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(kPollMs));
+        }
+        goOn.set_value();
+        banning.join();
+        banned.set_value();
+        delegating.join();
+        pubGate = nullptr;
+        CHECK(delegatedStatus.load() != 200);
+        CHECK(!grants.peekTransient(ben.fingerprint()).has_value());
+        CHECK(grants.peekBan(ben.fingerprint()).has_value());
     }
 
     api.stop();

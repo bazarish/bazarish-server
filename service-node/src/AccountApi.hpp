@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #pragma once
 
+#include "UserLocks.hpp"
 #include "LoginMailbox.hpp"
 #include "GrantStore.hpp"
 #include "NodeSettings.hpp"
@@ -46,6 +47,7 @@ struct AccountApiOptions {
     std::function<void(const std::string& user, std::uint64_t quotaBytes)> publishQuota;
     // A private node, such as a bot's own: a signer outside this set is refused. Empty: a public node.
     std::function<bool(const std::string& user)> admitsUser;
+    std::shared_ptr<UserLocks> userLocks = std::make_shared<UserLocks>();
 
 
     std::shared_ptr<NodeSettings> settings;

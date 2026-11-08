@@ -4,6 +4,7 @@
 #include "Config.hpp"
 
 #include <filesystem>
+#include <functional>
 #include <mutex>
 #include <string>
 
@@ -18,6 +19,8 @@ public:
     const std::filesystem::path& configPath() const { return configPath_; }
 
     void set(const Config& values);
+    // Reads, changes and writes under one lock: two edits of different fields both stay.
+    Config update(const std::function<void(Config&)>& change);
 
     bool unclaimed() const;
 

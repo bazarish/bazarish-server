@@ -170,7 +170,7 @@ int main()
 
     const Bytes secret = randomBytes(kDeliverySecretSize);
     const Bytes pass = deliveryPass(secret, std::string(52, 'b'));
-    storage.registerPasses(alice, {deliveryPassHandle(pass)});
+    CHECK(storage.registerPasses(alice, {deliveryPassHandle(pass)}, kMaxPassesPerMailbox));
 
     const Bytes payload = {'f', 'e', 'd', '-', 'b', 'l', 'o', 'b'};
 
@@ -385,7 +385,8 @@ int main()
         const Bytes busySecret = randomBytes(kDeliverySecretSize);
         const Bytes busy = deliveryPass(busySecret, std::string(52, 'c'));
         const Bytes quiet = deliveryPass(randomBytes(kDeliverySecretSize), std::string(52, 'd'));
-        storage.registerPasses(alice, {deliveryPassHandle(busy), deliveryPassHandle(quiet)});
+        CHECK(storage.registerPasses(
+            alice, {deliveryPassHandle(busy), deliveryPassHandle(quiet)}, kMaxPassesPerMailbox));
         const Bytes payload(16, 0x42);
         const auto mail = [&](const Bytes& with, const std::string& id, const std::int64_t at) {
             return engine.deliver(makeSealed(sealingPublic, "content", alice, id, with), payload,

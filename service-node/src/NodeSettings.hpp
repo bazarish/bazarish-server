@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -37,6 +38,8 @@ public:
     Values get() const;
 
     void set(const Values& values);
+    // Reads, changes and writes under one lock: two edits of different fields both stay.
+    Values update(const std::function<void(Values&)>& change);
 
 private:
     void persist(const Values& values) const;

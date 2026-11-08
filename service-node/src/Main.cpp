@@ -1,5 +1,6 @@
 // Bazarish project (c) 2026
 #include "AccountApi.hpp"
+#include "AccountRemoval.hpp"
 #include "GrantStore.hpp"
 #include "IdleSweep.hpp"
 #include "NodeSettings.hpp"
@@ -276,6 +277,8 @@ int main(const int argc, const char** argv)
     options.tlsCertificate = credential.certificate.string();
     options.tlsKey = credential.key.string();
     options.opsClientPins = nodeConfig.opsClients;
+    const auto userLocks = std::make_shared<bazarish::service::UserLocks>();
+    options.userLocks = userLocks;
     options.publishI2pTransient = [&promptPush](const std::string& user,
                                       const std::string& transientB64,
                                       const std::int64_t expiresUnix,
@@ -343,19 +346,19 @@ int main(const int argc, const char** argv)
         portalOptions.accountUsage = [&operatorPush](const std::string& user) {
             return operatorPush.accountUsage(user);
         };
-        portalOptions.deleteAccount = [&store, &grants, &operatorPush](const std::string& user) {
-            store.deleteAccount(user);
-            if (!operatorPush.publish(user, std::string(), 0, {})) {
-                bazarish::log::warn("destination of {} was not taken down: the messaging server "
-                    "refused it", bazarish::log::redact(user));
-            }
-            if (!operatorPush.forgetMailbox(user)) {
-                bazarish::log::warn("mailbox of {} was not dropped: the messaging server refused it",
-                    bazarish::log::redact(user));
-            }
-            grants.erase(user);
-            bazarish::log::info("account deleted by its owner: {}", bazarish::log::redact(user));
-        };
+        portalOptions.deleteAccount
+            = [&store, &grants, &operatorPush, userLocks](const std::string& user) {
+                  const bazarish::service::UserLocks::Held held = userLocks->hold(user);
+                  bazarish::service::removeAccount(user, store, grants,
+                      [&operatorPush](const std::string& gone) {
+                          return operatorPush.publish(gone, std::string(), 0, {}).has_value();
+                      },
+                      [&operatorPush](const std::string& gone) {
+                          return operatorPush.forgetMailbox(gone);
+                      });
+                  bazarish::log::info(
+                      "account deleted by its owner: {}", bazarish::log::redact(user));
+              };
         try {
             portal = std::make_unique<bazarish::service::PortalApi>(portalOptions, grants);
         } catch (const std::exception& error) {
@@ -376,7 +379,7 @@ int main(const int argc, const char** argv)
         while (!stopping.waitFor(kIdleSweepInterval)) {
             try {
                 bazarish::service::sweepIdleAccounts(store, grants, operatorPush,
-                    settings->get().idleDeleteDays, bazarish::nowSeconds(), stopping);
+                    settings->get().idleDeleteDays, bazarish::nowSeconds(), stopping, *userLocks);
             } catch (const std::exception& error) {
                 bazarish::log::warn("idle sweep failed: {}", error.what());
             }

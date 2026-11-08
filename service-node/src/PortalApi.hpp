@@ -58,6 +58,7 @@ private:
     std::mutex reseedMutex_;
     std::string reseedSu3_;
     std::int64_t reseedFetchedAt_ = 0;
+    bool reseedFetching_ = false;
 
     void setupRoutes();
     void setupWebRoutes();
@@ -73,7 +74,6 @@ private:
 
     NodeSettings::Values settings() const { return settings_->get(); }
 
-    LoginChallenge& login();
 
     PortalApiOptions options_;
     std::shared_ptr<NodeSettings> settings_;

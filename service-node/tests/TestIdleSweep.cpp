@@ -55,6 +55,7 @@ int main()
 {
     namespace fs = std::filesystem;
     const StopGate going;
+    UserLocks locks;
     const fs::path root = fs::temp_directory_path() / ("bazarish-sweep-" + toHex(randomBytes(8)));
     const Identity node = Identity::generate();
     const OperatorPush noServer(OperatorPush::Dial{}, node, OperatorPush::kPromptAttempts);
@@ -80,27 +81,27 @@ int main()
         CHECK(idleSince(store.getAccount(pending), grants, pending)
             == kRegisteredAt + days(kPendingRegistrationDay));
 
-        sweepIdleAccounts(store, grants, noServer, 0, now, going);
+        sweepIdleAccounts(store, grants, noServer, 0, now, going, locks);
         CHECK(store.allAccounts().size() == 3);
 
         StopGate halted;
         halted.stop();
-        sweepIdleAccounts(store, grants, noServer, kIdleDays, now, halted);
+        sweepIdleAccounts(store, grants, noServer, kIdleDays, now, halted, locks);
         CHECK(store.getAccount(lapsed).has_value());
 
-        sweepIdleAccounts(store, grants, noServer, kIdleDays, now, going);
+        sweepIdleAccounts(store, grants, noServer, kIdleDays, now, going, locks);
         CHECK(store.getAccount(active).has_value());
         CHECK(!store.getAccount(lapsed).has_value());
         CHECK(!store.getAccount(neverDelegated).has_value());
         CHECK(grants.peekApproval(pending).has_value());
 
         sweepIdleAccounts(store, grants, noServer, kIdleDays,
-            kRegisteredAt + days(kActiveDelegationDay + kIdleDays) + 1, going);
+            kRegisteredAt + days(kActiveDelegationDay + kIdleDays) + 1, going, locks);
         CHECK(!store.getAccount(active).has_value());
         CHECK(grants.peekApproval(pending).has_value());
 
         sweepIdleAccounts(store, grants, noServer, kIdleDays,
-            kRegisteredAt + days(kPendingRegistrationDay + kIdleDays) + 1, going);
+            kRegisteredAt + days(kPendingRegistrationDay + kIdleDays) + 1, going, locks);
         CHECK(!grants.peekApproval(pending).has_value());
     }
 

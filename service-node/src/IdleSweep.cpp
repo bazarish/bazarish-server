@@ -1,5 +1,6 @@
 // Bazarish project (c) 2026
 #include "IdleSweep.hpp"
+#include "AccountRemoval.hpp"
 
 #include <bazarish/Clock.hpp>
 #include <bazarish/Log.hpp>
@@ -29,7 +30,7 @@ std::int64_t idleSince(const std::optional<SubscriptionStore::Account>& account,
 }
 
 void sweepIdleAccounts(SubscriptionStore& store, GrantStore& grants, const OperatorPush& push,
-    const std::int64_t idleDays, const std::int64_t now, const StopGate& stopping)
+    const std::int64_t idleDays, const std::int64_t now, const StopGate& stopping, UserLocks& locks)
 {
     if (idleDays <= 0) {
         return;
@@ -46,20 +47,16 @@ void sweepIdleAccounts(SubscriptionStore& store, GrantStore& grants, const Opera
         if (stopping.stopped()) {
             return;
         }
+        const UserLocks::Held held = locks.hold(user);
         const std::int64_t since = idleSince(store.getAccount(user), grants, user);
         if (since == 0 || since + idleSeconds > now) {
             continue;
         }
-        if (!push.publish(user, std::string(), 0, {})) {
-            log::warn("destination of swept account {} not revoked on the messaging server",
-                log::redact(user));
-        }
-        if (!push.forgetMailbox(user)) {
-            log::warn("mailbox of swept account {} not dropped on the messaging server",
-                log::redact(user));
-        }
-        grants.erase(user);
-        store.deleteAccount(user);
+        removeAccount(user, store, grants,
+            [&push](const std::string& gone) {
+                return push.publish(gone, std::string(), 0, {}).has_value();
+            },
+            [&push](const std::string& gone) { return push.forgetMailbox(gone); });
         log::info("swept idle account {}", log::redact(user));
     }
 }

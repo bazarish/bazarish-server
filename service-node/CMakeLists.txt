@@ -30,7 +30,9 @@ add_library(bazarish_service_lib STATIC
     src/Messages.cpp
     src/PortalApi.cpp
     src/GrantStore.cpp
+    src/AccountRemoval.cpp
     src/IdleSweep.cpp
+    src/UserLocks.cpp
     src/NodeSettings.cpp
     src/OperatorPush.cpp
     src/LoginMailbox.cpp

@@ -114,20 +114,14 @@ PortalApi::PortalApi(PortalApiOptions options, GrantStore& grants)
     , assets_(options_.assetsDirectory)
     , messages_(options_.assetsDirectory / "messages.json")
     , grants_(grants)
-    , login_(options_.challengeSecret, settings_->get().loginConsumer)
+    , login_(options_.challengeSecret,
+          LoginChallenge::ConsumerFn(
+              [settings = settings_]() { return settings->get().loginConsumer; }))
     , session_(options_.sessionSecret, kSessionTtlSeconds)
 {
 }
 
 PortalApi::~PortalApi() = default;
-
-LoginChallenge& PortalApi::login()
-{
-    if (const LoginConsumer wanted = settings().loginConsumer; wanted != login_.consumer()) {
-        login_.setConsumer(wanted);
-    }
-    return login_;
-}
 
 int PortalApi::bind(const std::string& host, const int port)
 {
@@ -164,20 +158,27 @@ void PortalApi::setupRoutes()
 
 std::string PortalApi::reseedArchive()
 {
-    const std::lock_guard<std::mutex> lock(reseedMutex_);
     const std::int64_t now = nowSeconds();
-    if (!reseedSu3_.empty() && now - reseedFetchedAt_ < kReseedHoldSeconds) {
-        return reseedSu3_;
-    }
-    try {
-        const std::string archive = options_.fetchReseedArchive();
-        if (archive.empty()) {
+    {
+        // One fetch at a time and never under the lock: the others take what is held meanwhile.
+        const std::lock_guard<std::mutex> lock(reseedMutex_);
+        const bool fresh = !reseedSu3_.empty() && now - reseedFetchedAt_ < kReseedHoldSeconds;
+        if (fresh || reseedFetching_) {
             return reseedSu3_;
         }
-        reseedSu3_ = archive;
-        reseedFetchedAt_ = now;
+        reseedFetching_ = true;
+    }
+    std::string archive;
+    try {
+        archive = options_.fetchReseedArchive();
     } catch (const std::exception& error) {
         bazarish::log::warn("portal: could not fetch the reseed archive: {}", error.what());
+    }
+    const std::lock_guard<std::mutex> lock(reseedMutex_);
+    reseedFetching_ = false;
+    if (!archive.empty()) {
+        reseedSu3_ = std::move(archive);
+        reseedFetchedAt_ = now;
     }
     return reseedSu3_;
 }
@@ -236,7 +237,7 @@ void PortalApi::setupWebRoutes()
 
     http_->post("/login", filled([this](const http::Request& request, http::Response& response) {
         try {
-            const std::string userId = login().verify(request.param("challenge"),
+            const std::string userId = login_.verify(request.param("challenge"),
                 request.param("blob"), nowSeconds());
             setSessionCookie(response, session_.issue(userId, nowSeconds()));
             redirectTo(response, "/");
@@ -256,7 +257,7 @@ void PortalApi::setupWebRoutes()
         if (claim.state == LoginMailbox::State::eSigned) {
             try {
                 setSessionCookie(
-                    response, session_.issue(login().verify(claim.challenge, claim.blob, now), now));
+                    response, session_.issue(login_.verify(claim.challenge, claim.blob, now), now));
                 state = "signedIn";
             } catch (const std::exception& error) {
                 bazarish::log::debug("portal sign-in refused: {}", error.what());
@@ -366,13 +367,13 @@ std::string PortalApi::signInPanel(const std::string& error, http::Response& res
     if (facades.empty() || !isB32I2pHost(facades.front())) {
         return assets_.render("signin.html",
             {
-                {"challenge", htmlEscape(login().issue(now))},
+                {"challenge", htmlEscape(login_.issue(now))},
                 {"error", notice(error, "is-error")},
                 {"scan", std::string()},
             });
     }
     const std::string& facade = facades.front();
-    const std::string challenge = login().issue(now, loginrelay::callbackUrl(facade));
+    const std::string challenge = login_.issue(now, loginrelay::callbackUrl(facade));
     const std::string nonce = loginrelay::nonceOf(challenge);
     const std::string token = toHex(randomBytes(kSignInTokenBytes));
     options_.logins->expect(challenge, token, now);

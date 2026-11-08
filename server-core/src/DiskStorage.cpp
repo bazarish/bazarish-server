@@ -11,6 +11,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <set>
 #include <algorithm>
 #include <fstream>
 #include <iterator>
@@ -164,7 +165,8 @@ bool DiskStorage::isClientRegistered(const std::string& user, const std::string&
     return fs::exists(userDir(user) / "clients" / clientId);
 }
 
-void DiskStorage::registerPasses(const std::string& user, const std::vector<Bytes>& handles)
+bool DiskStorage::registerPasses(
+    const std::string& user, const std::vector<Bytes>& handles, const std::size_t cap)
 {
     requireFingerprint(user);
     for (const Bytes& handle : handles) {
@@ -174,11 +176,22 @@ void DiskStorage::registerPasses(const std::string& user, const std::vector<Byte
     }
     const std::lock_guard<std::mutex> lock(mutex_);
     const fs::path dir = userDir(user) / "passes";
+    std::set<std::string> added;
+    for (const Bytes& handle : handles) {
+        std::error_code ec;
+        if (!fs::exists(dir / toHex(handle), ec)) {
+            added.insert(toHex(handle));
+        }
+    }
+    if (listDirectoryNames(dir).size() + added.size() > cap) {
+        return false;
+    }
     createDirectoryDurably(dir);
     for (const Bytes& handle : handles) {
         writeMarker(dir / toHex(handle));
     }
     syncDirectory(dir);
+    return true;
 }
 
 bool DiskStorage::hasPass(const std::string& user, const Bytes& handle)
@@ -221,7 +234,8 @@ std::size_t DiskStorage::revokePasses(const std::string& user, const std::vector
 
 Storage::PutResult DiskStorage::putBlob(const std::string& user, const std::string& blobId,
     const Bytes& data, const std::string& deliveryClass, const std::uint64_t quotaBytes,
-    const std::int64_t receivedAt, const std::string& alreadyAcked)
+    const std::int64_t receivedAt, const std::string& alreadyAcked,
+    const std::optional<std::size_t> heldLimit)
 {
     requireFingerprint(user);
     requireSafeId(blobId);
@@ -229,14 +243,17 @@ Storage::PutResult DiskStorage::putBlob(const std::string& user, const std::stri
 
     const fs::path blobs = userDir(user) / "blobs";
     const fs::path meta = userDir(user) / "meta";
-    if (fs::exists(blobs / blobId)) {
+    const fs::path seen = userDir(user) / "seen";
+    if (fs::exists(blobs / blobId) || fs::exists(seen / blobId)) {
         return PutResult::eDuplicate;
+    }
+    if (heldLimit.has_value() && countHeldLocked(user, deliveryClass) >= *heldLimit) {
+        return PutResult::eClassFull;
     }
     if (usageLocked(user) + data.size() > quotaBytes) {
         return PutResult::eQuotaExceeded;
     }
 
-    const fs::path seen = userDir(user) / "seen";
     createDirectoryDurably(blobs);
     createDirectoryDurably(meta);
     createDirectoryDurably(seen);
@@ -306,6 +323,11 @@ std::size_t DiskStorage::countHeld(const std::string& user, const std::string& d
 {
     requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
+    return countHeldLocked(user, deliveryClass);
+}
+
+std::size_t DiskStorage::countHeldLocked(const std::string& user, const std::string& deliveryClass)
+{
     std::size_t held = 0;
     for (const std::string& blobId : listDirectoryNames(userDir(user) / "blobs")) {
         const fs::path metaPath = userDir(user) / "meta" / (blobId + ".json");

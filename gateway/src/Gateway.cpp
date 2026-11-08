@@ -2062,6 +2062,10 @@ void Gateway::setServerLink(std::optional<ServerLink> link)
     std::shared_ptr<server::TlsPipe> watching;
     {
         const std::lock_guard<std::mutex> lock(linkMutex_);
+        // The same link again: the watch on it stays, and so do the routes it lists.
+        if (serverLink_ == link) {
+            return;
+        }
         serverLink_ = std::move(link);
         watching = watch_;
     }

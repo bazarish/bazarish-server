@@ -1,5 +1,6 @@
 // Bazarish project (c) 2026
 #include "AccountApi.hpp"
+#include "AccountRemoval.hpp"
 
 #include <bazarish/Auth.hpp>
 #include <bazarish/Clock.hpp>
@@ -151,6 +152,104 @@ std::string holdMessageFor(const std::optional<bazarish::service::GrantStore::Ap
     return settings.registrationMessage;
 }
 
+void editSettings(const nlohmann::json& body, bazarish::service::NodeSettings::Values& values)
+{
+    if (body.contains("requireApproval")) {
+        values.requireApproval = body.at("requireApproval").get<bool>();
+    }
+    if (body.contains("registrationMessage")) {
+        values.registrationMessage
+            = body.at("registrationMessage").get<std::string>();
+    }
+    if (body.contains("portalMessage")) {
+        values.portalMessage = body.at("portalMessage").get<std::string>();
+    }
+    if (body.contains("loginConsumer")) {
+        const nlohmann::json& consumer = body.at("loginConsumer");
+        bazarish::service::LoginConsumer wanted;
+        wanted.name = consumer.value("name", values.loginConsumer.name);
+        wanted.place
+            = normalizedUrls(consumer.value("place", values.loginConsumer.place));
+        wanted.role = consumer.value("role", values.loginConsumer.role);
+        try {
+            bazarish::service::requireUsableConsumer(wanted);
+        } catch (const std::exception& error) {
+            throw std::invalid_argument(error.what());
+        }
+        values.loginConsumer = wanted;
+    }
+    if (body.contains("facades")) {
+        std::vector<std::string> facades;
+        for (const nlohmann::json& entry : body.at("facades")) {
+            std::string address = entry.get<std::string>();
+            if (address.empty()) {
+                continue;
+            }
+            if (address.find('/') != std::string::npos) {
+                throw std::invalid_argument(
+                    "a facade is an address, with no scheme and no path");
+            }
+            if (!bazarish::isI2pFacadeAddress(address)
+                && !bazarish::allowFacadeWithoutI2pForDevPurposes()) {
+                throw std::invalid_argument(
+                    "a facade must be a .b32.i2p address: " + address);
+            }
+            facades.push_back(std::move(address));
+        }
+        if (facades.empty()) {
+            throw std::invalid_argument("a server with no facade cannot be reached");
+        }
+        values.facades = std::move(facades);
+    }
+    if (body.contains("reseeds")) {
+        std::vector<std::string> reseeds;
+        for (const nlohmann::json& entry : body.at("reseeds")) {
+            const std::string url = withoutTrailingSlash(entry.get<std::string>());
+            if (url.empty()) {
+                continue;
+            }
+            if (!bazarish::i2p::isReseedUrl(url)) {
+                throw std::invalid_argument("a reseed is an https URL: " + url);
+            }
+            if (bazarish::isI2pUrl(url) && !bazarish::allowFacadeWithoutI2pForDevPurposes()) {
+                throw std::invalid_argument(
+                    "a reseed must not be a .b32.i2p address: " + url);
+            }
+            addOnce(reseeds, url);
+        }
+        values.reseeds = std::move(reseeds);
+    }
+    if (body.contains("portalLinks")) {
+        values.portalLinks
+            = normalizedUrls(body.at("portalLinks").get<std::vector<std::string>>());
+    }
+    if (body.contains("logLevel")) {
+        const std::string level = body.at("logLevel").get<std::string>();
+        const std::optional<bazarish::log::Level> parsed
+            = bazarish::log::levelFromString(level);
+        if (!parsed.has_value()) {
+            throw std::invalid_argument("not a log level: " + level);
+        }
+        values.logLevel = level;
+    }
+    bazarish::readEndpointInto(body, "listen", values.listenHost, values.listenPort);
+    bazarish::readEndpointInto(
+        body, "portalListen", values.portalListenHost, values.portalListenPort);
+    bazarish::readEndpointInto(body, "messaging", values.messagingHost, values.messagingPort);
+    if (body.contains("idleDeleteDays")) {
+        values.idleDeleteDays = body.at("idleDeleteDays").get<std::int64_t>();
+        if (values.idleDeleteDays < 0) {
+            throw std::invalid_argument("a lifetime cannot be negative");
+        }
+    }
+    if (body.contains("defaultQuotaBytes")) {
+        values.defaultQuotaBytes = body.at("defaultQuotaBytes").get<std::uint64_t>();
+        if (values.defaultQuotaBytes == 0) {
+            throw std::invalid_argument("a new account needs some storage");
+        }
+    }
+}
+
 }  // namespace
 
 namespace bazarish::service {
@@ -233,13 +332,11 @@ void AccountApi::deleteAccount(const std::string& user)
     if (!grants_.peekApproval(user).has_value() && !store_.getAccount(user).has_value()) {
         return;
     }
-    revokeDestination(user);
-    if (!options_.forgetMailbox(user)) {
-        bazarish::log::warn("mailbox of {} was not dropped: the messaging server refused it",
-            log::redact(user));
-    }
-    store_.deleteAccount(user);
-    grants_.erase(user);
+    removeAccount(user, store_, grants_,
+        [this](const std::string& gone) {
+            return options_.publishI2pTransient(gone, std::string(), 0, {}).has_value();
+        },
+        options_.forgetMailbox);
 }
 
 nlohmann::json AccountApi::userRecord(
@@ -378,6 +475,7 @@ void AccountApi::setupOpsRoutes()
             if (message.empty()) {
                 throw std::invalid_argument("a hold needs a message for the account's owner");
             }
+            const UserLocks::Held locked = options_.userLocks->hold(user);
             if (!grants_.peekApproval(user).has_value()) {
                 respondError(response, 404, ErrorCode::eAccountUnknown, "no such account");
                 return;
@@ -391,6 +489,7 @@ void AccountApi::setupOpsRoutes()
     ops_->del("/v1/account/user",
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const std::string user = request.query("user");
+            const UserLocks::Held locked = options_.userLocks->hold(user);
             if (!grants_.peekApproval(user).has_value()
                 && !store_.getAccount(user).has_value()) {
                 respondError(response, 404, ErrorCode::eAccountUnknown, "no such account");
@@ -405,6 +504,7 @@ void AccountApi::setupOpsRoutes()
             const nlohmann::json body = bazarish::parseJson(request.body);
             const std::string user = body.at("user").get<std::string>();
             const std::string reason = body.value("reason", std::string());
+            const UserLocks::Held locked = options_.userLocks->hold(user);
             deleteAccount(user);
             grants_.ban(user, reason.empty() ? std::string(kDefaultBanReason) : reason,
                 nowSeconds());
@@ -415,6 +515,7 @@ void AccountApi::setupOpsRoutes()
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = bazarish::parseJson(request.body);
             const std::string user = body.at("user").get<std::string>();
+            const UserLocks::Held locked = options_.userLocks->hold(user);
             grants_.unban(user);
             respondJson(response, {{"ok", true}});
         })));
@@ -467,104 +568,16 @@ void AccountApi::setupOpsRoutes()
     ops_->put("/v1/account/settings",
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = bazarish::parseJson(request.body);
-            NodeSettings::Values values = settings();
-            if (body.contains("requireApproval")) {
-                values.requireApproval = body.at("requireApproval").get<bool>();
-            }
-            if (body.contains("registrationMessage")) {
-                values.registrationMessage
-                    = body.at("registrationMessage").get<std::string>();
-            }
-            if (body.contains("portalMessage")) {
-                values.portalMessage = body.at("portalMessage").get<std::string>();
-            }
-            if (body.contains("loginConsumer")) {
-                const nlohmann::json& consumer = body.at("loginConsumer");
-                LoginConsumer wanted;
-                wanted.name = consumer.value("name", values.loginConsumer.name);
-                wanted.place
-                    = normalizedUrls(consumer.value("place", values.loginConsumer.place));
-                wanted.role = consumer.value("role", values.loginConsumer.role);
-                try {
-                    requireUsableConsumer(wanted);
-                } catch (const std::exception& error) {
-                    throw std::invalid_argument(error.what());
-                }
-                values.loginConsumer = wanted;
-            }
-            if (body.contains("facades")) {
-                std::vector<std::string> facades;
-                for (const nlohmann::json& entry : body.at("facades")) {
-                    std::string address = entry.get<std::string>();
-                    if (address.empty()) {
-                        continue;
-                    }
-                    if (address.find('/') != std::string::npos) {
-                        throw std::invalid_argument(
-                            "a facade is an address, with no scheme and no path");
-                    }
-                    if (!bazarish::isI2pFacadeAddress(address)
-                        && !bazarish::allowFacadeWithoutI2pForDevPurposes()) {
-                        throw std::invalid_argument(
-                            "a facade must be a .b32.i2p address: " + address);
-                    }
-                    facades.push_back(std::move(address));
-                }
-                if (facades.empty()) {
-                    throw std::invalid_argument("a server with no facade cannot be reached");
-                }
-                values.facades = std::move(facades);
-            }
-            if (body.contains("reseeds")) {
-                std::vector<std::string> reseeds;
-                for (const nlohmann::json& entry : body.at("reseeds")) {
-                    const std::string url = withoutTrailingSlash(entry.get<std::string>());
-                    if (url.empty()) {
-                        continue;
-                    }
-                    if (!bazarish::i2p::isReseedUrl(url)) {
-                        throw std::invalid_argument("a reseed is an https URL: " + url);
-                    }
-                    if (bazarish::isI2pUrl(url) && !bazarish::allowFacadeWithoutI2pForDevPurposes()) {
-                        throw std::invalid_argument(
-                            "a reseed must not be a .b32.i2p address: " + url);
-                    }
-                    addOnce(reseeds, url);
-                }
-                values.reseeds = std::move(reseeds);
-            }
-            if (body.contains("portalLinks")) {
-                values.portalLinks
-                    = normalizedUrls(body.at("portalLinks").get<std::vector<std::string>>());
-            }
-            if (body.contains("logLevel")) {
-                const std::string level = body.at("logLevel").get<std::string>();
-                const std::optional<bazarish::log::Level> parsed
-                    = bazarish::log::levelFromString(level);
-                if (!parsed.has_value()) {
-                    throw std::invalid_argument("not a log level: " + level);
-                }
-                values.logLevel = level;
-            }
-            readEndpointInto(body, "listen", values.listenHost, values.listenPort);
-            readEndpointInto(
-                body, "portalListen", values.portalListenHost, values.portalListenPort);
-            readEndpointInto(body, "messaging", values.messagingHost, values.messagingPort);
-            if (body.contains("idleDeleteDays")) {
-                values.idleDeleteDays = body.at("idleDeleteDays").get<std::int64_t>();
-                if (values.idleDeleteDays < 0) {
-                    throw std::invalid_argument("a lifetime cannot be negative");
-                }
-            }
-            if (body.contains("defaultQuotaBytes")) {
-                values.defaultQuotaBytes = body.at("defaultQuotaBytes").get<std::uint64_t>();
-                if (values.defaultQuotaBytes == 0) {
-                    throw std::invalid_argument("a new account needs some storage");
-                }
-            }
-            const std::string levelBefore = settings().logLevel;
+            // Checked on a copy first, so a bad request is a refusal and never a half write.
+            NodeSettings::Values probe = settings();
+            editSettings(body, probe);
+            std::string levelBefore;
+            NodeSettings::Values values;
             try {
-                settings_->set(values);
+                values = settings_->update([&body, &levelBefore](NodeSettings::Values& edited) {
+                    levelBefore = edited.logLevel;
+                    editSettings(body, edited);
+                });
             } catch (const std::exception& error) {
                 respondError(response, 500, ErrorCode::eRequestFailed, error.what());
                 return;
@@ -608,6 +621,7 @@ void AccountApi::setupOpsRoutes()
             const nlohmann::json body = bazarish::parseJson(request.body);
             const std::string user = body.at("user").get<std::string>();
             const auto quotaBytes = body.at("quotaBytes").get<std::uint64_t>();
+            const UserLocks::Held locked = options_.userLocks->hold(user);
             const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
             const std::optional<SubscriptionStore::Account> held
                 = store_.getAccount(user);
@@ -633,6 +647,7 @@ void AccountApi::setupOpsRoutes()
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = bazarish::parseJson(request.body);
             const std::string user = body.at("user").get<std::string>();
+            const UserLocks::Held locked = options_.userLocks->hold(user);
             if (!grants_.peekApproval(user).has_value()) {
                 respondError(response, 404, ErrorCode::eAccountUnknown, "no such account");
                 return;
@@ -715,6 +730,7 @@ void AccountApi::setupRoutes()
                     "this node serves only its own accounts");
                 return;
             }
+            const UserLocks::Held locked = options_.userLocks->hold(user);
             try {
                 handler(request, response, user);
             } catch (const nlohmann::json::exception& error) {

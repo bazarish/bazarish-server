@@ -4,6 +4,7 @@
 #include "GrantStore.hpp"
 #include "OperatorPush.hpp"
 #include "SubscriptionStore.hpp"
+#include "UserLocks.hpp"
 
 #include <Restart.hpp>
 
@@ -18,6 +19,6 @@ std::int64_t idleSince(const std::optional<SubscriptionStore::Account>& account,
 
 // Each account costs pushes to the messaging server: a stop is looked at between accounts.
 void sweepIdleAccounts(SubscriptionStore& store, GrantStore& grants, const OperatorPush& push,
-    std::int64_t idleDays, std::int64_t now, const StopGate& stopping);
+    std::int64_t idleDays, std::int64_t now, const StopGate& stopping, UserLocks& locks);
 
 }  // namespace bazarish::service

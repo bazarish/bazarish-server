@@ -547,16 +547,9 @@ void HttpApi::setupRoutes()
             }
             const std::vector<Bytes> handles
                 = passHandles(bazarish::parseJson(request.body));
-            std::set<std::string> added;
-            for (const Bytes& handle : handles) {
-                if (!store.hasPass(user, handle)) {
-                    added.insert(toHex(handle));
-                }
-            }
-            if (store.passCount(user) + added.size() > kMaxPassesPerMailbox) {
+            if (!store.registerPasses(user, handles, kMaxPassesPerMailbox)) {
                 throw std::invalid_argument("this mailbox holds too many delivery passes");
             }
-            store.registerPasses(user, handles);
             return jsonResponse({{"ok", true}, {"held", store.passCount(user)}});
         }));
 

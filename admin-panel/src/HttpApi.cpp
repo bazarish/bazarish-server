@@ -812,74 +812,74 @@ void HttpApi::registerRoutes()
     http_->put("/api/panel", api([this](const http::Request& request, http::Response& response) {
         try {
             const nlohmann::json body = bazarish::parseJson(request.body);
-            Config panel = settings_->get();
-            if (body.contains("admins")) {
-                std::vector<std::string> admins;
-                for (const nlohmann::json& entry : body.at("admins")) {
-                    const std::string fingerprint = entry.get<std::string>();
-                    if (fingerprint.empty()) {
-                        continue;
-                    }
-                    if (!isFingerprint(fingerprint)) {
-                        throw std::invalid_argument(
-                            "not a 52-character fingerprint: " + fingerprint);
-                    }
-                    admins.push_back(fingerprint);
-                }
-                if (admins.empty()) {
-                    throw std::invalid_argument("a panel needs at least one administrator");
-                }
-                panel.admins = std::move(admins);
-            }
-            if (body.contains("consumer")) {
-                const nlohmann::json& consumer = body.at("consumer");
-                service::LoginConsumer wanted;
-                wanted.name = consumer.value("name", panel.consumer.name);
-                wanted.place = consumer.value("place", panel.consumer.place);
-                wanted.role = consumer.value("role", panel.consumer.role);
-                try {
-                    service::requireUsableConsumer(wanted);
-                } catch (const std::exception& error) {
-                    throw std::invalid_argument(error.what());
-                }
-                panel.consumer = wanted;
-            }
-            readEndpointInto(body, "listen", panel.listenHost, panel.listenPort);
-            if (body.contains("fleets")) {
-                std::vector<Fleet> fleets;
-                for (const nlohmann::json& entry : body.at("fleets")) {
-                    Fleet fleet;
-                    fleet.name = entry.value("name", std::string());
-                    for (const nlohmann::json& item : entry.at("services")) {
-                        ServiceEntry service;
-                        service.name = item.value("name", std::string());
-                        service.kind = item.value("kind", std::string());
-                        service.url = item.value("url", std::string());
-                        service.pin = item.value("pin", std::string());
-                        if (!isKnownServiceKind(service.kind)) {
+            const Config panel = settings_->update([&body](Config& edited) {
+                if (body.contains("admins")) {
+                    std::vector<std::string> admins;
+                    for (const nlohmann::json& entry : body.at("admins")) {
+                        const std::string fingerprint = entry.get<std::string>();
+                        if (fingerprint.empty()) {
+                            continue;
+                        }
+                        if (!isFingerprint(fingerprint)) {
                             throw std::invalid_argument(
-                                "the panel does not know a service of kind \"" + service.kind
-                                + "\"");
+                                "not a 52-character fingerprint: " + fingerprint);
                         }
-                        if (service.url.empty() || service.name.empty()) {
-                            throw std::invalid_argument("a service needs a name and a URL");
-                        }
-                        if (service.url.rfind("https://", 0) != 0) {
-                            throw std::invalid_argument(
-                                "a service is reached over https: " + service.url);
-                        }
-                        if (service.pin.empty()) {
-                            throw std::invalid_argument(
-                                "a service is named by the key it presents: " + service.name);
-                        }
-                        fleet.services.push_back(std::move(service));
+                        admins.push_back(fingerprint);
                     }
-                    requireCoherentFleet(fleet);
-                    fleets.push_back(std::move(fleet));
+                    if (admins.empty()) {
+                        throw std::invalid_argument("a panel needs at least one administrator");
+                    }
+                    edited.admins = std::move(admins);
                 }
-                panel.fleets = std::move(fleets);
-            }
-            settings_->set(panel);
+                if (body.contains("consumer")) {
+                    const nlohmann::json& consumer = body.at("consumer");
+                    service::LoginConsumer wanted;
+                    wanted.name = consumer.value("name", edited.consumer.name);
+                    wanted.place = consumer.value("place", edited.consumer.place);
+                    wanted.role = consumer.value("role", edited.consumer.role);
+                    try {
+                        service::requireUsableConsumer(wanted);
+                    } catch (const std::exception& error) {
+                        throw std::invalid_argument(error.what());
+                    }
+                    edited.consumer = wanted;
+                }
+                readEndpointInto(body, "listen", edited.listenHost, edited.listenPort);
+                if (body.contains("fleets")) {
+                    std::vector<Fleet> fleets;
+                    for (const nlohmann::json& entry : body.at("fleets")) {
+                        Fleet fleet;
+                        fleet.name = entry.value("name", std::string());
+                        for (const nlohmann::json& item : entry.at("services")) {
+                            ServiceEntry service;
+                            service.name = item.value("name", std::string());
+                            service.kind = item.value("kind", std::string());
+                            service.url = item.value("url", std::string());
+                            service.pin = item.value("pin", std::string());
+                            if (!isKnownServiceKind(service.kind)) {
+                                throw std::invalid_argument(
+                                    "the panel does not know a service of kind \"" + service.kind
+                                    + "\"");
+                            }
+                            if (service.url.empty() || service.name.empty()) {
+                                throw std::invalid_argument("a service needs a name and a URL");
+                            }
+                            if (service.url.rfind("https://", 0) != 0) {
+                                throw std::invalid_argument(
+                                    "a service is reached over https: " + service.url);
+                            }
+                            if (service.pin.empty()) {
+                                throw std::invalid_argument(
+                                    "a service is named by the key it presents: " + service.name);
+                            }
+                            fleet.services.push_back(std::move(service));
+                        }
+                        requireCoherentFleet(fleet);
+                        fleets.push_back(std::move(fleet));
+                    }
+                    edited.fleets = std::move(fleets);
+                }
+            });
             nlohmann::json answer = syncedFleets(panel.fleets, identity_, credential_);
             answer["admins"] = panel.admins;
             sendJson(response, answer.dump());

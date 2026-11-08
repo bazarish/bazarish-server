@@ -11,6 +11,7 @@
 #include <fstream>
 #include <stdexcept>
 #include <thread>
+#include <vector>
 
 #define CHECK(condition)                                                            \
     do {                                                                            \
@@ -43,6 +44,9 @@ namespace {
 
 constexpr std::uint64_t kQuota = 1024;
 constexpr std::int64_t kNow = 1780000000;
+constexpr std::size_t kPassCap = 64;
+constexpr std::size_t kRacers = 16;
+constexpr std::size_t kHeldLimit = 5;
 
 std::string makeUser(const unsigned char fill)
 {
@@ -77,23 +81,23 @@ int main()
     const Bytes passCarol = deliveryPass(secret, std::string(52, 'c'));
     const Bytes handleBob = deliveryPassHandle(passBob);
     const Bytes handleCarol = deliveryPassHandle(passCarol);
-    storage.registerPasses(alice, {handleBob, handleCarol});
+    CHECK(storage.registerPasses(alice, {handleBob, handleCarol}, kPassCap));
     CHECK(storage.passCount(alice) == 2);
     CHECK(storage.hasPass(alice, handleBob));
     // Registering one already held is how a block is lifted, so it must not create a second entry.
-    storage.registerPasses(alice, {handleBob});
+    CHECK(storage.registerPasses(alice, {handleBob}, kPassCap));
     CHECK(storage.passCount(alice) == 2);
     CHECK(!storage.hasPass(alice, passBob));
     CHECK(!storage.hasPass(alice, Bytes{}));
     CHECK(!storage.hasPass(alice, Bytes(bazarish::kDeliveryPassSize - 1, 0x11)));
-    CHECK_THROWS(storage.registerPasses(alice, {Bytes{1, 2, 3}}));
+    CHECK_THROWS(storage.registerPasses(alice, {Bytes{1, 2, 3}}, kPassCap));
 
     CHECK(storage.revokePasses(alice, {handleBob}) == 1);
     CHECK(!storage.hasPass(alice, handleBob));
     CHECK(storage.hasPass(alice, handleCarol));
     CHECK(storage.passCount(alice) == 1);
     CHECK(storage.revokePasses(alice, {handleBob}) == 0);
-    storage.registerPasses(alice, {handleBob});
+    CHECK(storage.registerPasses(alice, {handleBob}, kPassCap));
     CHECK(storage.hasPass(alice, handleBob));
 
     const Bytes blob(100, 0xab);
@@ -212,6 +216,38 @@ int main()
     CHECK(storage.putBlob(dave, "over", Bytes(20, 'x'), "content",
               storage.userQuota(dave, kQuota), kNow)
         == Storage::PutResult::eQuotaExceeded);
+
+    {
+        const std::string erin = makeUser(0x77);
+        std::vector<std::thread> racers;
+        for (std::size_t i = 0; i < kRacers; ++i) {
+            racers.emplace_back([&storage, &erin, i]() {
+                (void)storage.putBlob(erin, "contact-" + std::to_string(i), Bytes{1}, "contact",
+                    kQuota, kNow, {}, kHeldLimit);
+            });
+        }
+        for (std::thread& racer : racers) {
+            racer.join();
+        }
+        CHECK(storage.countHeld(erin, "contact") == kHeldLimit);
+        CHECK(storage.putBlob(erin, "contact-0", Bytes{1}, "contact", kQuota, kNow, {}, kHeldLimit)
+            != Storage::PutResult::eStored);
+
+        racers.clear();
+        for (std::size_t i = 0; i < kRacers; ++i) {
+            racers.emplace_back([&storage, &erin]() {
+                std::vector<Bytes> handles;
+                for (std::size_t n = 0; n < kPassCap / kHeldLimit; ++n) {
+                    handles.push_back(randomBytes(bazarish::kDeliveryPassSize));
+                }
+                (void)storage.registerPasses(erin, handles, kPassCap);
+            });
+        }
+        for (std::thread& racer : racers) {
+            racer.join();
+        }
+        CHECK(storage.passCount(erin) <= kPassCap);
+    }
 
     DiskStorage reopened(root);
     CHECK(reopened.usage(alice) == 100);

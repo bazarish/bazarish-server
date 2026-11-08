@@ -53,6 +53,16 @@ void NodeSettings::set(const Values& values)
     values_ = values;
 }
 
+NodeSettings::Values NodeSettings::update(const std::function<void(Values&)>& change)
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    Values values = values_;
+    change(values);
+    persist(values);
+    values_ = values;
+    return values;
+}
+
 void NodeSettings::persist(const Values& values) const
 {
     ConfigFile file(configPath_);

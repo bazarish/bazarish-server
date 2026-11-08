@@ -4,6 +4,7 @@
 #include <bazarish/Bytes.hpp>
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -18,7 +19,10 @@ public:
     virtual std::vector<std::string> listClients(const std::string& user) = 0;
     virtual bool isClientRegistered(const std::string& user, const std::string& clientId) = 0;
 
-    virtual void registerPasses(const std::string& user, const std::vector<Bytes>& handles) = 0;
+    // False, and nothing kept, when the new ones would take the mailbox past `cap`.
+    virtual bool registerPasses(
+        const std::string& user, const std::vector<Bytes>& handles, std::size_t cap)
+        = 0;
     virtual bool hasPass(const std::string& user, const Bytes& handle) = 0;
     virtual std::size_t passCount(const std::string& user) = 0;
     virtual std::size_t revokePasses(
@@ -28,6 +32,7 @@ public:
         eStored,
         eDuplicate,
         eQuotaExceeded,
+        eClassFull,
     };
 
     struct PendingEntry {
@@ -38,9 +43,11 @@ public:
         bool operator==(const PendingEntry&) const = default;
     };
 
+    // Duplicate when held or seen before; `heldLimit` bounds what the class may hold at once.
     virtual PutResult putBlob(const std::string& user, const std::string& blobId,
         const Bytes& data, const std::string& deliveryClass, std::uint64_t quotaBytes,
-        std::int64_t receivedAt, const std::string& alreadyAcked = {})
+        std::int64_t receivedAt, const std::string& alreadyAcked = {},
+        std::optional<std::size_t> heldLimit = std::nullopt)
         = 0;
     virtual bool hasBlob(const std::string& user, const std::string& blobId) = 0;
     virtual bool isPendingFor(

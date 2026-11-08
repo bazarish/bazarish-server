@@ -64,6 +64,16 @@ void PanelSettings::set(const Config& values)
     values_ = values;
 }
 
+Config PanelSettings::update(const std::function<void(Config&)>& change)
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    Config values = values_;
+    change(values);
+    persist(values);
+    values_ = values;
+    return values;
+}
+
 void PanelSettings::persist(const Config& values) const
 {
     if (configPath_.empty()) {

@@ -23,8 +23,6 @@ public:
     std::string login(const std::string& challenge, const std::string& blob, std::int64_t now);
 
 private:
-    service::LoginChallenge& challenges();
-
     std::shared_ptr<PanelSettings> settings_;
     service::LoginChallenge challenges_;
 };

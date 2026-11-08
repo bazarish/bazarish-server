@@ -258,7 +258,7 @@ int main()
              ++i) {
             filler.push_back(randomBytes(kDeliveryPassSize));
         }
-        storage.registerPasses(alice.fingerprint(), filler);
+        CHECK(storage.registerPasses(alice.fingerprint(), filler, kMaxPassesPerMailbox));
         CHECK(storage.passCount(alice.fingerprint()) == kMaxPassesPerMailbox);
         const auto registerPasses = [port, &alice](const nlohmann::json& passes) {
             const std::string body = nlohmann::json{{"passes", passes}}.dump();
@@ -273,7 +273,7 @@ int main()
     {
         const Bytes handleForCarol
             = deliveryPassHandle(deliveryPass(aliceSecret, std::string(52, 'c')));
-        storage.registerPasses(alice.fingerprint(), {handleForCarol});
+        CHECK(storage.registerPasses(alice.fingerprint(), {handleForCarol}, kMaxPassesPerMailbox));
         const std::string body
             = nlohmann::json{{"passes", {toBase64(handleForBob)}}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/messaging/passes/revoke",
@@ -282,7 +282,7 @@ int main()
         CHECK(nlohmann::json::parse(result.body).at("revoked") == 1);
         CHECK(!storage.hasPass(alice.fingerprint(), handleForBob));
         CHECK(storage.hasPass(alice.fingerprint(), handleForCarol));
-        storage.registerPasses(alice.fingerprint(), {handleForBob});
+        CHECK(storage.registerPasses(alice.fingerprint(), {handleForBob}, kMaxPassesPerMailbox));
     }
 
     const Bytes payload = {'e', '2', 'e', '-', 'b', 'l', 'o', 'b'};

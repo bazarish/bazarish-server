@@ -7,6 +7,7 @@
 
 #include <LoginRelay.hpp>
 
+#include <bazarish/KeyedSeal.hpp>
 #include <bazarish/Percent.hpp>
 #include <bazarish/Portal.hpp>
 #include <bazarish/ServerDescriptor.hpp>
@@ -115,19 +116,26 @@ void testPortalDiscovery()
         const std::string challenge = panel.issue(now(), loginrelay::callbackUrl(facade));
         const std::string nonce = loginrelay::nonceOf(challenge);
         const Identity signer = Identity::generate();
-        const auto deliver = [&](const std::string& sent, const std::string& blob) {
+        const Bytes key = newLinkKey();
+        const auto deliverUnder = [&](const Bytes& sealing, const std::string& sent,
+                                      const std::string& blob) {
             return call(port, "POST", loginrelay::kCallbackPath, {},
-                nlohmann::json{{"challenge", sent}, {"blob", blob}}.dump())
+                sealLoginAnswer(sealing, {sent, blob}))
                 .status;
+        };
+        const auto deliver = [&](const std::string& sent, const std::string& blob) {
+            return deliverUnder(key, sent, blob);
         };
         const std::string path = std::string(loginrelay::kChallengePrefix) + nonce;
         CHECK(call(port, "GET", path).status == 404);
         CHECK(deliver(challenge, signLoginBlob(signer, now(), challenge)) == 404);
 
-        CHECK(options.logins->expect(challenge, "token", now()));
+        CHECK(options.logins->expect(challenge, "token", key, now()));
         const http::ClientResponse fetched = call(port, "GET", path);
         CHECK(fetched.status == 200);
-        CHECK(fetched.body == challenge);
+        CHECK(fetched.body.find(nonce) == std::string::npos);
+        CHECK(openLoginChallenge(key, Bytes(fetched.body.begin(), fetched.body.end())) == challenge);
+        CHECK(deliverUnder(newLinkKey(), challenge, signLoginBlob(signer, now(), challenge)) == 403);
         CHECK(call(port, "POST", loginrelay::kCallbackPath, {}, "{\"challenge\": 1}").status == 400);
         CHECK(call(port, "POST", loginrelay::kCallbackPath, {}, "not json").status == 400);
         CHECK(deliver(challenge, "not a blob") == 403);
@@ -272,7 +280,7 @@ void testWebFlow()
                 {{"Cookie", "signin=" + cookie}}).body).at("state").get<std::string>();
         };
         CHECK(wait(token) == "waiting");
-        CHECK(options.logins->challengeOf(nonce, now()) == scanned);
+        CHECK(options.logins->held(nonce, now())->challenge == scanned);
         CHECK(options.logins->deliver(nonce, scanned, signLoginBlob(identity, now(), scanned), now()));
         CHECK(wait(toHex(randomBytes(kSecretBytes))) == "gone");
         const http::ClientResponse claimed = call(port, "GET", "/login/wait?nonce=" + nonce,

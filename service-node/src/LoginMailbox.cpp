@@ -4,6 +4,7 @@
 #include <LoginRelay.hpp>
 
 #include <bazarish/Hmac.hpp>
+#include <bazarish/KeyedSeal.hpp>
 
 #include <iterator>
 #include <stdexcept>
@@ -15,11 +16,14 @@ LoginMailbox::LoginMailbox(const std::int64_t windowSeconds)
 {
 }
 
-bool LoginMailbox::expect(
-    const std::string& challenge, const std::string& token, const std::int64_t now)
+bool LoginMailbox::expect(const std::string& challenge, const std::string& token,
+    const Bytes& key, const std::int64_t now)
 {
     if (token.empty()) {
         throw std::invalid_argument("an awaited login needs the token of its browser");
+    }
+    if (key.size() != kLinkKeyBytes) {
+        throw std::invalid_argument("an awaited login needs the key its exchange is sealed under");
     }
     const std::string nonce = loginrelay::nonceOf(challenge);
     const std::lock_guard<std::mutex> lock(mutex_);
@@ -27,16 +31,20 @@ bool LoginMailbox::expect(
     if (awaited_.size() >= kMaxAwaitedLogins) {
         return false;
     }
-    awaited_[nonce] = Awaited{token, challenge, {}, now};
+    awaited_[nonce] = Awaited{token, challenge, key, {}, now};
     return true;
 }
 
-std::string LoginMailbox::challengeOf(const std::string& nonce, const std::int64_t now)
+std::optional<LoginMailbox::Held> LoginMailbox::held(
+    const std::string& nonce, const std::int64_t now)
 {
     const std::lock_guard<std::mutex> lock(mutex_);
     pruneLocked(now);
     const auto found = awaited_.find(nonce);
-    return found == awaited_.end() ? std::string() : found->second.challenge;
+    if (found == awaited_.end()) {
+        return std::nullopt;
+    }
+    return Held{found->second.challenge, found->second.key};
 }
 
 bool LoginMailbox::deliver(const std::string& nonce, const std::string& challenge,

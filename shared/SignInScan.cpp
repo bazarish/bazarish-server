@@ -13,13 +13,13 @@ std::string newSignInToken()
     return toHex(randomBytes(kSignInTokenBytes));
 }
 
-std::string signInScan(
-    WebAssets& assets, const std::string& facade, const std::string& challenge)
+std::string signInScan(WebAssets& assets, const std::string& facade,
+    const std::string& challenge, const Bytes& key)
 {
     const std::string nonce = loginrelay::nonceOf(challenge);
     return assets.render("signin-scan.html",
         {
-            {"qr", qr::svg(loginrelay::challengeLink(facade, nonce))},
+            {"qr", qr::svg(loginrelay::challengeLink(facade, nonce, key))},
             {"nonce", nonce},
         });
 }

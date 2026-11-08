@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #pragma once
 
+#include <bazarish/Bytes.hpp>
+
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -18,6 +20,6 @@ std::string nonceOf(const std::string& challenge);
 
 std::string callbackUrl(const std::string& facade);
 
-std::string challengeLink(const std::string& facade, const std::string& nonce);
+std::string challengeLink(const std::string& facade, const std::string& nonce, const Bytes& key);
 
 }  // namespace bazarish::loginrelay

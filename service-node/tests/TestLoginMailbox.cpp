@@ -4,6 +4,7 @@
 
 #include <LoginRelay.hpp>
 
+#include <bazarish/KeyedSeal.hpp>
 #include <bazarish/LoginChallenge.hpp>
 
 #include <cstdio>
@@ -19,6 +20,8 @@ constexpr std::int64_t kWindow = 300;
 
 }  // namespace
 
+const bazarish::Bytes kKey = bazarish::newLinkKey();
+
 int main()
 {
     bazarish::service::LoginChallenge site("site-secret",
@@ -29,10 +32,11 @@ int main()
 
     {
         LoginMailbox mailbox(kWindow);
-        CHECK(mailbox.challengeOf(nonce, kNow).empty());
+        CHECK(!mailbox.held(nonce, kNow).has_value());
         CHECK(!mailbox.deliver(nonce, challenge, "blob", kNow));
-        CHECK(mailbox.expect(challenge, "token", kNow));
-        CHECK(mailbox.challengeOf(nonce, kNow) == challenge);
+        CHECK(mailbox.expect(challenge, "token", kKey, kNow));
+        CHECK(mailbox.held(nonce, kNow)->challenge == challenge);
+        CHECK(mailbox.held(nonce, kNow)->key == kKey);
         CHECK(mailbox.claim(nonce, "token", kNow).state == LoginMailbox::State::eWaiting);
         CHECK(mailbox.claim(nonce, "stranger", kNow).state == LoginMailbox::State::eGone);
         CHECK(mailbox.claim(nonce, "", kNow).state == LoginMailbox::State::eGone);
@@ -48,9 +52,9 @@ int main()
 
     {
         LoginMailbox mailbox(kWindow);
-        CHECK(mailbox.expect(challenge, "token", kNow));
+        CHECK(mailbox.expect(challenge, "token", kKey, kNow));
         CHECK(mailbox.claim(nonce, "token", kNow + kWindow).state == LoginMailbox::State::eWaiting);
-        CHECK(mailbox.challengeOf(nonce, kNow + kWindow + 1).empty());
+        CHECK(!mailbox.held(nonce, kNow + kWindow + 1).has_value());
         CHECK(!mailbox.deliver(nonce, challenge, "blob", kNow + kWindow + 1));
         CHECK(mailbox.claim(nonce, "token", kNow + kWindow + 1).state == LoginMailbox::State::eGone);
     }
@@ -59,7 +63,7 @@ int main()
         LoginMailbox mailbox(kWindow);
         bool refused = false;
         try {
-            (void)mailbox.expect(challenge, "", kNow);
+            (void)mailbox.expect(challenge, "", kKey, kNow);
         } catch (const std::invalid_argument&) {
             refused = true;
         }
@@ -68,13 +72,18 @@ int main()
 
     {
         LoginMailbox mailbox(kWindow);
+        CHECK_THROWS((void)mailbox.expect(challenge, "token", bazarish::Bytes(1, 0), kNow));
+    }
+
+    {
+        LoginMailbox mailbox(kWindow);
         const std::string first = site.issue(kNow);
-        CHECK(mailbox.expect(first, "token", kNow));
+        CHECK(mailbox.expect(first, "token", kKey, kNow));
         for (std::size_t i = 1; i < bazarish::service::kMaxAwaitedLogins; ++i) {
-            CHECK(mailbox.expect(site.issue(kNow + 1), "token", kNow + 1));
+            CHECK(mailbox.expect(site.issue(kNow + 1), "token", kKey, kNow + 1));
         }
-        CHECK(!mailbox.expect(site.issue(kNow + 1), "token", kNow + 1));
-        CHECK(!mailbox.challengeOf(bazarish::loginrelay::nonceOf(first), kNow + 1).empty());
+        CHECK(!mailbox.expect(site.issue(kNow + 1), "token", kKey, kNow + 1));
+        CHECK(mailbox.held(bazarish::loginrelay::nonceOf(first), kNow + 1).has_value());
     }
 
     std::printf("TestLoginMailbox: all checks passed\n");

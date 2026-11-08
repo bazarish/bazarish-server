@@ -6,12 +6,13 @@
 #include "SubscriptionStore.hpp"
 
 #include <LoginRelay.hpp>
-#include <bazarish/LoginChallenge.hpp>
-#include <bazarish/Clock.hpp>
 #include <bazarish/Auth.hpp>
 #include <bazarish/Certificates.hpp>
+#include <bazarish/Clock.hpp>
 #include <bazarish/Crypto.hpp>
+#include <bazarish/KeyedSeal.hpp>
 #include <bazarish/Log.hpp>
+#include <bazarish/LoginChallenge.hpp>
 
 #include <bazarish/HttpClient.hpp>
 #include <nlohmann/json.hpp>
@@ -339,10 +340,15 @@ int main()
         const std::string challenge = issuer.issue(nowSeconds());
         const std::string nonce = loginrelay::nonceOf(challenge);
         const std::string expect
-            = nlohmann::json{{"challenge", challenge}, {"token", "browser"}}.dump();
+            = nlohmann::json{{"challenge", challenge}, {"token", "browser"},
+                {"key", linkKeyText(newLinkKey())}}.dump();
         CHECK(call(opsPort, stranger, "POST", "/v1/login/expect", expect).status == 403);
         CHECK(call(opsPort, panel, "POST", "/v1/login/expect",
                   nlohmann::json{{"challenge", challenge}}.dump()).status == 400);
+        CHECK(call(opsPort, panel, "POST", "/v1/login/expect",
+                  nlohmann::json{{"challenge", challenge}, {"token", "browser"}}.dump())
+                  .status
+            == 400);
         CHECK(call(opsPort, panel, "POST", "/v1/login/expect", expect).status == 200);
         const auto claim = [&](const Identity& who, const std::string& token) {
             return call(opsPort, who, "POST", "/v1/login/claim",

@@ -2,6 +2,7 @@
 #include "LoginRelay.hpp"
 
 #include <bazarish/JsonRead.hpp>
+#include <bazarish/KeyedSeal.hpp>
 #include <bazarish/Links.hpp>
 #include <bazarish/Portal.hpp>
 
@@ -38,10 +39,12 @@ std::string callbackUrl(const std::string& facade)
     return service::kLoginCallbackScheme + facade + kCallbackPath;
 }
 
-std::string challengeLink(const std::string& facade, const std::string& nonce)
+std::string challengeLink(const std::string& facade, const std::string& nonce, const Bytes& key)
 {
-    return schemeLink(std::string(kSignKind) + service::kLoginLinkField + facade
-        + kChallengePrefix + nonce);
+    return service::withLoginKey(
+        schemeLink(std::string(kSignKind) + service::kLoginLinkField + facade + kChallengePrefix
+            + nonce),
+        key);
 }
 
 }  // namespace bazarish::loginrelay

@@ -6,6 +6,7 @@
 #include <SignInScan.hpp>
 #include <WebFace.hpp>
 
+#include <bazarish/KeyedSeal.hpp>
 #include <bazarish/Percent.hpp>
 #include <bazarish/ServerDescriptor.hpp>
 
@@ -346,7 +347,8 @@ std::string PortalApi::signInPanel(const std::string& error, http::Response& res
     const std::string& facade = facades.front();
     const std::string challenge = login_.issue(now, loginrelay::callbackUrl(facade));
     const std::string token = newSignInToken();
-    if (!options_.logins->expect(challenge, token, now)) {
+    const Bytes key = newLinkKey();
+    if (!options_.logins->expect(challenge, token, key, now)) {
         return pasteOnly();
     }
     setCookie(response, kSignInCookie, token, kSignInCookieAttributes);
@@ -354,7 +356,7 @@ std::string PortalApi::signInPanel(const std::string& error, http::Response& res
         {
             {"challenge", htmlEscape(challenge)},
             {"error", notice(error, "is-error")},
-            {"scan", signInScan(assets_, facade, challenge)},
+            {"scan", signInScan(assets_, facade, challenge, key)},
         });
 }
 

@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #pragma once
 
+#include <bazarish/Bytes.hpp>
+
 #include <bazarish/WebAssets.hpp>
 
 #include <cstddef>
@@ -12,7 +14,7 @@ inline constexpr std::size_t kSignInTokenBytes = 16;
 
 std::string newSignInToken();
 // The code a phone scans for a challenge that calls back to the facade.
-std::string signInScan(
-    WebAssets& assets, const std::string& facade, const std::string& challenge);
+std::string signInScan(WebAssets& assets, const std::string& facade,
+    const std::string& challenge, const Bytes& key);
 
 }  // namespace bazarish::server

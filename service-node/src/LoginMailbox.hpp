@@ -1,11 +1,13 @@
 // Bazarish project (c) 2026
 #pragma once
 
+#include <bazarish/Bytes.hpp>
 #include <bazarish/Portal.hpp>
 
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -18,10 +20,14 @@ public:
     explicit LoginMailbox(std::int64_t windowSeconds = kLoginWindowSeconds);
 
     // False when the box is full: a login already waiting is never pushed out by a new one.
-    [[nodiscard]] bool expect(
-        const std::string& challenge, const std::string& token, std::int64_t now);
+    [[nodiscard]] bool expect(const std::string& challenge, const std::string& token,
+        const Bytes& key, std::int64_t now);
 
-    std::string challengeOf(const std::string& nonce, std::int64_t now);
+    struct Held {
+        std::string challenge;
+        Bytes key;
+    };
+    std::optional<Held> held(const std::string& nonce, std::int64_t now);
 
     bool deliver(const std::string& nonce, const std::string& challenge, const std::string& blob,
         std::int64_t now);
@@ -42,6 +48,7 @@ private:
     struct Awaited {
         std::string token;
         std::string challenge;
+        Bytes key;
         std::string blob;
         std::int64_t since = 0;
     };

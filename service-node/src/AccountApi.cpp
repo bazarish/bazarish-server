@@ -9,21 +9,21 @@
 #include "AccountRemoval.hpp"
 #include "IdleSweep.hpp"
 
-#include <bazarish/KeyedSeal.hpp>
 #include <bazarish/Auth.hpp>
 #include <bazarish/Certificates.hpp>
 #include <bazarish/Clock.hpp>
 #include <bazarish/ConfigFile.hpp>
 #include <bazarish/Errors.hpp>
 #include <bazarish/HttpResponses.hpp>
+#include <bazarish/HttpServer.hpp>
+#include <bazarish/I2p.hpp>
 #include <bazarish/JsonRead.hpp>
+#include <bazarish/KeyedSeal.hpp>
+#include <bazarish/Limits.hpp>
+#include <bazarish/Log.hpp>
 #include <bazarish/PlainText.hpp>
 #include <bazarish/ServerDescriptor.hpp>
 #include <bazarish/Tunnel.hpp>
-#include <bazarish/HttpServer.hpp>
-#include <bazarish/I2p.hpp>
-#include <bazarish/Limits.hpp>
-#include <bazarish/Log.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -381,7 +381,8 @@ void AccountApi::setupOpsRoutes()
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = bazarish::parseJson(request.body);
             if (!options_.logins->expect(body.at("challenge").get<std::string>(),
-                    body.at("token").get<std::string>(), nowSeconds())) {
+                    body.at("token").get<std::string>(),
+                    linkKeyFromText(body.at("key").get<std::string>()), nowSeconds())) {
                 respondError(response, 503, ErrorCode::eRequestFailed,
                     "too many sign-ins are waiting");
                 return;
@@ -651,25 +652,38 @@ void AccountApi::setupRoutes()
 
     http_->post(loginrelay::kCallbackPath,
         filled([this](const http::Request& request, http::Response& response) {
-            const nlohmann::json body = bazarish::parseJsonOrDiscarded(request.body);
-            if (body.is_discarded() || !body.is_object() || !body.contains("challenge")
-                || !body.contains("blob") || !body.at("challenge").is_string()
-                || !body.at("blob").is_string()) {
-                respondError(response, 400, ErrorCode::eRequestFailed,
-                    "challenge and blob expected");
-                return;
-            }
-            const std::string challenge = body.at("challenge").get<std::string>();
-            const std::string blob = body.at("blob").get<std::string>();
             const std::int64_t now = nowSeconds();
             std::string nonce;
             try {
-                nonce = loginrelay::nonceOf(challenge);
-                (void)verifyLoginBlob(blob, now, challenge);
+                nonce = loginAnswerNonce(request.body);
+            } catch (const std::exception& error) {
+                respondError(response, 400, ErrorCode::eRequestFailed,
+                    std::string("a sealed answer expected: ") + error.what());
+                return;
+            }
+            const std::optional<LoginMailbox::Held> held = options_.logins->held(nonce, now);
+            if (!held.has_value()) {
+                respondError(response, 404, ErrorCode::eRequestFailed,
+                    "no sign-in waits for this challenge");
+                return;
+            }
+            std::optional<LoginAnswer> answer;
+            try {
+                answer = openLoginAnswer(held->key, request.body);
+                if (answer.has_value()) {
+                    (void)verifyLoginBlob(answer->blob, now, answer->challenge);
+                }
             } catch (const std::exception& error) {
                 respondError(response, 403, ErrorCode::eRequestFailed, error.what());
                 return;
             }
+            if (!answer.has_value()) {
+                respondError(response, 403, ErrorCode::eRequestFailed,
+                    "the answer is sealed under another key");
+                return;
+            }
+            const std::string& challenge = answer->challenge;
+            const std::string& blob = answer->blob;
             if (!options_.logins->deliver(nonce, challenge, blob, now)) {
                 respondError(response, 404, ErrorCode::eRequestFailed,
                     "no sign-in waits for this challenge");
@@ -680,15 +694,16 @@ void AccountApi::setupRoutes()
 
     http_->get(std::string(loginrelay::kChallengePrefix) + "{hex}",
         filled([this](const http::Request& request, http::Response& response) {
-            const std::string challenge
-                = options_.logins->challengeOf(request.captures.at(0), nowSeconds());
-            if (challenge.empty()) {
+            const std::optional<LoginMailbox::Held> held
+                = options_.logins->held(request.captures.at(0), nowSeconds());
+            if (!held.has_value()) {
                 respondError(response, 404, ErrorCode::eRequestFailed,
                     "no sign-in waits with this challenge");
                 return;
             }
-            response.contentType = "text/plain; charset=utf-8";
-            response.body = challenge;
+            const Bytes sealed = sealLoginChallenge(held->key, held->challenge);
+            response.contentType = "application/octet-stream";
+            response.body.assign(sealed.begin(), sealed.end());
         }));
 
     http_->routeAsync("POST", std::string(bazarish::tunnel::kNodeTunnelPath),

@@ -6,6 +6,7 @@
 #include <bazarish/Crypto.hpp>
 #include <bazarish/HttpClient.hpp>
 #include <bazarish/HttpServer.hpp>
+#include <bazarish/KeyedSeal.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/Percent.hpp>
 #include <bazarish/Portal.hpp>
@@ -135,6 +136,7 @@ int main()
     node->post("/v1/login/expect", [&](const http::Request& request) {
         const std::lock_guard<std::mutex> lock(guard);
         expected = nlohmann::json::parse(request.body);
+        CHECK(linkKeyFromText(expected.at("key").get<std::string>()).size() == kLinkKeyBytes);
         return json({{"ok", true}});
     });
     node->post("/v1/login/claim", [&](const http::Request& request) {

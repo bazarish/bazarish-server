@@ -19,6 +19,7 @@
 #include <bazarish/HttpServer.hpp>
 #include <bazarish/I2pAddress.hpp>
 #include <bazarish/JsonRead.hpp>
+#include <bazarish/KeyedSeal.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/Percent.hpp>
 #include <bazarish/WebAssets.hpp>
@@ -236,11 +237,14 @@ std::string HttpApi::loginForm(const std::string& error, http::Response& respons
     if (!facade.empty()) {
         challenge = auth_.issueChallenge(now, loginrelay::callbackUrl(facade));
         const std::string token = newSignInToken();
+        const Bytes key = newLinkKey();
         const JsonResult expected = callJson(*node, identity_, credential_, "POST",
-            fleet::kLoginExpect, nlohmann::json{{"challenge", challenge}, {"token", token}}.dump());
+            fleet::kLoginExpect,
+            nlohmann::json{{"challenge", challenge}, {"token", token}, {"key", linkKeyText(key)}}
+                .dump());
         if (expected.ok) {
             setCookie(response, kSignInCookie, token, kSignInCookieAttributes);
-            scan = signInScan(assets_, facade, challenge);
+            scan = signInScan(assets_, facade, challenge, key);
         } else {
             bazarish::log::warn("sign-in shows no code: the service node refused it ({})",
                 failureText(expected));

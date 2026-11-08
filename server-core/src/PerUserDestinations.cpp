@@ -102,11 +102,14 @@ SignAckFn signAckWith(std::shared_ptr<Key> signingKey)
 }  // namespace
 
 PerUserDestinations::PerUserDestinations(bazarish::i2p::Router* const router,
-    DeliveryEngine& engine, std::filesystem::path stateDir, const bazarish::i2p::Privacy privacy)
+    DeliveryEngine& engine, std::filesystem::path stateDir, const bazarish::i2p::Privacy privacy,
+    GetCardFn getCard, std::function<void()> servedChanged)
     : router_(router)
     , engine_(engine)
     , stateDir_(std::move(stateDir))
     , privacy_(privacy)
+    , getCard_(std::move(getCard))
+    , servedChanged_(std::move(servedChanged))
 {
 }
 
@@ -120,21 +123,28 @@ PerUserDestinations::~PerUserDestinations()
     if (sweeper_.joinable()) {
         sweeper_.join();
     }
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<std::string> users;
+        for (const auto& entry : dests_) {
+            users.push_back(entry.first);
+        }
+        for (const std::string& user : users) {
+            teardownLocked(user);
+        }
+    }
+    {
+        const std::lock_guard<std::mutex> lock(watchMutex_);
+        for (const auto& entry : watched_) {
+            if (const std::shared_ptr<bazarish::i2p::Stream> held = entry.first.lock()) {
+                held->close();
+            }
+        }
+    }
+    reapRetired();
     if (watchdog_.joinable()) {
         watchdog_.join();
     }
-    {
-        const std::lock_guard<std::mutex> lock(mutex_);
-        for (auto& entry : dests_) {
-            entry.second->running = false;
-        }
-        const std::lock_guard<std::mutex> retiringLock(retiringMutex_);
-        for (auto& entry : dests_) {
-            retiring_.push_back(std::move(entry.second));
-        }
-        dests_.clear();
-    }
-    reapRetired();
 }
 
 void PerUserDestinations::reapRetired()
@@ -475,16 +485,6 @@ void PerUserDestinations::reloadLocked(const std::int64_t now)
                 bazarish::log::redact(entry.path().filename().string()), error.what());
         }
     }
-}
-
-void PerUserDestinations::setGetCard(GetCardFn getCard)
-{
-    getCard_ = std::move(getCard);
-}
-
-void PerUserDestinations::setServedChanged(std::function<void()> changed)
-{
-    servedChanged_ = std::move(changed);
 }
 
 void PerUserDestinations::announceServed() const

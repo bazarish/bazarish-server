@@ -60,13 +60,14 @@ private:
     void setupOpsRoutes();
 
     const FacadeOptions options_;
-    std::unique_ptr<bazarish::http::Server> http_;
-    std::unique_ptr<bazarish::http::Server> ops_;
-    std::unique_ptr<bazarish::http::Server> direct_;
+    // Before the servers: their requests still in flight hold these until the servers are gone.
     Load load_;
     bazarish::auth::ReplayCache operatorReplays_;
     bazarish::StopGate stopGate_;
     std::int64_t startedAt_ = 0;
+    std::unique_ptr<bazarish::http::Server> http_;
+    std::unique_ptr<bazarish::http::Server> ops_;
+    std::unique_ptr<bazarish::http::Server> direct_;
 };
 
 }  // namespace bazarish::facade

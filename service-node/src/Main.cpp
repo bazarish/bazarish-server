@@ -375,8 +375,8 @@ int main(const int argc, const char** argv)
     std::thread sweeper([&]() {
         while (!stopping.waitFor(kIdleSweepInterval)) {
             try {
-                bazarish::service::sweepIdleAccounts(store, grants, operatorPush, settings->get().idleDeleteDays,
-                    bazarish::nowSeconds());
+                bazarish::service::sweepIdleAccounts(store, grants, operatorPush,
+                    settings->get().idleDeleteDays, bazarish::nowSeconds(), stopping);
             } catch (const std::exception& error) {
                 bazarish::log::warn("idle sweep failed: {}", error.what());
             }

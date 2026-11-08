@@ -92,8 +92,37 @@ void I2pFront::stop()
     if (readyThread_.joinable()) {
         readyThread_.join();
     }
+    (void)reapRelays(true);
     endpoint_.reset();
     router_.reset();
+}
+
+std::size_t I2pFront::reapRelays(const bool all)
+{
+    std::list<Relay> done;
+    std::size_t left = 0;
+    {
+        const std::lock_guard<std::mutex> lock(relaysMutex_);
+        for (auto it = relays_.begin(); it != relays_.end();) {
+            if (all || it->finished->load()) {
+                done.splice(done.end(), relays_, it++);
+            } else {
+                ++it;
+            }
+        }
+        left = relays_.size();
+    }
+    for (Relay& gone : done) {
+        if (!gone.finished->load()) {
+            gone.stream->close();
+            (void)::shutdown(gone.fd, SHUT_RDWR);
+        }
+        gone.thread.join();
+        if (::close(gone.fd) != 0) {
+            bazarish::log::warn("i2p front: closing a relay's socket failed");
+        }
+    }
+    return left;
 }
 
 void I2pFront::acceptLoop()
@@ -116,19 +145,23 @@ void I2pFront::acceptLoop()
                 options_.localHost, options_.localPort);
             continue;
         }
-        // Detached: one slow client must not hold up the accept loop.
-        if (relays_.load() >= kMaxRelaysInFlight) {
+        // A thread of its own: one slow client must not hold up the accept loop.
+        if (reapRelays(false) >= kMaxRelaysInFlight) {
             bazarish::log::warn("i2p front: {} relays already in flight; refusing one",
                 kMaxRelaysInFlight);
             ::close(fd);
             stream->close();
             continue;
         }
-        relays_.fetch_add(1);
-        std::thread([this, held = std::move(stream), fd]() mutable {
-            relay(*held, fd);
-            relays_.fetch_sub(1);
-        }).detach();
+        const std::shared_ptr<bazarish::i2p::Stream> held = std::move(stream);
+        const std::shared_ptr<std::atomic<bool>> finished
+            = std::make_shared<std::atomic<bool>>(false);
+        const std::lock_guard<std::mutex> lock(relaysMutex_);
+        relays_.push_back(Relay{std::thread([held, fd, finished]() {
+                                    relay(*held, fd);
+                                    finished->store(true);
+                                }),
+            held, fd, finished});
     }
 }
 

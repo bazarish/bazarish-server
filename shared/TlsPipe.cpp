@@ -130,7 +130,6 @@ struct TlsPipe::Impl {
         expiry.cancel();
         stream.next_layer().shutdown(tcp::socket::shutdown_both, ignored);
         stream.next_layer().close(ignored);
-        alive.reset();
     }
 
     asio::io_context io;
@@ -159,6 +158,8 @@ TlsPipe::TlsPipe(std::unique_ptr<Impl> impl)
 TlsPipe::~TlsPipe()
 {
     close();
+    // Held until now, so a write posted after close still runs and is answered.
+    impl_->alive.reset();
     impl_->loop.join();
 }
 
@@ -257,6 +258,10 @@ void TlsPipe::writeAll(const void* const data, const std::size_t size)
     Impl* const impl = impl_.get();
     asio::post(impl->io,
         [impl, piece = std::vector<unsigned char>(at, at + size), written]() mutable {
+            if (impl->closed.load()) {
+                written->set_value(asio::error::operation_aborted);
+                return;
+            }
             impl->outbox.emplace_back(std::move(piece), std::move(written));
             if (impl->outbox.size() == 1) {
                 impl->writeNext();

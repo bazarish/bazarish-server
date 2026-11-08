@@ -137,19 +137,20 @@ int main()
         / ("bazarish-gateway-link-" + toHex(randomBytes(kRandomNameBytes)));
     DiskStorage storage(root / "storage");
     DeliveryEngine engine(storage, DeliveryEngineOptions{});
-    PerUserDestinations dests(
-        nullptr, engine, root / "dests", i2p::Privacy::eMinimal);
+    std::unique_ptr<GatewayLink> linked;
+    PerUserDestinations dests(nullptr, engine, root / "dests", i2p::Privacy::eMinimal, {},
+        [&linked]() { linked->servedChanged(); });
 
     const tls::Credential server = tls::selfSigned(root / "server");
     const tls::Credential gateway = tls::selfSigned(root / "gateway");
     const tls::Credential stranger = tls::selfSigned(root / "stranger");
 
-    GatewayLink link(
-        server, {gateway.pin}, [&dests]() { return dests.served(); },
+    linked = std::make_unique<GatewayLink>(
+        server, std::vector<std::string>{gateway.pin}, [&dests]() { return dests.served(); },
         [&dests](const std::string& to, const std::string& from, TlsPipe& pipe) {
             return dests.serveDirect(to, from, pipe);
         });
-    dests.setServedChanged([&link]() { link.servedChanged(); });
+    GatewayLink& link = *linked;
     const int port = link.start("127.0.0.1", 0);
     CHECK(port > 0);
 

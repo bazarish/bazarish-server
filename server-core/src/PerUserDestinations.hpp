@@ -27,7 +27,8 @@ namespace bazarish::server {
 class PerUserDestinations {
 public:
     PerUserDestinations(bazarish::i2p::Router* router, DeliveryEngine& engine,
-        std::filesystem::path stateDir, bazarish::i2p::Privacy privacy);
+        std::filesystem::path stateDir, bazarish::i2p::Privacy privacy, GetCardFn getCard,
+        std::function<void()> servedChanged);
     ~PerUserDestinations();
 
     PerUserDestinations(const PerUserDestinations&) = delete;
@@ -51,8 +52,6 @@ public:
     std::size_t sweepExpired(std::int64_t now);
     std::chrono::seconds nextSweepIn(std::int64_t now) const;
 
-    void setGetCard(GetCardFn getCard);
-    void setServedChanged(std::function<void()> changed);
     std::vector<std::string> served() const;
     bool serveDirect(const std::string& to, const std::string& from, TlsPipe& pipe);
 
@@ -96,8 +95,8 @@ private:
     DeliveryEngine& engine_;
     const std::filesystem::path stateDir_;
     const bazarish::i2p::Privacy privacy_;
-    GetCardFn getCard_;
-    std::function<void()> servedChanged_;
+    const GetCardFn getCard_;
+    const std::function<void()> servedChanged_;
     mutable std::mutex mutex_;
     std::map<std::string, std::unique_ptr<Destination>> dests_;
     std::thread sweeper_;

@@ -436,10 +436,7 @@ void Gateway::stop()
     for (const std::shared_ptr<Session>& session : held) {
         retire(session);
     }
-    {
-        std::unique_lock<std::mutex> lock(dialMutex_);
-        dialDone_.wait(lock, [this]() { return dialsRunning_ == 0; });
-    }
+    reapDials(true);
     if (streamPool_) {
         streamPool_->stop();
     }
@@ -1071,8 +1068,22 @@ void Gateway::onEndpointCreate(const std::shared_ptr<Session>& session,
     if (local) {
         publicBase64 = i2p::Keys::generate().publicBase64();
     } else {
-        endpoint = endpointFor(config);
-        publicBase64 = endpoint->publicBase64();
+        try {
+            endpoint = endpointFor(config);
+            publicBase64 = endpoint->publicBase64();
+        } catch (const std::exception& error) {
+            bazarish::log::warn("gateway: a destination was not made: {}", error.what());
+            const Bytes refusal = encodeJson(FrameType::eError, frame.ref,
+                {{"code", faultName(Fault::eRefused)}, {"message", error.what()}});
+            ++refused_;
+            {
+                const std::lock_guard<std::mutex> lock(mutex_);
+                session->endpoints.erase(frame.ref);
+                session->remember(frame.ref, refusal);
+            }
+            socket->send(refusal);
+            return;
+        }
     }
     {
         const std::lock_guard<std::mutex> lock(mutex_);
@@ -1394,19 +1405,20 @@ void Gateway::onStreamOpen(const std::shared_ptr<Session>& session,
         return;
     }
 
-    {
-        const std::lock_guard<std::mutex> lock(dialMutex_);
-        ++dialsRunning_;
-    }
+    reapDials(false);
     try {
-        std::thread([this, session, from, ref = frame.ref, host, deadline, socket]() {
+        const std::shared_ptr<std::atomic<bool>> done = std::make_shared<std::atomic<bool>>(false);
+        std::thread dialling([this, session, from, ref = frame.ref, host, deadline, socket, done]() {
             dial(session, from, ref, host, deadline, socket);
-            dialFinished();
-        }).detach();
+            done->store(true);
+        });
+        {
+            const std::lock_guard<std::mutex> lock(dialMutex_);
+            dialThreads_.push_back(DialThread{std::move(dialling), done});
+        }
         ++dials_;
     } catch (const std::system_error& error) {
         bazarish::log::warn("gateway: no thread for a dial: {}", error.what());
-        dialFinished();
         {
             const std::lock_guard<std::mutex> lock(mutex_);
             session->dialling.erase(frame.ref);
@@ -1415,13 +1427,22 @@ void Gateway::onStreamOpen(const std::shared_ptr<Session>& session,
     }
 }
 
-void Gateway::dialFinished()
+void Gateway::reapDials(const bool all)
 {
+    std::list<DialThread> finished;
     {
         const std::lock_guard<std::mutex> lock(dialMutex_);
-        --dialsRunning_;
+        for (auto it = dialThreads_.begin(); it != dialThreads_.end();) {
+            if (all || it->done->load()) {
+                finished.splice(finished.end(), dialThreads_, it++);
+            } else {
+                ++it;
+            }
+        }
     }
-    dialDone_.notify_all();
+    for (DialThread& dial : finished) {
+        dial.thread.join();
+    }
 }
 
 std::optional<DirectRoute> Gateway::directFor(const std::string& host) const
@@ -1476,6 +1497,7 @@ void Gateway::dial(const std::shared_ptr<Session>& session,
         {
             const std::lock_guard<std::mutex> lock(mutex_);
             session->dialling.erase(stream);
+            session->abandoned.erase(stream);
             session->remember(stream, answer);
             out = answerOn(*session, answerTo);
         }
@@ -1495,7 +1517,7 @@ void Gateway::dial(const std::shared_ptr<Session>& session,
     {
         const std::lock_guard<std::mutex> lock(mutex_);
         session->dialling.erase(stream);
-        if (session->retired) {
+        if (session->retired || session->abandoned.erase(stream) > 0) {
             entry->stream->close();
             return;
         }
@@ -1815,6 +1837,9 @@ void Gateway::onStreamEnd(const std::shared_ptr<Session>& session, const Frame& 
     {
         const std::lock_guard<std::mutex> lock(mutex_);
         entry = streamOf(*session, frame.ref);
+        if (entry == nullptr && session->dialling.count(frame.ref) > 0) {
+            session->abandoned.insert(frame.ref);
+        }
         if (entry != nullptr) {
             session->streams.erase(frame.ref);
             peer = entry->peer.lock();

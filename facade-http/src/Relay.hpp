@@ -19,6 +19,7 @@ inline constexpr std::size_t kPumpBufferBytes = 32 * 1024;
 inline constexpr int kDrainMillis = 60000;
 inline constexpr int kDrainPollMillis = 50;
 
+// The fd stays the caller's to close, so a stop from outside can shut it while this runs.
 template <typename Stream>
 void relay(Stream& stream, const int fd)
 {
@@ -69,7 +70,6 @@ void relay(Stream& stream, const int fd)
     stream.close();
     ::shutdown(fd, SHUT_RD);
     inbound.join();
-    ::close(fd);
     bazarish::log::debug("i2p relay done: {} bytes in, {} bytes out", fromClient, toClient);
 }
 

@@ -84,13 +84,13 @@ private:
     SubscriptionStore& store_;
     GrantStore& grants_;
     const AccountApiOptions options_;
-    std::unique_ptr<bazarish::http::Server> http_;
-    std::unique_ptr<bazarish::http::Server> ops_;
     std::int64_t startedAt_ = 0;
     bazarish::StopGate stopGate_;
-
     auth::ReplayCache replayCache_;
     server::TunnelFace tunnel_;
+    // Last: the servers go first, while what their handlers touch is still here.
+    std::unique_ptr<bazarish::http::Server> http_;
+    std::unique_ptr<bazarish::http::Server> ops_;
 };
 
 }  // namespace bazarish::service

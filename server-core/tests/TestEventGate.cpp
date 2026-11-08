@@ -8,6 +8,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <memory>
 #include <thread>
 
 #define CHECK(condition)                                                                           \
@@ -46,6 +47,22 @@ int main()
 
     gate.notify("nobody");
     io.run_for(std::chrono::milliseconds(50));
+
+    {
+        auto gone = std::make_unique<boost::asio::io_context>();
+        gate.wait(gone->get_executor(), "dave", std::chrono::seconds(30), []() {});
+        CHECK(gate.waiting() == 2);
+        gone.reset();
+    }
+    CHECK(gate.waiting() == 1);
+    gate.notify("dave");
+
+    std::atomic<bool> toldEarly{false};
+    gate.notify("erin");
+    gate.wait(io.get_executor(), "erin", std::chrono::seconds(30),
+        [&toldEarly]() { toldEarly = true; });
+    io.run_for(std::chrono::milliseconds(200));
+    CHECK(toldEarly.load());
     std::printf("ok\n");
     return 0;
 }

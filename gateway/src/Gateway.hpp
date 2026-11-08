@@ -20,6 +20,7 @@
 #include <condition_variable>
 #include <filesystem>
 #include <functional>
+#include <list>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -119,7 +120,8 @@ private:
     void afterReplay(const std::shared_ptr<Session>& session);
     http::SocketPtr laneFor(const Session& session, const Frame& frame) const;
 
-    void dialFinished();
+    // Joins the dials that are done, or all of them.
+    void reapDials(bool all);
     bool startReaderLocked(
         const std::shared_ptr<Session>& session, const std::shared_ptr<StreamEntry>& entry);
     void endWithoutReader(const std::shared_ptr<Session>& session,
@@ -200,7 +202,11 @@ private:
     std::atomic<std::size_t> dials_{0};
     std::mutex dialMutex_;
     std::condition_variable dialDone_;
-    std::size_t dialsRunning_ = 0;
+    struct DialThread {
+        std::thread thread;
+        std::shared_ptr<std::atomic<bool>> done;
+    };
+    std::list<DialThread> dialThreads_;
     std::int64_t startedAt_ = 0;
     std::atomic<bool> running_{false};
 };

@@ -156,9 +156,9 @@ int main(const int argc, const char** argv)
 
     std::unique_ptr<bazarish::i2p::Router> router;
     std::unique_ptr<bazarish::server::PerUserDestinations> perUserDests;
-    std::unique_ptr<bazarish::server::GatewayLink> gatewayLink;
+    std::shared_ptr<bazarish::server::GatewayLink> gatewayLink;
     if (gatewayListen.has_value()) {
-        gatewayLink = std::make_unique<bazarish::server::GatewayLink>(credential, gatewayPins,
+        gatewayLink = std::make_shared<bazarish::server::GatewayLink>(credential, gatewayPins,
             [&perUserDests]() { return perUserDests->served(); },
             [&perUserDests](const std::string& to, const std::string& from,
                 bazarish::server::TlsPipe& pipe) {
@@ -172,14 +172,16 @@ int main(const int argc, const char** argv)
         routerConfig.role = bazarish::i2p::Role::eServer;
         router = std::make_unique<bazarish::i2p::Router>(routerConfig);
 
-        perUserDests = std::make_unique<bazarish::server::PerUserDestinations>(
-            router.get(), engine, stateDir, privacy);
-        perUserDests->setGetCard(
-            [&nodeCards](const std::string& user) { return nodeCards.card(user); });
-        if (gatewayLink) {
-            perUserDests->setServedChanged(
-                [link = gatewayLink.get()]() { link->servedChanged(); });
-        }
+        // Weak: the link goes before the destinations, whose sweep may still tell it.
+        const std::weak_ptr<bazarish::server::GatewayLink> told = gatewayLink;
+        perUserDests = std::make_unique<bazarish::server::PerUserDestinations>(router.get(),
+            engine, stateDir, privacy,
+            [&nodeCards](const std::string& user) { return nodeCards.card(user); },
+            [told]() {
+                if (const std::shared_ptr<bazarish::server::GatewayLink> link = told.lock()) {
+                    link->servedChanged();
+                }
+            });
         perUserDests->reloadPersisted(nowSeconds());
     }
 

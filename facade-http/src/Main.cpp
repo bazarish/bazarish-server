@@ -207,6 +207,5 @@ int main(const int argc, const char** argv)
 
     facade.wait();
     i2pFront.stop();
-    facade.stop();
     return restart.requested() ? bazarish::kRestartExitCode : 0;
 }

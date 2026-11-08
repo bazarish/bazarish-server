@@ -41,6 +41,8 @@ public:
     std::map<std::uint32_t, std::shared_ptr<EndpointEntry>> endpoints;
     std::map<std::uint32_t, std::shared_ptr<StreamEntry>> streams;
     std::set<std::uint32_t> dialling;
+    // Dials the client ended before they answered: one that opens after is closed, not told.
+    std::set<std::uint32_t> abandoned;
     bool retired = false;
     Bytes key;
     std::set<std::string> tickets;

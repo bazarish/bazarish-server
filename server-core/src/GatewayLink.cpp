@@ -77,13 +77,18 @@ void GatewayLink::stop()
         impl_->acceptor.close(ignored);
     });
     loop_.join();
+    // Outside the lock: the last hold on a pipe joins its loop, which may want the lock.
+    std::vector<std::shared_ptr<TlsPipe>> open;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
         for (const std::weak_ptr<TlsPipe>& held : open_) {
-            if (const std::shared_ptr<TlsPipe> pipe = held.lock()) {
-                pipe->close();
+            if (std::shared_ptr<TlsPipe> pipe = held.lock()) {
+                open.push_back(std::move(pipe));
             }
         }
+    }
+    for (const std::shared_ptr<TlsPipe>& pipe : open) {
+        pipe->close();
     }
     changed_.notify_all();
     reap(true);
@@ -91,14 +96,21 @@ void GatewayLink::stop()
 
 void GatewayLink::setGateways(std::vector<std::string> gateways)
 {
-    const std::lock_guard<std::mutex> lock(mutex_);
-    gateways_ = std::move(gateways);
-    for (const std::weak_ptr<TlsPipe>& held : open_) {
-        const std::shared_ptr<TlsPipe> pipe = held.lock();
-        if (pipe != nullptr
-            && std::find(gateways_.begin(), gateways_.end(), pipe->peerPin()) == gateways_.end()) {
-            pipe->close();
+    std::vector<std::shared_ptr<TlsPipe>> dropped;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        gateways_ = std::move(gateways);
+        for (const std::weak_ptr<TlsPipe>& held : open_) {
+            std::shared_ptr<TlsPipe> pipe = held.lock();
+            if (pipe != nullptr
+                && std::find(gateways_.begin(), gateways_.end(), pipe->peerPin())
+                    == gateways_.end()) {
+                dropped.push_back(std::move(pipe));
+            }
         }
+    }
+    for (const std::shared_ptr<TlsPipe>& pipe : dropped) {
+        pipe->close();
     }
 }
 
@@ -209,7 +221,10 @@ void GatewayLink::watch(const std::shared_ptr<TlsPipe>& pipe)
 {
     const auto ended = std::make_shared<std::atomic<bool>>(false);
     pipe->whenEnded([this, ended]() {
-        ended->store(true);
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            ended->store(true);
+        }
         changed_.notify_all();
     });
     std::uint64_t told = 0;

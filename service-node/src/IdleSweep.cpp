@@ -29,7 +29,7 @@ std::int64_t idleSince(const std::optional<SubscriptionStore::Account>& account,
 }
 
 void sweepIdleAccounts(SubscriptionStore& store, GrantStore& grants, const OperatorPush& push,
-    const std::int64_t idleDays, const std::int64_t now)
+    const std::int64_t idleDays, const std::int64_t now, const StopGate& stopping)
 {
     if (idleDays <= 0) {
         return;
@@ -43,6 +43,9 @@ void sweepIdleAccounts(SubscriptionStore& store, GrantStore& grants, const Opera
         users.insert(account.user);
     }
     for (const std::string& user : users) {
+        if (stopping.stopped()) {
+            return;
+        }
         const std::int64_t since = idleSince(store.getAccount(user), grants, user);
         if (since == 0 || since + idleSeconds > now) {
             continue;

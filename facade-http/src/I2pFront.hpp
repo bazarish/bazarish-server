@@ -6,7 +6,9 @@
 #include <atomic>
 #include <cstddef>
 #include <filesystem>
+#include <list>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 
@@ -32,7 +34,16 @@ public:
     void stop();
 
 private:
+    struct Relay {
+        std::thread thread;
+        std::shared_ptr<bazarish::i2p::Stream> stream;
+        int fd = -1;
+        std::shared_ptr<std::atomic<bool>> finished;
+    };
+
     void acceptLoop();
+    // Joins the relays that are done, or all of them, cutting the rest short first.
+    std::size_t reapRelays(bool all);
 
     const Options options_;
     const bazarish::i2p::Keys keys_;
@@ -41,7 +52,8 @@ private:
     std::thread acceptThread_;
     std::thread readyThread_;
     std::atomic<bool> running_{false};
-    std::atomic<std::size_t> relays_{0};
+    std::mutex relaysMutex_;
+    std::list<Relay> relays_;
 };
 
 }  // namespace bazarish::facade

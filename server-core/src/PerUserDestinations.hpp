@@ -43,7 +43,6 @@ public:
         std::string state = "none";
     };
 
-    // The keys are the account's: it issues them with the address and hands them over each time.
     Assignment provision(const std::string& userFp, const std::string& transientB64,
         std::int64_t expiresUnix, const std::string& sealingKeyPem,
         const std::string& signingKeyPem);
@@ -67,7 +66,6 @@ public:
 private:
     struct Destination {
         std::atomic<bool> running{true};
-        // Several: one accepted stream must not hold up the next.
         std::vector<std::thread> workers;
         std::string transientB64;
         std::int64_t expiresUnix = 0;

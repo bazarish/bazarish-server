@@ -145,7 +145,6 @@ void I2pFront::acceptLoop()
                 options_.localHost, options_.localPort);
             continue;
         }
-        // A thread of its own: one slow client must not hold up the accept loop.
         if (reapRelays(false) >= kMaxRelaysInFlight) {
             bazarish::log::warn("i2p front: {} relays already in flight; refusing one",
                 kMaxRelaysInFlight);

@@ -24,7 +24,6 @@ namespace {
 
 namespace http = bazarish::http;
 
-// A form body: the challenge is base64 and carries characters a form encodes.
 std::string formEncoded(const std::string& text)
 {
     std::string out;

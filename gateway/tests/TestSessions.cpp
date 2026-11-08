@@ -85,7 +85,7 @@ int main()
     CHECK(!second->answered(4).has_value());
     CHECK(second->answered(299).has_value());
 
-    store.close(second->cookie());
+    CHECK(store.drain().size() == 1);
     CHECK(store.size() == 0);
     CHECK(store.holding(secondTickets.front(), kStart) == nullptr);
 

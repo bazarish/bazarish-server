@@ -9,8 +9,6 @@
 
 #include <bazarish/LoginChallenge.hpp>
 #include <bazarish/PortalSession.hpp>
-#include <Restart.hpp>
-
 #include <bazarish/WebAssets.hpp>
 
 #include <cstdint>
@@ -50,7 +48,6 @@ public:
     PortalApi& operator=(const PortalApi&) = delete;
 
     int bind(const std::string& host, int port);
-    void wait();
     void stop();
 
 private:
@@ -60,7 +57,6 @@ private:
     std::int64_t reseedFetchedAt_ = 0;
     bool reseedFetching_ = false;
 
-    void setupRoutes();
     void setupWebRoutes();
     std::string homePage(const bazarish::http::Request& request, const std::string& user,
         const std::string& error, bazarish::http::Response& response);
@@ -74,7 +70,6 @@ private:
 
     NodeSettings::Values settings() const { return settings_->get(); }
 
-
     PortalApiOptions options_;
     std::shared_ptr<NodeSettings> settings_;
     WebAssets assets_;
@@ -83,7 +78,6 @@ private:
     LoginChallenge login_;
     PortalSession session_;
     std::unique_ptr<bazarish::http::Server> http_;
-    bazarish::StopGate stopGate_;
 };
 
 }  // namespace bazarish::service

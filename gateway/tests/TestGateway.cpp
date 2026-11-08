@@ -97,7 +97,6 @@ http::ClientResponse askOps(const int port, const std::string& pin,
     return http::request("127.0.0.1", port, out, options);
 }
 
-// What a client keeps of its session: the key, and the tickets that join it again.
 struct Seat {
     Bytes key;
     std::deque<Bytes> tickets;
@@ -169,7 +168,6 @@ void send(Dialled& dialled, const Bytes& frame)
     writeRaw(*dialled.socket, dialled.records->seal(frame));
 }
 
-// The next frame that is not a refill of tickets, which are kept as a client keeps them.
 Frame receive(Dialled& dialled)
 {
     while (true) {

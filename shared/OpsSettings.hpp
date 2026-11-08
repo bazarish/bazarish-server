@@ -11,17 +11,15 @@
 
 namespace bazarish::server {
 
-// The fields an operator's settings change shares across services, each checked; a field the
-// body leaves out keeps the value given.
+// A field the body leaves out keeps `current`; a wrong one throws.
 std::string logLevelIn(const nlohmann::json& body, const std::string& current);
 std::string privacyIn(const nlohmann::json& body, const std::string& current);
 int tunnelQuantityIn(const nlohmann::json& body, int current);
 
-// The same two read from a service's config file at start; a wrong value throws.
+// A wrong value in the config throws.
 i2p::Privacy configPrivacy(const ConfigView& config, i2p::Privacy absent);
 log::Level configLogLevel(const ConfigView& config);
 
-// Puts a changed log level in force.
 void applyLogLevel(const std::string& before, const std::string& after);
 
 }  // namespace bazarish::server

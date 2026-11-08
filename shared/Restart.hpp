@@ -24,8 +24,7 @@ private:
     bool stopped_ = false;
 };
 
-// SIGINT and SIGTERM, taken from every thread started after it, reach onStop on a thread of its
-// own: a handler may not touch a mutex or a condition variable.
+// Blocks SIGINT and SIGTERM in the constructing thread and every thread it starts later.
 class SignalWaiter {
 public:
     explicit SignalWaiter(std::function<void()> onStop);

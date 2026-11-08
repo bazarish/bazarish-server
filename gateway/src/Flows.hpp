@@ -56,7 +56,6 @@ struct StreamEntry {
     Bytes waiting;
     bool endAfterDrain = false;
     StreamBook book;
-    http::SocketPtr socket;
     std::thread reader;
     std::atomic<bool> running{true};
 };

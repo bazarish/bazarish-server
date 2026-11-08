@@ -5,7 +5,7 @@
 
 namespace bazarish::qr {
 
-// The text as a black-on-white QR code in one SVG path; throws when it does not fit a symbol.
+// Throws when the text does not fit a QR symbol.
 std::string svg(const std::string& text);
 
 }  // namespace bazarish::qr

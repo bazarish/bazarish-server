@@ -1,8 +1,6 @@
 // Bazarish project (c) 2026
 #pragma once
 
-// The routes one service of a fleet calls on another: the side that serves a route and the side
-// that calls it name it from here.
 namespace bazarish::fleet {
 
 inline constexpr char kMessagingAccount[] = "/v1/messaging/account";

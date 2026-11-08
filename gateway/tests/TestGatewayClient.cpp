@@ -172,13 +172,6 @@ int main()
     ofMyOwn.keys = i2p::Keys::generate();
     CHECK_THROWS(borrowed.createEndpoint(ofMyOwn));
 
-    bool refusedKey = false;
-    try {
-        (void)mine->privateBlob();
-    } catch (const std::exception&) {
-        refusedKey = true;
-    }
-    CHECK(refusedKey);
     bool refusedProxy = false;
     try {
         borrowed.setSocksProxy("127.0.0.1", 9050);

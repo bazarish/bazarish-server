@@ -71,14 +71,13 @@ std::optional<GrantStore::SubscriptionGrant> GrantStore::peekSubscription(const 
     return result;
 }
 
-void GrantStore::setI2pTransient(const std::string& user, const std::int64_t transientExpires,
-    const std::int64_t updatedAt)
+void GrantStore::setI2pTransient(const std::string& user, const std::int64_t transientExpires)
 {
     requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     const fs::path path = grantPath(user);
     nlohmann::json body = grantRecord(path);
-    body["transient"] = {{"expires", transientExpires}, {"updatedAt", updatedAt}};
+    body["transient"] = {{"expires", transientExpires}};
     writeFileAtomic(path, body.dump());
 }
 
@@ -97,7 +96,6 @@ std::optional<GrantStore::Transient> GrantStore::peekTransient(const std::string
     const nlohmann::json& entry = body.at("transient");
     Transient result;
     result.expires = entry.at("expires").get<std::int64_t>();
-    result.updatedAt = entry.at("updatedAt").get<std::int64_t>();
     return result;
 }
 
@@ -206,12 +204,12 @@ void GrantStore::hold(const std::string& user, const std::string& message, const
     writeFileAtomic(path, body.dump());
 }
 
-void GrantStore::ban(const std::string& user, const std::string& reason, const std::int64_t now)
+void GrantStore::ban(const std::string& user, const std::string& reason)
 {
     requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     writeFileAtomic(banPath(user),
-        nlohmann::json{{"reason", reason}, {"bannedAt", now}}.dump());
+        nlohmann::json{{"reason", reason}}.dump());
 }
 
 std::optional<GrantStore::Ban> GrantStore::peekBan(const std::string& user) const
@@ -225,7 +223,6 @@ std::optional<GrantStore::Ban> GrantStore::peekBan(const std::string& user) cons
     const nlohmann::json body = readJsonFile(path);
     Ban result;
     result.reason = body.value("reason", std::string());
-    result.bannedAt = body.value("bannedAt", std::int64_t{0});
     return result;
 }
 

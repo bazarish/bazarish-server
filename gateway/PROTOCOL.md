@@ -209,15 +209,11 @@ network means it to, rather than between two streams inside one.
 ### Attaching
 
 A flow socket joins the session with a ticket, and its first frame is `attach`
-naming the flow: the endpoint id of a realtime destination, or
-the id of a stream. There is no second handshake and no second session. A socket
-that opens with `hello` is the main one; a socket that opens with `attach` is a
-flow's.
-
-`attach` carries how many payload bytes the client has received on that stream,
-and the gateway answers `ok` with its own count, which is the same exchange a
-resumed session makes and makes migration lossless whenever it happens. A
-realtime endpoint has no counts: datagrams are not replayed.
+naming the endpoint id of the destination it serves. There is no second
+handshake and no second session. A socket that opens with `hello` is the main
+one; a socket that opens with `attach` is a flow's. The gateway answers `ok`; an
+id that names no destination of the session is refused. Datagrams are not
+replayed, and the streams of the destination keep their counts on the session.
 
 A flow is attached **when it is created** and not afterwards. What is attached
 is the **destination**, not the stream: a client raises a destination of its own
@@ -401,7 +397,7 @@ endpoint's identifier is the `ref` of its `endpoint-create`.
 | 0x03 | `ok` | gateway | echo | `{}`, or the operation's answer |
 | 0x04 | `error` | gateway | echo | `{"code": "...", "message": "..."}` |
 | 0x05 | `resume` | client | echo | `{"streams": [{"id": n, "received": n}]}` |
-| 0x06 | `attach` | client | flow | `{"received": n}`, on a flow socket's first frame |
+| 0x06 | `attach` | client | flow | `{}`, on a flow socket's first frame |
 | 0x07 | `tickets` | gateway | 0 | `{"tickets": ["<base64>", ...]}`, the session's tickets topped up |
 | 0x10 | `endpoint-create` | client | endpoint | `{"kind": "stream\|raw", "published": true, "realtime": false, "target": "<host>", "keys": "<i2p base64>", "readers": ["<i2p base64>"], "readerKey": "<i2p base64>"}`, `target`, `keys` with `readers`, and `readerKey` optional |
 | 0x11 | `endpoint-stop` | client | endpoint | `{}` |

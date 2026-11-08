@@ -319,7 +319,7 @@ void AccountApi::revokeDestination(const std::string& user)
     if (options_.publishI2pTransient) {
         options_.publishI2pTransient(user, std::string(), 0, {});
     }
-    grants_.setI2pTransient(user, 0, nowSeconds());
+    grants_.setI2pTransient(user, 0);
 }
 
 void AccountApi::deleteAccount(const std::string& user)
@@ -485,8 +485,7 @@ void AccountApi::setupOpsRoutes()
             const std::string reason = body.value("reason", std::string());
             const UserLocks::Held locked = options_.userLocks->hold(user);
             deleteAccount(user);
-            grants_.ban(user, reason.empty() ? std::string(kDefaultBanReason) : reason,
-                nowSeconds());
+            grants_.ban(user, reason.empty() ? std::string(kDefaultBanReason) : reason);
             respondJson(response, userRecord(user, grants_.peekApproval(user)));
         })));
 
@@ -547,7 +546,6 @@ void AccountApi::setupOpsRoutes()
     ops_->put(fleet::kAccountSettings,
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = bazarish::parseJson(request.body);
-            // Checked on a copy first, so a bad request is a refusal and never a half write.
             NodeSettings::Values probe = settings();
             editSettings(body, probe);
             std::string levelBefore;
@@ -888,7 +886,7 @@ void AccountApi::setupRoutes()
                     "the messaging server did not accept the delegation");
                 return;
             }
-            grants_.setI2pTransient(user, expiresUnix, now);
+            grants_.setI2pTransient(user, expiresUnix);
             if (const std::optional<SubscriptionStore::Account> held = store_.getAccount(user);
                 held.has_value()) {
                 SubscriptionStore::Account record = *held;
@@ -915,7 +913,6 @@ void AccountApi::setupRoutes()
                             ? holdMessageFor(approval, settings())
                             : std::string()},
                     {"transientExpires", transient.has_value() ? transient->expires : 0},
-                    {"transientUpdatedAt", transient.has_value() ? transient->updatedAt : 0},
                 });
         });
 

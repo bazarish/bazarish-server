@@ -52,10 +52,8 @@ public:
     std::size_t rejoins() const { return rejoins_.load(); }
     std::size_t refusals() const { return refused_.load(); }
     std::size_t dials() const { return dials_.load(); }
-    // What a link to this gateway carries to name it.
     std::string fingerprint() const { return identity_.fingerprint(); }
     std::size_t pooled() const;
-    // Asks for a fresh presence delegation near its end and stops an address that outlives one.
     void lapseDelegations(std::int64_t now);
 
 private:
@@ -110,7 +108,6 @@ private:
         std::shared_ptr<Session> session;
         bool resumed = false;
         bool greeted = false;
-        std::uint32_t flow = 0;
     };
 
     std::shared_ptr<Session> sessionFor(const http::SocketPtr& socket) const;
@@ -120,7 +117,6 @@ private:
     void afterReplay(const std::shared_ptr<Session>& session);
     http::SocketPtr laneFor(const Session& session, const Frame& frame) const;
 
-    // Joins the dials that are done, or all of them.
     void reapDials(bool all);
     bool startReaderLocked(
         const std::shared_ptr<Session>& session, const std::shared_ptr<StreamEntry>& entry);
@@ -128,8 +124,7 @@ private:
         const std::shared_ptr<StreamEntry>& entry, const http::SocketPtr& answerTo);
     void acceptLoop(const std::shared_ptr<Session>& session,
         const std::shared_ptr<EndpointEntry>& entry);
-    void datagramLoop(const std::shared_ptr<Session>& session,
-        const std::shared_ptr<EndpointEntry>& entry);
+    void datagramLoop(const std::shared_ptr<EndpointEntry>& entry);
     void readLoop(const std::shared_ptr<Session>& session,
         const std::shared_ptr<StreamEntry>& entry);
     void dial(const std::shared_ptr<Session>& session,
@@ -145,8 +140,7 @@ private:
     static void sendInPieces(http::Socket& socket, std::uint32_t id, const Bytes& data);
     std::shared_ptr<EndpointEntry> stopEndpoint(
         const std::shared_ptr<Session>& session, std::uint32_t id);
-    void teardown(const std::shared_ptr<Session>& session,
-        const std::shared_ptr<StreamEntry>& entry, Fault fault);
+    void teardown(const std::shared_ptr<StreamEntry>& entry);
     void joinTaken(std::thread& slot);
     void orphan(const std::shared_ptr<StreamEntry>& entry);
     void retire(const std::shared_ptr<Session>& session);

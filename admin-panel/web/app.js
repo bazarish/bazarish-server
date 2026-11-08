@@ -800,7 +800,6 @@
         return one.replace(/\/+$/, "") === other.replace(/\/+$/, "");
     }
 
-    // The portal's addresses, each of which can also be one of the reseeds it serves.
     function linkList(block, links, reseeds) {
         block.appendChild(element("p", "field-label", t("Addresses")));
         var wrap = element("div", "link-list");

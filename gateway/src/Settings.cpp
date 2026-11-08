@@ -25,7 +25,6 @@ constexpr const char* kNginxNotFound = "<html>\r\n"
 
 constexpr const char* kSecureScheme = "https://";
 constexpr const char* kPlainScheme = "http://";
-// A path, a query or anything a link's query cannot carry ends the authority.
 constexpr const char* kNotInAuthority = "/?#& \t\r\n";
 
 std::size_t poolDepth(const ConfigView& config, const std::string& path, const std::size_t fallback)

@@ -107,7 +107,7 @@ int PortalApi::bind(const std::string& host, const int port)
     options.host = host;
     options.port = port;
     http_ = std::make_unique<http::Server>(options);
-    setupRoutes();
+    setupWebRoutes();
     try {
         return http_->start();
     } catch (const std::exception& error) {
@@ -116,22 +116,11 @@ int PortalApi::bind(const std::string& host, const int port)
     }
 }
 
-void PortalApi::wait()
-{
-    stopGate_.wait();
-}
-
 void PortalApi::stop()
 {
-    stopGate_.stop();
     if (http_) {
         http_->stop();
     }
-}
-
-void PortalApi::setupRoutes()
-{
-    setupWebRoutes();
 }
 
 std::string PortalApi::reseedArchive()

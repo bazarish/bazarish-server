@@ -10,7 +10,6 @@
 
 namespace bazarish::server {
 
-// A service's editable settings: the ones in force, written back to its config file on change.
 template <class Values>
 class SettingsFile {
 public:

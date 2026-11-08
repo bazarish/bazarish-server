@@ -6,10 +6,8 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# One build of common and of the embedded i2pd engine for the whole fleet.
 set(BAZARISH_COMMON_DIR "${CMAKE_CURRENT_SOURCE_DIR}/common" CACHE PATH
     "Path to the bazarish common library repository")
-# No server is a client: the client core and the libraries only it needs stay out.
 set(BAZARISH_WITH_CLIENT OFF CACHE BOOL "Build the client core library" FORCE)
 add_subdirectory(${BAZARISH_COMMON_DIR} bazarish-common)
 

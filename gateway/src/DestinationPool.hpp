@@ -12,7 +12,6 @@ namespace bazarish::gateway {
 
 class DestinationPool {
 public:
-    // A watching pool serves only requests that bring a reader key, and gives the key when taken.
     enum class Use { eGeneral, eWatching };
     DestinationPool(i2p::Router& router, i2p::EndpointConfig shape, std::size_t depth,
         Use use = Use::eGeneral);

@@ -14,7 +14,6 @@
 
 namespace bazarish::server {
 
-// A byte stream over TLS between two services of one operator, each pinning the other's key.
 class TlsPipe {
 public:
     static std::unique_ptr<TlsPipe> dial(const std::string& host, int port,

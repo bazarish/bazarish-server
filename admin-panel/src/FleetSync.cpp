@@ -50,7 +50,6 @@ bool everyInterface(const std::string& host)
     return host.empty() || host == "0.0.0.0" || host == "::" || host == "[::]";
 }
 
-// A listener on every interface is dialled where the panel reaches the same service.
 nlohmann::json dialledAt(const nlohmann::json& listen, const ServiceEntry& service)
 {
     const std::string host = listen.value("host", std::string());

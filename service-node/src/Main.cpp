@@ -73,8 +73,6 @@ void printUsage()
 }
 
 using bazarish::readFileBytes;
-using bazarish::readFileText;
-using bazarish::writePrivateFile;
 
 struct PortalConfig {
     std::string message = kDefaultPortalMessage;

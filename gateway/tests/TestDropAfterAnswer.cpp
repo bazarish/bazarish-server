@@ -29,7 +29,6 @@ constexpr const char* kHeaderEnd = "\r\n\r\n";
 
 }  // namespace
 
-// A stream dropped the moment its answer is read races the frames the gateway still sends for it.
 int main()
 {
     const std::filesystem::path root

@@ -2,8 +2,7 @@
 name: Release
 
 on:
-  # Every push walks the whole path - build, tests, packages and their upgrade over
-  # an installed server; only the publishing below waits for a tag.
+  # Every push builds, tests, packs and upgrade-tests; only publishing waits for a tag.
   push:
   workflow_dispatch:
 
@@ -43,8 +42,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
-      # The container runs as root over a checkout the runner's user owns, and git
-      # works only in a repository it trusts.
+      # The container's root does not own the checkout, and git refuses one it does not trust.
       - name: Trust the checkout
         run: git config --global --add safe.directory '*'
       - name: Build, test and pack

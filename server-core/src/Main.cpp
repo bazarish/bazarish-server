@@ -59,7 +59,8 @@ void printUsage()
         "\n"
         "The server keeps no destination of its own: inbound federation arrives on\n"
         "each user's own I2P destination, which it operates from the transient that\n"
-        "user delegated to it. Clients reach this server through a facade.\n",
+        "user delegated to it. A gateway linked over \"gatewayListen\" reaches the\n"
+        "same destinations over pinned TLS. Clients reach this server through a facade.\n",
         bazarish::kBuildVersion);
 }
 

@@ -36,7 +36,7 @@ struct Fleet {
 bool isKnownServiceKind(const std::string& kind);
 
 void requireCoherentFleet(const Fleet& fleet);
-// Fleets as a config file or an edit names them; a malformed one throws std::invalid_argument.
+// Throws std::invalid_argument on a malformed fleet.
 std::vector<Fleet> fleetsFromJson(const nlohmann::json& list);
 
 nlohmann::json fleetsJson(const std::vector<Fleet>& fleets);

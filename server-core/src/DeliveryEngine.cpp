@@ -24,7 +24,7 @@ constexpr const char* kContactsWaitingRefusal
 
 }  // namespace
 
-DeliveryEngine::DeliveryEngine(Storage& storage, const DeliveryEngineOptions options)
+DeliveryEngine::DeliveryEngine(DiskStorage& storage, const DeliveryEngineOptions options)
     : storage_(storage)
     , options_(options)
     , contactSources_(kContactSourceMemorySeconds)
@@ -129,12 +129,12 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
     const std::optional<std::size_t> heldLimit = deliveryClass == kContactDeliveryClass
         ? std::optional<std::size_t>(kMaxPendingContactRequests)
         : std::nullopt;
-    const Storage::PutResult result = storage_.putBlob(mailbox, deliveryId, payload, deliveryClass,
+    const DiskStorage::PutResult result = storage_.putBlob(mailbox, deliveryId, payload, deliveryClass,
         storage_.userQuota(mailbox, options_.defaultQuotaBytes), now, {}, heldLimit);
-    if (result == Storage::PutResult::eClassFull) {
+    if (result == DiskStorage::PutResult::eClassFull) {
         return fail(ErrorCode::eContactRateLimited, kContactsWaitingRefusal);
     }
-    if (result == Storage::PutResult::eQuotaExceeded) {
+    if (result == DiskStorage::PutResult::eQuotaExceeded) {
         if (deliveryClass == kContentDeliveryClass) {
             return fail(ErrorCode::eStorageFull, "recipient storage quota is exhausted");
         }

@@ -2,7 +2,7 @@
 #pragma once
 
 #include "ContactSources.hpp"
-#include "Storage.hpp"
+#include "DiskStorage.hpp"
 
 #include <RateLimiter.hpp>
 
@@ -25,7 +25,7 @@ struct DeliveryEngineOptions {
 
 class DeliveryEngine {
 public:
-    DeliveryEngine(Storage& storage, DeliveryEngineOptions options);
+    DeliveryEngine(DiskStorage& storage, DeliveryEngineOptions options);
 
     struct Outcome {
         bool delivered = false;
@@ -38,7 +38,7 @@ public:
         const Key& sealingKey, const std::string& owner, const std::string& peer);
 
 private:
-    Storage& storage_;
+    DiskStorage& storage_;
     const DeliveryEngineOptions options_;
     ContactSources contactSources_;
     RateLimiter mailPerPass_;

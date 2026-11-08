@@ -28,7 +28,6 @@
 #include <optional>
 #include <string>
 #include <map>
-#include <thread>
 
 using namespace bazarish;
 using namespace bazarish::service;
@@ -88,16 +87,8 @@ void testPortalDiscovery()
 
     AccountApi api(store, grants, options);
     const int port = api.bind("127.0.0.1", 0);
-    std::thread serverThread([&api]() { api.wait(); });
-
-    http::ClientResponse response;
-    for (int attempt = 0; attempt < 200; ++attempt) {
-        response = call(port, "GET", "/v1/account/portal");
-        if (response.status != 0) {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
+    CHECK(port > 0);
+    const http::ClientResponse response = call(port, "GET", "/v1/account/portal");
     CHECK(response.status == 200);
 
     const nlohmann::json body = nlohmann::json::parse(response.body);
@@ -151,7 +142,6 @@ void testPortalDiscovery()
     CHECK(open.at("links").size() == 2);
 
     api.stop();
-    serverThread.join();
     fs::remove_all(root);
 }
 
@@ -217,16 +207,7 @@ void testWebFlow()
     PortalApi portal(options, grants);
     const int port = portal.bind("127.0.0.1", 0);
     CHECK(port > 0);
-    std::thread portalThread([&portal]() { portal.wait(); });
-
-    http::ClientResponse page;
-    for (int attempt = 0; attempt < 200; ++attempt) {
-        page = call(port, "GET", "/");
-        if (page.status != 0) {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
+    const http::ClientResponse page = call(port, "GET", "/");
     CHECK(page.status == 200);
     CHECK(page.body.find("is-plain\">Sign in<") != std::string::npos);
 
@@ -370,7 +351,7 @@ void testWebFlow()
 
     {
         const Identity refused = Identity::generate();
-        grants.ban(refused.fingerprint(), "Spam", now());
+        grants.ban(refused.fingerprint(), "Spam");
         const http::ClientResponse page = call(port, "GET", "/");
         const std::string challenge = between(page.body, "<pre class=\"copy\">", "</pre>");
         const http::ClientResponse signedIn = postForm(port, "/login",
@@ -388,7 +369,6 @@ void testWebFlow()
     }
 
     portal.stop();
-    portalThread.join();
     fs::remove_all(root);
 }
 

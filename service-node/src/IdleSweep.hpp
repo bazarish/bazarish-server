@@ -17,7 +17,7 @@ namespace bazarish::service {
 std::int64_t idleSince(const std::optional<SubscriptionStore::Account>& account,
     GrantStore& grants, const std::string& user);
 
-// Each account costs pushes to the messaging server: a stop is looked at between accounts.
+// `stopping` is looked at between accounts.
 void sweepIdleAccounts(SubscriptionStore& store, GrantStore& grants, const OperatorPush& push,
     std::int64_t idleDays, std::int64_t now, const StopGate& stopping, UserLocks& locks);
 

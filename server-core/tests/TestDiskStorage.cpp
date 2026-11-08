@@ -77,8 +77,8 @@ int main()
     CHECK(storage.hasPass(alice, handleBob));
 
     const Bytes blob(100, 0xab);
-    CHECK(storage.putBlob(alice, "msg1", blob, "content", kQuota, kNow) == Storage::PutResult::eStored);
-    CHECK(storage.putBlob(alice, "msg1", blob, "content", kQuota, kNow) == Storage::PutResult::eDuplicate);
+    CHECK(storage.putBlob(alice, "msg1", blob, "content", kQuota, kNow) == DiskStorage::PutResult::eStored);
+    CHECK(storage.putBlob(alice, "msg1", blob, "content", kQuota, kNow) == DiskStorage::PutResult::eDuplicate);
     CHECK(storage.usage(alice) == 100);
     CHECK(storage.hasBlob(alice, "msg1"));
     CHECK(!storage.hasBlob(alice, "nosuchblob"));
@@ -87,17 +87,17 @@ int main()
 
     const Bytes bigBlob(static_cast<std::size_t>(kQuota), 0xcd);
     CHECK(storage.putBlob(alice, "msg2", bigBlob, "content", kQuota, kNow)
-        == Storage::PutResult::eQuotaExceeded);
+        == DiskStorage::PutResult::eQuotaExceeded);
     CHECK(storage.usage(alice) == 100);
 
     CHECK((storage.listPending(alice, "client1")
-        == std::vector<Storage::PendingEntry>{{"msg1", "content", blob.size()}}));
+        == std::vector<DiskStorage::PendingEntry>{{"msg1", "content", blob.size()}}));
     {
         std::ofstream stray(root / "users" / alice / "blobs" / "msg9.tmp");
         stray << "half a delivery";
     }
     CHECK((storage.listPending(alice, "client1")
-        == std::vector<Storage::PendingEntry>{{"msg1", "content", blob.size()}}));
+        == std::vector<DiskStorage::PendingEntry>{{"msg1", "content", blob.size()}}));
     {
         std::ofstream stray(root / "users" / alice / "blobs" / "msg8.tmp");
         stray << std::string(kQuota, 'x');
@@ -112,7 +112,7 @@ int main()
     CHECK(!storage.isPendingFor(alice, "nosuchblob", "client2"));
     CHECK(storage.listPending(alice, "client1").empty());
     CHECK((storage.listPending(alice, "client2")
-        == std::vector<Storage::PendingEntry>{{"msg1", "content", blob.size()}}));
+        == std::vector<DiskStorage::PendingEntry>{{"msg1", "content", blob.size()}}));
     CHECK(storage.usage(alice) == 100);
     storage.ackBlob(alice, "msg1", "client2");
     CHECK(storage.usage(alice) == 0);
@@ -122,15 +122,15 @@ int main()
     {
         constexpr auto kStampGap = std::chrono::milliseconds(2);
         CHECK(storage.putBlob(alice, "zzz", blob, "content", kQuota, kNow)
-            == Storage::PutResult::eStored);
+            == DiskStorage::PutResult::eStored);
         std::this_thread::sleep_for(kStampGap);
         CHECK(storage.putBlob(alice, "mmm", blob, "content", kQuota, kNow)
-            == Storage::PutResult::eStored);
+            == DiskStorage::PutResult::eStored);
         std::this_thread::sleep_for(kStampGap);
         CHECK(storage.putBlob(alice, "aaa", blob, "content", kQuota, kNow)
-            == Storage::PutResult::eStored);
+            == DiskStorage::PutResult::eStored);
         CHECK((storage.listPending(alice, "client1")
-            == std::vector<Storage::PendingEntry>{
+            == std::vector<DiskStorage::PendingEntry>{
                 {"zzz", "content", blob.size()}, {"mmm", "content", blob.size()},
                 {"aaa", "content", blob.size()}}));
         for (const char* const id : {"zzz", "mmm", "aaa"}) {
@@ -140,20 +140,20 @@ int main()
         CHECK(storage.listPending(alice, "client1").empty());
     }
 
-    CHECK(storage.putBlob(alice, "msg3", blob, "content", kQuota, kNow) == Storage::PutResult::eStored);
+    CHECK(storage.putBlob(alice, "msg3", blob, "content", kQuota, kNow) == DiskStorage::PutResult::eStored);
     storage.ackBlob(alice, "msg3", "client1");
     CHECK(storage.usage(alice) == 100);
     storage.unregisterClient(alice, "client2");
     CHECK(storage.usage(alice) == 0);
 
     storage.unregisterClient(alice, "client1");
-    CHECK(storage.putBlob(alice, "msg4", blob, "content", kQuota, kNow) == Storage::PutResult::eStored);
+    CHECK(storage.putBlob(alice, "msg4", blob, "content", kQuota, kNow) == DiskStorage::PutResult::eStored);
     CHECK(storage.usage(alice) == 100);
 
     const std::string bob = makeUser(0x02);
     storage.registerClient(bob, "bclient");
-    CHECK(storage.putBlob(bob, "old", blob, "content", kQuota, kNow) == Storage::PutResult::eStored);
-    CHECK(storage.putBlob(bob, "fresh", blob, "contact", kQuota, kNow) == Storage::PutResult::eStored);
+    CHECK(storage.putBlob(bob, "old", blob, "content", kQuota, kNow) == DiskStorage::PutResult::eStored);
+    CHECK(storage.putBlob(bob, "fresh", blob, "contact", kQuota, kNow) == DiskStorage::PutResult::eStored);
     storage.purgeExpired(kNow);
     CHECK(storage.listPending(bob, "bclient").size() == 2);
     CHECK(storage.usage(bob) == 200);
@@ -161,9 +161,9 @@ int main()
 
     CHECK(!storage.hasSeen(bob, "nonce-fresh"));
     CHECK(storage.putBlob(bob, "nonce-fresh", blob, "content", kQuota, kNow + 100)
-        == Storage::PutResult::eStored);
+        == DiskStorage::PutResult::eStored);
     CHECK(storage.putBlob(bob, "nonce-stale", blob, "content", kQuota, kNow - 100)
-        == Storage::PutResult::eStored);
+        == DiskStorage::PutResult::eStored);
     CHECK(storage.hasSeen(bob, "nonce-fresh"));
     CHECK(storage.hasSeen(bob, "nonce-stale"));
     storage.purgeExpired(kNow);
@@ -188,10 +188,10 @@ int main()
     CHECK(storage.userQuota(dave, kQuota) == 8);
     CHECK(storage.userQuota(alice, kQuota) == kQuota);
     CHECK(storage.putBlob(dave, "tiny", Bytes{1, 2, 3}, "content", 8, kNow)
-        == Storage::PutResult::eStored);
+        == DiskStorage::PutResult::eStored);
     CHECK(storage.putBlob(dave, "over", Bytes(20, 'x'), "content",
               storage.userQuota(dave, kQuota), kNow)
-        == Storage::PutResult::eQuotaExceeded);
+        == DiskStorage::PutResult::eQuotaExceeded);
 
     {
         const std::string erin = makeUser(0x77);
@@ -207,7 +207,7 @@ int main()
         }
         CHECK(storage.countHeld(erin, "contact") == kHeldLimit);
         CHECK(storage.putBlob(erin, "contact-0", Bytes{1}, "contact", kQuota, kNow, {}, kHeldLimit)
-            != Storage::PutResult::eStored);
+            != DiskStorage::PutResult::eStored);
 
         racers.clear();
         for (std::size_t i = 0; i < kRacers; ++i) {

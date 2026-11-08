@@ -26,7 +26,6 @@ struct ServedDestination {
     std::string dest;
 };
 
-// The keys an account issued for its address: a node passes them to the messaging server.
 struct AddressKeys {
     std::string sealingPem;
     std::string signingPem;

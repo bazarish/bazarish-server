@@ -50,11 +50,11 @@ using bazarish::nowSeconds;
 using bazarish::http::errorResponse;
 using bazarish::http::jsonResponse;
 
-nlohmann::json pendingJson(bazarish::server::Storage& storage, const std::string& user,
+nlohmann::json pendingJson(bazarish::server::DiskStorage& storage, const std::string& user,
     const std::string& clientId)
 {
     nlohmann::json items = nlohmann::json::array();
-    for (const bazarish::server::Storage::PendingEntry& entry :
+    for (const bazarish::server::DiskStorage::PendingEntry& entry :
         storage.listPending(user, clientId)) {
         items.push_back(
             {{"id", entry.blobId}, {"class", entry.deliveryClass}, {"bytes", entry.bytes}});
@@ -84,7 +84,7 @@ std::vector<Bytes> passHandles(const nlohmann::json& body)
 
 namespace bazarish::server {
 
-HttpApi::HttpApi(Storage& storage, EventGate& eventGate, const HttpApiOptions options)
+HttpApi::HttpApi(DiskStorage& storage, EventGate& eventGate, const HttpApiOptions options)
     : storage_(storage)
     , eventGate_(eventGate)
     , options_(options)
@@ -209,7 +209,7 @@ void HttpApi::wakeUser(const std::string& user)
 
 void HttpApi::setupOpsRoutes()
 {
-    Storage& store = storage_;
+    DiskStorage& store = storage_;
     const auto operatorOnly = [this](bazarish::http::Handler handler) {
         return bazarish::server::operatorOnly(
             options_.operatorFingerprints, replayCache_, std::move(handler));
@@ -400,7 +400,7 @@ void HttpApi::setupRoutes()
         };
     };
 
-    Storage& store = storage_;
+    DiskStorage& store = storage_;
 
     const auto requireClient
         = [&store](const bazarish::http::Request& request, const std::string& user) -> std::string {
@@ -613,13 +613,13 @@ void HttpApi::setupRoutes()
                 return jsonResponse({{"ok", true}, {"stored", true}});
             }
 
-            const Storage::PutResult result = storage_.putBlob(user, deliveryId, payload,
+            const DiskStorage::PutResult result = storage_.putBlob(user, deliveryId, payload,
                 kDeviceDeliveryClass, storage_.userQuota(user, options_.defaultQuotaBytes),
                 nowSeconds(), caller);
-            if (result == Storage::PutResult::eQuotaExceeded) {
+            if (result == DiskStorage::PutResult::eQuotaExceeded) {
                 return errorResponse(507, ErrorCode::eStorageFull, "your storage is full");
             }
-            if (result == Storage::PutResult::eStored) {
+            if (result == DiskStorage::PutResult::eStored) {
                 wakeUser(user);
             }
             return jsonResponse({{"ok", true}, {"stored", true}});

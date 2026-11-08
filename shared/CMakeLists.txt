@@ -1,5 +1,4 @@
 # Bazarish project (c) 2026
-# What the servers share and the client has no use for.
 add_library(bazarish_server_shared STATIC
     Health.cpp
     LoginRelay.cpp
@@ -18,7 +17,6 @@ target_include_directories(bazarish_server_shared PUBLIC ${CMAKE_CURRENT_SOURCE_
 target_link_libraries(bazarish_server_shared PUBLIC bazarish_common)
 target_compile_options(bazarish_server_shared PRIVATE -Wall -Wextra -Werror)
 
-# Its own library: only the faces that draw a QR code take libqrencode.
 add_library(bazarish_server_qr STATIC QrSvg.cpp SignInScan.cpp)
 target_include_directories(bazarish_server_qr PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 find_library(QRENCODE_LIBRARY NAMES qrencode REQUIRED)
@@ -27,7 +25,6 @@ target_include_directories(bazarish_server_qr PRIVATE ${QRENCODE_INCLUDE_DIR})
 target_link_libraries(bazarish_server_qr PUBLIC bazarish_server_shared PRIVATE ${QRENCODE_LIBRARY})
 target_compile_options(bazarish_server_qr PRIVATE -Wall -Wextra -Werror)
 
-# One test of a server library; the source is tests/<name>.cpp of the caller unless named.
 function(bazarish_server_test name library)
     set(source tests/${name}.cpp)
     if(ARGC GREATER 2)

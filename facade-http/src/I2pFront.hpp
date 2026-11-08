@@ -42,7 +42,7 @@ private:
     };
 
     void acceptLoop();
-    // Joins the relays that are done, or all of them, cutting the rest short first.
+    // `all` also cuts short the relays still running; returns how many are left.
     std::size_t reapRelays(bool all);
 
     const Options options_;

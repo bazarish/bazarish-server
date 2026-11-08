@@ -19,7 +19,6 @@ public:
 
     struct Transient {
         std::int64_t expires = 0;
-        std::int64_t updatedAt = 0;
     };
 
     explicit GrantStore(std::filesystem::path root);
@@ -31,8 +30,7 @@ public:
 
     std::optional<SubscriptionGrant> takeSubscription(const std::string& user);
 
-    void setI2pTransient(
-        const std::string& user, std::int64_t transientExpires, std::int64_t updatedAt);
+    void setI2pTransient(const std::string& user, std::int64_t transientExpires);
 
     std::optional<Transient> peekTransient(const std::string& user);
 
@@ -58,11 +56,10 @@ public:
 
     void erase(const std::string& user);
 
-    void ban(const std::string& user, const std::string& reason, std::int64_t now);
+    void ban(const std::string& user, const std::string& reason);
 
     struct Ban {
         std::string reason;
-        std::int64_t bannedAt = 0;
     };
 
     std::optional<Ban> peekBan(const std::string& user) const;

@@ -341,7 +341,7 @@ int main()
     {
         storage.registerClient(alice.fingerprint(), "alicephone");
         CHECK(storage.putBlob(alice.fingerprint(), "seen-here", payload, "content", 1024 * 1024, kNow)
-            == Storage::PutResult::eStored);
+            == DiskStorage::PutResult::eStored);
         storage.ackBlob(alice.fingerprint(), "seen-here", "alicedev");
         CHECK(storage.hasBlob(alice.fingerprint(), "seen-here"));
         const std::string body = nlohmann::json{{"ids", {"seen-here"}}}.dump();
@@ -359,7 +359,7 @@ int main()
         storage.setUserQuota(alice.fingerprint(), half.size() * 2);
         for (const char* const id : {"big-a", "big-b"}) {
             CHECK(storage.putBlob(alice.fingerprint(), id, half, "content", half.size() * 2, kNow)
-                == Storage::PutResult::eStored);
+                == DiskStorage::PutResult::eStored);
         }
         const auto fetch = [port, &alice](const nlohmann::json& ids) {
             const std::string body = nlohmann::json{{"ids", ids}}.dump();

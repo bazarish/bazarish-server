@@ -2,7 +2,7 @@
 #pragma once
 
 #include "ServerSettings.hpp"
-#include "Storage.hpp"
+#include "DiskStorage.hpp"
 
 #include <bazarish/Auth.hpp>
 #include <bazarish/Bytes.hpp>
@@ -60,7 +60,7 @@ struct HttpApiOptions {
 
 class HttpApi {
 public:
-    HttpApi(Storage& storage, EventGate& eventGate, HttpApiOptions options);
+    HttpApi(DiskStorage& storage, EventGate& eventGate, HttpApiOptions options);
     ~HttpApi();
 
     HttpApi(const HttpApi&) = delete;
@@ -86,7 +86,7 @@ private:
     std::string reseedSu3_;
     std::int64_t reseedPackedAt_ = 0;
 
-    Storage& storage_;
+    DiskStorage& storage_;
     EventGate& eventGate_;
     const HttpApiOptions options_;
 

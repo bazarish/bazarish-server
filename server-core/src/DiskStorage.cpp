@@ -232,7 +232,7 @@ std::size_t DiskStorage::revokePasses(const std::string& user, const std::vector
     return dropped;
 }
 
-Storage::PutResult DiskStorage::putBlob(const std::string& user, const std::string& blobId,
+DiskStorage::PutResult DiskStorage::putBlob(const std::string& user, const std::string& blobId,
     const Bytes& data, const std::string& deliveryClass, const std::uint64_t quotaBytes,
     const std::int64_t receivedAt, const std::string& alreadyAcked,
     const std::optional<std::size_t> heldLimit)
@@ -342,7 +342,7 @@ std::size_t DiskStorage::countHeldLocked(const std::string& user, const std::str
     return held;
 }
 
-std::vector<Storage::PendingEntry> DiskStorage::listPending(const std::string& user,
+std::vector<DiskStorage::PendingEntry> DiskStorage::listPending(const std::string& user,
     const std::string& clientId)
 {
     requireFingerprint(user);

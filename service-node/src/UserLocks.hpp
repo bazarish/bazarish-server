@@ -8,8 +8,7 @@
 
 namespace bazarish::service {
 
-// One lock per account, held over everything that reads its records, goes to the network and
-// writes them back. Taken before the stores' own locks; never two accounts at once.
+// Taken before the stores' own locks; never two accounts at once.
 class UserLocks {
 public:
     class Held {

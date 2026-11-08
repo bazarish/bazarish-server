@@ -6,7 +6,6 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# common is this repository's own submodule, never a directory found beside a component.
 get_filename_component(BAZARISH_SERVER_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 set(BAZARISH_COMMON_DIR "${BAZARISH_SERVER_ROOT}/common" CACHE PATH
     "Path to the bazarish common library repository")
@@ -18,7 +17,6 @@ if(NOT TARGET bazarish_common)
     add_subdirectory(${BAZARISH_COMMON_DIR} bazarish-common)
 endif()
 
-# What the servers here share and the client has no use for.
 if(NOT TARGET bazarish_server_shared)
     add_subdirectory(${BAZARISH_SERVER_ROOT}/shared bazarish-server-shared)
 endif()
@@ -52,7 +50,6 @@ bazarish_server_test(TestAdminAuth bazarish_admin_lib)
 bazarish_server_test(TestServiceClient bazarish_admin_lib)
 bazarish_server_test(TestFleetSync bazarish_admin_lib)
 bazarish_server_test(TestLoginPage bazarish_admin_lib)
-# The test renders the shipped sign-in template, not a stand-in.
 target_compile_definitions(TestLoginPage
     PRIVATE BAZARISH_PANEL_WEB_DIR="${CMAKE_CURRENT_SOURCE_DIR}/web")
 bazarish_server_test(TestPanelFleet bazarish_admin_lib)

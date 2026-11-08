@@ -99,11 +99,6 @@ std::shared_ptr<Session> SessionStore::holding(const Bytes& ticket, const std::i
     return nullptr;
 }
 
-void SessionStore::close(const std::string& cookie)
-{
-    sessions_.erase(cookie);
-}
-
 std::vector<std::shared_ptr<Session>> SessionStore::drain()
 {
     std::vector<std::shared_ptr<Session>> gone;

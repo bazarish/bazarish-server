@@ -210,7 +210,7 @@ int main()
             == 400);
 
         const std::int64_t delegatedUntil = nowSeconds() + kHeldDelegationSeconds;
-        grants.setI2pTransient(served, delegatedUntil, nowSeconds());
+        grants.setI2pTransient(served, delegatedUntil);
         const http::ClientResponse held
             = call(opsPort, panel, "POST", "/v1/account/undelegate", body);
         CHECK(held.status == 200);

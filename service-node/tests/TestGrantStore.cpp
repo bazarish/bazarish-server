@@ -51,7 +51,6 @@ int main()
         CHECK(approval->pending());
         CHECK(approval->requestedAt == 2000);
 
-        // A renewal must not restart the deadline.
         grants.recordRegistration(moderated, 9000, false);
         approval = grants.peekApproval(moderated);
         CHECK(approval->requestedAt == 2000);

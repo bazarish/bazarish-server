@@ -65,7 +65,6 @@ public:
     std::shared_ptr<Session> open(std::int64_t now);
     // The live session a ticket was issued by; the ticket itself stays until it is spent.
     std::shared_ptr<Session> holding(const Bytes& ticket, std::int64_t now) const;
-    void close(const std::string& cookie);
 
     std::vector<std::shared_ptr<Session>> sweep(std::int64_t now);
     std::vector<std::shared_ptr<Session>> drain();

@@ -32,7 +32,6 @@ namespace {
 
 constexpr std::size_t kDecoyPageBytes = 32 * 1024;
 
-constexpr std::size_t kSocketMessageBytes = gateway::kMaxRecordBytes;
 
 constexpr std::chrono::seconds kReplayGrace{5};
 // A closed address's lease set is still found this long: i2pd's TUNNEL_EXPIRATION_TIMEOUT.
@@ -41,7 +40,6 @@ constexpr std::chrono::seconds kGoneHereMemory{660};
 constexpr i2p::Privacy kCallPrivacy = i2p::Privacy::eMinimal;
 
 constexpr std::chrono::seconds kServerHandshake{10};
-// Every address server-core serves, in one line: room for a few hundred thousand.
 constexpr std::size_t kMaxServedListBytes = 16 * 1024 * 1024;
 
 http::Response opsRefusal(const int status, const std::string& message)
@@ -330,7 +328,7 @@ http::Response Gateway::decoy() const
 int Gateway::start()
 {
     http::SocketRoutes routes;
-    routes.maxMessageBytes = kSocketMessageBytes;
+    routes.maxMessageBytes = gateway::kMaxRecordBytes;
     routes.idleTimeout = kKeepalive + kPongTimeout;
     routes.admit = [this](const http::Request& request) -> std::optional<http::Response> {
         if (!admitted(request)) {
@@ -702,12 +700,6 @@ void Gateway::socketClosed(const http::SocketPtr& socket)
             endpoint->socket.reset();
         }
     }
-    for (auto& [id, stream] : session->streams) {
-        (void)id;
-        if (stream->socket == socket) {
-            stream->socket.reset();
-        }
-    }
     session->removeSocket(now);
     connections_.erase(found);
 }
@@ -744,9 +736,6 @@ std::shared_ptr<Session> Gateway::sessionFor(const http::SocketPtr& socket) cons
 
 http::SocketPtr Gateway::outletFor(const Session& session, const StreamEntry& stream)
 {
-    if (stream.socket) {
-        return stream.socket;
-    }
     const auto found = session.endpoints.find(stream.endpoint);
     if (found != session.endpoints.end() && found->second->socket) {
         return found->second->socket;
@@ -1102,7 +1091,7 @@ void Gateway::onEndpointCreate(const std::shared_ptr<Session>& session,
         try {
             if (entry->raw) {
                 entry->worker
-                    = std::thread([this, session, entry]() { datagramLoop(session, entry); });
+                    = std::thread([this, entry]() { datagramLoop(entry); });
             } else if (entry->published) {
                 entry->worker
                     = std::thread([this, session, entry]() { acceptLoop(session, entry); });
@@ -1318,8 +1307,7 @@ void Gateway::onRawSend(const std::shared_ptr<Session>& session, const http::Soc
     from->endpoint->sendRawDatagram(sent.host, sent.payload);
 }
 
-void Gateway::datagramLoop(
-    const std::shared_ptr<Session>& session, const std::shared_ptr<EndpointEntry>& entry)
+void Gateway::datagramLoop(const std::shared_ptr<EndpointEntry>& entry)
 {
     while (entry->running.load()) {
         std::vector<std::uint8_t> payload;
@@ -1345,7 +1333,6 @@ void Gateway::datagramLoop(
         }
         out->send(encode(FrameType::eRawRecv, entry->id, Bytes(payload.begin(), payload.end())));
     }
-    (void)session;
 }
 
 void Gateway::onStreamOpen(const std::shared_ptr<Session>& session,
@@ -1752,7 +1739,6 @@ void Gateway::readLoop(
         if (got == 0) {
             break;
         }
-        // Between two of the client's sockets there is no outlet: the bytes wait, they are not lost.
         {
             const std::lock_guard<std::mutex> lock(mutex_);
             entry->waiting.insert(entry->waiting.end(), buffer.begin(),
@@ -1858,12 +1844,11 @@ void Gateway::onStreamEnd(const std::shared_ptr<Session>& session, const Frame& 
     if (entry == nullptr) {
         return;
     }
-    entry->book.peerFinished();
     if (peer != nullptr && theirs != nullptr) {
         pump(theirs, peer);
         return;
     }
-    teardown(session, entry, Fault::eClosed);
+    teardown(entry);
 }
 
 void Gateway::joinTaken(std::thread& slot)
@@ -1895,8 +1880,7 @@ void Gateway::orphan(const std::shared_ptr<StreamEntry>& entry)
     pump(theirs, peer);
 }
 
-void Gateway::teardown(const std::shared_ptr<Session>&,
-    const std::shared_ptr<StreamEntry>& entry, const Fault)
+void Gateway::teardown(const std::shared_ptr<StreamEntry>& entry)
 {
     entry->running.store(false);
     if (entry->stream) {
@@ -1941,40 +1925,26 @@ void Gateway::onResume(const std::shared_ptr<Session>& session,
 
 void Gateway::onAttach(const http::SocketPtr& socket, const Frame& frame)
 {
-    const nlohmann::json body = bodyJson(frame);
     const std::shared_ptr<Session> session = sessionFor(socket);
     if (session == nullptr) {
         fail(socket, frame.ref, Fault::eUnknownId, "this socket belongs to no session");
         socket->close();
         return;
     }
-    const std::uint64_t received = body.value("received", std::uint64_t{0});
-
     std::shared_ptr<EndpointEntry> endpoint;
-    std::shared_ptr<StreamEntry> stream;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
-        connections_[socket].flow = frame.ref;
         endpoint = endpointOf(*session, frame.ref);
-        stream = streamOf(*session, frame.ref);
         if (endpoint != nullptr) {
             endpoint->socket = socket;
-        } else if (stream != nullptr) {
-            stream->socket = socket;
         }
     }
     topUpTickets(session, socket);
-    if (endpoint != nullptr) {
-        socket->send(encodeJson(FrameType::eOk, frame.ref, nlohmann::json::object()));
+    if (endpoint == nullptr) {
+        fail(socket, frame.ref, Fault::eUnknownId, "no such destination on this session");
         return;
     }
-    if (stream == nullptr) {
-        fail(socket, frame.ref, Fault::eUnknownId, "no such flow on this session");
-        return;
-    }
-    socket->send(encodeJson(FrameType::eOk, frame.ref,
-        {{"received", stream->book.received()}, {"finished", stream->book.finishedSending()}}));
-    sendInPieces(*socket, stream->id, stream->book.replay(received));
+    socket->send(encodeJson(FrameType::eOk, frame.ref, nlohmann::json::object()));
 }
 
 void Gateway::statusLoop()
@@ -2060,7 +2030,6 @@ void Gateway::setServerLink(std::optional<ServerLink> link)
     std::shared_ptr<server::TlsPipe> watching;
     {
         const std::lock_guard<std::mutex> lock(linkMutex_);
-        // The same link again: the watch on it stays, and so do the routes it lists.
         if (serverLink_ == link) {
             return;
         }

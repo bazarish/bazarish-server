@@ -1,7 +1,6 @@
 // Bazarish project (c) 2026
 #pragma once
 
-// Where each service of a fleet listens unless its configuration says otherwise.
 namespace bazarish::fleet {
 
 inline constexpr const char* kLoopback = "127.0.0.1";

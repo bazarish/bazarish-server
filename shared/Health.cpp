@@ -5,11 +5,6 @@
 
 #include <nlohmann/json.hpp>
 
-#ifdef _WIN32
-#include <windows.h>
-#include <psapi.h>
-#endif
-
 #include <fstream>
 #include <limits>
 #include <stdexcept>
@@ -19,8 +14,6 @@
 namespace bazarish::health {
 
 namespace {
-
-#ifndef _WIN32
 
 constexpr const char* kStatusFile = "/proc/self/status";
 // proc(5) gives the memory fields in kibibytes.
@@ -47,23 +40,13 @@ std::uint64_t statusFieldBytes(const std::string& field)
     throw std::runtime_error("health: " + std::string(kStatusFile) + " names no " + field);
 }
 
-#endif
-
 }  // namespace
 
 MemoryUsage processMemoryUsage()
 {
     MemoryUsage usage;
-#ifdef _WIN32
-    PROCESS_MEMORY_COUNTERS counters{};
-    if (::GetProcessMemoryInfo(::GetCurrentProcess(), &counters, sizeof counters) != 0) {
-        usage.current = counters.WorkingSetSize;
-        usage.peak = counters.PeakWorkingSetSize;
-    }
-#else
     usage.current = statusFieldBytes("VmRSS:");
     usage.peak = statusFieldBytes("VmHWM:");
-#endif
     return usage;
 }
 

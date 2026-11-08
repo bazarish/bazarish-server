@@ -30,7 +30,6 @@ constexpr std::size_t kAnswerBytes = 3000;
 
 }  // namespace
 
-// Answers that come back while the client is between two control sockets must not be lost.
 int main()
 {
     const std::filesystem::path root

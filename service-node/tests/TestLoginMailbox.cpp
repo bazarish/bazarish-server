@@ -31,7 +31,7 @@ int main()
         LoginMailbox mailbox(kWindow);
         CHECK(mailbox.challengeOf(nonce, kNow).empty());
         CHECK(!mailbox.deliver(nonce, challenge, "blob", kNow));
-        mailbox.expect(challenge, "token", kNow);
+        CHECK(mailbox.expect(challenge, "token", kNow));
         CHECK(mailbox.challengeOf(nonce, kNow) == challenge);
         CHECK(mailbox.claim(nonce, "token", kNow).state == LoginMailbox::State::eWaiting);
         CHECK(mailbox.claim(nonce, "stranger", kNow).state == LoginMailbox::State::eGone);
@@ -48,7 +48,7 @@ int main()
 
     {
         LoginMailbox mailbox(kWindow);
-        mailbox.expect(challenge, "token", kNow);
+        CHECK(mailbox.expect(challenge, "token", kNow));
         CHECK(mailbox.claim(nonce, "token", kNow + kWindow).state == LoginMailbox::State::eWaiting);
         CHECK(mailbox.challengeOf(nonce, kNow + kWindow + 1).empty());
         CHECK(!mailbox.deliver(nonce, challenge, "blob", kNow + kWindow + 1));
@@ -59,7 +59,7 @@ int main()
         LoginMailbox mailbox(kWindow);
         bool refused = false;
         try {
-            mailbox.expect(challenge, "", kNow);
+            (void)mailbox.expect(challenge, "", kNow);
         } catch (const std::invalid_argument&) {
             refused = true;
         }
@@ -69,11 +69,12 @@ int main()
     {
         LoginMailbox mailbox(kWindow);
         const std::string first = site.issue(kNow);
-        mailbox.expect(first, "token", kNow);
-        for (std::size_t i = 0; i < bazarish::service::kMaxAwaitedLogins; ++i) {
-            mailbox.expect(site.issue(kNow + 1), "token", kNow + 1);
+        CHECK(mailbox.expect(first, "token", kNow));
+        for (std::size_t i = 1; i < bazarish::service::kMaxAwaitedLogins; ++i) {
+            CHECK(mailbox.expect(site.issue(kNow + 1), "token", kNow + 1));
         }
-        CHECK(mailbox.challengeOf(bazarish::loginrelay::nonceOf(first), kNow + 1).empty());
+        CHECK(!mailbox.expect(site.issue(kNow + 1), "token", kNow + 1));
+        CHECK(!mailbox.challengeOf(bazarish::loginrelay::nonceOf(first), kNow + 1).empty());
     }
 
     std::printf("TestLoginMailbox: all checks passed\n");

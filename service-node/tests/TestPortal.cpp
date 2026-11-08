@@ -124,7 +124,7 @@ void testPortalDiscovery()
         CHECK(call(port, "GET", path).status == 404);
         CHECK(deliver(challenge, signLoginBlob(signer, now(), challenge)) == 404);
 
-        options.logins->expect(challenge, "token", now());
+        CHECK(options.logins->expect(challenge, "token", now()));
         const http::ClientResponse fetched = call(port, "GET", path);
         CHECK(fetched.status == 200);
         CHECK(fetched.body == challenge);

@@ -6,6 +6,7 @@
 #include <bazarish/Address.hpp>
 #include <bazarish/Clock.hpp>
 #include <bazarish/Crypto.hpp>
+#include <bazarish/FederationFrame.hpp>
 #include <bazarish/JsonRead.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/PrivateFile.hpp>
@@ -90,7 +91,7 @@ SignAckFn signAckWith(std::shared_ptr<Key> signingKey)
 {
     return [signingKey = std::move(signingKey)](const std::string& deliveryId,
                Bytes& outSignerPublicDer, Bytes& outSignature) {
-        const Bytes signedBytes(deliveryId.begin(), deliveryId.end());
+        const Bytes signedBytes = deliveryAckInput(deliveryId);
         outSignature = bazarish::sign(*signingKey, signedBytes);
         outSignerPublicDer = signingKey->publicDer();
     };

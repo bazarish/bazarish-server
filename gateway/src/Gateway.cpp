@@ -175,7 +175,7 @@ http::Response Gateway::notFound() const
 
 bool Gateway::admitted(const http::Request& request) const
 {
-    return request.path == settings_.basePath;
+    return service::constantTimeEqual(request.path, settings_.basePath);
 }
 
 std::optional<http::Response> Gateway::operatorRefusal(const http::Request& request) const
@@ -350,9 +350,7 @@ int Gateway::start()
         }
         return decoy();
     };
-    for (const char* method : {"GET", "POST", "PUT", "DELETE", "HEAD"}) {
-        server_.route(method, "*", answer);
-    }
+    server_.route(http::kAnyMethod, "*", answer);
     streamPool_ = std::make_unique<DestinationPool>(
         router_, shapeOf(false, false, false), settings_.streamPool);
     callPool_ = std::make_unique<DestinationPool>(

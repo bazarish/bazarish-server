@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -12,9 +13,10 @@ class PanelSessions {
 public:
     explicit PanelSessions(std::int64_t ttlSeconds = 3600);
 
-    std::string create(std::int64_t now);
+    std::string create(const std::string& fingerprint, std::int64_t now);
 
-    bool valid(const std::string& token, std::int64_t now);
+    // The operator a live session belongs to; none for an unknown or expired token.
+    std::optional<std::string> holder(const std::string& token, std::int64_t now);
 
     void destroy(const std::string& token);
 
@@ -23,7 +25,11 @@ private:
 
     std::int64_t ttlSeconds_;
     std::mutex mutex_;
-    std::unordered_map<std::string, std::int64_t> tokens_;
+    struct Held {
+        std::string fingerprint;
+        std::int64_t expires = 0;
+    };
+    std::unordered_map<std::string, Held> tokens_;
 };
 
 }  // namespace bazarish::admin

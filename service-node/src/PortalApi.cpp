@@ -104,6 +104,7 @@ PortalApi::~PortalApi() = default;
 int PortalApi::bind(const std::string& host, const int port)
 {
     http::Server::Options options;
+    options.denyFraming = true;
     options.host = host;
     options.port = port;
     http_ = std::make_unique<http::Server>(options);
@@ -331,18 +332,23 @@ std::string PortalApi::signInPanel(const std::string& error, http::Response& res
 {
     const std::int64_t now = nowSeconds();
     const std::vector<std::string> facades = settings().facades;
-    if (facades.empty() || !isB32I2pHost(facades.front())) {
+    const auto pasteOnly = [&]() {
         return assets_.render("signin.html",
             {
                 {"challenge", htmlEscape(login_.issue(now))},
                 {"error", notice(error, "is-error")},
                 {"scan", std::string()},
             });
+    };
+    if (facades.empty() || !isB32I2pHost(facades.front())) {
+        return pasteOnly();
     }
     const std::string& facade = facades.front();
     const std::string challenge = login_.issue(now, loginrelay::callbackUrl(facade));
     const std::string token = newSignInToken();
-    options_.logins->expect(challenge, token, now);
+    if (!options_.logins->expect(challenge, token, now)) {
+        return pasteOnly();
+    }
     setCookie(response, kSignInCookie, token, kSignInCookieAttributes);
     return assets_.render("signin.html",
         {

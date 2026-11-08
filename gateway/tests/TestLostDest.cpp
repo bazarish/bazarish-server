@@ -71,7 +71,9 @@ int main()
 
     CHECK(testutil::waitFor([&]() { return before->lost(); }));
     CHECK(!before->ready());
-    CHECK(before->connect("anything.b32.i2p", std::chrono::seconds(1)) == nullptr);
+    CHECK(before->connect(
+        "dlkbeyqjykssca6o7qlbwgq4fr2hry7kw2ursn2sh3lt3acox6gq.b32.i2p", std::chrono::seconds(1))
+        == nullptr);
 
     const auto asked = std::chrono::steady_clock::now();
     CHECK(!before->waitReady(std::chrono::seconds(kWaitSeconds)));

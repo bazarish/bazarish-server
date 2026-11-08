@@ -18,7 +18,7 @@ PanelSessions::PanelSessions(const std::int64_t ttlSeconds)
 void PanelSessions::pruneLocked(const std::int64_t now)
 {
     for (auto it = tokens_.begin(); it != tokens_.end();) {
-        if (it->second <= now) {
+        if (it->second.expires <= now) {
             it = tokens_.erase(it);
         } else {
             ++it;
@@ -26,23 +26,26 @@ void PanelSessions::pruneLocked(const std::int64_t now)
     }
 }
 
-std::string PanelSessions::create(const std::int64_t now)
+std::string PanelSessions::create(const std::string& fingerprint, const std::int64_t now)
 {
     const std::string token = toBase64Url(randomBytes(kSessionTokenBytes));
     const std::lock_guard<std::mutex> lock(mutex_);
     pruneLocked(now);
-    tokens_[token] = now + ttlSeconds_;
+    tokens_[token] = Held{fingerprint, now + ttlSeconds_};
     return token;
 }
 
-bool PanelSessions::valid(const std::string& token, const std::int64_t now)
+std::optional<std::string> PanelSessions::holder(const std::string& token, const std::int64_t now)
 {
     if (token.empty()) {
-        return false;
+        return std::nullopt;
     }
     const std::lock_guard<std::mutex> lock(mutex_);
     const auto it = tokens_.find(token);
-    return it != tokens_.end() && it->second > now;
+    if (it == tokens_.end() || it->second.expires <= now) {
+        return std::nullopt;
+    }
+    return it->second.fingerprint;
 }
 
 void PanelSessions::destroy(const std::string& token)

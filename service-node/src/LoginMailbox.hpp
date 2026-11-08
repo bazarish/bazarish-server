@@ -17,7 +17,9 @@ class LoginMailbox {
 public:
     explicit LoginMailbox(std::int64_t windowSeconds = kLoginWindowSeconds);
 
-    void expect(const std::string& challenge, const std::string& token, std::int64_t now);
+    // False when the box is full: a login already waiting is never pushed out by a new one.
+    [[nodiscard]] bool expect(
+        const std::string& challenge, const std::string& token, std::int64_t now);
 
     std::string challengeOf(const std::string& nonce, std::int64_t now);
 

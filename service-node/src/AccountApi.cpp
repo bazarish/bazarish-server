@@ -379,8 +379,12 @@ void AccountApi::setupOpsRoutes()
     ops_->post(fleet::kLoginExpect,
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = bazarish::parseJson(request.body);
-            options_.logins->expect(body.at("challenge").get<std::string>(),
-                body.at("token").get<std::string>(), nowSeconds());
+            if (!options_.logins->expect(body.at("challenge").get<std::string>(),
+                    body.at("token").get<std::string>(), nowSeconds())) {
+                respondError(response, 503, ErrorCode::eRequestFailed,
+                    "too many sign-ins are waiting");
+                return;
+            }
             respondJson(response, {{"ok", true}});
         })));
 

@@ -285,7 +285,13 @@ void HttpApi::registerRoutes()
     }
 
     const auto signedIn = [this](const http::Request& request) {
-        return sessions_.valid(request.cookie(kCookieName), nowSeconds());
+        const std::optional<std::string> holder
+            = sessions_.holder(request.cookie(kCookieName), nowSeconds());
+        if (!holder.has_value()) {
+            return false;
+        }
+        const std::vector<std::string> admins = settings_->get().admins;
+        return std::find(admins.begin(), admins.end(), *holder) != admins.end();
     };
 
     const auto setupPage = [this](const std::string& error) {
@@ -319,7 +325,7 @@ void HttpApi::registerRoutes()
                 return;
             }
             bazarish::log::info("this panel is now administered by {}", fingerprint);
-            setSessionCookie(response, sessions_.create(nowSeconds()));
+            setSessionCookie(response, sessions_.create(fingerprint, nowSeconds()));
             redirectTo(response, "/");
         } catch (const std::exception& error) {
             bazarish::log::warn("panel setup refused: {}", error.what());
@@ -370,9 +376,9 @@ void HttpApi::registerRoutes()
         std::string state = claim.at("state").get<std::string>();
         if (state == "signed") {
             try {
-                auth_.login(claim.at("challenge").get<std::string>(),
+                const std::string fingerprint = auth_.login(claim.at("challenge").get<std::string>(),
                     claim.at("blob").get<std::string>(), nowSeconds());
-                setSessionCookie(response, sessions_.create(nowSeconds()));
+                setSessionCookie(response, sessions_.create(fingerprint, nowSeconds()));
                 state = "signedIn";
             } catch (const std::exception& error) {
                 bazarish::log::warn("panel sign-in refused: {}", error.what());
@@ -389,8 +395,9 @@ void HttpApi::registerRoutes()
             return;
         }
         try {
-            auth_.login(request.param("challenge"), request.param("blob"), nowSeconds());
-            setSessionCookie(response, sessions_.create(nowSeconds()));
+            const std::string fingerprint
+                = auth_.login(request.param("challenge"), request.param("blob"), nowSeconds());
+            setSessionCookie(response, sessions_.create(fingerprint, nowSeconds()));
             redirectTo(response, "/");
         } catch (const std::exception& error) {
             bazarish::log::warn("panel sign-in refused: {}", error.what());
@@ -823,6 +830,7 @@ void HttpApi::registerRoutes()
 int HttpApi::bind(const std::string& host, const int port)
 {
     http::Server::Options options;
+    options.denyFraming = true;
     options.host = host;
     options.port = port;
     http_ = std::make_unique<http::Server>(options);

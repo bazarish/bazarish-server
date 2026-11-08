@@ -5,7 +5,7 @@
 
 #include <bazarish/Hmac.hpp>
 
-#include <algorithm>
+#include <iterator>
 #include <stdexcept>
 
 namespace bazarish::service {
@@ -15,7 +15,7 @@ LoginMailbox::LoginMailbox(const std::int64_t windowSeconds)
 {
 }
 
-void LoginMailbox::expect(
+bool LoginMailbox::expect(
     const std::string& challenge, const std::string& token, const std::int64_t now)
 {
     if (token.empty()) {
@@ -25,10 +25,10 @@ void LoginMailbox::expect(
     const std::lock_guard<std::mutex> lock(mutex_);
     pruneLocked(now);
     if (awaited_.size() >= kMaxAwaitedLogins) {
-        awaited_.erase(std::min_element(awaited_.begin(), awaited_.end(),
-            [](const auto& a, const auto& b) { return a.second.since < b.second.since; }));
+        return false;
     }
     awaited_[nonce] = Awaited{token, challenge, {}, now};
+    return true;
 }
 
 std::string LoginMailbox::challengeOf(const std::string& nonce, const std::int64_t now)

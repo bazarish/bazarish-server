@@ -216,6 +216,21 @@ int main()
     }
 
     {
+        const Identity colleague = Identity::generate();
+        Config both = settings->get();
+        both.admins.push_back(colleague.fingerprint());
+        settings->set(both);
+        Panel theirs = panel;
+        theirs.cookie = signIn(panel.port, colleague);
+        CHECK(theirs.ask("GET", "/api/panel").status == 200);
+        Config only = settings->get();
+        only.admins = {admin.fingerprint()};
+        settings->set(only);
+        CHECK(theirs.ask("GET", "/api/panel").status == 401);
+        CHECK(panel.ask("GET", "/api/panel").status == 200);
+    }
+
+    {
         nlohmann::json twice = nlohmann::json::parse(panel.ask("GET", "/api/panel").body);
         nlohmann::json& list = twice.at("fleets")[0].at("services");
         list.push_back(list[1]);

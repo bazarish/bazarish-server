@@ -7,6 +7,7 @@
 
 #include <bazarish/Clock.hpp>
 #include <bazarish/DeliveryEnvelope.hpp>
+#include <bazarish/FederationFrame.hpp>
 #include <bazarish/Hybrid.hpp>
 #include <bazarish/Limits.hpp>
 #include <bazarish/Pass.hpp>
@@ -103,7 +104,7 @@ const Key& ackKey()
 
 void signAck(const std::string& deliveryId, Bytes& outPub, Bytes& outSig)
 {
-    outSig = bazarish::sign(ackKey(), Bytes(deliveryId.begin(), deliveryId.end()));
+    outSig = bazarish::sign(ackKey(), deliveryAckInput(deliveryId));
     outPub = ackKey().publicDer();
 }
 
@@ -461,7 +462,7 @@ int main()
         CHECK(result.delivered);
         CHECK(result.deliveryId == "fmsg-signed");
         CHECK(result.signerPublicDer == ackKey().publicDer());
-        const Bytes signedBytes(result.deliveryId.begin(), result.deliveryId.end());
+        const Bytes signedBytes = deliveryAckInput(result.deliveryId);
         CHECK(bazarish::verify(
             Key::fromPublicDer(result.signerPublicDer), signedBytes, result.signature));
         const Key other = Key::generateSigning();

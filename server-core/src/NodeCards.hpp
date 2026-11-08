@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #pragma once
 
+#include "Federation.hpp"
+
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Crypto.hpp>
 
@@ -29,14 +31,14 @@ public:
 
     NodeCards(NodeAddress node, std::shared_ptr<const Identity> identity);
 
-    std::optional<Bytes> card(const std::string& user);
+    std::optional<HeldCard> card(const std::string& user);
     void forget(const std::string& user);
 
 private:
     NodeAddress node_;
     std::shared_ptr<const Identity> identity_;
     std::mutex mutex_;
-    std::map<std::string, std::pair<std::int64_t, Bytes>> cached_;
+    std::map<std::string, std::pair<std::int64_t, HeldCard>> cached_;
 };
 
 }  // namespace bazarish::server

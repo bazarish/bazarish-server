@@ -21,6 +21,7 @@ public:
         std::string dest;
         std::int64_t delegatedAt = 0;
         Bytes card;
+        Bytes cardKey;
     };
 
     explicit SubscriptionStore(const std::filesystem::path& root);

@@ -7,10 +7,11 @@
 
 #include <bazarish/Auth.hpp>
 #include <bazarish/Certificates.hpp>
+#include <bazarish/Crypto.hpp>
 #include <bazarish/Descriptor.hpp>
 #include <bazarish/Hybrid.hpp>
 #include <bazarish/I2p.hpp>
-#include <bazarish/Crypto.hpp>
+#include <bazarish/KeyedSeal.hpp>
 #include <bazarish/Tunnel.hpp>
 
 #include <bazarish/HttpClient.hpp>
@@ -32,6 +33,8 @@ using namespace bazarish;
 using namespace bazarish::service;
 
 namespace {
+
+const std::string kCardKeyText = bazarish::linkKeyText(bazarish::newLinkKey());
 
 using testutil::Headers;
 using testutil::call;
@@ -139,7 +142,7 @@ int main()
     {
         grants.grantSubscription(alice.fingerprint(), kQuota, now);
         const Bytes card = botCard(alice, now);
-        const std::string body = nlohmann::json{{"card", toBase64(card)}}.dump();
+        const std::string body = nlohmann::json{{"card", toBase64(card)}, {"cardKey", kCardKeyText}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
             signedHeaders(alice, "POST", "/v1/account/card", body), body);
         CHECK(result.status == 200);
@@ -155,7 +158,7 @@ int main()
         const nlohmann::json forgedBody
             = {{"v", kCertificateFormatVersion}, {"user", alice.fingerprint()}};
         const Bytes forged = hybrid::signJson(forgedBody, mallory);
-        const std::string body = nlohmann::json{{"card", toBase64(forged)}}.dump();
+        const std::string body = nlohmann::json{{"card", toBase64(forged)}, {"cardKey", kCardKeyText}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
             signedHeaders(mallory, "POST", "/v1/account/card", body), body);
         CHECK(result.status == 400);
@@ -163,7 +166,7 @@ int main()
 
     {
         const Bytes card = botCard(mallory, now);
-        const std::string body = nlohmann::json{{"card", toBase64(card)}}.dump();
+        const std::string body = nlohmann::json{{"card", toBase64(card)}, {"cardKey", kCardKeyText}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
             signedHeaders(mallory, "POST", "/v1/account/card", body), body);
         CHECK(result.status == 404);
@@ -178,7 +181,7 @@ int main()
         CHECK(!grants.peekSubscription(alice.fingerprint()).has_value());
         const Bytes card
             = botCard(alice, now + 1, dest, sealing.publicDer(), servingKey);
-        const std::string body = nlohmann::json{{"card", toBase64(card)}}.dump();
+        const std::string body = nlohmann::json{{"card", toBase64(card)}, {"cardKey", kCardKeyText}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
             signedHeaders(alice, "POST", "/v1/account/card", body), body);
         CHECK(result.status == 200);
@@ -188,6 +191,7 @@ int main()
             = call(port, "GET", "/v1/account/card?user=" + alice.fingerprint(),
                 signedHeaders(serverIdentity, "GET", "/v1/account/card", ""));
         CHECK(looked.status == 200);
+        CHECK(nlohmann::json::parse(looked.body).at("cardKey") == kCardKeyText);
         const ContactCard fetched = ContactCard::verify(
             fromBase64(nlohmann::json::parse(looked.body).at("card").get<std::string>()));
         CHECK(fetched.dest == dest);
@@ -198,14 +202,14 @@ int main()
                 = "elkbeyqjykssca6o7qlbwgq4fr2hry7kw2ursn2sh3lt3acox6gq.b32.i2p";
             const Bytes stale = botCard(
                 alice, now, oldDest, sealing.publicDer(), servingKey);
-            const std::string staleBody = nlohmann::json{{"card", toBase64(stale)}}.dump();
+            const std::string staleBody = nlohmann::json{{"card", toBase64(stale)}, {"cardKey", kCardKeyText}}.dump();
             CHECK(call(port, "POST", "/v1/account/card",
                       signedHeaders(alice, "POST", "/v1/account/card", staleBody), staleBody)
                       .status
                 == 409);
             const Bytes sameAge = botCard(
                 alice, now + 1, oldDest, sealing.publicDer(), servingKey);
-            const std::string sameBody = nlohmann::json{{"card", toBase64(sameAge)}}.dump();
+            const std::string sameBody = nlohmann::json{{"card", toBase64(sameAge)}, {"cardKey", kCardKeyText}}.dump();
             CHECK(call(port, "POST", "/v1/account/card",
                       signedHeaders(alice, "POST", "/v1/account/card", sameBody), sameBody)
                       .status
@@ -220,7 +224,7 @@ int main()
 
             const Bytes future = botCard(alice, now + 4000, oldDest,
                 sealing.publicDer(), servingKey);
-            const std::string futureBody = nlohmann::json{{"card", toBase64(future)}}.dump();
+            const std::string futureBody = nlohmann::json{{"card", toBase64(future)}, {"cardKey", kCardKeyText}}.dump();
             CHECK(call(port, "POST", "/v1/account/card",
                       signedHeaders(alice, "POST", "/v1/account/card", futureBody), futureBody)
                       .status

@@ -8,6 +8,7 @@
 #include <bazarish/Auth.hpp>
 #include <bazarish/Certificates.hpp>
 #include <bazarish/Crypto.hpp>
+#include <bazarish/KeyedSeal.hpp>
 
 #include <bazarish/HttpClient.hpp>
 #include <bazarish/I2p.hpp>
@@ -24,6 +25,8 @@ using namespace bazarish;
 using namespace bazarish::service;
 
 namespace {
+
+const std::string kCardKeyText = bazarish::linkKeyText(bazarish::newLinkKey());
 
 using testutil::Headers;
 using testutil::call;
@@ -103,7 +106,7 @@ int main()
         grants.grantSubscription(
             alice.fingerprint(), kQuota, now);
         const Bytes card = botCard(alice, now);
-        const std::string body = nlohmann::json{{"card", toBase64(card)}}.dump();
+        const std::string body = nlohmann::json{{"card", toBase64(card)}, {"cardKey", kCardKeyText}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
             signedHeaders(alice, "POST", "/v1/account/card", body), body);
         CHECK(result.status == 200);

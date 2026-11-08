@@ -20,7 +20,11 @@
 
 namespace bazarish::server {
 
-using GetCardFn = std::function<std::optional<Bytes>(const std::string& fingerprint)>;
+struct HeldCard {
+    Bytes der;
+    Bytes key;
+};
+using GetCardFn = std::function<std::optional<HeldCard>(const std::string& fingerprint)>;
 
 using SignAckFn = std::function<void(
     const std::string& deliveryId, Bytes& outSignerPublicDer, Bytes& outSignature)>;

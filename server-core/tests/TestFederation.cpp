@@ -9,6 +9,7 @@
 #include <bazarish/DeliveryEnvelope.hpp>
 #include <bazarish/FederationFrame.hpp>
 #include <bazarish/Hybrid.hpp>
+#include <bazarish/KeyedSeal.hpp>
 #include <bazarish/Limits.hpp>
 #include <bazarish/Pass.hpp>
 #include <bazarish/Resolve.hpp>
@@ -18,6 +19,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -127,8 +129,15 @@ FederationDeliverResult roundTrip(DeliveryEngine& engine, const Bytes& sealed, c
     return result;
 }
 
+Bytes sealedCardQuery(const CardFetchQuery& query, const Bytes& cardKey)
+{
+    const std::string queryText = toJson(query).dump();
+    return KeyedSeal(cardKey, kCardRequestLabel).seal(Bytes(queryText.begin(), queryText.end()));
+}
+
+// The reply as the dialling client reads it: opened under the key it sealed the query with.
 FederationFetchResult roundTripCard(DeliveryEngine& engine, const CardFetchQuery& query,
-    const GetCardFn& getCard, const std::string& owner)
+    const GetCardFn& getCard, const std::string& owner, const Bytes& cardKey)
 {
     int fds[2];
     CHECK(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0);
@@ -139,10 +148,14 @@ FederationFetchResult roundTripCard(DeliveryEngine& engine, const CardFetchQuery
         federationServeOnce(
             serverStream, engine, kNow, std::string(), servingKey(), owner, getCard, signAck);
     });
-    const std::string queryText = toJson(query).dump();
-    const FederationFetchResult result = federationSendFetch(
-        clientStream, "card", Bytes(queryText.begin(), queryText.end()));
+    FederationFetchResult result
+        = federationSendFetch(clientStream, "card", sealedCardQuery(query, cardKey));
     serverThread.join();
+    if (result.ok) {
+        const std::optional<Bytes> opened = KeyedSeal(cardKey, kCardReplyLabel).open(result.sealed);
+        CHECK(opened.has_value());
+        result.sealed = *opened;
+    }
     return result;
 }
 
@@ -412,48 +425,60 @@ int main()
 
     {
         const Bytes cardDer(200, 0x5a);
-        const GetCardFn getCard = [&](const std::string& fp) -> std::optional<Bytes> {
+        const Bytes aliceKey = newLinkKey();
+        const GetCardFn getCard = [&](const std::string& fp) -> std::optional<HeldCard> {
             if (fp == alice) {
-                return cardDer;
+                return HeldCard{cardDer, aliceKey};
             }
             return std::nullopt;
         };
 
         const FederationFetchResult ok
-            = roundTripCard(engine, CardFetchQuery{alice}, getCard, alice);
+            = roundTripCard(engine, CardFetchQuery{alice}, getCard, alice, aliceKey);
         CHECK(ok.ok);
         CHECK(ok.sealed == cardDer);
 
+        const FederationFetchResult wrongKey
+            = roundTripCard(engine, CardFetchQuery{alice}, getCard, alice, newLinkKey());
+        CHECK(!wrongKey.ok);
+        CHECK(wrongKey.errorCode == "CARD_UNKNOWN");
+
         const std::string cardless = toBase32(Bytes(32, 0x77));
         const FederationFetchResult unknown
-            = roundTripCard(engine, CardFetchQuery{cardless}, getCard, cardless);
+            = roundTripCard(engine, CardFetchQuery{cardless}, getCard, cardless, aliceKey);
         CHECK(!unknown.ok);
         CHECK(unknown.errorCode == "CARD_UNKNOWN");
 
         const FederationFetchResult noFn
-            = roundTripCard(engine, CardFetchQuery{alice}, GetCardFn{}, alice);
+            = roundTripCard(engine, CardFetchQuery{alice}, GetCardFn{}, alice, aliceKey);
         CHECK(!noFn.ok);
         CHECK(noFn.errorCode == "CARD_UNKNOWN");
 
         const std::string bob = toBase32(Bytes(32, 0x0b));
-        const GetCardFn nodeWide = [&](const std::string& fp) -> std::optional<Bytes> {
+        const GetCardFn nodeWide = [&](const std::string& fp) -> std::optional<HeldCard> {
             if (fp == alice || fp == bob) {
-                return cardDer;
+                return HeldCard{cardDer, aliceKey};
             }
             return std::nullopt;
         };
         const FederationFetchResult own
-            = roundTripCard(engine, CardFetchQuery{alice}, nodeWide, alice);
+            = roundTripCard(engine, CardFetchQuery{alice}, nodeWide, alice, aliceKey);
         CHECK(own.ok);
         CHECK(own.sealed == cardDer);
 
         const FederationFetchResult neighbour
-            = roundTripCard(engine, CardFetchQuery{bob}, nodeWide, alice);
+            = roundTripCard(engine, CardFetchQuery{bob}, nodeWide, alice, aliceKey);
         CHECK(!neighbour.ok);
         CHECK(neighbour.errorCode == "CARD_UNKNOWN");
-        const FederationFetchResult absent
-            = roundTripCard(engine, CardFetchQuery{toBase32(Bytes(32, 0x99))}, nodeWide, alice);
+        const FederationFetchResult absent = roundTripCard(
+            engine, CardFetchQuery{toBase32(Bytes(32, 0x99))}, nodeWide, alice, aliceKey);
         CHECK(absent.errorCode == neighbour.errorCode);
+
+        CHECK(sealedCardQuery(CardFetchQuery{alice}, aliceKey).size()
+            == sealedCardQuery(CardFetchQuery{bob}, newLinkKey()).size());
+        const Bytes onTheWire = sealedCardQuery(CardFetchQuery{alice}, aliceKey);
+        CHECK(std::search(onTheWire.begin(), onTheWire.end(), alice.begin(), alice.end())
+            == onTheWire.end());
     }
 
     {

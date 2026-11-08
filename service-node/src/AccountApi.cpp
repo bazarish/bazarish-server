@@ -9,6 +9,7 @@
 #include "AccountRemoval.hpp"
 #include "IdleSweep.hpp"
 
+#include <bazarish/KeyedSeal.hpp>
 #include <bazarish/Auth.hpp>
 #include <bazarish/Certificates.hpp>
 #include <bazarish/Clock.hpp>
@@ -745,8 +746,10 @@ void AccountApi::setupRoutes()
             const Bytes der = fromBase64(body.at("card").get<std::string>());
 
             ContactCard card;
+            Bytes cardKey;
             try {
                 card = ContactCard::verify(der);
+                cardKey = linkKeyFromText(body.at("cardKey").get<std::string>());
             } catch (const std::exception& error) {
                 respondError(response, 400, ErrorCode::eRequestFailed,
                     std::string("invalid contact card: ") + error.what());
@@ -805,6 +808,7 @@ void AccountApi::setupRoutes()
             record.dest = card.dest.empty() && held.has_value() ? held->dest : card.dest;
             record.delegatedAt = held.has_value() ? held->delegatedAt : 0;
             record.card = der;
+            record.cardKey = cardKey;
             store_.putAccount(record);
             options_.publishQuota(user, quota);
 
@@ -939,7 +943,8 @@ void AccountApi::setupRoutes()
                     "no card for that account");
                 return;
             }
-            respondJson(response, {{"user", user}, {"card", toBase64(account->card)}});
+            respondJson(response, {{"user", user}, {"card", toBase64(account->card)},
+                {"cardKey", linkKeyText(account->cardKey)}});
         })));
 
     clientRoute("POST", "/v1/account/registration",

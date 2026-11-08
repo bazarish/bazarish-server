@@ -3,6 +3,7 @@
 
 #include <FleetRoutes.hpp>
 
+#include <bazarish/KeyedSeal.hpp>
 #include <bazarish/Auth.hpp>
 #include <bazarish/Clock.hpp>
 #include <bazarish/HttpClient.hpp>
@@ -27,7 +28,7 @@ NodeCards::NodeCards(NodeAddress node, std::shared_ptr<const Identity> identity)
 {
 }
 
-std::optional<Bytes> NodeCards::card(const std::string& user)
+std::optional<HeldCard> NodeCards::card(const std::string& user)
 {
     const std::int64_t now = nowSeconds();
     {
@@ -55,7 +56,9 @@ std::optional<Bytes> NodeCards::card(const std::string& user)
         throw std::runtime_error(
             "the service node answered a card lookup with HTTP " + std::to_string(answer.status));
     }
-    const Bytes card = fromBase64(parseJson(answer.body).at("card").get<std::string>());
+    const nlohmann::json found = parseJson(answer.body);
+    const HeldCard card{fromBase64(found.at("card").get<std::string>()),
+        linkKeyFromText(found.at("cardKey").get<std::string>())};
     const std::lock_guard<std::mutex> lock(mutex_);
     cached_[user] = {now, card};
     return card;

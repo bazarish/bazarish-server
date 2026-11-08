@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #include "SubscriptionStore.hpp"
 
+#include <bazarish/KeyedSeal.hpp>
 #include <bazarish/Log.hpp>
 
 #include <bazarish/Address.hpp>
@@ -37,6 +38,7 @@ void SubscriptionStore::putAccount(const Account& account)
         {"dest", account.dest},
         {"delegatedAt", account.delegatedAt},
         {"card", toBase64(account.card)},
+        {"cardKey", account.cardKey.empty() ? std::string() : linkKeyText(account.cardKey)},
     };
     writeFileAtomic(accountPath(account.user), body.dump());
 }
@@ -52,6 +54,9 @@ SubscriptionStore::Account accountFromJson(const nlohmann::json& body)
     account.dest = body.at("dest").get<std::string>();
     account.delegatedAt = body.at("delegatedAt").get<std::int64_t>();
     account.card = fromBase64(body.at("card").get<std::string>());
+    if (const std::string cardKey = body.at("cardKey").get<std::string>(); !cardKey.empty()) {
+        account.cardKey = linkKeyFromText(cardKey);
+    }
     return account;
 }
 

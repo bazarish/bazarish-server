@@ -3,6 +3,7 @@
 #include "TestUtil.hpp"
 
 #include <bazarish/Bytes.hpp>
+#include <bazarish/KeyedSeal.hpp>
 
 #include <cstdio>
 #include <cstdlib>
@@ -31,7 +32,7 @@ int main()
 
     CHECK(!store.getAccount(alice).has_value());
     SubscriptionStore::Account account{
-        alice, 1000, 10485760, "destination.b32.i2p", 1500, Bytes{0xaa, 0xbb}};
+        alice, 1000, 10485760, "destination.b32.i2p", 1500, Bytes{0xaa, 0xbb}, newLinkKey()};
     store.putAccount(account);
     const auto loaded = store.getAccount(alice);
     CHECK(loaded.has_value());
@@ -39,6 +40,7 @@ int main()
     CHECK(loaded->registeredAt == 1000);
     CHECK(loaded->quotaBytes == 10485760);
     CHECK(loaded->card == (Bytes{0xaa, 0xbb}));
+    CHECK(loaded->cardKey == account.cardKey);
     CHECK(loaded->dest == "destination.b32.i2p");
     CHECK(loaded->delegatedAt == 1500);
     store.deleteAccount(alice);

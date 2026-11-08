@@ -1,5 +1,6 @@
 // Bazarish project (c) 2026
 #include "Federation.hpp"
+#include <bazarish/KeyedSeal.hpp>
 #include <bazarish/JsonRead.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/Errors.hpp>
@@ -48,18 +49,14 @@ void federationServeFrame(const std::string& headerLine,
     }
 
     if (op == "card") {
-        if (getCard) {
-            const Bytes queryBytes = fromBase64(header.at("sealed").get<std::string>());
-            const CardFetchQuery query = cardFetchQueryFromJson(bazarish::parseJson(queryBytes));
-            if (query.fingerprint != owner) {
-                writeReply(
-                    nlohmann::json({{"ok", false}, {"errorCode", "CARD_UNKNOWN"}}).dump());
-                return;
-            }
-            const std::optional<Bytes> cardDer = getCard(query.fingerprint);
-            if (cardDer) {
-                writeReply(
-                    nlohmann::json({{"ok", true}, {"sealed", toBase64(*cardDer)}}).dump());
+        const std::optional<HeldCard> held = getCard ? getCard(owner) : std::nullopt;
+        if (held.has_value()) {
+            const std::optional<Bytes> queryBytes = KeyedSeal(held->key, kCardRequestLabel)
+                .open(fromBase64(header.at("sealed").get<std::string>()));
+            if (queryBytes.has_value()
+                && cardFetchQueryFromJson(bazarish::parseJson(*queryBytes)).fingerprint == owner) {
+                const Bytes sealed = KeyedSeal(held->key, kCardReplyLabel).seal(held->der);
+                writeReply(nlohmann::json({{"ok", true}, {"sealed", toBase64(sealed)}}).dump());
                 return;
             }
         }

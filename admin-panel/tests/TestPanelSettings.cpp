@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #include "AdminAuth.hpp"
 #include "PanelSettings.hpp"
+#include "TestUtil.hpp"
 
 #include <bazarish/Auth.hpp>
 #include <bazarish/Certificates.hpp>
@@ -15,15 +16,6 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
-
-#define CHECK(condition)                                                            \
-    do {                                                                            \
-        if (!(condition)) {                                                         \
-            std::fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, \
-                #condition);                                                        \
-            std::exit(1);                                                           \
-        }                                                                           \
-    } while (false)
 
 using namespace bazarish;
 using namespace bazarish::admin;

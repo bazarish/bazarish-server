@@ -1,5 +1,12 @@
 // Bazarish project (c) 2026
 #include "Facade.hpp"
+
+#include <FleetRoutes.hpp>
+#include <Health.hpp>
+#include <LoginRelay.hpp>
+#include <OpsGate.hpp>
+#include <OpsSettings.hpp>
+
 #include "FacadeAddress.hpp"
 
 #include <bazarish/Auth.hpp>
@@ -7,13 +14,12 @@
 #include <bazarish/ConfigFile.hpp>
 #include <bazarish/Errors.hpp>
 #include <bazarish/HttpClient.hpp>
+#include <bazarish/HttpResponses.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <bazarish/I2p.hpp>
 #include <bazarish/JsonRead.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/Tunnel.hpp>
-#include <Health.hpp>
-#include <LoginRelay.hpp>
 
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
@@ -69,16 +75,13 @@ bazarish::http::Response notFound()
 
 bazarish::http::Response refusal(const int status, const std::string& message)
 {
-    return {status, "application/json", {},
-        bazarish::makeErrorEnvelope(bazarish::ErrorCode::eRequestFailed, message).dump()};
+    return bazarish::http::errorResponse(status, bazarish::ErrorCode::eRequestFailed, message);
 }
 
 bazarish::http::Response gatewayFailure()
 {
-    return {502, "application/json", {},
-        bazarish::makeErrorEnvelope(bazarish::ErrorCode::eUpstreamUnavailable,
-            "backend unreachable")
-            .dump()};
+    return bazarish::http::errorResponse(
+        502, bazarish::ErrorCode::eUpstreamUnavailable, "backend unreachable");
 }
 
 }  // namespace
@@ -213,23 +216,9 @@ void Facade::setupRoutes(bazarish::http::Server& server)
 
 void Facade::setupOpsRoutes()
 {
-    const auto operatorOnly = [this](auto handler) {
-        return [this, handler](
-                   const bazarish::http::Request& request) -> bazarish::http::Response {
-            if (const std::optional<bazarish::http::Response> refused
-                = bazarish::http::operatorRefusal(request, nowSeconds(),
-                    options_.operatorFingerprints, operatorReplays_);
-                refused.has_value()) {
-                return *refused;
-            }
-            try {
-                return handler(request);
-            } catch (const nlohmann::json::exception& error) {
-                return refusal(400, error.what());
-            } catch (const std::invalid_argument& error) {
-                return refusal(400, error.what());
-            }
-        };
+    const auto operatorOnly = [this](bazarish::http::Handler handler) {
+        return bazarish::server::operatorOnly(
+            options_.operatorFingerprints, operatorReplays_, std::move(handler));
     };
 
     ops_->get("/healthz", operatorOnly([this](const bazarish::http::Request&) {
@@ -244,7 +233,7 @@ void Facade::setupOpsRoutes()
         return bazarish::http::Response{200, "application/json", {}, report.dump()};
     }));
 
-    ops_->get("/settings", operatorOnly([this](const bazarish::http::Request&) {
+    ops_->get(fleet::kOpsSettings, operatorOnly([this](const bazarish::http::Request&) {
         const FacadeSettings::Values values = options_.settings->get();
         return bazarish::http::Response{200, "application/json", {},
             nlohmann::json{
@@ -265,36 +254,18 @@ void Facade::setupOpsRoutes()
                 .dump()};
     }));
 
-    ops_->put("/settings", operatorOnly([this](const bazarish::http::Request& request) {
+    ops_->put(fleet::kOpsSettings, operatorOnly([this](const bazarish::http::Request& request) {
         FacadeSettings::Values values = options_.settings->get();
         const nlohmann::json body = bazarish::parseJson(request.body);
-        if (body.contains("logLevel")) {
-            const std::string level = body.at("logLevel").get<std::string>();
-            if (!bazarish::log::levelFromString(level).has_value()) {
-                throw std::invalid_argument("not a log level: " + level);
-            }
-            values.logLevel = level;
-        }
+        values.logLevel = bazarish::server::logLevelIn(body, values.logLevel);
         readEndpointInto(body, "messaging", values.messagingHost, values.messagingPort);
         readEndpointInto(body, "serviceNode", values.serviceNodeHost, values.serviceNodePort);
         readEndpointInto(body, "listen", values.listenHost, values.listenPort);
         readEndpointInto(body, "opsListen", values.opsHost, values.opsPort);
         readEndpointInto(body, "directListen", values.directHost, values.directPort);
-        if (body.contains("i2pPrivacy")) {
-            const std::string named = body.at("i2pPrivacy").get<std::string>();
-            if (!bazarish::i2p::privacyFromString(named).has_value()) {
-                throw std::invalid_argument("not a privacy level: " + named);
-            }
-            values.i2pPrivacy = named;
-        }
-        if (body.contains("i2pTunnelQuantity")) {
-            const int quantity = body.at("i2pTunnelQuantity").get<int>();
-            if (quantity < 1 || quantity > bazarish::i2p::kMaxTunnelQuantity) {
-                throw std::invalid_argument("a destination carries between 1 and "
-                    + std::to_string(bazarish::i2p::kMaxTunnelQuantity) + " tunnels");
-            }
-            values.i2pTunnelQuantity = quantity;
-        }
+        values.i2pPrivacy = bazarish::server::privacyIn(body, values.i2pPrivacy);
+        values.i2pTunnelQuantity
+            = bazarish::server::tunnelQuantityIn(body, values.i2pTunnelQuantity);
 
         const std::string levelBefore = options_.settings->get().logLevel;
         try {
@@ -302,13 +273,7 @@ void Facade::setupOpsRoutes()
         } catch (const std::exception& error) {
             return refusal(500, error.what());
         }
-        if (values.logLevel != levelBefore) {
-            if (const std::optional<bazarish::log::Level> level
-                = bazarish::log::levelFromString(values.logLevel);
-                level.has_value()) {
-                bazarish::log::setLevel(*level);
-            }
-        }
+        bazarish::server::applyLogLevel(levelBefore, values.logLevel);
         return bazarish::http::Response{200, "application/json", {},
             nlohmann::json{{"logLevel", values.logLevel}}.dump()};
     }));
@@ -324,7 +289,7 @@ void Facade::setupOpsRoutes()
                 .dump()};
     }));
 
-    ops_->post("/restart", operatorOnly([this](const bazarish::http::Request&) {
+    ops_->post(fleet::kOpsRestart, operatorOnly([this](const bazarish::http::Request&) {
         bazarish::log::info("restarting at the operator's request");
         options_.requestRestart();
         return bazarish::http::Response{200, "application/json", {}, R"({"restarting":true})"};

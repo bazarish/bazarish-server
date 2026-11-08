@@ -1,5 +1,6 @@
 // Bazarish project (c) 2026
 #include "PerUserDestinations.hpp"
+#include "TestUtil.hpp"
 
 #include "DeliveryEngine.hpp"
 #include "DiskStorage.hpp"
@@ -16,15 +17,6 @@
 #include <fstream>
 #include <iterator>
 #include <string>
-
-#define CHECK(condition)                                                            \
-    do {                                                                            \
-        if (!(condition)) {                                                         \
-            std::fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, \
-                #condition);                                                        \
-            std::exit(1);                                                           \
-        }                                                                           \
-    } while (false)
 
 using namespace bazarish;
 using namespace bazarish::server;
@@ -51,8 +43,7 @@ std::string fieldOf(const std::filesystem::path& path, const char* key)
 int main()
 {
     const std::filesystem::path root
-        = std::filesystem::temp_directory_path() / "bazarish-peruserdest-test";
-    std::filesystem::remove_all(root);
+        = testutil::freshDir("peruserdest-test");
     DiskStorage storage(root);
 
     DeliveryEngine engine(storage, DeliveryEngineOptions{});
@@ -205,5 +196,6 @@ int main()
     }
 
     std::printf("TestPerUserDestinations OK\n");
+    std::filesystem::remove_all(root);
     return 0;
 }

@@ -1,5 +1,6 @@
 // Bazarish project (c) 2026
 #include "FleetSync.hpp"
+#include "TestUtil.hpp"
 
 #include <bazarish/Crypto.hpp>
 #include <bazarish/HttpServer.hpp>
@@ -14,15 +15,6 @@
 #include <mutex>
 #include <string>
 #include <vector>
-
-#define CHECK(condition)                                                            \
-    do {                                                                            \
-        if (!(condition)) {                                                         \
-            std::fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, \
-                #condition);                                                        \
-            std::exit(1);                                                           \
-        }                                                                           \
-    } while (false)
 
 using namespace bazarish;
 using namespace bazarish::admin;
@@ -66,8 +58,7 @@ int main()
 
     const Identity panel = Identity::generate();
     const std::filesystem::path root
-        = std::filesystem::temp_directory_path() / "bazarish-panel-sync-test";
-    std::filesystem::remove_all(root);
+        = testutil::freshDir("panel-sync-test");
     const tls::Credential services = tls::selfSigned(root / "services");
     const tls::Credential panelKeys = tls::selfSigned(root / "panel");
 

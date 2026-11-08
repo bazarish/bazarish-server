@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #include "NodeCards.hpp"
 
+#include <FleetRoutes.hpp>
+
 #include <bazarish/Auth.hpp>
 #include <bazarish/Clock.hpp>
 #include <bazarish/HttpClient.hpp>
@@ -16,7 +18,6 @@ namespace {
 
 constexpr int kFound = 200;
 constexpr int kNotFound = 404;
-constexpr char kCardPath[] = "/v1/account/card";
 
 }  // namespace
 
@@ -38,8 +39,8 @@ std::optional<Bytes> NodeCards::card(const std::string& user)
     }
     http::ClientRequest lookup;
     lookup.method = "GET";
-    lookup.target = std::string(kCardPath) + "?user=" + user;
-    lookup.headers = auth::signRequest(*identity_, now, "GET", kCardPath, {});
+    lookup.target = std::string(fleet::kAccountCard) + "?user=" + user;
+    lookup.headers = auth::signRequest(*identity_, now, "GET", fleet::kAccountCard, {});
     http::ClientOptions options;
     options.tls = node_.tls;
     options.pin = node_.pin;

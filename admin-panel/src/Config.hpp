@@ -3,6 +3,8 @@
 
 #include <bazarish/Portal.hpp>
 
+#include <FleetPorts.hpp>
+
 #include <nlohmann/json.hpp>
 
 #include <string>
@@ -34,6 +36,8 @@ struct Fleet {
 bool isKnownServiceKind(const std::string& kind);
 
 void requireCoherentFleet(const Fleet& fleet);
+// Fleets as a config file or an edit names them; a malformed one throws std::invalid_argument.
+std::vector<Fleet> fleetsFromJson(const nlohmann::json& list);
 
 nlohmann::json fleetsJson(const std::vector<Fleet>& fleets);
 
@@ -43,7 +47,7 @@ struct Config {
     std::string assetsDir;
     service::LoginConsumer consumer;
     std::string listenHost = "127.0.0.1";
-    int listenPort = 8460;
+    int listenPort = fleet::kPanelPort;
     std::vector<Fleet> fleets;
 
     static Config fromJson(const std::string& text);

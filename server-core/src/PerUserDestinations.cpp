@@ -36,10 +36,7 @@ constexpr std::chrono::minutes kExpirySweepInterval{10};
 
 nlohmann::json readRecord(const std::filesystem::path& path)
 {
-    std::ifstream in(path, std::ios::binary);
-    const std::string text(
-        (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    return bazarish::parseJson(text);
+    return bazarish::parseJson(bazarish::readFileText(path));
 }
 
 std::string addressOfTransient(const std::string& transientB64)

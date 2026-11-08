@@ -10,6 +10,9 @@
 
 namespace bazarish::server {
 
+// What a mailbox may hold until its node grants a quota of its own.
+inline constexpr std::uint64_t kDefaultQuotaBytes = 50 * 1024 * 1024;
+
 class Storage {
 public:
     virtual ~Storage() = default;

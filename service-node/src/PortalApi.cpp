@@ -3,15 +3,18 @@
 
 #include <LoginRelay.hpp>
 #include <QrSvg.hpp>
+#include <SignInScan.hpp>
+#include <WebFace.hpp>
 
+#include <bazarish/Percent.hpp>
 #include <bazarish/ServerDescriptor.hpp>
 
-#include <bazarish/HttpServer.hpp>
-#include <bazarish/Clock.hpp>
-#include <bazarish/Log.hpp>
 #include <bazarish/Bytes.hpp>
+#include <bazarish/Clock.hpp>
 #include <bazarish/Crypto.hpp>
+#include <bazarish/HttpServer.hpp>
 #include <bazarish/I2pAddress.hpp>
+#include <bazarish/Log.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -29,6 +32,15 @@
 #include <string>
 #include <utility>
 
+using bazarish::server::clearCookie;
+using bazarish::server::newSignInToken;
+using bazarish::server::notice;
+using bazarish::server::redirectTo;
+using bazarish::server::sendHtml;
+using bazarish::server::sendJson;
+using bazarish::server::setCookie;
+using bazarish::server::signInScan;
+
 namespace {
 
 constexpr std::int64_t kReseedHoldSeconds = 300;
@@ -40,44 +52,18 @@ using bazarish::nowSeconds;
 using bazarish::htmlEscape;
 using bazarish::http::filled;
 
-
-void sendHtml(http::Response& response, const std::string& html, const int status = 200)
-{
-    response.status = status;
-    response.contentType = "text/html; charset=utf-8";
-    response.headers["Cache-Control"] = "no-store";
-    response.body = html;
-}
-
-void sendJson(http::Response& response, const nlohmann::json& body)
-{
-    response.contentType = "application/json";
-    response.headers["Cache-Control"] = "no-store";
-    response.body = body.dump();
-}
-
-void redirectTo(http::Response& response, const std::string& location)
-{
-    response.status = 303;
-    response.headers["Location"] = location;
-}
-
 const char* const kSessionCookie = "session";
 const char* const kCookieAttributes = "; HttpOnly; Secure; SameSite=Strict; Path=/";
 const char* const kSignInCookie = "signin";
 const char* const kSignInCookieAttributes = "; HttpOnly; Secure; SameSite=Strict; Path=/login";
-constexpr std::size_t kSignInTokenBytes = 16;
-
 void setSessionCookie(http::Response& response, const std::string& token)
 {
-    response.headers["Set-Cookie"]
-        = std::string(kSessionCookie) + "=" + token + kCookieAttributes;
+    setCookie(response, kSessionCookie, token, kCookieAttributes);
 }
 
 void clearSessionCookie(http::Response& response)
 {
-    response.headers["Set-Cookie"]
-        = std::string(kSessionCookie) + "=" + kCookieAttributes + "; Max-Age=0";
+    clearCookie(response, kSessionCookie, kCookieAttributes);
 }
 
 constexpr std::size_t kSizeTextBytes = 32;
@@ -94,14 +80,6 @@ std::string bytesHuman(const std::uint64_t bytes)
     char buffer[kSizeTextBytes];
     std::snprintf(buffer, sizeof(buffer), value < 10.0 ? "%.1f %s" : "%.0f %s", value, units[unit]);
     return buffer;
-}
-
-std::string notice(const std::string& text, const std::string& kind)
-{
-    if (text.empty()) {
-        return {};
-    }
-    return "<p class=\"notice " + kind + "\">" + htmlEscape(text) + "</p>";
 }
 
 }  // namespace
@@ -322,7 +300,7 @@ std::string PortalApi::languageSwitch(const std::string& lang, const std::string
     for (const Language& language : messages_.languages()) {
         const bool current = language.code == lang;
         list += "      <li><a class=\"lang-one" + std::string(current ? " is-on" : "")
-            + "\" href=\"/lang/" + language.code + "?back=" + urlEncode(sameSitePath(here))
+            + "\" href=\"/lang/" + language.code + "?back=" + percentEncode(sameSitePath(here))
             + "\"" + (current ? " aria-current=\"true\"" : "") + ">" + htmlEscape(language.name)
             + "</a></li>\n";
     }
@@ -374,20 +352,14 @@ std::string PortalApi::signInPanel(const std::string& error, http::Response& res
     }
     const std::string& facade = facades.front();
     const std::string challenge = login_.issue(now, loginrelay::callbackUrl(facade));
-    const std::string nonce = loginrelay::nonceOf(challenge);
-    const std::string token = toHex(randomBytes(kSignInTokenBytes));
+    const std::string token = newSignInToken();
     options_.logins->expect(challenge, token, now);
-    response.headers["Set-Cookie"] = std::string(kSignInCookie) + "=" + token + kSignInCookieAttributes;
+    setCookie(response, kSignInCookie, token, kSignInCookieAttributes);
     return assets_.render("signin.html",
         {
             {"challenge", htmlEscape(challenge)},
             {"error", notice(error, "is-error")},
-            {"scan",
-                assets_.render("signin-scan.html",
-                    {
-                        {"qr", bazarish::qr::svg(loginrelay::challengeLink(facade, nonce))},
-                        {"nonce", nonce},
-                    })},
+            {"scan", signInScan(assets_, facade, challenge)},
         });
 }
 

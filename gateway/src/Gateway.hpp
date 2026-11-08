@@ -141,6 +141,8 @@ private:
     std::optional<std::pair<ServerLink, tls::Credential>> serverFor(const std::string& host) const;
     bool reachesLocallyLocked(const std::string& host) const;
     void dropUnrouted();
+    bool stopAsLost(const std::shared_ptr<Session>& session, std::uint32_t id);
+    static void sendInPieces(http::Socket& socket, std::uint32_t id, const Bytes& data);
     std::shared_ptr<EndpointEntry> stopEndpoint(
         const std::shared_ptr<Session>& session, std::uint32_t id);
     void teardown(const std::shared_ptr<Session>& session,

@@ -38,7 +38,6 @@ inline constexpr int kLanguageCookieDays = 365;
 
 std::string languageCookie(const std::string& code);
 
-std::string urlEncode(const std::string& value);
 
 std::string sameSitePath(const std::string& asked);
 

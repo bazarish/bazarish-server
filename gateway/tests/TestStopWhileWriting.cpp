@@ -45,8 +45,7 @@ i2p::RouterConfig borrowedFrom(const int port, const std::string& fingerprint)
 int main()
 {
     const std::filesystem::path root
-        = std::filesystem::temp_directory_path() / "bazarish-gateway-stop-test";
-    std::filesystem::remove_all(root);
+        = testutil::freshDir("gateway-stop-test");
     std::filesystem::create_directories(root);
 
     Settings settings;

@@ -33,25 +33,12 @@ i2p::RouterConfig borrowedFrom(const int port, const std::string& fingerprint)
     return config;
 }
 
-bool waitFor(const std::function<bool()>& done)
-{
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(kWaitSeconds);
-    while (std::chrono::steady_clock::now() < deadline) {
-        if (done()) {
-            return true;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-    return done();
-}
-
 }  // namespace
 
 int main()
 {
     const std::filesystem::path root
-        = std::filesystem::temp_directory_path() / "bazarish-gateway-lost-dest-test";
-    std::filesystem::remove_all(root);
+        = testutil::freshDir("gateway-lost-dest-test");
     std::filesystem::create_directories(root);
 
     Settings settings;
@@ -74,15 +61,15 @@ int main()
     wanted.privacy = i2p::Privacy::eMinimal;
     wanted.published = false;
     const std::shared_ptr<i2p::Endpoint> before = client.createEndpoint(wanted);
-    CHECK(waitFor([&]() { return first->sockets() >= 1; }));
+    CHECK(testutil::waitFor([&]() { return first->sockets() >= 1; }));
 
     first.reset();
     settings.listenPort = port;
     Gateway second(settings, engine);
     CHECK(second.start() == port);
-    CHECK(waitFor([&]() { return second.sockets() >= 1; }));
+    CHECK(testutil::waitFor([&]() { return second.sockets() >= 1; }));
 
-    CHECK(waitFor([&]() { return before->lost(); }));
+    CHECK(testutil::waitFor([&]() { return before->lost(); }));
     CHECK(!before->ready());
     CHECK(before->connect("anything.b32.i2p", std::chrono::seconds(1)) == nullptr);
 

@@ -26,7 +26,6 @@ constexpr const char* kPath = "/0e5b73c1a9f4";
 constexpr int kWaitSeconds = 30;
 constexpr std::size_t kTotalBytes = kStreamWindowBytes;
 constexpr std::size_t kReadChunk = 8 * 1024;
-constexpr std::chrono::milliseconds kLook{20};
 
 i2p::RouterConfig borrowedFrom(const int port, const std::string& fingerprint)
 {
@@ -44,25 +43,12 @@ i2p::RouterConfig borrowedFrom(const int port, const std::string& fingerprint)
     return config;
 }
 
-bool waitFor(const std::function<bool()>& done)
-{
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(kWaitSeconds);
-    while (std::chrono::steady_clock::now() < deadline) {
-        if (done()) {
-            return true;
-        }
-        std::this_thread::sleep_for(kLook);
-    }
-    return done();
-}
-
 }  // namespace
 
 int main()
 {
     const std::filesystem::path root
-        = std::filesystem::temp_directory_path() / "bazarish-gateway-lost-frame-test";
-    std::filesystem::remove_all(root);
+        = testutil::freshDir("gateway-lost-frame-test");
     std::filesystem::create_directories(root);
 
     Settings settings;
@@ -123,14 +109,14 @@ int main()
         payload += static_cast<char>('a' + payload.size() % 26);
     }
     out->writeAll(bazarish::viewOf(payload));
-    CHECK(waitFor([&]() { return out->pendingBytes() == 0; }));
+    CHECK(testutil::waitFor([&]() { return out->pendingBytes() == 0; }));
     CHECK(received.load() < kTotalBytes);
 
     relay.cut(0);
     relay.stall(false);
-    CHECK(waitFor([&]() { return gateway.rejoins() >= 1; }));
+    CHECK(testutil::waitFor([&]() { return gateway.rejoins() >= 1; }));
 
-    CHECK(waitFor([&]() { return received.load() == kTotalBytes; }));
+    CHECK(testutil::waitFor([&]() { return received.load() == kTotalBytes; }));
     taking.join();
     CHECK(gateway.refusals() == 0);
 

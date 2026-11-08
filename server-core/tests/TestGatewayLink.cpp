@@ -1,5 +1,6 @@
 // Bazarish project (c) 2026
 #include "GatewayLink.hpp"
+#include "TestUtil.hpp"
 
 #include "DeliveryEngine.hpp"
 #include "DiskStorage.hpp"
@@ -8,6 +9,7 @@
 #include <TlsPipe.hpp>
 
 #include <bazarish/Crypto.hpp>
+#include <bazarish/DeliveryEnvelope.hpp>
 #include <bazarish/FederationFrame.hpp>
 #include <bazarish/Hybrid.hpp>
 #include <bazarish/I2p.hpp>
@@ -26,15 +28,6 @@
 #include <string>
 #include <vector>
 
-#define CHECK(condition)                                                            \
-    do {                                                                            \
-        if (!(condition)) {                                                         \
-            std::fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, \
-                #condition);                                                        \
-            std::exit(1);                                                           \
-        }                                                                           \
-    } while (false)
-
 using namespace bazarish;
 using namespace bazarish::server;
 namespace fs = std::filesystem;
@@ -51,9 +44,8 @@ const std::string kWatch = nlohmann::json({{"watch", true}}).dump() + "\n";
 
 Bytes contactRequest(const Key& servingPublic, const std::string& mailbox, const std::string& id)
 {
-    const std::string text
-        = nlohmann::json({{"class", "contact"}, {"mailbox", mailbox}, {"deliveryId", id}}).dump();
-    return hybrid::seal(Bytes(text.begin(), text.end()), servingPublic);
+    return bazarish::sealDeliveryEnvelope(
+        bazarish::DeliveryEnvelope{"contact", mailbox, id, std::nullopt}, servingPublic);
 }
 
 std::vector<std::string> listed(TlsPipe& pipe)

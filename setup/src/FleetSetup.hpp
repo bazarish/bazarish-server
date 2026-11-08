@@ -2,11 +2,13 @@
 #pragma once
 
 #include <filesystem>
+
+#include <FleetPorts.hpp>
 #include <string>
 
 namespace bazarish::setup {
 
-inline constexpr int kPanelPort = 8460;
+using fleet::kPanelPort;
 
 struct Layout {
     std::filesystem::path configDir;

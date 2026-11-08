@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #include "TlsPipe.hpp"
 
+#include <bazarish/TlsContext.hpp>
+
 #include <boost/asio/connect.hpp>
 #include <boost/asio/executor_work_guard.hpp>
 #include <boost/asio/io_context.hpp>
@@ -42,15 +44,10 @@ using Written = std::shared_ptr<std::promise<boost::system::error_code>>;
 ssl::context contextFor(const ssl::context::method method,
     const std::optional<std::reference_wrapper<const tls::Credential>>& own)
 {
-    ssl::context context(method);
-    if (SSL_CTX_set_min_proto_version(context.native_handle(), TLS1_3_VERSION) != 1) {
-        throw std::runtime_error("tls pipe: TLS 1.3 cannot be required");
-    }
-    if (own.has_value()) {
-        context.use_certificate_chain_file(own->get().certificate.string());
-        context.use_private_key_file(own->get().key.string(), ssl::context::pem);
-    }
-    return context;
+    const std::string certificate = own.has_value() ? own->get().certificate.string() : "";
+    const std::string key = own.has_value() ? own->get().key.string() : "";
+    return method == ssl::context::tls_server ? tls::serverContext(certificate, key)
+                                              : tls::clientContext(certificate, key);
 }
 
 }  // namespace

@@ -46,23 +46,16 @@ target_compile_options(bazarish-admin-panel PRIVATE -Wall -Wextra -Werror)
 
 enable_testing()
 
-function(bazarish_admin_add_test name)
-    add_executable(${name} tests/${name}.cpp)
-    target_link_libraries(${name} PRIVATE bazarish_admin_lib)
-    target_compile_options(${name} PRIVATE -Wall -Wextra -Werror)
-    add_test(NAME ${name} COMMAND ${name})
-endfunction()
-
-bazarish_admin_add_test(TestConfig)
-bazarish_admin_add_test(TestPanelSettings)
-bazarish_admin_add_test(TestAdminAuth)
-bazarish_admin_add_test(TestServiceClient)
-bazarish_admin_add_test(TestFleetSync)
-bazarish_admin_add_test(TestLoginPage)
+bazarish_server_test(TestConfig bazarish_admin_lib)
+bazarish_server_test(TestPanelSettings bazarish_admin_lib)
+bazarish_server_test(TestAdminAuth bazarish_admin_lib)
+bazarish_server_test(TestServiceClient bazarish_admin_lib)
+bazarish_server_test(TestFleetSync bazarish_admin_lib)
+bazarish_server_test(TestLoginPage bazarish_admin_lib)
 # The test renders the shipped sign-in template, not a stand-in.
 target_compile_definitions(TestLoginPage
     PRIVATE BAZARISH_PANEL_WEB_DIR="${CMAKE_CURRENT_SOURCE_DIR}/web")
-bazarish_admin_add_test(TestPanelFleet)
+bazarish_server_test(TestPanelFleet bazarish_admin_lib)
 target_compile_definitions(TestPanelFleet
     PRIVATE BAZARISH_PANEL_WEB_DIR="${CMAKE_CURRENT_SOURCE_DIR}/web")
 

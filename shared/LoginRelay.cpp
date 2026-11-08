@@ -13,7 +13,7 @@ namespace bazarish::loginrelay {
 
 std::optional<std::string> nonceAfter(const std::string& path, const std::string& prefix)
 {
-    if (path.rfind(prefix, 0) != 0) {
+    if (!path.starts_with(prefix)) {
         return std::nullopt;
     }
     const std::string nonce = path.substr(prefix.size());

@@ -1,8 +1,16 @@
 // Bazarish project (c) 2026
 #include "DeliveryEngine.hpp"
+
+#include <FleetPorts.hpp>
+#include <Health.hpp>
+#include <OpsSettings.hpp>
+#include <Restart.hpp>
+#include <StateIdentity.hpp>
+
 #include "DiskStorage.hpp"
 #include "EventGate.hpp"
 #include "GatewayLink.hpp"
+
 #include "HttpApi.hpp"
 #include "NodeCards.hpp"
 #include "PerUserDestinations.hpp"
@@ -16,8 +24,6 @@
 #include <bazarish/Log.hpp>
 #include <bazarish/PrivateFile.hpp>
 #include <bazarish/Tls.hpp>
-#include <Restart.hpp>
-#include <StateIdentity.hpp>
 
 #include <bazarish/HttpClient.hpp>
 #include <nlohmann/json.hpp>
@@ -34,9 +40,9 @@ namespace {
 
 namespace fs = std::filesystem;
 
-constexpr const char* kDefaultHost = "127.0.0.1";
-constexpr int kDefaultPort = 8420;
-constexpr int kDefaultOpsPort = 8428;
+constexpr const char* kDefaultHost = bazarish::fleet::kLoopback;
+constexpr int kDefaultPort = bazarish::fleet::kCorePort;
+constexpr int kDefaultOpsPort = bazarish::fleet::kCoreOpsPort;
 
 void printUsage()
 {
@@ -108,23 +114,13 @@ int main(const int argc, const char** argv)
         = config.endpoint("gatewayListen");
     const std::vector<std::string> gatewayPins = config.list("gateways");
     bazarish::i2p::Privacy privacy = bazarish::i2p::Privacy::eMax;
-    if (const std::string named = config.text("i2p.privacy"); !named.empty()) {
-        const std::optional<bazarish::i2p::Privacy> parsed
-            = bazarish::i2p::privacyFromString(named);
-        if (!parsed.has_value()) {
-            std::fprintf(stderr, "config: i2p.privacy is not a privacy level\n");
-            return 2;
-        }
-        privacy = *parsed;
-    }
     bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
-    if (const std::string level = config.text("logLevel"); !level.empty()) {
-        const std::optional<bazarish::log::Level> parsed = bazarish::log::levelFromString(level);
-        if (!parsed.has_value()) {
-            std::fprintf(stderr, "config: logLevel is not a level\n");
-            return 2;
-        }
-        logLevel = *parsed;
+    try {
+        privacy = bazarish::server::configPrivacy(config, bazarish::i2p::Privacy::eMax);
+        logLevel = bazarish::server::configLogLevel(config);
+    } catch (const std::invalid_argument& error) {
+        std::fprintf(stderr, "config: %s\n", error.what());
+        return 2;
     }
     const bool i2pLog = config.flag("i2p.log", false);
 
@@ -206,20 +202,7 @@ int main(const int argc, const char** argv)
     httpOptions.defaultQuotaBytes = engineOptions.defaultQuotaBytes;
     httpOptions.reseedSample
         = [](const std::size_t count) { return bazarish::i2p::sampleRouterInfos(count); };
-    httpOptions.diskUsage = [stateDir]() {
-        std::uint64_t used = 0;
-        std::error_code failure;
-        for (const fs::directory_entry& entry :
-            fs::recursive_directory_iterator(stateDir, failure)) {
-            if (entry.is_regular_file(failure)) {
-                used += entry.file_size(failure);
-            }
-        }
-        if (failure) {
-            bazarish::log::warn("storage walk incomplete: {}", failure.message());
-        }
-        return used;
-    };
+    httpOptions.diskUsage = [stateDir]() { return bazarish::health::treeBytes(stateDir); };
     httpOptions.assignDestination
         = [&perUserDests](const std::string& user) -> bazarish::server::DestinationAssignment {
         const bazarish::server::PerUserDestinations::Assignment assigned

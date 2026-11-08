@@ -2,6 +2,7 @@
 #pragma once
 
 #include <bazarish/Bytes.hpp>
+#include <bazarish/HttpClient.hpp>
 
 #include <chrono>
 #include <cstddef>
@@ -60,6 +61,8 @@ public:
     std::optional<Bytes> nodeCard(const Bytes& sealingPublicKeyDer) const;
 
 private:
+    bazarish::http::ClientResponse call(
+        const std::string& method, const std::string& pathAndQuery, const std::string& body) const;
     std::optional<std::string> send(const std::string& method, const std::string& path,
         const std::string& target, const std::string& bodyText) const;
     std::optional<std::string> putBody(const std::string& path, const std::string& bodyText) const;

@@ -12,7 +12,9 @@
 
 #include <fstream>
 #include <limits>
+#include <stdexcept>
 #include <string>
+#include <system_error>
 
 namespace bazarish::health {
 
@@ -20,25 +22,29 @@ namespace {
 
 #ifndef _WIN32
 
+constexpr const char* kStatusFile = "/proc/self/status";
+// proc(5) gives the memory fields in kibibytes.
+constexpr std::uint64_t kKibibyte = 1024;
+
 std::uint64_t statusFieldBytes(const std::string& field)
 {
-    std::ifstream status("/proc/self/status");
+    std::ifstream status(kStatusFile);
     if (!status) {
-        return 0;
+        throw std::runtime_error(std::string("health: cannot read ") + kStatusFile);
     }
     std::string label;
     while (status >> label) {
         if (label == field) {
             std::uint64_t kib = 0;
             std::string unit;
-            if (status >> kib >> unit) {
-                return kib * 1024;
+            if (!(status >> kib >> unit)) {
+                throw std::runtime_error("health: " + field + " does not read as a size");
             }
-            return 0;
+            return kib * kKibibyte;
         }
         status.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
     }
-    return 0;
+    throw std::runtime_error("health: " + std::string(kStatusFile) + " names no " + field);
 }
 
 #endif
@@ -59,6 +65,25 @@ MemoryUsage processMemoryUsage()
     usage.peak = statusFieldBytes("VmHWM:");
 #endif
     return usage;
+}
+
+std::uint64_t treeBytes(const std::filesystem::path& directory)
+{
+    std::uint64_t bytes = 0;
+    std::error_code failure;
+    for (std::filesystem::recursive_directory_iterator walk(directory, failure), end;
+         !failure && walk != end; walk.increment(failure)) {
+        std::error_code gone;
+        if (walk->is_regular_file(gone)) {
+            const std::uintmax_t size = walk->file_size(gone);
+            bytes += gone ? 0 : size;
+        }
+    }
+    if (failure) {
+        throw std::runtime_error(
+            "health: cannot walk " + directory.string() + ": " + failure.message());
+    }
+    return bytes;
 }
 
 std::string reportJson(const std::string& service, const std::string& version,

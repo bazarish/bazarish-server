@@ -2,11 +2,13 @@
 #pragma once
 
 #include "FacadeSettings.hpp"
+
+#include <FleetPorts.hpp>
+#include <Restart.hpp>
 #include "Load.hpp"
 
 #include <bazarish/Auth.hpp>
 #include <bazarish/HttpServer.hpp>
-#include <Restart.hpp>
 
 #include <cstdint>
 #include <functional>
@@ -16,9 +18,9 @@
 
 namespace bazarish::facade {
 
-inline constexpr const char* kDefaultUpstreamHost = "127.0.0.1";
-inline constexpr int kDefaultMessagingPort = 8420;
-inline constexpr int kDefaultServiceNodePort = 8421;
+inline constexpr const char* kDefaultUpstreamHost = fleet::kLoopback;
+inline constexpr int kDefaultMessagingPort = fleet::kCorePort;
+inline constexpr int kDefaultServiceNodePort = fleet::kNodePort;
 
 struct Upstream {
     std::string host;

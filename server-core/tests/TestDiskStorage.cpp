@@ -1,5 +1,6 @@
 // Bazarish project (c) 2026
 #include "DiskStorage.hpp"
+#include "TestUtil.hpp"
 
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Pass.hpp>
@@ -12,30 +13,6 @@
 #include <stdexcept>
 #include <thread>
 #include <vector>
-
-#define CHECK(condition)                                                            \
-    do {                                                                            \
-        if (!(condition)) {                                                         \
-            std::fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, \
-                #condition);                                                        \
-            std::exit(1);                                                           \
-        }                                                                           \
-    } while (false)
-
-#define CHECK_THROWS(expression)                                                     \
-    do {                                                                             \
-        bool thrown = false;                                                         \
-        try {                                                                        \
-            (void)(expression);                                                      \
-        } catch (const std::exception&) {                                            \
-            thrown = true;                                                           \
-        }                                                                            \
-        if (!thrown) {                                                               \
-            std::fprintf(stderr, "CHECK_THROWS failed at %s:%d: %s did not throw\n", \
-                __FILE__, __LINE__, #expression);                                    \
-            std::exit(1);                                                            \
-        }                                                                            \
-    } while (false)
 
 using namespace bazarish;
 using namespace bazarish::server;
@@ -58,8 +35,7 @@ std::string makeUser(const unsigned char fill)
 int main()
 {
     const std::filesystem::path root
-        = std::filesystem::temp_directory_path() / "bazarish-storage-test";
-    std::filesystem::remove_all(root);
+        = testutil::freshDir("storage-test");
     DiskStorage storage(root);
 
     const std::string alice = makeUser(0x01);

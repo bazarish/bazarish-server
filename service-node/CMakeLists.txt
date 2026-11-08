@@ -50,12 +50,9 @@ target_compile_options(bazarish-service-node PRIVATE -Wall -Wextra -Werror)
 enable_testing()
 
 function(bazarish_service_add_test name)
-    add_executable(${name} tests/${name}.cpp)
-    target_link_libraries(${name} PRIVATE bazarish_service_lib)
-    target_compile_options(${name} PRIVATE -Wall -Wextra -Werror)
+    bazarish_server_test(${name} bazarish_service_lib)
     target_compile_definitions(${name} PRIVATE
         BAZARISH_PORTAL_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/portal")
-    add_test(NAME ${name} COMMAND ${name})
 endfunction()
 
 bazarish_service_add_test(TestSubscriptionStore)

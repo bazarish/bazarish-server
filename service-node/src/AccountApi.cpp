@@ -1,17 +1,24 @@
 // Bazarish project (c) 2026
 #include "AccountApi.hpp"
-#include "AccountRemoval.hpp"
 
-#include <bazarish/Auth.hpp>
-#include <bazarish/Clock.hpp>
-#include <bazarish/ConfigFile.hpp>
-#include <bazarish/JsonRead.hpp>
-#include <bazarish/Tunnel.hpp>
-#include <bazarish/Certificates.hpp>
-#include <bazarish/ServerDescriptor.hpp>
-#include <bazarish/Errors.hpp>
+#include <FleetRoutes.hpp>
 #include <Health.hpp>
 #include <LoginRelay.hpp>
+#include <OpsGate.hpp>
+
+#include "AccountRemoval.hpp"
+#include "IdleSweep.hpp"
+
+#include <bazarish/Auth.hpp>
+#include <bazarish/Certificates.hpp>
+#include <bazarish/Clock.hpp>
+#include <bazarish/ConfigFile.hpp>
+#include <bazarish/Errors.hpp>
+#include <bazarish/HttpResponses.hpp>
+#include <bazarish/JsonRead.hpp>
+#include <bazarish/PlainText.hpp>
+#include <bazarish/ServerDescriptor.hpp>
+#include <bazarish/Tunnel.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <bazarish/I2p.hpp>
 #include <bazarish/Limits.hpp>
@@ -85,9 +92,7 @@ Bytes bodyBytes(const http::Request& request)
 void respondError(http::Response& response, const int status, const ErrorCode code,
     const std::string& message)
 {
-    response.status = status;
-    response.contentType = "application/json";
-    response.body = bazarish::makeErrorEnvelope(code, message).dump();
+    response = http::errorResponse(status, code, message);
 }
 
 void respondJson(http::Response& response, const nlohmann::json& body)
@@ -102,16 +107,6 @@ constexpr std::size_t kDefaultUserPageSize = 50;
 constexpr std::size_t kMaxUserPageSize = 500;
 
 const char* const kDefaultBanReason = "Banned";
-
-std::string lowercased(std::string text)
-{
-    for (char& c : text) {
-        if (c >= 'A' && c <= 'Z') {
-            c = static_cast<char>(c - 'A' + 'a');
-        }
-    }
-    return text;
-}
 
 std::size_t parsedCount(const std::string& text, const std::size_t fallback)
 {
@@ -351,14 +346,13 @@ nlohmann::json AccountApi::userRecord(
         ? held->registeredAt
         : (grant.has_value() ? grant->grantedAt
                              : (approval.has_value() ? approval->requestedAt : 0));
-    const std::int64_t idleSince
-        = held.has_value() && held->delegatedAt != 0 ? held->delegatedAt : registeredAt;
+    const std::int64_t idleFrom = idleSince(held, grants_, user);
     return {
         {"user", user},
         {"dest", held.has_value() ? held->dest : std::string()},
         {"registeredAt", registeredAt},
         {"delegatedAt", held.has_value() ? held->delegatedAt : 0},
-        {"sweepAt", sweepDeadline(idleSince, values)},
+        {"sweepAt", sweepDeadline(idleFrom, values)},
         {"banned", ban.has_value()},
         {"banReason", ban.has_value() ? ban->reason : std::string()},
         {"holdMessage", approval.has_value() ? approval->message : std::string()},
@@ -378,26 +372,11 @@ nlohmann::json AccountApi::userRecord(
 
 void AccountApi::setupOpsRoutes()
 {
-    const auto operatorOnly = [this](auto handler) {
-        return [this, handler](const http::Request& request, http::Response& response) {
-            if (const std::optional<http::Response> refused
-                = http::operatorRefusal(
-                    request, nowSeconds(), options_.operatorFingerprints, replayCache_);
-                refused.has_value()) {
-                response = *refused;
-                return;
-            }
-            try {
-                handler(request, response);
-            } catch (const nlohmann::json::exception& error) {
-                respondError(response, 400, ErrorCode::eRequestFailed, error.what());
-            } catch (const std::invalid_argument& error) {
-                respondError(response, 400, ErrorCode::eRequestFailed, error.what());
-            }
-        };
+    const auto operatorOnly = [this](http::Filler handler) {
+        return server::operatorOnly(options_.operatorFingerprints, replayCache_, std::move(handler));
     };
 
-    ops_->post("/v1/login/expect",
+    ops_->post(fleet::kLoginExpect,
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = bazarish::parseJson(request.body);
             options_.logins->expect(body.at("challenge").get<std::string>(),
@@ -405,7 +384,7 @@ void AccountApi::setupOpsRoutes()
             respondJson(response, {{"ok", true}});
         })));
 
-    ops_->post("/v1/login/claim",
+    ops_->post(fleet::kLoginClaim,
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = bazarish::parseJson(request.body);
             const LoginMailbox::Claim claim = options_.logins->claim(
@@ -428,7 +407,7 @@ void AccountApi::setupOpsRoutes()
 
     ops_->get("/v1/account/users",
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
-            const std::string query = lowercased(request.query("q"));
+            const std::string query = asciiLower(request.query("q"));
             const std::string state = request.query("state");
             const std::size_t limit
                 = std::min(parsedCount(request.query("limit"), kDefaultUserPageSize),
@@ -442,8 +421,8 @@ void AccountApi::setupOpsRoutes()
                     const std::optional<SubscriptionStore::Account> held
                         = store_.getAccount(user);
                     const std::string dest = held.has_value() ? held->dest : std::string();
-                    const bool matches = lowercased(user).find(query) != std::string::npos
-                        || lowercased(dest).find(query) != std::string::npos;
+                    const bool matches = asciiLower(user).find(query) != std::string::npos
+                        || asciiLower(dest).find(query) != std::string::npos;
                     if (!matches) {
                         continue;
                     }
@@ -467,7 +446,7 @@ void AccountApi::setupOpsRoutes()
                 {{"users", users}, {"total", matched}, {"limit", limit}, {"offset", offset}});
         })));
 
-    ops_->post("/v1/account/undelegate",
+    ops_->post(fleet::kAccountUndelegate,
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = bazarish::parseJson(request.body);
             const std::string user = body.at("user").get<std::string>();
@@ -499,7 +478,7 @@ void AccountApi::setupOpsRoutes()
             respondJson(response, {{"ok", true}});
         })));
 
-    ops_->post("/v1/account/ban",
+    ops_->post(fleet::kAccountBan,
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = bazarish::parseJson(request.body);
             const std::string user = body.at("user").get<std::string>();
@@ -511,7 +490,7 @@ void AccountApi::setupOpsRoutes()
             respondJson(response, userRecord(user, grants_.peekApproval(user)));
         })));
 
-    ops_->post("/v1/account/unban",
+    ops_->post(fleet::kAccountUnban,
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = bazarish::parseJson(request.body);
             const std::string user = body.at("user").get<std::string>();
@@ -520,7 +499,7 @@ void AccountApi::setupOpsRoutes()
             respondJson(response, {{"ok", true}});
         })));
 
-    ops_->get("/v1/account/settings",
+    ops_->get(fleet::kAccountSettings,
         filled(operatorOnly([this](const http::Request&, http::Response& response) {
             const NodeSettings::Values values = settings();
             std::uint64_t allocated = 0;
@@ -565,7 +544,7 @@ void AccountApi::setupOpsRoutes()
                 });
         })));
 
-    ops_->put("/v1/account/settings",
+    ops_->put(fleet::kAccountSettings,
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = bazarish::parseJson(request.body);
             // Checked on a copy first, so a bad request is a refusal and never a half write.
@@ -598,7 +577,7 @@ void AccountApi::setupOpsRoutes()
                 });
         })));
 
-    ops_->post("/v1/account/restart",
+    ops_->post(fleet::kAccountRestart,
         filled(operatorOnly([this](const http::Request&, http::Response& response) {
             bazarish::log::info("restarting at the operator's request");
             options_.requestRestart();
@@ -616,7 +595,7 @@ void AccountApi::setupOpsRoutes()
             respondJson(response, userRecord(user, approval));
         })));
 
-    ops_->put("/v1/account/quota",
+    ops_->put(fleet::kAccountQuota,
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = bazarish::parseJson(request.body);
             const std::string user = body.at("user").get<std::string>();
@@ -643,7 +622,7 @@ void AccountApi::setupOpsRoutes()
             respondJson(response, userRecord(user, approval));
         })));
 
-    ops_->post("/v1/account/approve",
+    ops_->post(fleet::kAccountApprove,
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = bazarish::parseJson(request.body);
             const std::string user = body.at("user").get<std::string>();
@@ -757,7 +736,7 @@ void AccountApi::setupRoutes()
         http_->route(method, path, filled(authenticated(handler)));
     };
 
-    clientRoute("POST", "/v1/account/card",
+    clientRoute("POST", fleet::kAccountCard,
         [this](const http::Request& request, http::Response& response,
                           const std::string& user) {
             const nlohmann::json body = bazarish::parseJson(request.body);
@@ -940,7 +919,7 @@ void AccountApi::setupRoutes()
                 });
         });
 
-    http_->get("/v1/account/card",
+    http_->get(fleet::kAccountCard,
         filled(fromServer([this](const http::Request& request, http::Response& response) {
             const std::string user = request.query("user");
             std::optional<SubscriptionStore::Account> account;

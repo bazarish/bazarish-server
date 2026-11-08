@@ -1,6 +1,11 @@
 // Bazarish project (c) 2026
 #include "HttpApi.hpp"
 
+#include <FleetRoutes.hpp>
+#include <Health.hpp>
+#include <OpsGate.hpp>
+#include <OpsSettings.hpp>
+
 #include "EventGate.hpp"
 
 #include <bazarish/Auth.hpp>
@@ -9,7 +14,7 @@
 #include <bazarish/ConfigFile.hpp>
 #include <bazarish/Crypto.hpp>
 #include <bazarish/Errors.hpp>
-#include <Health.hpp>
+#include <bazarish/HttpResponses.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <bazarish/I2p.hpp>
 #include <bazarish/JsonRead.hpp>
@@ -42,16 +47,8 @@ constexpr int kMaxEventWaitSeconds = 30;
 
 using bazarish::nowSeconds;
 
-bazarish::http::Response errorResponse(
-    const int status, const ErrorCode code, const std::string& message)
-{
-    return {status, "application/json", {}, bazarish::makeErrorEnvelope(code, message).dump()};
-}
-
-bazarish::http::Response jsonResponse(const nlohmann::json& body)
-{
-    return {200, "application/json", {}, body.dump()};
-}
+using bazarish::http::errorResponse;
+using bazarish::http::jsonResponse;
 
 nlohmann::json pendingJson(bazarish::server::Storage& storage, const std::string& user,
     const std::string& clientId)
@@ -213,23 +210,9 @@ void HttpApi::wakeUser(const std::string& user)
 void HttpApi::setupOpsRoutes()
 {
     Storage& store = storage_;
-    const auto operatorOnly = [this](auto handler) {
-        return [this, handler](
-                   const bazarish::http::Request& request) -> bazarish::http::Response {
-            if (const std::optional<bazarish::http::Response> refused
-                = bazarish::http::operatorRefusal(request, nowSeconds(),
-                    options_.operatorFingerprints, replayCache_);
-                refused.has_value()) {
-                return *refused;
-            }
-            try {
-                return handler(request);
-            } catch (const nlohmann::json::exception& error) {
-                return errorResponse(400, ErrorCode::eRequestFailed, error.what());
-            } catch (const std::invalid_argument& error) {
-                return errorResponse(400, ErrorCode::eRequestFailed, error.what());
-            }
-        };
+    const auto operatorOnly = [this](bazarish::http::Handler handler) {
+        return bazarish::server::operatorOnly(
+            options_.operatorFingerprints, replayCache_, std::move(handler));
     };
 
     ops_->get("/healthz", operatorOnly([this](const bazarish::http::Request&) {
@@ -238,7 +221,7 @@ void HttpApi::setupOpsRoutes()
                 "server-core", options_.version, startedAt_, nowSeconds(), std::string())};
     }));
 
-    ops_->get("/v1/messaging/account",
+    ops_->get(fleet::kMessagingAccount,
         operatorOnly([this, &store](const bazarish::http::Request& request) {
             const std::string user = request.query("user");
             if (user.empty()) {
@@ -251,7 +234,7 @@ void HttpApi::setupOpsRoutes()
             });
         }));
 
-    ops_->del("/v1/messaging/account",
+    ops_->del(fleet::kMessagingAccount,
         operatorOnly([this, &store](const bazarish::http::Request& request) {
             const std::string user = request.query("user");
             if (user.empty()) {
@@ -264,7 +247,7 @@ void HttpApi::setupOpsRoutes()
             return jsonResponse({{"ok", true}});
         }));
 
-    ops_->get("/v1/messaging/settings",
+    ops_->get(fleet::kMessagingSettings,
         operatorOnly([this](const bazarish::http::Request&) {
             const ServerSettings::Values values = options_.settings->get();
             return jsonResponse({
@@ -284,28 +267,16 @@ void HttpApi::setupOpsRoutes()
             });
         }));
 
-    ops_->put("/v1/messaging/settings",
+    ops_->put(fleet::kMessagingSettings,
         operatorOnly([this](const bazarish::http::Request& request) {
             ServerSettings::Values values = options_.settings->get();
             {
                 const nlohmann::json body = bazarish::parseJson(request.body);
-                if (body.contains("logLevel")) {
-                    const std::string level = body.at("logLevel").get<std::string>();
-                    if (!bazarish::log::levelFromString(level).has_value()) {
-                        throw std::invalid_argument("not a log level: " + level);
-                    }
-                    values.logLevel = level;
-                }
+                values.logLevel = logLevelIn(body, values.logLevel);
                 if (body.contains("i2pLog")) {
                     values.i2pLog = body.at("i2pLog").get<bool>();
                 }
-                if (body.contains("i2pPrivacy")) {
-                    const std::string named = body.at("i2pPrivacy").get<std::string>();
-                    if (!bazarish::i2p::privacyFromString(named).has_value()) {
-                        throw std::invalid_argument("not a privacy level: " + named);
-                    }
-                    values.i2pPrivacy = named;
-                }
+                values.i2pPrivacy = privacyIn(body, values.i2pPrivacy);
                 readEndpointInto(body, "listen", values.listenHost, values.listenPort);
                 if (body.contains("serviceNode")) {
                     values.serviceNodeUrl = body.at("serviceNode").get<std::string>();
@@ -323,13 +294,7 @@ void HttpApi::setupOpsRoutes()
             } catch (const std::exception& error) {
                 return errorResponse(500, ErrorCode::eRequestFailed, error.what());
             }
-            if (values.logLevel != before.logLevel) {
-                if (const std::optional<bazarish::log::Level> level
-                    = bazarish::log::levelFromString(values.logLevel);
-                    level.has_value()) {
-                    bazarish::log::setLevel(*level);
-                }
-            }
+            applyLogLevel(before.logLevel, values.logLevel);
             if (values.i2pLog != before.i2pLog) {
                 bazarish::i2p::setI2pLogging(values.i2pLog);
             }
@@ -339,7 +304,7 @@ void HttpApi::setupOpsRoutes()
             return jsonResponse({{"logLevel", values.logLevel}, {"i2pLog", values.i2pLog}});
         }));
 
-    ops_->post("/v1/messaging/restart",
+    ops_->post(fleet::kMessagingRestart,
         operatorOnly([this](const bazarish::http::Request&) {
             bazarish::log::info("restarting at the operator's request");
             options_.requestRestart();
@@ -355,11 +320,11 @@ void HttpApi::setupOpsRoutes()
             return bazarish::http::Response{200, "application/octet-stream", {}, archive};
         }));
 
-    ops_->get("/v1/messaging/storage", operatorOnly([this](const bazarish::http::Request&) {
+    ops_->get(fleet::kMessagingStorage, operatorOnly([this](const bazarish::http::Request&) {
         return jsonResponse({{"usedBytes", options_.diskUsage()}});
     }));
 
-    ops_->put("/v1/messaging/quota",
+    ops_->put(fleet::kMessagingQuota,
         operatorOnly([&store](const bazarish::http::Request& request) {
             const nlohmann::json body = bazarish::parseJson(request.body);
             store.setUserQuota(body.at("user").get<std::string>(),
@@ -367,7 +332,7 @@ void HttpApi::setupOpsRoutes()
             return jsonResponse({{"ok", true}});
         }));
 
-    ops_->put("/v1/messaging/i2p-dest",
+    ops_->put(fleet::kMessagingI2pDest,
         operatorOnly([this](const bazarish::http::Request& request) {
             const nlohmann::json body = bazarish::parseJson(request.body);
             const std::string user = body.at("user").get<std::string>();
@@ -387,7 +352,7 @@ void HttpApi::setupOpsRoutes()
             return jsonResponse({{"dest", served.dest}});
         }));
 
-    ops_->post("/v1/messaging/node-card",
+    ops_->post(fleet::kMessagingNodeCard,
         operatorOnly([this](const bazarish::http::Request& request) {
             const nlohmann::json body = bazarish::parseJson(request.body);
             const Key sealing

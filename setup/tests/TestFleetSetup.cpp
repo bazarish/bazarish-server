@@ -1,5 +1,6 @@
 // Bazarish project (c) 2026
 #include "FleetSetup.hpp"
+#include "TestUtil.hpp"
 
 #include <StateIdentity.hpp>
 
@@ -14,15 +15,6 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string>
-
-#define CHECK(condition)                                                            \
-    do {                                                                            \
-        if (!(condition)) {                                                         \
-            std::fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, \
-                #condition);                                                        \
-            std::exit(1);                                                           \
-        }                                                                           \
-    } while (false)
 
 namespace {
 
@@ -73,8 +65,7 @@ bool reachedAt(const nlohmann::json& link, const nlohmann::json& listen, const s
 
 int main()
 {
-    const fs::path root = fs::temp_directory_path() / "bazarish-fleet-setup-test";
-    fs::remove_all(root);
+    const fs::path root = testutil::freshDir("fleet-setup-test");
 
     const bazarish::setup::Layout layout = layoutUnder(root / "fresh");
     writeGateway(layout);

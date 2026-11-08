@@ -1,5 +1,10 @@
 // Bazarish project (c) 2026
 #include "Facade.hpp"
+
+#include <FleetPorts.hpp>
+#include <OpsSettings.hpp>
+#include <Restart.hpp>
+
 #include "FacadeAddress.hpp"
 #include "I2pFront.hpp"
 
@@ -8,7 +13,6 @@
 #include <bazarish/I2p.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/Tls.hpp>
-#include <Restart.hpp>
 
 #include <cstdio>
 #include <cstring>
@@ -19,8 +23,8 @@
 
 namespace {
 
-constexpr const char* kDefaultHost = "127.0.0.1";
-constexpr int kDefaultPort = 8419;
+constexpr const char* kDefaultHost = bazarish::fleet::kLoopback;
+constexpr int kDefaultPort = bazarish::fleet::kFacadePort;
 constexpr int kDefaultTunnelQuantity = 16;
 
 void printUsage()
@@ -73,14 +77,13 @@ int main(const int argc, const char** argv)
         = config.endpoint("directListen");
     const std::filesystem::path stateDir(config.text("state"));
     bazarish::i2p::Privacy privacy = bazarish::i2p::Privacy::eMax;
-    if (const std::string named = config.text("i2p.privacy"); !named.empty()) {
-        const std::optional<bazarish::i2p::Privacy> parsed
-            = bazarish::i2p::privacyFromString(named);
-        if (!parsed.has_value()) {
-            std::fprintf(stderr, "config: i2p.privacy is not a privacy level\n");
-            return 2;
-        }
-        privacy = *parsed;
+    bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
+    try {
+        privacy = bazarish::server::configPrivacy(config, bazarish::i2p::Privacy::eMax);
+        logLevel = bazarish::server::configLogLevel(config);
+    } catch (const std::invalid_argument& error) {
+        std::fprintf(stderr, "config: %s\n", error.what());
+        return 2;
     }
     const int tunnelQuantity = static_cast<int>(
         config.number("i2p.tunnelQuantity", kDefaultTunnelQuantity));
@@ -88,15 +91,6 @@ int main(const int argc, const char** argv)
         std::fprintf(stderr, "config: i2p.tunnelQuantity is between 1 and %d\n",
             bazarish::i2p::kMaxTunnelQuantity);
         return 2;
-    }
-    bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
-    if (const std::string level = config.text("logLevel"); !level.empty()) {
-        const std::optional<bazarish::log::Level> parsed = bazarish::log::levelFromString(level);
-        if (!parsed.has_value()) {
-            std::fprintf(stderr, "config: logLevel is not a level\n");
-            return 2;
-        }
-        logLevel = *parsed;
     }
 
     bazarish::facade::FacadeOptions options;

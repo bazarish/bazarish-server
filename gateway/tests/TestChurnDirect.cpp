@@ -34,8 +34,7 @@ constexpr std::size_t kAnswerBytes = 3000;
 int main()
 {
     const std::filesystem::path root
-        = std::filesystem::temp_directory_path() / "bazarish-gateway-churn-direct-test";
-    std::filesystem::remove_all(root);
+        = testutil::freshDir("gateway-churn-direct-test");
     std::filesystem::create_directories(root);
 
     const tls::Credential served = tls::selfSigned(root / "served");

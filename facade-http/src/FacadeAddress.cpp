@@ -34,8 +34,7 @@ FacadeAddress loadAddress(const fs::path& stateDir)
     if (!fs::exists(keyPath)) {
         writeKeys(keyPath, bazarish::i2p::Keys::generate());
     }
-    const std::string raw = bazarish::readFileText(keyPath);
-    return FacadeAddress{bazarish::i2p::Keys::fromBlob(bazarish::Bytes(raw.begin(), raw.end()))};
+    return FacadeAddress{bazarish::i2p::Keys::fromBlob(bazarish::readFileBytes(keyPath))};
 }
 
 FacadeAddress mintAddress(const fs::path& stateDir)

@@ -1,23 +1,23 @@
 // Bazarish project (c) 2026
 #include "Health.hpp"
+#include "TestUtil.hpp"
 
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <cstdlib>
-
-#define CHECK(condition)                                                            \
-    do {                                                                            \
-        if (!(condition)) {                                                         \
-            std::fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, \
-                #condition);                                                        \
-            std::exit(1);                                                           \
-        }                                                                           \
-    } while (false)
 
 #include <nlohmann/json.hpp>
 
 #include <string>
 
 using namespace bazarish;
+
+namespace {
+
+constexpr std::size_t kFileBytes = 1000;
+
+}  // namespace
 
 int main()
 {
@@ -32,6 +32,14 @@ int main()
     CHECK(report.at("uptime").get<std::int64_t>() == 123);
     CHECK(report.at("ramBytes").get<std::uint64_t>() > 0);
     CHECK(report.contains("ramPeakBytes"));
+
+    const std::filesystem::path tree = testutil::freshDir("health-tree");
+    std::filesystem::create_directories(tree / "inner");
+    std::ofstream(tree / "a.bin") << std::string(kFileBytes, 'a');
+    std::ofstream(tree / "inner" / "b.bin") << std::string(kFileBytes * 2, 'b');
+    CHECK(health::treeBytes(tree) == kFileBytes * 3);
+    std::filesystem::remove_all(tree);
+    CHECK_THROWS(health::treeBytes(tree));
 
     std::printf("TestHealth: all checks passed\n");
     return 0;

@@ -58,18 +58,6 @@ i2p::RouterConfig borrowedFrom(const int port, const std::string& fingerprint)
     return config;
 }
 
-bool waitFor(const std::function<bool()>& done)
-{
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(kWaitSeconds);
-    while (std::chrono::steady_clock::now() < deadline) {
-        if (done()) {
-            return true;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-    return done();
-}
-
 bool routedLocally(const i2p::Router& router, const std::string& host)
 {
     for (const i2p::LocalDestination& destination : router.localDestinations()) {
@@ -105,8 +93,7 @@ http::ClientResponse askOps(const int port, const std::string& pin, const std::s
 int main()
 {
     const std::filesystem::path root
-        = std::filesystem::temp_directory_path() / "bazarish-gateway-ops-test";
-    std::filesystem::remove_all(root);
+        = testutil::freshDir("gateway-ops-test");
     std::filesystem::create_directories(root);
 
     const std::filesystem::path configPath = root / "gateway.json";
@@ -217,7 +204,7 @@ int main()
     const std::unique_ptr<i2p::Stream> card
         = link->connect(kServerDest, std::chrono::seconds(kWaitSeconds));
     CHECK(card != nullptr);
-    CHECK(waitFor([&]() { return routedLocally(bob, link->routingHost()); }));
+    CHECK(testutil::waitFor([&]() { return routedLocally(bob, link->routingHost()); }));
     card->close();
     link->stop();
     bob.stop();

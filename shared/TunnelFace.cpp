@@ -3,8 +3,10 @@
 
 #include <bazarish/Clock.hpp>
 #include <bazarish/Errors.hpp>
+#include <bazarish/HttpResponses.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/Padding.hpp>
+#include <bazarish/PlainText.hpp>
 #include <bazarish/Tunnel.hpp>
 
 #include <algorithm>
@@ -18,22 +20,12 @@ namespace {
 
 constexpr std::size_t kRefusalNoiseBytes = 64;
 
-std::string lowered(std::string name)
-{
-    std::transform(name.begin(), name.end(), name.begin(),
-        [](const unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return name;
-}
-
 Bytes bodyBytes(const http::Request& request)
 {
     return Bytes(request.body.begin(), request.body.end());
 }
 
-http::Response errorResponse(const int status, const ErrorCode code, const std::string& message)
-{
-    return {status, "application/json", {}, makeErrorEnvelope(code, message).dump()};
-}
+using http::errorResponse;
 
 bool namesTunnel(const std::string& path)
 {
@@ -105,7 +97,7 @@ void TunnelFace::serve(
         carried.target = inner.query.empty() ? inner.path : inner.path + "?" + inner.query;
         carried.body = std::string(inner.body.begin(), inner.body.end());
         for (const auto& [name, value] : inner.headers) {
-            carried.headers[lowered(name)] = value;
+            carried.headers[asciiLower(name)] = value;
         }
         if (!inner.contentType.empty()) {
             carried.headers["content-type"] = inner.contentType;

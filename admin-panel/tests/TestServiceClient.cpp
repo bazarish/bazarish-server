@@ -1,5 +1,6 @@
 // Bazarish project (c) 2026
 #include "ServiceClient.hpp"
+#include "TestUtil.hpp"
 
 #include <bazarish/Auth.hpp>
 #include <bazarish/Bytes.hpp>
@@ -18,15 +19,6 @@
 #include <string>
 #include <thread>
 
-#define CHECK(condition)                                                            \
-    do {                                                                            \
-        if (!(condition)) {                                                         \
-            std::fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, \
-                #condition);                                                        \
-            std::exit(1);                                                           \
-        }                                                                           \
-    } while (false)
-
 using namespace bazarish;
 using namespace bazarish::admin;
 
@@ -43,8 +35,7 @@ int main()
 {
     const Identity panel = Identity::generate();
     const std::filesystem::path keyRoot
-        = std::filesystem::temp_directory_path() / "bazarish-panel-client-test";
-    std::filesystem::remove_all(keyRoot);
+        = testutil::freshDir("panel-client-test");
     const bazarish::tls::Credential servicePins = bazarish::tls::selfSigned(keyRoot / "service");
     const bazarish::tls::Credential panelPins = bazarish::tls::selfSigned(keyRoot / "panel");
 

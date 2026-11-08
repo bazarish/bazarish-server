@@ -1,5 +1,7 @@
 // Bazarish project (c) 2026
 #include "AccountApi.hpp"
+#include "HttpTestUtil.hpp"
+#include "TestUtil.hpp"
 
 #include "SubscriptionStore.hpp"
 
@@ -26,35 +28,18 @@
 #include <thread>
 #include <vector>
 
-#define CHECK(condition)                                                            \
-    do {                                                                            \
-        if (!(condition)) {                                                         \
-            std::fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, \
-                #condition);                                                        \
-            std::exit(1);                                                           \
-        }                                                                           \
-    } while (false)
-
 using namespace bazarish;
 using namespace bazarish::service;
 
 namespace {
 
+using testutil::Headers;
+using testutil::signedHeaders;
+
 namespace http = bazarish::http;
-
-using Headers = std::map<std::string, std::string>;
-
 
 constexpr std::int64_t kHeldDelegationSeconds = 5 * 24 * 60 * 60;
 using bazarish::nowSeconds;
-
-Headers signedHeaders(const Identity& identity, const std::string& method, const std::string& path,
-    const std::string& body)
-{
-    const auth::Headers headers = auth::signRequest(
-        identity, nowSeconds(), method, path, Bytes(body.begin(), body.end()));
-    return Headers(headers.begin(), headers.end());
-}
 
 http::ClientResponse call(const int port, const Identity& identity, const std::string& method,
     const std::string& target, const std::string& body = {})
@@ -76,8 +61,7 @@ http::ClientResponse call(const int port, const Identity& identity, const std::s
 int main()
 {
     const std::filesystem::path root
-        = std::filesystem::temp_directory_path() / "bazarish-operator-test";
-    std::filesystem::remove_all(root);
+        = testutil::freshDir("operator-test");
     SubscriptionStore store(root);
     GrantStore grants(root);
 

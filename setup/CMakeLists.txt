@@ -34,6 +34,6 @@ target_compile_options(bazarish-setup PRIVATE -Wall -Wextra -Werror)
 enable_testing()
 
 add_executable(TestFleetSetup tests/TestFleetSetup.cpp)
-target_link_libraries(TestFleetSetup PRIVATE bazarish_setup_lib)
+target_link_libraries(TestFleetSetup PRIVATE bazarish_setup_lib bazarish_test_util)
 target_compile_options(TestFleetSetup PRIVATE -Wall -Wextra -Werror)
 add_test(NAME TestFleetSetup COMMAND TestFleetSetup)

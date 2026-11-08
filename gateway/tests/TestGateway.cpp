@@ -199,8 +199,7 @@ nlohmann::json greet(Dialled& dialled, const int version = kProtocolVersion)
 int main()
 {
     const std::filesystem::path root
-        = std::filesystem::temp_directory_path() / "bazarish-gateway-test";
-    std::filesystem::remove_all(root);
+        = testutil::freshDir("gateway-test");
     std::filesystem::create_directories(root);
 
     Settings settings;

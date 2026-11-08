@@ -1,8 +1,11 @@
 // Bazarish project (c) 2026
 #include "HttpApi.hpp"
 
+#include <FleetRoutes.hpp>
 #include <LoginRelay.hpp>
 #include <QrSvg.hpp>
+#include <SignInScan.hpp>
+#include <WebFace.hpp>
 
 #include "FleetSync.hpp"
 #include "ServiceClient.hpp"
@@ -17,6 +20,7 @@
 #include <bazarish/I2pAddress.hpp>
 #include <bazarish/JsonRead.hpp>
 #include <bazarish/Log.hpp>
+#include <bazarish/Percent.hpp>
 #include <bazarish/WebAssets.hpp>
 
 #include <nlohmann/json.hpp>
@@ -29,9 +33,20 @@
 #include <utility>
 #include <vector>
 
+using bazarish::server::clearCookie;
+using bazarish::server::newSignInToken;
+using bazarish::server::notice;
+using bazarish::server::redirectTo;
+using bazarish::server::sendHtml;
+using bazarish::server::sendJson;
+using bazarish::server::sendJsonText;
+using bazarish::server::setCookie;
+using bazarish::server::signInScan;
+
 namespace {
 
 namespace http = bazarish::http;
+namespace fleet = bazarish::fleet;
 
 using bazarish::htmlEscape;
 using bazarish::nowSeconds;
@@ -41,75 +56,20 @@ const char* const kCookieName = "adminsession";
 const char* const kCookieAttributes = "; HttpOnly; SameSite=Strict; Path=/";
 const char* const kSignInCookie = "adminsignin";
 const char* const kSignInCookieAttributes = "; HttpOnly; SameSite=Strict; Path=/login";
-constexpr std::size_t kSignInTokenBytes = 16;
-const char* const kLoginExpectPath = "/v1/login/expect";
-const char* const kLoginClaimPath = "/v1/login/claim";
-const char* const kNodeSettingsPath = "/v1/account/settings";
+
+void sendError(http::Response& response, const int status, const std::string& message)
+{
+    sendJson(response, nlohmann::json{{"error", message}}, status);
+}
 
 void setSessionCookie(http::Response& response, const std::string& token)
 {
-    response.headers["Set-Cookie"] = std::string(kCookieName) + "=" + token + kCookieAttributes;
+    setCookie(response, kCookieName, token, kCookieAttributes);
 }
 
 void clearSessionCookie(http::Response& response)
 {
-    response.headers["Set-Cookie"]
-        = std::string(kCookieName) + "=" + kCookieAttributes + "; Max-Age=0";
-}
-
-void sendHtml(http::Response& response, const std::string& html, const int status = 200)
-{
-    response.status = status;
-    response.contentType = "text/html; charset=utf-8";
-    response.headers["Cache-Control"] = "no-store";
-    response.body = html;
-}
-
-void sendJson(http::Response& response, const std::string& body, const int status = 200)
-{
-    response.status = status;
-    response.contentType = "application/json";
-    response.headers["Cache-Control"] = "no-store";
-    response.body = body;
-}
-
-void sendError(http::Response& response, const int status, const std::string& message)
-{
-    sendJson(response, nlohmann::json{{"error", message}}.dump(), status);
-}
-
-std::string notice(const std::string& text)
-{
-    if (text.empty()) {
-        return {};
-    }
-    return "<p class=\"notice is-error\">" + htmlEscape(text) + "</p>";
-}
-
-void redirectTo(http::Response& response, const std::string& location)
-{
-    response.status = 303;
-    response.headers["Location"] = location;
-}
-
-std::string urlEncoded(const std::string& text)
-{
-    static const char* const kHexDigits = "0123456789ABCDEF";
-    constexpr unsigned kNibbleBits = 4;
-    constexpr unsigned kLowNibble = 0x0F;
-    std::string out;
-    for (const unsigned char c : text) {
-        const bool unreserved = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
-            || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~';
-        if (unreserved) {
-            out.push_back(static_cast<char>(c));
-        } else {
-            out.push_back('%');
-            out.push_back(kHexDigits[c >> kNibbleBits]);
-            out.push_back(kHexDigits[c & kLowNibble]);
-        }
-    }
-    return out;
+    clearCookie(response, kCookieName, kCookieAttributes);
 }
 
 nlohmann::json linkErrorsOf(const bazarish::admin::GatewayLinking& linking)
@@ -147,13 +107,13 @@ nlohmann::json syncedFleets(const std::vector<bazarish::admin::Fleet>& fleets,
 std::string settingsPathOf(const std::string& kind)
 {
     if (kind == bazarish::admin::kServerCoreKind) {
-        return "/v1/messaging/settings";
+        return fleet::kMessagingSettings;
     }
     if (kind == bazarish::admin::kServiceNodeKind) {
-        return "/v1/account/settings";
+        return fleet::kAccountSettings;
     }
     if (kind == bazarish::admin::kFacadeKind || kind == bazarish::admin::kGatewayKind) {
-        return "/settings";
+        return fleet::kOpsSettings;
     }
     return {};
 }
@@ -161,13 +121,13 @@ std::string settingsPathOf(const std::string& kind)
 std::string restartPathOf(const std::string& kind)
 {
     if (kind == bazarish::admin::kServerCoreKind) {
-        return "/v1/messaging/restart";
+        return fleet::kMessagingRestart;
     }
     if (kind == bazarish::admin::kServiceNodeKind) {
-        return "/v1/account/restart";
+        return fleet::kAccountRestart;
     }
     if (kind == bazarish::admin::kFacadeKind || kind == bazarish::admin::kGatewayKind) {
-        return "/restart";
+        return fleet::kOpsRestart;
     }
     return {};
 }
@@ -253,7 +213,7 @@ std::optional<ServiceEntry> HttpApi::serviceOfKind(
 std::string HttpApi::loginFacade(const ServiceEntry& node)
 {
     const JsonResult settings
-        = callJson(node, identity_, credential_, "GET", kNodeSettingsPath);
+        = callJson(node, identity_, credential_, "GET", fleet::kAccountSettings);
     if (!settings.ok) {
         bazarish::log::warn("sign-in shows no code: the service node did not answer ({})",
             failureText(settings));
@@ -275,18 +235,12 @@ std::string HttpApi::loginForm(const std::string& error, http::Response& respons
     std::string challenge;
     if (!facade.empty()) {
         challenge = auth_.issueChallenge(now, loginrelay::callbackUrl(facade));
-        const std::string token = toHex(randomBytes(kSignInTokenBytes));
+        const std::string token = newSignInToken();
         const JsonResult expected = callJson(*node, identity_, credential_, "POST",
-            kLoginExpectPath, nlohmann::json{{"challenge", challenge}, {"token", token}}.dump());
+            fleet::kLoginExpect, nlohmann::json{{"challenge", challenge}, {"token", token}}.dump());
         if (expected.ok) {
-            response.headers["Set-Cookie"]
-                = std::string(kSignInCookie) + "=" + token + kSignInCookieAttributes;
-            const std::string nonce = loginrelay::nonceOf(challenge);
-            scan = assets_.render("signin-scan.html",
-                {
-                    {"qr", bazarish::qr::svg(loginrelay::challengeLink(facade, nonce))},
-                    {"nonce", nonce},
-                });
+            setCookie(response, kSignInCookie, token, kSignInCookieAttributes);
+            scan = signInScan(assets_, facade, challenge);
         } else {
             bazarish::log::warn("sign-in shows no code: the service node refused it ({})",
                 failureText(expected));
@@ -298,8 +252,8 @@ std::string HttpApi::loginForm(const std::string& error, http::Response& respons
     }
     return assets_.render("login.html",
         {
-            {"challenge", challenge},
-            {"error", notice(error)},
+            {"challenge", htmlEscape(challenge)},
+            {"error", notice(error, "is-error")},
             {"scan", scan},
         });
 }
@@ -318,7 +272,7 @@ void HttpApi::proxyToNode(const std::string& fleet, http::Response& response,
         sendError(response, 502, result.error.empty() ? "service-node unreachable" : result.error);
         return;
     }
-    sendJson(response, result.body, result.status);
+    sendJsonText(response, result.body, result.status);
 }
 
 void HttpApi::registerRoutes()
@@ -338,7 +292,7 @@ void HttpApi::registerRoutes()
         return assets_.render("setup.html",
             {
                 {"challenge", auth_.issueChallenge(nowSeconds())},
-                {"error", notice(error)},
+                {"error", notice(error, "is-error")},
             });
     };
 
@@ -401,10 +355,10 @@ void HttpApi::registerRoutes()
     http_->get("/login/wait", filled([this](const http::Request& request, http::Response& response) {
         const std::optional<ServiceEntry> node = serviceOfKind(std::string(), kServiceNodeKind);
         if (!node.has_value()) {
-            sendJson(response, nlohmann::json{{"state", "gone"}}.dump());
+            sendJson(response, nlohmann::json{{"state", "gone"}});
             return;
         }
-        const JsonResult claimed = callJson(*node, identity_, credential_, "POST", kLoginClaimPath,
+        const JsonResult claimed = callJson(*node, identity_, credential_, "POST", fleet::kLoginClaim,
             nlohmann::json{{"nonce", request.query("nonce")},
                 {"token", request.cookie(kSignInCookie)}}
                 .dump());
@@ -425,7 +379,7 @@ void HttpApi::registerRoutes()
                 state = "gone";
             }
         }
-        sendJson(response, nlohmann::json{{"state", state}}.dump());
+        sendJson(response, nlohmann::json{{"state", state}});
     }));
 
     http_->post("/login", filled([this](
@@ -523,36 +477,36 @@ void HttpApi::registerRoutes()
         for (const Fleet& fleet : panel.fleets) {
             fleets.push_back(fleet.name);
         }
-        sendJson(response, nlohmann::json{{"services", services}, {"fleets", fleets}}.dump());
+        sendJson(response, nlohmann::json{{"services", services}, {"fleets", fleets}});
     }));
 
     http_->get("/api/users", api([this](const http::Request& request, http::Response& response) {
-        std::string query = "/v1/account/users?q=" + urlEncoded(request.query("q"))
-            + "&state=" + urlEncoded(request.query("state"));
+        std::string query = "/v1/account/users?q=" + percentEncode(request.query("q"))
+            + "&state=" + percentEncode(request.query("state"));
         if (const std::string limit = request.query("limit"); !limit.empty()) {
-            query += "&limit=" + urlEncoded(limit);
+            query += "&limit=" + percentEncode(limit);
         }
         if (const std::string offset = request.query("offset"); !offset.empty()) {
-            query += "&offset=" + urlEncoded(offset);
+            query += "&offset=" + percentEncode(offset);
         }
         proxyToNode(request.query("fleet"), response, "GET", query, std::string());
     }));
 
     http_->post("/api/qr", api([](const http::Request& request, http::Response& response) {
         const nlohmann::json body = bazarish::parseJson(request.body);
-        sendJson(response, nlohmann::json{{"svg", qr::svg(body.at("text").get<std::string>())}}.dump());
+        sendJson(response, nlohmann::json{{"svg", qr::svg(body.at("text").get<std::string>())}});
     }));
 
     http_->post("/api/approve", api([this](const http::Request& request, http::Response& response) {
         const nlohmann::json body = bazarish::parseJson(request.body);
-        proxyToNode(request.query("fleet"), response, "POST", "/v1/account/approve",
+        proxyToNode(request.query("fleet"), response, "POST", fleet::kAccountApprove,
             nlohmann::json{{"user", body.at("user")}}.dump());
     }));
 
     http_->post("/api/undelegate", api([this](
                                        const http::Request& request, http::Response& response) {
         const nlohmann::json body = bazarish::parseJson(request.body);
-        proxyToNode(request.query("fleet"), response, "POST", "/v1/account/undelegate",
+        proxyToNode(request.query("fleet"), response, "POST", fleet::kAccountUndelegate,
             nlohmann::json{{"user", body.at("user")},
                 {"message", body.value("message", std::string())}}
                 .dump());
@@ -561,19 +515,19 @@ void HttpApi::registerRoutes()
     http_->post("/api/delete", api([this](const http::Request& request, http::Response& response) {
         const nlohmann::json body = bazarish::parseJson(request.body);
         proxyToNode(request.query("fleet"), response, "DELETE",
-            "/v1/account/user?user=" + urlEncoded(body.at("user").get<std::string>()), {});
+            "/v1/account/user?user=" + percentEncode(body.at("user").get<std::string>()), {});
     }));
 
     http_->post("/api/ban", api([this](const http::Request& request, http::Response& response) {
         const nlohmann::json body = bazarish::parseJson(request.body);
-        proxyToNode(request.query("fleet"), response, "POST", "/v1/account/ban",
+        proxyToNode(request.query("fleet"), response, "POST", fleet::kAccountBan,
             nlohmann::json{{"user", body.at("user")}, {"reason", body.value("reason", std::string())}}
                 .dump());
     }));
 
     http_->post("/api/unban", api([this](const http::Request& request, http::Response& response) {
         const nlohmann::json body = bazarish::parseJson(request.body);
-        proxyToNode(request.query("fleet"), response, "POST", "/v1/account/unban",
+        proxyToNode(request.query("fleet"), response, "POST", fleet::kAccountUnban,
             nlohmann::json{{"user", body.at("user")}}.dump());
     }));
 
@@ -586,14 +540,14 @@ void HttpApi::registerRoutes()
             return;
         }
         const JsonResult account = callJson(*core, identity_, credential_, "GET",
-            "/v1/messaging/account?user=" + urlEncoded(request.query("user")));
+            "/v1/messaging/account?user=" + percentEncode(request.query("user")));
         if (account.status == 0) {
             bazarish::log::warn("server-core unreachable: {}", account.error);
             sendError(response, 502,
                 account.error.empty() ? "server-core unreachable" : account.error);
             return;
         }
-        sendJson(response, account.body, account.status);
+        sendJsonText(response, account.body, account.status);
     }));
 
     http_->get("/api/settings", api([this](
@@ -605,10 +559,10 @@ void HttpApi::registerRoutes()
             return;
         }
         const JsonResult settings
-            = callJson(*node, identity_, credential_, "GET", "/v1/account/settings");
+            = callJson(*node, identity_, credential_, "GET", fleet::kAccountSettings);
         if (!settings.ok) {
             bazarish::log::warn("service-node settings unavailable: {}", settings.error);
-            sendJson(response, settings.body, settings.status == 0 ? 502 : settings.status);
+            sendJsonText(response, settings.body, settings.status == 0 ? 502 : settings.status);
             return;
         }
         nlohmann::json merged = bazarish::parseJson(settings.body);
@@ -618,7 +572,7 @@ void HttpApi::registerRoutes()
             = serviceOfKind(request.query("fleet"), kServerCoreKind);
             core.has_value()) {
             const JsonResult disk
-                = callJson(*core, identity_, credential_, "GET", "/v1/messaging/storage");
+                = callJson(*core, identity_, credential_, "GET", fleet::kMessagingStorage);
             if (disk.ok) {
                 merged["diskUsedBytes"] = bazarish::parseJson(disk.body).at("usedBytes");
                 merged["diskError"] = "";
@@ -627,11 +581,11 @@ void HttpApi::registerRoutes()
                 merged["diskError"] = disk.error.empty() ? "server-core unreachable" : disk.error;
             }
         }
-        sendJson(response, merged.dump());
+        sendJson(response, merged);
     }));
 
     http_->put("/api/settings", api([this](const http::Request& request, http::Response& response) {
-        proxyToNode(request.query("fleet"), response, "PUT", "/v1/account/settings", request.body);
+        proxyToNode(request.query("fleet"), response, "PUT", fleet::kAccountSettings, request.body);
     }));
 
     const auto toService = [this](const http::Request& request, http::Response& response,
@@ -672,12 +626,12 @@ void HttpApi::registerRoutes()
         const bool linksGateways = service->kind == kServerCoreKind || service->kind == kFacadeKind;
         const std::optional<Fleet> fleet = fleetNamed(request.query("fleet"));
         if (method != "PUT" || restarting || !result.ok || !linksGateways || !fleet.has_value()) {
-            sendJson(response, result.body, result.status);
+            sendJsonText(response, result.body, result.status);
             return;
         }
         nlohmann::json answer = bazarish::parseJson(result.body);
         answer["gatewayLinkErrors"] = linkErrorsOf(linkGateways(*fleet, identity_, credential_));
-        sendJson(response, answer.dump(), result.status);
+        sendJson(response, answer, result.status);
     };
 
     http_->get("/api/facades", api([this](const http::Request& request,
@@ -692,7 +646,7 @@ void HttpApi::registerRoutes()
         if (const std::optional<ServiceEntry> node = serviceOfKind(fleet->name, kServiceNodeKind);
             node.has_value()) {
             const JsonResult shown
-                = callJson(*node, identity_, credential_, "GET", "/v1/account/settings");
+                = callJson(*node, identity_, credential_, "GET", fleet::kAccountSettings);
             if (shown.ok) {
                 described = bazarish::parseJson(shown.body).value(
                     "facades", nlohmann::json::array());
@@ -724,8 +678,7 @@ void HttpApi::registerRoutes()
         }
         sendJson(response,
             nlohmann::json{{"facades", facades}, {"descriptor", described},
-                {"descriptorError", describedError}}
-                .dump());
+                {"descriptorError", describedError}});
     }));
 
     http_->post("/api/facade/new-address", api([this](const http::Request& request,
@@ -757,8 +710,7 @@ void HttpApi::registerRoutes()
         }
         sendJson(response,
             nlohmann::json{{"address", address}, {"previousAddress", previous},
-                {"descriptorError", descriptorError}, {"gateways", gateways}}
-                .dump());
+                {"descriptorError", descriptorError}, {"gateways", gateways}});
     }));
 
     http_->get("/api/service-settings", api([toService](
@@ -793,8 +745,7 @@ void HttpApi::registerRoutes()
                 {"stateDir", panel.stateDir},
                 {"assetsDir", panel.assetsDir},
                 {"version", options_.version},
-            }
-                .dump());
+            });
     }));
 
     http_->post("/api/panel/restart", api([this](
@@ -806,7 +757,7 @@ void HttpApi::registerRoutes()
         }
         bazarish::log::info("restarting at the operator's request");
         options_.requestRestart();
-        sendJson(response, R"({"restarting":true})");
+        sendJson(response, nlohmann::json{{"restarting", true}});
     }));
 
     http_->put("/api/panel", api([this](const http::Request& request, http::Response& response) {
@@ -846,43 +797,12 @@ void HttpApi::registerRoutes()
                 }
                 readEndpointInto(body, "listen", edited.listenHost, edited.listenPort);
                 if (body.contains("fleets")) {
-                    std::vector<Fleet> fleets;
-                    for (const nlohmann::json& entry : body.at("fleets")) {
-                        Fleet fleet;
-                        fleet.name = entry.value("name", std::string());
-                        for (const nlohmann::json& item : entry.at("services")) {
-                            ServiceEntry service;
-                            service.name = item.value("name", std::string());
-                            service.kind = item.value("kind", std::string());
-                            service.url = item.value("url", std::string());
-                            service.pin = item.value("pin", std::string());
-                            if (!isKnownServiceKind(service.kind)) {
-                                throw std::invalid_argument(
-                                    "the panel does not know a service of kind \"" + service.kind
-                                    + "\"");
-                            }
-                            if (service.url.empty() || service.name.empty()) {
-                                throw std::invalid_argument("a service needs a name and a URL");
-                            }
-                            if (service.url.rfind("https://", 0) != 0) {
-                                throw std::invalid_argument(
-                                    "a service is reached over https: " + service.url);
-                            }
-                            if (service.pin.empty()) {
-                                throw std::invalid_argument(
-                                    "a service is named by the key it presents: " + service.name);
-                            }
-                            fleet.services.push_back(std::move(service));
-                        }
-                        requireCoherentFleet(fleet);
-                        fleets.push_back(std::move(fleet));
-                    }
-                    edited.fleets = std::move(fleets);
+                    edited.fleets = fleetsFromJson(body.at("fleets"));
                 }
             });
             nlohmann::json answer = syncedFleets(panel.fleets, identity_, credential_);
             answer["admins"] = panel.admins;
-            sendJson(response, answer.dump());
+            sendJson(response, answer);
         } catch (const std::invalid_argument& error) {
             sendError(response, 400, error.what());
         } catch (const nlohmann::json::exception& error) {
@@ -894,7 +814,7 @@ void HttpApi::registerRoutes()
 
     http_->put("/api/quota", api([this](const http::Request& request, http::Response& response) {
         const nlohmann::json body = bazarish::parseJson(request.body);
-        proxyToNode(request.query("fleet"), response, "PUT", "/v1/account/quota",
+        proxyToNode(request.query("fleet"), response, "PUT", fleet::kAccountQuota,
             nlohmann::json{{"user", body.at("user")}, {"quotaBytes", body.at("quotaBytes")}}
                 .dump());
     }));

@@ -1,12 +1,15 @@
 // Bazarish project (c) 2026
 #include "Gateway.hpp"
 
+#include <FleetRoutes.hpp>
+#include <Health.hpp>
+#include <OpsSettings.hpp>
+#include <StateIdentity.hpp>
+
 #include <BuildVersion.hpp>
 #include <bazarish/Auth.hpp>
 #include <bazarish/Clock.hpp>
 #include <bazarish/Crypto.hpp>
-#include <Health.hpp>
-#include <StateIdentity.hpp>
 #include <bazarish/Hmac.hpp>
 #include <bazarish/I2pAddress.hpp>
 #include <bazarish/JsonRead.hpp>
@@ -128,19 +131,6 @@ void readLeaseSetAuth(const nlohmann::json& body, i2p::EndpointConfig& config)
     }
 }
 
-std::size_t drawBetween(const std::size_t low, const std::size_t high)
-{
-    if (high <= low) {
-        return low;
-    }
-    const Bytes draw = randomBytes(sizeof(std::uint64_t));
-    std::uint64_t value = 0;
-    for (const unsigned char byte : draw) {
-        value = (value << 8) | byte;
-    }
-    return low + static_cast<std::size_t>(value % (high - low + 1));
-}
-
 }  // namespace
 
 Gateway::Gateway(Settings settings, i2p::Router& router, OpsControl control)
@@ -259,11 +249,7 @@ http::Response Gateway::settingsChanged(const http::Request& request)
     try {
         const nlohmann::json body = bazarish::parseJson(request.body);
         if (body.contains("i2pPrivacy")) {
-            const std::string named = body.at("i2pPrivacy").get<std::string>();
-            if (!i2p::privacyFromString(named).has_value()) {
-                throw std::invalid_argument("not a privacy level: " + named);
-            }
-            writes.push_back({{"i2p", "privacy"}, named});
+            writes.push_back({{"i2p", "privacy"}, server::privacyIn(body, {})});
         }
         for (const char* const pool : {"stream", "call", "watch"}) {
             const std::string key = std::string(pool) + "Pool";
@@ -330,7 +316,8 @@ http::Response Gateway::restart(const http::Request& request)
 
 http::Response Gateway::decoy() const
 {
-    const std::size_t size = drawBetween(settings_.decoyMinBytes, settings_.decoyMaxBytes);
+    const std::size_t size = static_cast<std::size_t>(
+        randomBetween(settings_.decoyMinBytes, settings_.decoyMaxBytes));
     const Bytes noise = randomBytes(size);
     http::Response response;
     response.status = 200;
@@ -398,11 +385,11 @@ void Gateway::bindOps()
     options.clientPins = settings_.opsClients;
     ops_ = std::make_unique<http::Server>(options);
     ops_->get("/healthz", [this](const http::Request& request) { return health(request); });
-    ops_->get("/settings",
+    ops_->get(fleet::kOpsSettings,
         [this](const http::Request& request) { return settingsShown(request); });
-    ops_->put("/settings",
+    ops_->put(fleet::kOpsSettings,
         [this](const http::Request& request) { return settingsChanged(request); });
-    ops_->post("/restart", [this](const http::Request& request) { return restart(request); });
+    ops_->post(fleet::kOpsRestart, [this](const http::Request& request) { return restart(request); });
     ops_->start();
     bazarish::log::info("ops listening on {}:{}, key {}", settings_.opsHost, settings_.opsPort,
         credential.pin);
@@ -1205,16 +1192,8 @@ void Gateway::lapseDelegations(const std::int64_t now)
         socket->send(frame);
     }
     for (const auto& [session, id] : lapsed) {
-        if (stopEndpoint(session, id) == nullptr) {
+        if (!stopAsLost(session, id)) {
             continue;
-        }
-        http::SocketPtr control;
-        {
-            const std::lock_guard<std::mutex> lock(mutex_);
-            control = session->control;
-        }
-        if (control) {
-            control->send(encodeJson(FrameType::eEndpointLost, id, nlohmann::json::object()));
         }
         bazarish::log::info("gateway: a presence address outlived its delegation and was stopped");
     }
@@ -1270,6 +1249,30 @@ std::shared_ptr<EndpointEntry> Gateway::stopEndpoint(
     }
     joinTaken(entry->worker);
     return entry;
+}
+
+bool Gateway::stopAsLost(const std::shared_ptr<Session>& session, const std::uint32_t id)
+{
+    if (stopEndpoint(session, id) == nullptr) {
+        return false;
+    }
+    http::SocketPtr control;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        control = session->control;
+    }
+    if (control) {
+        control->send(encodeJson(FrameType::eEndpointLost, id, nlohmann::json::object()));
+    }
+    return true;
+}
+
+void Gateway::sendInPieces(http::Socket& socket, const std::uint32_t id, const Bytes& data)
+{
+    for (std::size_t at = 0; at < data.size(); at += kMaxBodyBytes) {
+        const std::size_t piece = std::min(kMaxBodyBytes, data.size() - at);
+        socket.send(encode(FrameType::eStreamData, id, ByteView(data).subspan(at, piece)));
+    }
 }
 
 void Gateway::onRawSend(const std::shared_ptr<Session>& session, const http::SocketPtr& socket,
@@ -1931,10 +1934,7 @@ void Gateway::onResume(const std::shared_ptr<Session>& session,
         if (!out) {
             continue;
         }
-        for (std::size_t at = 0; at < again.size(); at += kMaxBodyBytes) {
-            const std::size_t piece = std::min(kMaxBodyBytes, again.size() - at);
-            out->send(encode(FrameType::eStreamData, id, ByteView(again).subspan(at, piece)));
-        }
+        sendInPieces(*out, id, again);
     }
     afterReplay(session);
 }
@@ -1974,12 +1974,7 @@ void Gateway::onAttach(const http::SocketPtr& socket, const Frame& frame)
     }
     socket->send(encodeJson(FrameType::eOk, frame.ref,
         {{"received", stream->book.received()}, {"finished", stream->book.finishedSending()}}));
-    const Bytes again = stream->book.replay(received);
-    for (std::size_t at = 0; at < again.size(); at += kMaxBodyBytes) {
-        const std::size_t piece = std::min(kMaxBodyBytes, again.size() - at);
-        socket->send(
-            encode(FrameType::eStreamData, stream->id, ByteView(again).subspan(at, piece)));
-    }
+    sendInPieces(*socket, stream->id, stream->book.replay(received));
 }
 
 void Gateway::statusLoop()
@@ -2118,16 +2113,8 @@ void Gateway::dropUnrouted()
         }
     }
     for (const auto& [session, id] : stranded) {
-        if (stopEndpoint(session, id) == nullptr) {
+        if (!stopAsLost(session, id)) {
             continue;
-        }
-        http::SocketPtr control;
-        {
-            const std::lock_guard<std::mutex> lock(mutex_);
-            control = session->control;
-        }
-        if (control) {
-            control->send(encodeJson(FrameType::eEndpointLost, id, nlohmann::json::object()));
         }
         bazarish::log::info("gateway: a destination lost its route and was stopped");
     }

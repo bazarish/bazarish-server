@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #include "FleetSetup.hpp"
 
+#include <FleetPorts.hpp>
 #include <StateIdentity.hpp>
 
 #include <bazarish/ConfigFile.hpp>
@@ -20,16 +21,16 @@ namespace {
 
 namespace fs = std::filesystem;
 
-constexpr const char* kLoopback = "127.0.0.1";
-constexpr int kCorePort = 8420;
-constexpr int kCoreOpsPort = 8428;
-constexpr int kCoreGatewayPort = 8424;
-constexpr int kNodePort = 8421;
-constexpr int kNodeOpsPort = 8427;
-constexpr int kFacadePort = 8419;
-constexpr int kFacadeDirectPort = 8418;
-constexpr int kFacadeOpsPort = 8429;
-constexpr int kGatewayOpsPort = 8439;
+using fleet::kCoreGatewayPort;
+using fleet::kCoreOpsPort;
+using fleet::kCorePort;
+using fleet::kFacadeDirectPort;
+using fleet::kFacadeOpsPort;
+using fleet::kFacadePort;
+using fleet::kGatewayOpsPort;
+using fleet::kLoopback;
+using fleet::kNodeOpsPort;
+using fleet::kNodePort;
 constexpr int kJsonIndent = 2;
 
 constexpr const char* kCoreName = "server-core";

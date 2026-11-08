@@ -2,6 +2,8 @@
 #include "Facade.hpp"
 #include "FacadeAddress.hpp"
 #include "Load.hpp"
+#include "HttpTestUtil.hpp"
+#include "TestUtil.hpp"
 
 #include <LoginRelay.hpp>
 #include <bazarish/HttpClient.hpp>
@@ -22,55 +24,18 @@
 #include <map>
 #include <utility>
 
-#define CHECK(condition)                                                            \
-    do {                                                                            \
-        if (!(condition)) {                                                         \
-            std::fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, \
-                #condition);                                                        \
-            std::exit(1);                                                           \
-        }                                                                           \
-    } while (false)
-
 namespace {
 
-namespace http = bazarish::http;
+using testutil::Headers;
+using testutil::call;
+using testutil::callTls;
+using testutil::signedHeaders;
 
-using Headers = std::map<std::string, std::string>;
+namespace http = bazarish::http;
 
 constexpr int kDirectPort = 8418;
 constexpr int kMovedDirectPort = 8417;
 constexpr int kMovedNodePort = 8431;
-
-http::ClientResponse call(const int port, const std::string& method, const std::string& path,
-    const Headers& headers = {}, const std::string& body = {})
-{
-    http::ClientRequest request;
-    request.method = method;
-    request.target = path;
-    request.headers = headers;
-    request.body = body;
-    if (!body.empty()) {
-        request.contentType = "application/json";
-    }
-    return http::request("127.0.0.1", port, request, {});
-}
-
-http::ClientResponse callTls(const int port, const std::string& pin, const std::string& method,
-    const std::string& path, const Headers& headers = {}, const std::string& body = {})
-{
-    http::ClientRequest request;
-    request.method = method;
-    request.target = path;
-    request.headers = headers;
-    request.body = body;
-    if (!body.empty()) {
-        request.contentType = "application/json";
-    }
-    http::ClientOptions options;
-    options.tls = true;
-    options.pin = pin;
-    return http::request("127.0.0.1", port, request, options);
-}
 
 void installBackend(http::Server& server, const std::string& name)
 {
@@ -129,8 +94,7 @@ void testLoadSample()
 void testAddress()
 {
     const std::filesystem::path state
-        = std::filesystem::temp_directory_path() / "bazarish-facade-test-address";
-    std::filesystem::remove_all(state);
+        = testutil::freshDir("facade-test-address");
 
     const bazarish::facade::FacadeAddress first = bazarish::facade::loadAddress(state);
     CHECK(first.address().find(".b32.i2p") != std::string::npos);
@@ -143,21 +107,12 @@ void testAddress()
     std::filesystem::remove_all(state);
 }
 
-Headers signedHeaders(const bazarish::Identity& identity, const std::string& method,
-    const std::string& path, const std::string& body)
-{
-    const bazarish::auth::Headers signature = bazarish::auth::signRequest(identity,
-        static_cast<std::int64_t>(std::time(nullptr)), method, path,
-        bazarish::Bytes(body.begin(), body.end()));
-    return Headers(signature.begin(), signature.end());
-}
-
 int main()
 {
     testLoadSample();
     testAddress();
     const std::filesystem::path backendState
-        = std::filesystem::temp_directory_path() / "bazarish-facade-test-backend";
+        = testutil::freshDir("facade-test-backend");
     const bazarish::tls::Credential backendCredential
         = bazarish::tls::selfSigned(backendState);
     http::Server::Options messagingOptions = backendOptions();
@@ -167,8 +122,8 @@ int main()
     installBackend(messaging, "messaging");
     const int messagingPort = messaging.start();
     CHECK(messagingPort > 0);
-    const bazarish::tls::Credential nodeCredential = bazarish::tls::selfSigned(
-        std::filesystem::temp_directory_path() / "bazarish-facade-test-node");
+    const std::filesystem::path nodeState = testutil::freshDir("facade-test-node");
+    const bazarish::tls::Credential nodeCredential = bazarish::tls::selfSigned(nodeState);
     http::Server::Options nodeOptions = backendOptions();
     nodeOptions.certificate = nodeCredential.certificate.string();
     nodeOptions.key = nodeCredential.key.string();
@@ -181,8 +136,8 @@ int main()
     options.messaging = {"127.0.0.1", messagingPort, backendCredential.pin};
     options.serviceNode = {"127.0.0.1", nodePort, nodeCredential.pin};
     options.address = "example.b32.i2p";
-    const std::filesystem::path configPath
-        = std::filesystem::temp_directory_path() / "bazarish-facade-test.json";
+    const std::filesystem::path configDir = testutil::freshDir("facade-test");
+    const std::filesystem::path configPath = configDir / "facade.json";
     {
         std::ofstream config(configPath);
         config << "{\n  \"logLevel\": \"info\"\n}\n";
@@ -207,8 +162,7 @@ int main()
     const bazarish::Identity operatorIdentity = bazarish::Identity::generate();
     options.operatorFingerprints = {operatorIdentity.fingerprint()};
     const std::filesystem::path facadeState
-        = std::filesystem::temp_directory_path() / "bazarish-facade-test-own";
-    std::filesystem::remove_all(facadeState);
+        = testutil::freshDir("facade-test-own");
     options.stateDirectory = facadeState.string();
     std::atomic<int> restarts{0};
     options.requestRestart = [&restarts]() { ++restarts; };
@@ -370,5 +324,8 @@ int main()
     facade.stop();
     messaging.stop();
     serviceNode.stop();
+    for (const std::filesystem::path& dir : {backendState, nodeState, configDir, facadeState}) {
+        std::filesystem::remove_all(dir);
+    }
     return 0;
 }

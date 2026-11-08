@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #include "HttpApi.hpp"
 #include "PanelSettings.hpp"
+#include "TestUtil.hpp"
 
 #include <bazarish/Crypto.hpp>
 #include <bazarish/Tls.hpp>
@@ -15,15 +16,6 @@
 #include <memory>
 #include <string>
 #include <thread>
-
-#define CHECK(condition)                                                            \
-    do {                                                                            \
-        if (!(condition)) {                                                         \
-            std::fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, \
-                #condition);                                                        \
-            std::exit(1);                                                           \
-        }                                                                           \
-    } while (false)
 
 using namespace bazarish;
 using namespace bazarish::admin;
@@ -56,8 +48,7 @@ int main()
 {
     bazarish::log::setLevel(bazarish::log::Level::eError);
     const std::filesystem::path root
-        = std::filesystem::temp_directory_path() / "bazarish-loginpage-test";
-    std::filesystem::remove_all(root);
+        = testutil::freshDir("loginpage-test");
     std::filesystem::create_directories(root);
     const std::filesystem::path configPath = root / "admin-panel.json";
     { std::ofstream(configPath) << "{}\n"; }
@@ -72,8 +63,8 @@ int main()
     HttpApiOptions options;
     options.version = "test";
     options.assetsDirectory = std::filesystem::path(BAZARISH_PANEL_WEB_DIR);
-    const bazarish::tls::Credential credential = bazarish::tls::selfSigned(
-        std::filesystem::temp_directory_path() / "bazarish-login-page-test");
+    const std::filesystem::path certificateDir = testutil::freshDir("login-page-test");
+    const bazarish::tls::Credential credential = bazarish::tls::selfSigned(certificateDir);
     HttpApi api(settings, identity, credential, options);
     const int port = api.bind("127.0.0.1", 0);
     CHECK(port > 0);
@@ -96,6 +87,7 @@ int main()
     api.stop();
     serverThread.join();
     std::filesystem::remove_all(root);
+    std::filesystem::remove_all(certificateDir);
     std::printf("TestLoginPage OK\n");
     return 0;
 }

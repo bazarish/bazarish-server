@@ -1,5 +1,11 @@
 // Bazarish project (c) 2026
 #include "AccountApi.hpp"
+
+#include <FleetPorts.hpp>
+#include <OpsSettings.hpp>
+#include <Restart.hpp>
+#include <StateIdentity.hpp>
+
 #include "AccountRemoval.hpp"
 #include "GrantStore.hpp"
 #include "IdleSweep.hpp"
@@ -18,8 +24,6 @@
 #include <bazarish/Log.hpp>
 #include <bazarish/PrivateFile.hpp>
 #include <bazarish/Tls.hpp>
-#include <Restart.hpp>
-#include <StateIdentity.hpp>
 #include <bazarish/ServerDescriptor.hpp>
 
 #include <chrono>
@@ -39,9 +43,9 @@ namespace {
 
 namespace fs = std::filesystem;
 
-constexpr const char* kDefaultHost = "127.0.0.1";
-constexpr int kDefaultPort = 8421;
-constexpr int kDefaultOpsPort = 8427;
+constexpr const char* kDefaultHost = bazarish::fleet::kLoopback;
+constexpr int kDefaultPort = bazarish::fleet::kNodePort;
+constexpr int kDefaultOpsPort = bazarish::fleet::kNodeOpsPort;
 constexpr std::size_t kPortalSecretBytes = 16;
 constexpr std::chrono::hours kIdleSweepInterval{1};
 constexpr std::chrono::seconds kBackendWaitBudget{60};
@@ -68,16 +72,7 @@ void printUsage()
         bazarish::kBuildVersion);
 }
 
-bazarish::Bytes readFileBytes(const fs::path& path)
-{
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        throw std::runtime_error("failed to open " + path.string());
-    }
-    return bazarish::Bytes(
-        std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-}
-
+using bazarish::readFileBytes;
 using bazarish::readFileText;
 using bazarish::writePrivateFile;
 
@@ -131,12 +126,8 @@ NodeConfig loadNodeConfig(const fs::path& path)
     config.opsListen = view.endpoint("opsListen").value_or(config.opsListen);
     config.opsClients = view.list("opsClients");
     config.operators = view.list("operators");
+    config.logLevel = bazarish::server::configLogLevel(view);
     if (const std::string level = view.text("logLevel"); !level.empty()) {
-        const std::optional<bazarish::log::Level> parsed = bazarish::log::levelFromString(level);
-        if (!parsed.has_value()) {
-            throw std::runtime_error("config: logLevel is not a level");
-        }
-        config.logLevel = *parsed;
         config.logLevelText = level;
     }
     config.freeStorageBytes = static_cast<std::uint64_t>(

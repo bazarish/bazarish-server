@@ -19,7 +19,7 @@ inline constexpr std::int64_t kContactSourceMemorySeconds = kSecondsPerDay;
 inline constexpr std::size_t kMailPerPassPerMinute = 120;
 
 struct DeliveryEngineOptions {
-    std::uint64_t defaultQuotaBytes = 50 * 1024 * 1024;
+    std::uint64_t defaultQuotaBytes = kDefaultQuotaBytes;
     std::function<void(const std::string& user)> onDelivered;
 };
 

@@ -1,19 +1,12 @@
 // Bazarish project (c) 2026
 #include "SessionStore.hpp"
+#include "TestUtil.hpp"
 
 #include <bazarish/Auth.hpp>
 #include <bazarish/Crypto.hpp>
 
 #include <cstdio>
 #include <string>
-
-#define CHECK(condition)                                                                \
-    do {                                                                                \
-        if (!(condition)) {                                                             \
-            std::printf("CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, #condition); \
-            return 1;                                                                   \
-        }                                                                               \
-    } while (false)
 
 using namespace bazarish;
 using namespace bazarish::server;

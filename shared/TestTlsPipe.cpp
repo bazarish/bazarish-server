@@ -1,5 +1,6 @@
 // Bazarish project (c) 2026
 #include "TlsPipe.hpp"
+#include "TestUtil.hpp"
 
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Crypto.hpp>
@@ -22,15 +23,6 @@
 #include <mutex>
 #include <string>
 #include <thread>
-
-#define CHECK(condition)                                                            \
-    do {                                                                            \
-        if (!(condition)) {                                                         \
-            std::fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, \
-                #condition);                                                        \
-            std::exit(1);                                                           \
-        }                                                                           \
-    } while (false)
 
 namespace fs = std::filesystem;
 using boost::asio::ip::tcp;

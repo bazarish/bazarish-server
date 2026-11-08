@@ -9,25 +9,14 @@
 #include <bazarish/I2p.hpp>
 #include <bazarish/Log.hpp>
 
-#include <atomic>
 #include <chrono>
-#include <csignal>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
-#include <thread>
 
 namespace {
 
 constexpr std::chrono::seconds kRouterWarmup{120};
-constexpr std::chrono::milliseconds kRestartAnswerGrace{300};
-
-volatile std::sig_atomic_t g_stop = 0;
-
-void onSignal(const int)
-{
-    g_stop = 1;
-}
 
 void printUsage()
 {
@@ -72,6 +61,9 @@ int main(const int argc, const char** argv)
         return 2;
     }
 
+    bazarish::StopGate stopped;
+    const bazarish::SignalWaiter signalWaiter([&stopped]() { stopped.stop(); });
+
     std::filesystem::create_directories(settings.stateDir);
     bazarish::i2p::RouterConfig routerConfig;
     routerConfig.dataDir = settings.stateDir / "i2p";
@@ -82,38 +74,26 @@ int main(const int argc, const char** argv)
     router.start();
     bazarish::log::info("gateway: router {} starting", bazarish::i2p::routerVersion());
 
-    std::atomic<bool> restartWanted{false};
+    bazarish::RestartSwitch restart([&stopped]() { stopped.stop(); });
     bazarish::gateway::Gateway gateway(settings, router,
         bazarish::gateway::OpsControl{
-            std::filesystem::path(argv[2]), [&restartWanted]() { restartWanted = true; }});
+            std::filesystem::path(argv[2]), [&restart]() { restart.request(); }});
     const int port = gateway.start();
     std::printf("bazarish-gateway %s listening on %s:%d\n", bazarish::kBuildVersion, settings.listenHost.c_str(),
         port);
     std::fflush(stdout);
 
-    std::signal(SIGINT, onSignal);
-    std::signal(SIGTERM, onSignal);
-
-    const auto warm = std::chrono::steady_clock::now() + kRouterWarmup;
-    bool announced = false;
-    while (g_stop == 0 && !restartWanted) {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-        if (!announced && router.ready()) {
+    if (!stopped.waitFor(kRouterWarmup)) {
+        if (router.ready()) {
             bazarish::log::info("gateway: the router has tunnels");
-            announced = true;
-        }
-        if (!announced && std::chrono::steady_clock::now() > warm) {
+        } else {
             bazarish::log::warn("gateway: the router still has no tunnels");
-            announced = true;
         }
+        stopped.wait();
     }
 
-    if (restartWanted) {
-        // The handler that asked has to get its answer out before the ops socket closes.
-        std::this_thread::sleep_for(kRestartAnswerGrace);
-    }
     bazarish::log::info("gateway: stopping");
     gateway.stop();
     router.stop();
-    return restartWanted ? bazarish::kRestartExitCode : 0;
+    return restart.requested() ? bazarish::kRestartExitCode : 0;
 }

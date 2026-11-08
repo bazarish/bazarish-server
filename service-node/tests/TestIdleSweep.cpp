@@ -3,6 +3,7 @@
 #include "IdleSweep.hpp"
 #include "OperatorPush.hpp"
 #include "SubscriptionStore.hpp"
+#include "TestUtil.hpp"
 
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Clock.hpp>
@@ -13,15 +14,6 @@
 #include <cstdlib>
 #include <filesystem>
 #include <string>
-
-#define CHECK(condition)                                                            \
-    do {                                                                            \
-        if (!(condition)) {                                                         \
-            std::fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, \
-                #condition);                                                        \
-            std::exit(1);                                                           \
-        }                                                                           \
-    } while (false)
 
 using namespace bazarish;
 using namespace bazarish::service;

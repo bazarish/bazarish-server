@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #include "HttpApi.hpp"
 #include "EventGate.hpp"
+#include "TestUtil.hpp"
 
 #include "DiskStorage.hpp"
 
@@ -18,15 +19,6 @@
 #include <memory>
 #include <string>
 #include <thread>
-
-#define CHECK(condition)                                                            \
-    do {                                                                            \
-        if (!(condition)) {                                                         \
-            std::fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, \
-                #condition);                                                        \
-            std::exit(1);                                                           \
-        }                                                                           \
-    } while (false)
 
 using namespace bazarish;
 using namespace bazarish::server;
@@ -51,8 +43,7 @@ int main()
 {
     bazarish::log::setLevel(bazarish::log::Level::eError);
     const std::filesystem::path root
-        = std::filesystem::temp_directory_path() / "bazarish-tunnel-test";
-    std::filesystem::remove_all(root);
+        = testutil::freshDir("tunnel-test");
     DiskStorage storage(root);
 
     const Identity serverIdentity = Identity::generate();

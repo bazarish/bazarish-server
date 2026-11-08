@@ -23,46 +23,32 @@ const char* const kI2pKey = "i2p";
 const char* const kI2pPrivacyKey = "privacy";
 const char* const kI2pTunnelsKey = "tunnelQuantity";
 
+void persistFacadeSettings(
+    ConfigFile& file, const FacadeSettingsValues& values, const FacadeSettingsValues& before)
+{
+    setIfChanged(file, {kLogLevelKey}, values.logLevel, before.logLevel);
+    setIfChanged(file, {kMessagingKey, kHostKey}, values.messagingHost, before.messagingHost);
+    setIfChanged(file, {kMessagingKey, kPortKey}, values.messagingPort, before.messagingPort);
+    setIfChanged(
+        file, {kServiceNodeKey, kHostKey}, values.serviceNodeHost, before.serviceNodeHost);
+    setIfChanged(
+        file, {kServiceNodeKey, kPortKey}, values.serviceNodePort, before.serviceNodePort);
+    setIfChanged(file, {kListenKey, kHostKey}, values.listenHost, before.listenHost);
+    setIfChanged(file, {kListenKey, kPortKey}, values.listenPort, before.listenPort);
+    setIfChanged(file, {kOpsListenKey, kHostKey}, values.opsHost, before.opsHost);
+    setIfChanged(file, {kOpsListenKey, kPortKey}, values.opsPort, before.opsPort);
+    setIfChanged(file, {kDirectListenKey, kHostKey}, values.directHost, before.directHost);
+    setIfChanged(file, {kDirectListenKey, kPortKey}, values.directPort, before.directPort);
+    setIfChanged(file, {kI2pKey, kI2pPrivacyKey}, values.i2pPrivacy, before.i2pPrivacy);
+    setIfChanged(
+        file, {kI2pKey, kI2pTunnelsKey}, values.i2pTunnelQuantity, before.i2pTunnelQuantity);
+}
+
 }  // namespace
 
 FacadeSettings::FacadeSettings(fs::path configPath, Values initial)
-    : configPath_(std::move(configPath))
-    , values_(std::move(initial))
+    : SettingsFile(std::move(configPath), std::move(initial), persistFacadeSettings)
 {
-}
-
-FacadeSettings::Values FacadeSettings::get() const
-{
-    const std::lock_guard<std::mutex> lock(mutex_);
-    return values_;
-}
-
-void FacadeSettings::set(const Values& values)
-{
-    const std::lock_guard<std::mutex> lock(mutex_);
-    persist(values);
-    values_ = values;
-}
-
-void FacadeSettings::persist(const Values& values) const
-{
-    ConfigFile file(configPath_);
-    setIfChanged(file, {kLogLevelKey}, values.logLevel, values_.logLevel);
-    setIfChanged(file, {kMessagingKey, kHostKey}, values.messagingHost, values_.messagingHost);
-    setIfChanged(file, {kMessagingKey, kPortKey}, values.messagingPort, values_.messagingPort);
-    setIfChanged(
-        file, {kServiceNodeKey, kHostKey}, values.serviceNodeHost, values_.serviceNodeHost);
-    setIfChanged(
-        file, {kServiceNodeKey, kPortKey}, values.serviceNodePort, values_.serviceNodePort);
-    setIfChanged(file, {kListenKey, kHostKey}, values.listenHost, values_.listenHost);
-    setIfChanged(file, {kListenKey, kPortKey}, values.listenPort, values_.listenPort);
-    setIfChanged(file, {kOpsListenKey, kHostKey}, values.opsHost, values_.opsHost);
-    setIfChanged(file, {kOpsListenKey, kPortKey}, values.opsPort, values_.opsPort);
-    setIfChanged(file, {kDirectListenKey, kHostKey}, values.directHost, values_.directHost);
-    setIfChanged(file, {kDirectListenKey, kPortKey}, values.directPort, values_.directPort);
-    setIfChanged(file, {kI2pKey, kI2pPrivacyKey}, values.i2pPrivacy, values_.i2pPrivacy);
-    setIfChanged(
-        file, {kI2pKey, kI2pTunnelsKey}, values.i2pTunnelQuantity, values_.i2pTunnelQuantity);
 }
 
 }  // namespace bazarish::facade

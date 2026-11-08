@@ -1,12 +1,13 @@
 // Bazarish project (c) 2026
 #include "DeliveryEngine.hpp"
 
+#include <bazarish/DeliveryEnvelope.hpp>
 #include <bazarish/JsonRead.hpp>
 #include <bazarish/Log.hpp>
 
 #include <bazarish/Address.hpp>
-#include <bazarish/Hybrid.hpp>
 #include <bazarish/Errors.hpp>
+#include <bazarish/Hybrid.hpp>
 #include <bazarish/Limits.hpp>
 #include <bazarish/Pass.hpp>
 
@@ -47,27 +48,26 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
         return outcome;
     };
 
-    std::string mailbox;
-    std::string deliveryClass;
-    std::string deliveryId;
-    Bytes pass;
+    DeliveryEnvelope envelope;
     try {
-        const Bytes plain = hybrid::unseal(sealed, sealingKey);
-        const nlohmann::json inner = bazarish::parseJson(plain);
-        deliveryClass = inner.at("class").get<std::string>();
-        mailbox = inner.at("mailbox").get<std::string>();
-        deliveryId = inner.at("deliveryId").get<std::string>();
-        if (deliveryClass == kContentDeliveryClass) {
-            pass = fromBase64(inner.at("pass").get<std::string>());
-        } else if (deliveryClass != kContactDeliveryClass) {
-            return fail(ErrorCode::eDeliveryRejected, "unknown delivery class");
-        }
-        if (!isFingerprint(mailbox)) {
-            return fail(ErrorCode::eDeliveryRejected, "mailbox is not a fingerprint");
-        }
+        envelope = openDeliveryEnvelope(sealed, sealingKey);
     } catch (const std::exception&) {
         return fail(ErrorCode::eDeliveryRejected, "envelope rejected");
     }
+    if (envelope.deliveryClass == kContentDeliveryClass && !envelope.pass.has_value()) {
+        return fail(ErrorCode::eDeliveryRejected, "envelope rejected");
+    }
+    if (envelope.deliveryClass != kContentDeliveryClass
+        && envelope.deliveryClass != kContactDeliveryClass) {
+        return fail(ErrorCode::eDeliveryRejected, "unknown delivery class");
+    }
+    if (!isFingerprint(envelope.mailbox)) {
+        return fail(ErrorCode::eDeliveryRejected, "mailbox is not a fingerprint");
+    }
+    const std::string& mailbox = envelope.mailbox;
+    const std::string& deliveryClass = envelope.deliveryClass;
+    const std::string& deliveryId = envelope.deliveryId;
+    const Bytes pass = envelope.pass.value_or(Bytes());
     outcome.deliveryId = deliveryId;
 
     const bool servedHere = mailbox == owner;

@@ -62,7 +62,7 @@ jobs:
           if-no-files-found: error
       - name: Say what broke
         if: failure()
-        run: .github/ci/report.sh
+        run: common/tools/ci-report.sh
 
   publish:
     name: Publish

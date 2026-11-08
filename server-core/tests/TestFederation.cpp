@@ -1,14 +1,16 @@
 // Bazarish project (c) 2026
 #include "Federation.hpp"
+#include "TestUtil.hpp"
 
 #include "DeliveryEngine.hpp"
 #include "DiskStorage.hpp"
 
 #include <bazarish/Clock.hpp>
+#include <bazarish/DeliveryEnvelope.hpp>
 #include <bazarish/Hybrid.hpp>
 #include <bazarish/Limits.hpp>
-#include <bazarish/Resolve.hpp>
 #include <bazarish/Pass.hpp>
+#include <bazarish/Resolve.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -22,15 +24,6 @@
 #include <optional>
 #include <stdexcept>
 #include <thread>
-
-#define CHECK(condition)                                                            \
-    do {                                                                            \
-        if (!(condition)) {                                                         \
-            std::fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, \
-                #condition);                                                        \
-            std::exit(1);                                                           \
-        }                                                                           \
-    } while (false)
 
 using namespace bazarish;
 using namespace bazarish::server;
@@ -91,12 +84,9 @@ struct SocketStream {
 Bytes makeSealed(const Key& sealingPublic, const std::string& kind,
     const std::string& mailbox, const std::string& deliveryId, const Bytes& pass)
 {
-    nlohmann::json inner = {{"class", kind}, {"mailbox", mailbox}, {"deliveryId", deliveryId}};
-    if (kind == "content") {
-        inner["pass"] = toBase64(pass);
-    }
-    const std::string text = inner.dump();
-    return hybrid::seal(Bytes(text.begin(), text.end()), sealingPublic);
+    return sealDeliveryEnvelope(DeliveryEnvelope{kind, mailbox, deliveryId,
+                                    kind == "content" ? std::optional<Bytes>(pass) : std::nullopt},
+        sealingPublic);
 }
 
 const Key& servingKey()
@@ -160,8 +150,7 @@ FederationFetchResult roundTripCard(DeliveryEngine& engine, const CardFetchQuery
 int main()
 {
     const std::filesystem::path root
-        = std::filesystem::temp_directory_path() / "bazarish-federation-test";
-    std::filesystem::remove_all(root);
+        = testutil::freshDir("federation-test");
     DiskStorage storage(root);
 
     const std::string alice = toBase32(Bytes(32, 0x01));

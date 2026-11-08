@@ -154,25 +154,6 @@ std::string languageCookie(const std::string& code)
         + "; HttpOnly; SameSite=Lax; Path=/";
 }
 
-std::string urlEncode(const std::string& value)
-{
-    static const char* const kDigits = "0123456789ABCDEF";
-    std::string out;
-    out.reserve(value.size());
-    for (const char letter : value) {
-        const unsigned char byte = static_cast<unsigned char>(letter);
-        if (std::isalnum(byte) != 0 || letter == '-' || letter == '_' || letter == '.'
-            || letter == '~') {
-            out.push_back(letter);
-        } else {
-            out.push_back('%');
-            out.push_back(kDigits[byte >> 4]);
-            out.push_back(kDigits[byte & 0x0F]);
-        }
-    }
-    return out;
-}
-
 std::string sameSitePath(const std::string& asked)
 {
     if (asked.empty() || asked.front() != '/' || asked.size() > kLongestBackPath) {

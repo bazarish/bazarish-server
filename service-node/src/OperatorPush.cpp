@@ -1,6 +1,9 @@
 // Bazarish project (c) 2026
 #include "OperatorPush.hpp"
 
+#include <FleetRoutes.hpp>
+#include <OpsClient.hpp>
+
 #include <bazarish/Auth.hpp>
 #include <bazarish/JsonRead.hpp>
 #include <bazarish/Log.hpp>
@@ -27,11 +30,6 @@ constexpr int kRetryDelaySeconds = 1;
 constexpr int kReadyPollSeconds = 1;
 constexpr int kFirstServerErrorStatus = 500;
 
-constexpr const char* kDestPath = "/v1/messaging/i2p-dest";
-constexpr const char* kQuotaPath = "/v1/messaging/quota";
-constexpr const char* kAccountPath = "/v1/messaging/account";
-constexpr const char* kNodeCardPath = "/v1/messaging/node-card";
-
 }  // namespace
 
 OperatorPush::OperatorPush(Dial backend, const Identity& signer, const int attempts)
@@ -49,19 +47,7 @@ bool OperatorPush::waitReachable(const std::chrono::seconds budget) const
     std::string lastError;
     while (true) {
         try {
-            const bazarish::http::Url target = bazarish::http::parseUrl(backend_.url);
-            bazarish::http::ClientRequest ask;
-            ask.method = "GET";
-            ask.target = "/healthz";
-            bazarish::http::ClientOptions options;
-            options.tls = target.tls;
-            options.pin = backend_.pin;
-            options.certificate = backend_.certificate;
-            options.key = backend_.key;
-            options.connectTimeout = std::chrono::seconds(kConnectTimeoutSeconds);
-            options.readTimeout = std::chrono::seconds(kReadTimeoutSeconds);
-            const bazarish::http::ClientResponse response
-                = bazarish::http::request(target.host, target.port, ask, options);
+            const bazarish::http::ClientResponse response = call("GET", "/healthz", {});
             if (response.status > 0) {
                 if (waited) {
                     bazarish::log::info("the messaging server is answering");
@@ -88,23 +74,8 @@ bool OperatorPush::waitReachable(const std::chrono::seconds budget) const
 std::optional<MailboxUsage> OperatorPush::accountUsage(
     const std::string& user) const
 {
-    const std::string path = "/v1/messaging/account";
-    const bazarish::http::Url target = bazarish::http::parseUrl(backend_.url);
-    const auth::Headers signature = auth::signRequest(
-        signer_, static_cast<std::int64_t>(std::time(nullptr)), "GET", path, Bytes());
-    bazarish::http::ClientRequest ask;
-    ask.method = "GET";
-    ask.target = path + "?user=" + user;
-    ask.headers = std::map<std::string, std::string>(signature.begin(), signature.end());
-    bazarish::http::ClientOptions options;
-    options.tls = target.tls;
-    options.pin = backend_.pin;
-    options.certificate = backend_.certificate;
-    options.key = backend_.key;
-    options.connectTimeout = std::chrono::seconds(kConnectTimeoutSeconds);
-    options.readTimeout = std::chrono::seconds(kReadTimeoutSeconds);
     const bazarish::http::ClientResponse response
-        = bazarish::http::request(target.host, target.port, ask, options);
+        = call("GET", std::string(fleet::kMessagingAccount) + "?user=" + user, {});
     if (response.status != 200) {
         bazarish::log::warn("mailbox usage unavailable (HTTP {}): {}", response.status,
             response.error.empty() ? response.body : response.error);
@@ -125,23 +96,7 @@ std::optional<MailboxUsage> OperatorPush::accountUsage(
 
 std::string OperatorPush::reseedArchive() const
 {
-    const std::string path = "/internal/i2pseeds.su3";
-    const bazarish::http::Url target = bazarish::http::parseUrl(backend_.url);
-    const auth::Headers signature = auth::signRequest(
-        signer_, static_cast<std::int64_t>(std::time(nullptr)), "GET", path, Bytes());
-    bazarish::http::ClientRequest ask;
-    ask.method = "GET";
-    ask.target = path;
-    ask.headers = std::map<std::string, std::string>(signature.begin(), signature.end());
-    bazarish::http::ClientOptions options;
-    options.tls = target.tls;
-    options.pin = backend_.pin;
-    options.certificate = backend_.certificate;
-    options.key = backend_.key;
-    options.connectTimeout = std::chrono::seconds(kConnectTimeoutSeconds);
-    options.readTimeout = std::chrono::seconds(kReadTimeoutSeconds);
-    const bazarish::http::ClientResponse response
-        = bazarish::http::request(target.host, target.port, ask, options);
+    const bazarish::http::ClientResponse response = call("GET", "/internal/i2pseeds.su3", {});
     if (response.status != 200 || response.body.empty()) {
         bazarish::log::warn("the messaging server has no reseed archive (HTTP {}): {}",
             response.status, response.error.empty() ? response.body : response.error);
@@ -163,8 +118,19 @@ std::optional<std::string> OperatorPush::putBody(
 
 bool OperatorPush::forgetMailbox(const std::string& user) const
 {
-    return send("DELETE", kAccountPath, std::string(kAccountPath) + "?user=" + user, std::string())
+    return send("DELETE", fleet::kMessagingAccount,
+        std::string(fleet::kMessagingAccount) + "?user=" + user, std::string())
         .has_value();
+}
+
+bazarish::http::ClientResponse OperatorPush::call(const std::string& method,
+    const std::string& pathAndQuery, const std::string& body) const
+{
+    return server::opsCall(
+        server::OpsTarget{backend_.url, backend_.pin, backend_.certificate, backend_.key}, signer_,
+        method, pathAndQuery, body,
+        server::OpsTimeouts{std::chrono::seconds(kConnectTimeoutSeconds),
+            std::chrono::seconds(kReadTimeoutSeconds)});
 }
 
 std::optional<std::string> OperatorPush::send(const std::string& method, const std::string& path,
@@ -172,25 +138,7 @@ std::optional<std::string> OperatorPush::send(const std::string& method, const s
 {
     for (int attempt = 1; attempt <= attempts_; ++attempt) {
         try {
-            const bazarish::http::Url backend = bazarish::http::parseUrl(backend_.url);
-            const auth::Headers signature = auth::signRequest(signer_,
-                static_cast<std::int64_t>(std::time(nullptr)), method, path,
-                Bytes(bodyText.begin(), bodyText.end()));
-            bazarish::http::ClientRequest push;
-            push.method = method;
-            push.target = target;
-            push.headers = std::map<std::string, std::string>(signature.begin(), signature.end());
-            push.body = bodyText;
-            push.contentType = "application/json";
-            bazarish::http::ClientOptions options;
-            options.tls = backend.tls;
-            options.pin = backend_.pin;
-            options.certificate = backend_.certificate;
-            options.key = backend_.key;
-            options.connectTimeout = std::chrono::seconds(kConnectTimeoutSeconds);
-            options.readTimeout = std::chrono::seconds(kReadTimeoutSeconds);
-            const bazarish::http::ClientResponse response
-                = bazarish::http::request(backend.host, backend.port, push, options);
+            const bazarish::http::ClientResponse response = call(method, target, bodyText);
             if (response.status == 200) {
                 return response.body;
             }
@@ -217,7 +165,7 @@ std::optional<Bytes> OperatorPush::nodeCard(const Bytes& sealingPublicKeyDer) co
 {
     const nlohmann::json body = {{"sealingKey", toBase64(sealingPublicKeyDer)}};
     const std::optional<std::string> answer
-        = send("POST", kNodeCardPath, kNodeCardPath, body.dump());
+        = send("POST", fleet::kMessagingNodeCard, fleet::kMessagingNodeCard, body.dump());
     if (!answer.has_value()) {
         return std::nullopt;
     }
@@ -233,7 +181,7 @@ std::optional<Bytes> OperatorPush::nodeCard(const Bytes& sealingPublicKeyDer) co
 bool OperatorPush::publishQuota(const std::string& user, const std::uint64_t quotaBytes) const
 {
     const nlohmann::json body = {{"user", user}, {"quotaBytes", quotaBytes}};
-    return put(kQuotaPath, body.dump());
+    return put(fleet::kMessagingQuota, body.dump());
 }
 
 std::optional<ServedDestination> OperatorPush::publish(const std::string& user,
@@ -247,7 +195,7 @@ std::optional<ServedDestination> OperatorPush::publish(const std::string& user,
         body["sealingKey"] = keys.sealingPem;
         body["signingKey"] = keys.signingPem;
     }
-    const std::optional<std::string> answer = putBody(kDestPath, body.dump());
+    const std::optional<std::string> answer = putBody(fleet::kMessagingI2pDest, body.dump());
     if (!answer.has_value()) {
         return std::nullopt;
     }

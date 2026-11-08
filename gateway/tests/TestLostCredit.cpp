@@ -46,18 +46,6 @@ i2p::RouterConfig borrowedFrom(const int port, const std::string& fingerprint)
     return config;
 }
 
-bool waitFor(const std::function<bool()>& done)
-{
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(kWaitSeconds);
-    while (std::chrono::steady_clock::now() < deadline) {
-        if (done()) {
-            return true;
-        }
-        std::this_thread::sleep_for(kLook);
-    }
-    return done();
-}
-
 void settle(const std::function<std::size_t()>& read)
 {
     std::size_t last = read();
@@ -82,8 +70,7 @@ void settle(const std::function<std::size_t()>& read)
 int main()
 {
     const std::filesystem::path root
-        = std::filesystem::temp_directory_path() / "bazarish-gateway-lost-credit-test";
-    std::filesystem::remove_all(root);
+        = testutil::freshDir("gateway-lost-credit-test");
     std::filesystem::create_directories(root);
 
     Settings settings;
@@ -132,7 +119,7 @@ int main()
 
     relay.hold(true);
     relay.cut(0);
-    CHECK(waitFor([&]() { return gateway.sockets() == 1; }));
+    CHECK(testutil::waitFor([&]() { return gateway.sockets() == 1; }));
 
     std::atomic<std::size_t> received{0};
     std::atomic<bool> ended{false};
@@ -156,9 +143,9 @@ int main()
     CHECK(received.load() < kTotalBytes);
 
     relay.hold(false);
-    CHECK(waitFor([&]() { return gateway.sockets() == 2; }));
+    CHECK(testutil::waitFor([&]() { return gateway.sockets() == 2; }));
 
-    CHECK(waitFor([&]() { return received.load() == kTotalBytes; }));
+    CHECK(testutil::waitFor([&]() { return received.load() == kTotalBytes; }));
     reader.join();
     CHECK(ended.load());
     CHECK(gateway.refusals() == 0);

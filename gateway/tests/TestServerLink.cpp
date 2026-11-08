@@ -32,7 +32,6 @@ namespace {
 constexpr const char* kPath = "/5d1c0e93b2a7";
 constexpr int kWaitSeconds = 20;
 constexpr std::chrono::seconds kShortWait{1};
-constexpr std::chrono::milliseconds kPoll{20};
 constexpr int kRandomNameBytes = 8;
 constexpr std::size_t kEchoBytes = 256;
 constexpr const char* kUserDest = "ykmtx5g3h4var6o4n4tw6k2fqsmszqwzkj2abdmax7avtiqyeskwb2zi.b32.i2p";
@@ -48,18 +47,6 @@ i2p::RouterConfig borrowedFrom(const int port, const std::string& fingerprint)
     config.gatewayFingerprint = fingerprint;
     config.gatewayTls = false;
     return config;
-}
-
-bool waitFor(const std::function<bool()>& done)
-{
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(kWaitSeconds);
-    while (std::chrono::steady_clock::now() < deadline) {
-        if (done()) {
-            return true;
-        }
-        std::this_thread::sleep_for(kPoll);
-    }
-    return done();
 }
 
 bool routedLocally(const i2p::Router& router, const std::string& host)
@@ -156,7 +143,7 @@ int main()
     alice.start();
 
     std::shared_ptr<i2p::Endpoint> lease;
-    CHECK(waitFor([&]() {
+    CHECK(testutil::waitFor([&]() {
         std::shared_ptr<i2p::Endpoint> made = leaseFor(alice, kUserDest);
         if (made->waitReady(kShortWait) && routedLocally(alice, made->routingHost())) {
             lease = made;
@@ -180,7 +167,7 @@ int main()
     CHECK(lease->connect(kOtherDest, kShortWait) == nullptr);
 
     serve({kOtherDest});
-    CHECK(waitFor([&]() { return lease->lost(); }));
+    CHECK(testutil::waitFor([&]() { return lease->lost(); }));
     const std::shared_ptr<i2p::Endpoint> built = leaseFor(alice, kUserDest);
     CHECK(!built->waitReady(kShortWait));
     CHECK(!routedLocally(alice, built->routingHost()));
@@ -194,12 +181,12 @@ int main()
         = shared->connect(kOtherDest, std::chrono::seconds(kWaitSeconds));
     CHECK(direct != nullptr);
     CHECK(echoed(*direct, "carried without a tunnel") == "carried without a tunnel");
-    CHECK(waitFor([&]() { return routedLocally(alice, shared->routingHost()); }));
+    CHECK(testutil::waitFor([&]() { return routedLocally(alice, shared->routingHost()); }));
     direct->close();
     shared->stop();
 
     std::shared_ptr<i2p::Endpoint> second;
-    CHECK(waitFor([&]() {
+    CHECK(testutil::waitFor([&]() {
         second = leaseFor(alice, kOtherDest);
         if (second->waitReady(kShortWait) && routedLocally(alice, second->routingHost())) {
             return true;
@@ -208,7 +195,7 @@ int main()
         return false;
     }));
     link.setGateways({});
-    CHECK(waitFor([&]() { return second->lost(); }));
+    CHECK(testutil::waitFor([&]() { return second->lost(); }));
     const std::shared_ptr<i2p::Endpoint> unlinked = leaseFor(alice, kOtherDest);
     CHECK(!unlinked->waitReady(kShortWait));
     CHECK(!routedLocally(alice, unlinked->routingHost()));

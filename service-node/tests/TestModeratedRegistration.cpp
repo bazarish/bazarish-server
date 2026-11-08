@@ -1,5 +1,7 @@
 // Bazarish project (c) 2026
 #include "AccountApi.hpp"
+#include "HttpTestUtil.hpp"
+#include "TestUtil.hpp"
 
 #include "SubscriptionStore.hpp"
 
@@ -18,48 +20,18 @@
 #include <map>
 #include <thread>
 
-#define CHECK(condition)                                                            \
-    do {                                                                            \
-        if (!(condition)) {                                                         \
-            std::fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, \
-                #condition);                                                        \
-            std::exit(1);                                                           \
-        }                                                                           \
-    } while (false)
-
 using namespace bazarish;
 using namespace bazarish::service;
 
 namespace {
 
+using testutil::Headers;
+using testutil::call;
+using testutil::signedHeaders;
+
 namespace http = bazarish::http;
 
 constexpr int kDelegationDays = 7;
-
-using Headers = std::map<std::string, std::string>;
-
-http::ClientResponse call(const int port, const std::string& method, const std::string& path,
-    const Headers& headers = {}, const std::string& body = {})
-{
-    http::ClientRequest request;
-    request.method = method;
-    request.target = path;
-    request.headers = headers;
-    request.body = body;
-    if (!body.empty()) {
-        request.contentType = "application/json";
-    }
-    return http::request("127.0.0.1", port, request, {});
-}
-
-Headers makeHeaders(const Identity& identity, const std::string& method,
-    const std::string& path, const std::string& body)
-{
-    const auth::Headers signed_ = auth::signRequest(identity,
-        static_cast<std::int64_t>(std::time(nullptr)), method, path,
-        Bytes(body.begin(), body.end()));
-    return Headers(signed_.begin(), signed_.end());
-}
 
 Bytes botCard(const Identity& owner, const std::int64_t issuedAt, const std::string& dest = {},
     const Bytes& sealingDer = {}, const Bytes& servingDer = {})
@@ -78,8 +50,7 @@ Bytes botCard(const Identity& owner, const std::int64_t issuedAt, const std::str
 int main()
 {
     const std::filesystem::path root
-        = std::filesystem::temp_directory_path() / "bazarish-moderation-test";
-    std::filesystem::remove_all(root);
+        = testutil::freshDir("moderation-test");
     SubscriptionStore store(root);
     GrantStore grants(root);
 
@@ -134,7 +105,7 @@ int main()
         const Bytes card = botCard(alice, now);
         const std::string body = nlohmann::json{{"card", toBase64(card)}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
-            makeHeaders(alice, "POST", "/v1/account/card", body), body);
+            signedHeaders(alice, "POST", "/v1/account/card", body), body);
         CHECK(result.status == 200);
         const nlohmann::json reply = nlohmann::json::parse(result.body);
         CHECK(reply.at("approval") == "pending");
@@ -143,14 +114,14 @@ int main()
 
     const auto cardServed = [&]() {
         return call(port, "GET", "/v1/account/card?user=" + alice.fingerprint(),
-            makeHeaders(serverIdentity, "GET", "/v1/account/card", ""))
+            signedHeaders(serverIdentity, "GET", "/v1/account/card", ""))
             .status;
     };
     CHECK(cardServed() == 404);
 
     {
         const http::ClientResponse result = call(port, "POST", "/v1/account/i2p-dest",
-            makeHeaders(alice, "POST", "/v1/account/i2p-dest", transientBody), transientBody);
+            signedHeaders(alice, "POST", "/v1/account/i2p-dest", transientBody), transientBody);
         CHECK(result.status == 403);
         const nlohmann::json error = nlohmann::json::parse(result.body).at("error");
         CHECK(error.at("code") == "ACCOUNT_PENDING_APPROVAL");
@@ -160,7 +131,7 @@ int main()
 
     {
         const http::ClientResponse result = call(opsPort, "GET", "/v1/account/users?state=pending",
-            makeHeaders(panel, "GET", "/v1/account/users", ""));
+            signedHeaders(panel, "GET", "/v1/account/users", ""));
         CHECK(result.status == 200);
         const nlohmann::json users = nlohmann::json::parse(result.body).at("users");
         CHECK(users.size() == 1);
@@ -171,24 +142,24 @@ int main()
     {
         const std::string body = nlohmann::json{{"user", alice.fingerprint()}}.dump();
         const http::ClientResponse forged = call(opsPort, "POST", "/v1/account/approve",
-            makeHeaders(alice, "POST", "/v1/account/approve", body), body);
+            signedHeaders(alice, "POST", "/v1/account/approve", body), body);
         CHECK(forged.status == 403);
         CHECK(grants.peekApproval(alice.fingerprint())->pending());
 
         const http::ClientResponse result = call(opsPort, "POST", "/v1/account/approve",
-            makeHeaders(panel, "POST", "/v1/account/approve", body), body);
+            signedHeaders(panel, "POST", "/v1/account/approve", body), body);
         CHECK(result.status == 200);
         CHECK(cardServed() == 200);
     }
 
     {
         const http::ClientResponse result = call(port, "POST", "/v1/account/i2p-dest",
-            makeHeaders(alice, "POST", "/v1/account/i2p-dest", transientBody), transientBody);
+            signedHeaders(alice, "POST", "/v1/account/i2p-dest", transientBody), transientBody);
         CHECK(result.status == 200);
         CHECK(pubCalls == 1);
 
         const http::ClientResponse pending = call(opsPort, "GET", "/v1/account/users?state=pending",
-            makeHeaders(panel, "GET", "/v1/account/users", ""));
+            signedHeaders(panel, "GET", "/v1/account/users", ""));
         CHECK(nlohmann::json::parse(pending.body).at("users").empty());
     }
 

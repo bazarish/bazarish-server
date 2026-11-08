@@ -24,7 +24,6 @@ using namespace bazarish::gateway;
 namespace {
 
 constexpr const char* kPath = "/5c3f9a12e8d7";
-constexpr int kWaitSeconds = 30;
 constexpr std::size_t kOversizeBytes = 20000;
 constexpr std::chrono::milliseconds kNothingArrives{1500};
 constexpr std::int64_t kAskedBeforeEnd = 300;
@@ -45,18 +44,6 @@ i2p::RouterConfig borrowedFrom(const int port, const std::string& fingerprint)
     config.gatewayDecoyMin = std::chrono::milliseconds(600000);
     config.gatewayDecoyMax = std::chrono::milliseconds(600000);
     return config;
-}
-
-bool waitFor(const std::function<bool()>& done)
-{
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(kWaitSeconds);
-    while (std::chrono::steady_clock::now() < deadline) {
-        if (done()) {
-            return true;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-    return done();
 }
 
 bool routedLocally(const i2p::Router& router, const std::string& host)
@@ -94,8 +81,7 @@ bool mediaFlows(i2p::Endpoint& from, i2p::Endpoint& to)
 int main()
 {
     const std::filesystem::path root
-        = std::filesystem::temp_directory_path() / "bazarish-gateway-media-lane-test";
-    std::filesystem::remove_all(root);
+        = testutil::freshDir("gateway-media-lane-test");
     std::filesystem::create_directories(root);
 
     Settings settings;
@@ -119,13 +105,13 @@ int main()
 
     const std::shared_ptr<i2p::Endpoint> hers = mediaOn(alice);
     const std::shared_ptr<i2p::Endpoint> his = mediaOn(bob);
-    CHECK(waitFor([&]() { return gateway.sockets() == 4; }));
-    CHECK(waitFor([&]() { return relay.connections() == 2; }));
+    CHECK(testutil::waitFor([&]() { return gateway.sockets() == 4; }));
+    CHECK(testutil::waitFor([&]() { return relay.connections() == 2; }));
 
     CHECK(!routedLocally(bob, his->routingHost()));
     CHECK(mediaFlows(*his, *hers));
     CHECK(mediaFlows(*hers, *his));
-    CHECK(waitFor([&]() {
+    CHECK(testutil::waitFor([&]() {
         return routedLocally(bob, his->routingHost()) && routedLocally(alice, hers->routingHost());
     }));
 
@@ -141,8 +127,8 @@ int main()
 
     relay.cut(1);
 
-    CHECK(waitFor([&]() { return relay.connections() >= 3; }));
-    CHECK(waitFor([&]() { return gateway.sockets() == 4; }));
+    CHECK(testutil::waitFor([&]() { return relay.connections() >= 3; }));
+    CHECK(testutil::waitFor([&]() { return gateway.sockets() == 4; }));
     CHECK(alice.running());
     CHECK(!hers->lost());
     CHECK(mediaFlows(*his, *hers));
@@ -179,7 +165,7 @@ int main()
     };
     const std::shared_ptr<i2p::Endpoint> reading = watcherWith(reader.rawPrivate());
     CHECK(mediaFlows(*reading, *presence));
-    CHECK(waitFor([&]() { return routedLocally(alice, presence->routingHost()); }));
+    CHECK(testutil::waitFor([&]() { return routedLocally(alice, presence->routingHost()); }));
     CHECK(mediaFlows(*presence, *reading));
     const std::shared_ptr<i2p::Endpoint> stranger = watcherWith(Key::generateX25519().rawPrivate());
     stranger->sendRawDatagram(presence->routingHost(), bazarish::viewOf(knock));
@@ -205,10 +191,10 @@ int main()
     CHECK(gateway.refusals() == 0);
 
     bob.stop();
-    CHECK(waitFor([&]() { return engine.localDestinations().size() == 1 + gateway.pooled(); }));
+    CHECK(testutil::waitFor([&]() { return engine.localDestinations().size() == 1 + gateway.pooled(); }));
 
     gateway.stop();
-    CHECK(waitFor([&]() { return engine.localDestinations().empty(); }));
+    CHECK(testutil::waitFor([&]() { return engine.localDestinations().empty(); }));
 
     alice.stop();
     std::filesystem::remove_all(root);

@@ -1,11 +1,13 @@
 // Bazarish project (c) 2026
 #include "HttpApi.hpp"
 #include "PanelSettings.hpp"
+#include "TestUtil.hpp"
 
 #include <bazarish/Crypto.hpp>
 #include <bazarish/HttpClient.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <bazarish/Log.hpp>
+#include <bazarish/Percent.hpp>
 #include <bazarish/Portal.hpp>
 #include <bazarish/Tls.hpp>
 #include <nlohmann/json.hpp>
@@ -26,15 +28,6 @@
 #include <thread>
 #include <vector>
 
-#define CHECK(condition)                                                            \
-    do {                                                                            \
-        if (!(condition)) {                                                         \
-            std::fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, \
-                #condition);                                                        \
-            std::exit(1);                                                           \
-        }                                                                           \
-    } while (false)
-
 using namespace bazarish;
 using namespace bazarish::admin;
 
@@ -45,22 +38,6 @@ namespace http = bazarish::http;
 constexpr const char* kOldAddress = "aaaa.b32.i2p";
 constexpr const char* kNewAddress = "cccc.b32.i2p";
 constexpr const char* kChallengeField = "name=\"challenge\" value=\"";
-
-std::string formEncoded(const std::string& text)
-{
-    std::string out;
-    for (const unsigned char c : text) {
-        if (std::isalnum(c) != 0 || c == '-' || c == '_' || c == '.') {
-            out.push_back(static_cast<char>(c));
-        } else {
-            static const char* const kHex = "0123456789ABCDEF";
-            out.push_back('%');
-            out.push_back(kHex[c >> 4]);
-            out.push_back(kHex[c & 0xF]);
-        }
-    }
-    return out;
-}
 
 std::unique_ptr<http::Server> serving(const tls::Credential& credential)
 {
@@ -111,8 +88,8 @@ std::string signIn(const int port, const Identity& admin, const std::string& pat
     login.method = "POST";
     login.target = path;
     login.contentType = "application/x-www-form-urlencoded";
-    login.body = "challenge=" + formEncoded(challenge) + "&blob="
-        + formEncoded(service::signLoginBlob(
+    login.body = "challenge=" + bazarish::percentEncode(challenge) + "&blob="
+        + bazarish::percentEncode(service::signLoginBlob(
             admin, static_cast<std::int64_t>(std::time(nullptr)), challenge));
     const http::ClientResponse answered = http::request("127.0.0.1", port, login, {});
     CHECK(answered.status == 303);
@@ -135,8 +112,7 @@ int main()
 {
     bazarish::log::setLevel(bazarish::log::Level::eError);
     const std::filesystem::path root
-        = std::filesystem::temp_directory_path() / "bazarish-panel-fleet-test";
-    std::filesystem::remove_all(root);
+        = testutil::freshDir("panel-fleet-test");
     std::filesystem::create_directories(root);
     const tls::Credential services = tls::selfSigned(root / "services");
     const tls::Credential panelKeys = tls::selfSigned(root / "panel");
@@ -315,7 +291,7 @@ int main()
         CHECK(callback.has_value() && callback->host == facadeHost);
         std::string token;
         for (const auto& [name, value] : shown.headers) {
-            if (value.rfind("adminsignin=", 0) == 0) {
+            if (value.starts_with("adminsignin=")) {
                 token = value.substr(std::strlen("adminsignin="), value.find(';') - std::strlen("adminsignin="));
                 CHECK(value.find("Path=/login") != std::string::npos);
             }
@@ -348,7 +324,7 @@ int main()
         CHECK(nlohmann::json::parse(entered.body).at("state") == "signedIn");
         std::string session;
         for (const auto& [name, value] : entered.headers) {
-            if (value.rfind("adminsession=", 0) == 0) {
+            if (value.starts_with("adminsession=")) {
                 session = value.substr(std::strlen("adminsession="), value.find(';') - std::strlen("adminsession="));
             }
         }

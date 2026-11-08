@@ -33,8 +33,7 @@ constexpr const char* kHeaderEnd = "\r\n\r\n";
 int main()
 {
     const std::filesystem::path root
-        = std::filesystem::temp_directory_path() / "bazarish-gateway-drop-after-answer-test";
-    std::filesystem::remove_all(root);
+        = testutil::freshDir("gateway-drop-after-answer-test");
     std::filesystem::create_directories(root);
 
     const tls::Credential served = tls::selfSigned(root / "served");

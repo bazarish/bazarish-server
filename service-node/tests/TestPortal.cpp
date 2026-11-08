@@ -2,9 +2,12 @@
 #include "AccountApi.hpp"
 #include "PortalApi.hpp"
 #include "SubscriptionStore.hpp"
+#include "HttpTestUtil.hpp"
+#include "TestUtil.hpp"
 
 #include <LoginRelay.hpp>
 
+#include <bazarish/Percent.hpp>
 #include <bazarish/Portal.hpp>
 #include <bazarish/ServerDescriptor.hpp>
 #include <bazarish/WebAssets.hpp>
@@ -27,53 +30,17 @@
 #include <map>
 #include <thread>
 
-#define CHECK(condition)                                                            \
-    do {                                                                            \
-        if (!(condition)) {                                                         \
-            std::fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, \
-                #condition);                                                        \
-            std::exit(1);                                                           \
-        }                                                                           \
-    } while (false)
-
-#define CHECK_THROWS(expression)                                                       \
-    do {                                                                               \
-        bool thrown = false;                                                           \
-        try {                                                                          \
-            (void)(expression);                                                        \
-        } catch (const std::exception&) {                                              \
-            thrown = true;                                                             \
-        }                                                                              \
-        if (!thrown) {                                                                 \
-            std::fprintf(stderr, "CHECK_THROWS failed at %s:%d\n", __FILE__, __LINE__); \
-            std::exit(1);                                                              \
-        }                                                                              \
-    } while (false)
-
 using namespace bazarish;
 using namespace bazarish::service;
 
 namespace {
 
+using testutil::Headers;
+using testutil::call;
+
 constexpr std::size_t kSecretBytes = 16;
 
 namespace http = bazarish::http;
-
-using Headers = std::map<std::string, std::string>;
-
-http::ClientResponse call(const int port, const std::string& method, const std::string& path,
-    const Headers& headers = {}, const std::string& body = {})
-{
-    http::ClientRequest request;
-    request.method = method;
-    request.target = path;
-    request.headers = headers;
-    request.body = body;
-    if (!body.empty()) {
-        request.contentType = "application/json";
-    }
-    return http::request("127.0.0.1", port, request, {});
-}
 
 std::int64_t now()
 {
@@ -186,22 +153,6 @@ void testPortalDiscovery()
     api.stop();
     serverThread.join();
     fs::remove_all(root);
-}
-
-std::string urlEncoded(const std::string& text)
-{
-    static const char* const kHexDigits = "0123456789ABCDEF";
-    std::string out;
-    for (const unsigned char c : text) {
-        if (std::isalnum(c) != 0 || c == '-' || c == '_' || c == '.' || c == '~') {
-            out.push_back(static_cast<char>(c));
-        } else {
-            out.push_back('%');
-            out.push_back(kHexDigits[c >> 4]);
-            out.push_back(kHexDigits[c & 0x0F]);
-        }
-    }
-    return out;
 }
 
 http::ClientResponse postForm(const int port, const std::string& path, const std::string& body,
@@ -371,7 +322,7 @@ void testWebFlow()
     const std::string challenge = between(page.body, "<pre class=\"copy\">", "</pre>");
     const std::string blob = signLoginBlob(identity, now(), challenge);
     const http::ClientResponse signedIn = postForm(port, "/login",
-        "challenge=" + urlEncoded(challenge) + "&blob=" + urlEncoded(blob));
+        "challenge=" + bazarish::percentEncode(challenge) + "&blob=" + bazarish::percentEncode(blob));
     CHECK(signedIn.status == 303);
     const std::string cookie = between(signedIn.headers.at("set-cookie") + ";", "session=", ";");
     CHECK(!cookie.empty());
@@ -423,8 +374,8 @@ void testWebFlow()
         const http::ClientResponse page = call(port, "GET", "/");
         const std::string challenge = between(page.body, "<pre class=\"copy\">", "</pre>");
         const http::ClientResponse signedIn = postForm(port, "/login",
-            "challenge=" + urlEncoded(challenge) + "&blob="
-                + urlEncoded(signLoginBlob(refused, now(), challenge)));
+            "challenge=" + bazarish::percentEncode(challenge) + "&blob="
+                + bazarish::percentEncode(signLoginBlob(refused, now(), challenge)));
         CHECK(signedIn.status == 303);
         const std::string banned
             = between(signedIn.headers.at("set-cookie") + ";", "session=", ";");

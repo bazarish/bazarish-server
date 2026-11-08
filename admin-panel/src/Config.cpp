@@ -64,6 +64,40 @@ nlohmann::json fleetsJson(const std::vector<Fleet>& fleets)
     return list;
 }
 
+std::vector<Fleet> fleetsFromJson(const nlohmann::json& list)
+{
+    std::vector<Fleet> fleets;
+    for (const nlohmann::json& entry : list) {
+        Fleet fleet;
+        fleet.name = entry.at("name").get<std::string>();
+        for (const nlohmann::json& item : entry.at("services")) {
+            ServiceEntry service;
+            service.name = item.at("name").get<std::string>();
+            service.kind = item.at("kind").get<std::string>();
+            service.url = item.at("url").get<std::string>();
+            service.pin = item.value("pin", std::string());
+            if (!isKnownServiceKind(service.kind)) {
+                throw std::invalid_argument(
+                    "the panel does not know a service of kind \"" + service.kind + "\"");
+            }
+            if (service.url.empty() || service.name.empty()) {
+                throw std::invalid_argument("a service needs a name and a URL");
+            }
+            if (!service.url.starts_with("https://")) {
+                throw std::invalid_argument("a service is reached over https: " + service.url);
+            }
+            if (service.pin.empty()) {
+                throw std::invalid_argument(
+                    "a service is named by the key it presents: " + service.name);
+            }
+            fleet.services.push_back(std::move(service));
+        }
+        requireCoherentFleet(fleet);
+        fleets.push_back(std::move(fleet));
+    }
+    return fleets;
+}
+
 Config Config::fromJson(const std::string& text)
 {
     const nlohmann::json json = bazarish::parseJsonWithComments(text);
@@ -88,28 +122,6 @@ Config Config::fromJson(const std::string& text)
             config.listenPort = listen.at("port").get<int>();
         }
     }
-    const auto readServices = [](const nlohmann::json& list) {
-        std::vector<ServiceEntry> services;
-        for (const nlohmann::json& item : list) {
-            ServiceEntry entry;
-            entry.name = item.at("name").get<std::string>();
-            entry.kind = item.at("kind").get<std::string>();
-            entry.url = item.at("url").get<std::string>();
-            entry.pin = item.value("pin", std::string());
-            if (!isKnownServiceKind(entry.kind)) {
-                throw std::runtime_error("unknown service kind \"" + entry.kind + "\"");
-            }
-            if (entry.url.rfind("https://", 0) != 0) {
-                throw std::runtime_error("service \"" + entry.name + "\" is not an https URL");
-            }
-            if (entry.pin.empty()) {
-                throw std::runtime_error("service \"" + entry.name + "\" has no pin");
-            }
-            services.push_back(std::move(entry));
-        }
-        return services;
-    };
-
     if (json.contains("consumer")) {
         const nlohmann::json& consumer = json.at("consumer");
         config.consumer.name = consumer.value("name", std::string());
@@ -118,13 +130,7 @@ Config Config::fromJson(const std::string& text)
     }
 
     if (json.contains("fleets")) {
-        for (const nlohmann::json& item : json.at("fleets")) {
-            Fleet fleet;
-            fleet.name = item.at("name").get<std::string>();
-            fleet.services = readServices(item.at("services"));
-            requireCoherentFleet(fleet);
-            config.fleets.push_back(std::move(fleet));
-        }
+        config.fleets = fleetsFromJson(json.at("fleets"));
     }
 
     if (config.consumer.name.empty()) {

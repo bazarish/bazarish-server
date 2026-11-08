@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #include "FleetSync.hpp"
 
+#include <FleetRoutes.hpp>
+
 #include "ServiceClient.hpp"
 
 #include <bazarish/JsonRead.hpp>
@@ -17,10 +19,8 @@ namespace bazarish::admin {
 
 namespace {
 
-constexpr const char* kFacadeSettingsPath = "/settings";
-constexpr const char* kGatewaySettingsPath = "/settings";
-constexpr const char* kNodeSettingsPath = "/v1/account/settings";
-constexpr const char* kServerSettingsPath = "/v1/messaging/settings";
+constexpr const char* kFacadeSettingsPath = fleet::kOpsSettings;
+constexpr const char* kGatewaySettingsPath = fleet::kOpsSettings;
 constexpr const char* kSchemeMark = "://";
 
 FacadeReport reportOf(const ServiceEntry& facade, const Identity& identity,
@@ -131,7 +131,7 @@ std::string publishFacades(const Fleet& fleet, const Identity& identity,
     if (ordered.empty()) {
         return "this deployment has no facade, so the descriptor keeps the addresses it has";
     }
-    const JsonResult written = callJson(*node, identity, credential, "PUT", kNodeSettingsPath,
+    const JsonResult written = callJson(*node, identity, credential, "PUT", fleet::kAccountSettings,
         nlohmann::json{{"facades", ordered}}.dump());
     if (!written.ok) {
         return "the service node did not take the addresses: " + failureText(written);
@@ -154,7 +154,7 @@ GatewayLinking linkGateways(
         if (service.kind != kServerCoreKind) {
             continue;
         }
-        const JsonResult shown = callJson(service, identity, credential, "GET", kServerSettingsPath);
+        const JsonResult shown = callJson(service, identity, credential, "GET", fleet::kMessagingSettings);
         if (!shown.ok) {
             linking.error = "server-core did not show its settings: " + failureText(shown);
             return linking;
@@ -162,7 +162,7 @@ GatewayLinking linkGateways(
         const nlohmann::json settings = bazarish::parseJson(shown.body);
         if (settings.value("gateways", nlohmann::json::array()) != pins) {
             const JsonResult written = callJson(service, identity, credential, "PUT",
-                kServerSettingsPath, nlohmann::json{{"gateways", pins}}.dump());
+                fleet::kMessagingSettings, nlohmann::json{{"gateways", pins}}.dump());
             if (!written.ok) {
                 linking.error = "server-core did not take the gateways: " + failureText(written);
                 return linking;

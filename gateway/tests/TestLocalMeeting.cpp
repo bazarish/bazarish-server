@@ -39,18 +39,6 @@ i2p::RouterConfig borrowedFrom(const int port, const std::string& fingerprint)
     return config;
 }
 
-bool waitFor(const std::function<bool()>& done)
-{
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(kWaitSeconds);
-    while (std::chrono::steady_clock::now() < deadline) {
-        if (done()) {
-            return true;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-    return done();
-}
-
 bool routedLocally(const i2p::Router& router, const std::string& host)
 {
     for (const i2p::LocalDestination& destination : router.localDestinations()) {
@@ -80,8 +68,7 @@ std::string readAll(i2p::Stream& stream, const std::size_t expected)
 int main()
 {
     const std::filesystem::path root
-        = std::filesystem::temp_directory_path() / "bazarish-gateway-meeting-test";
-    std::filesystem::remove_all(root);
+        = testutil::freshDir("gateway-meeting-test");
     std::filesystem::create_directories(root);
 
     Settings settings;
@@ -134,13 +121,13 @@ int main()
     dialling.bulk = true;
     const std::shared_ptr<i2p::Endpoint> his = bob.createEndpoint(dialling);
 
-    CHECK(waitFor([&]() { return gateway.sockets() == 3; }));
+    CHECK(testutil::waitFor([&]() { return gateway.sockets() == 3; }));
 
     CHECK(!routedLocally(bob, his->routingHost()));
     const std::unique_ptr<i2p::Stream> out
         = his->connect(host, std::chrono::seconds(kWaitSeconds));
     CHECK(out != nullptr);
-    CHECK(waitFor([&]() {
+    CHECK(testutil::waitFor([&]() {
         return routedLocally(bob, his->routingHost()) && routedLocally(alice, host);
     }));
 
@@ -200,7 +187,7 @@ int main()
         ended.store(true);
     });
     hers->stop();
-    CHECK(waitFor([&]() { return ended.load(); }));
+    CHECK(testutil::waitFor([&]() { return ended.load(); }));
     reader.join();
 
     CHECK(gateway.refusals() == 0);
@@ -223,7 +210,7 @@ int main()
     const std::unique_ptr<i2p::Stream> card
         = link->connect(kServerDest, std::chrono::seconds(kWaitSeconds));
     CHECK(card != nullptr);
-    CHECK(waitFor([&]() { return routedLocally(bob, link->routingHost()); }));
+    CHECK(testutil::waitFor([&]() { return routedLocally(bob, link->routingHost()); }));
     card->close();
     link->stop();
 

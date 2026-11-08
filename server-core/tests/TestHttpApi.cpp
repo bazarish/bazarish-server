@@ -1,16 +1,19 @@
 // Bazarish project (c) 2026
 #include "HttpApi.hpp"
 #include "EventGate.hpp"
+#include "HttpTestUtil.hpp"
+#include "TestUtil.hpp"
 
 #include "DeliveryEngine.hpp"
 #include "DiskStorage.hpp"
 
 #include <bazarish/Auth.hpp>
 #include <bazarish/Certificates.hpp>
-#include <bazarish/Log.hpp>
+#include <bazarish/DeliveryEnvelope.hpp>
 #include <bazarish/Hybrid.hpp>
 #include <bazarish/I2p.hpp>
 #include <bazarish/Limits.hpp>
+#include <bazarish/Log.hpp>
 #include <bazarish/Pass.hpp>
 
 #include <bazarish/HttpClient.hpp>
@@ -32,55 +35,31 @@
 #include <thread>
 #include <vector>
 
-#define CHECK(condition)                                                            \
-    do {                                                                            \
-        if (!(condition)) {                                                         \
-            std::fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, \
-                #condition);                                                        \
-            std::exit(1);                                                           \
-        }                                                                           \
-    } while (false)
-
 using namespace bazarish;
 using namespace bazarish::server;
 
 namespace {
 
+using testutil::Headers;
+using testutil::call;
+
 namespace http = bazarish::http;
-
-using Headers = std::map<std::string, std::string>;
-
-http::ClientResponse call(const int port, const std::string& method, const std::string& path,
-    const Headers& headers = {}, const std::string& body = {})
-{
-    http::ClientRequest request;
-    request.method = method;
-    request.target = path;
-    request.headers = headers;
-    request.body = body;
-    if (!body.empty()) {
-        request.contentType = "application/json";
-    }
-    return http::request("127.0.0.1", port, request, {});
-}
 
 Headers makeHeaders(const Identity& identity, const std::string& method,
     const std::string& path, const std::string& body, const std::string& clientId)
 {
-    const auth::Headers signed_ = auth::signRequest(identity,
-        static_cast<std::int64_t>(std::time(nullptr)), method, path,
-        Bytes(body.begin(), body.end()), clientId);
-    Headers headers(signed_.begin(), signed_.end());
+    Headers headers = testutil::signedHeaders(identity, method, path, body, clientId);
     if (!clientId.empty()) {
         headers.emplace("X-Bazarish-Client", clientId);
     }
     return headers;
 }
 
-Bytes sealEnvelope(const Key& serverSealingPublic, const nlohmann::json& inner)
+Bytes sealEnvelope(const Key& serverSealingPublic, const std::string& mailbox,
+    const std::string& deliveryId, const Bytes& pass)
 {
-    const std::string innerText = inner.dump();
-    return hybrid::seal(Bytes(innerText.begin(), innerText.end()), serverSealingPublic);
+    return sealDeliveryEnvelope(
+        DeliveryEnvelope{"content", mailbox, deliveryId, pass}, serverSealingPublic);
 }
 
 }  // namespace
@@ -91,8 +70,7 @@ constexpr std::size_t kHeavyPayloadBytes = 64 * 1024;
 int main()
 {
     const std::filesystem::path root
-        = std::filesystem::temp_directory_path() / "bazarish-httpapi-test";
-    std::filesystem::remove_all(root);
+        = testutil::freshDir("httpapi-test");
     DiskStorage storage(root);
 
     const Identity serverIdentity = Identity::generate();
@@ -288,9 +266,7 @@ int main()
     }
 
     const Bytes payload = {'e', '2', 'e', '-', 'b', 'l', 'o', 'b'};
-    const Bytes envelope = sealEnvelope(sealingPublic,
-        {{"class", "content"}, {"mailbox", alice.fingerprint()},
-            {"pass", toBase64(passForBob)}, {"deliveryId", "msg-1"}});
+    const Bytes envelope = sealEnvelope(sealingPublic, alice.fingerprint(), "msg-1", passForBob);
     const Key engineSealing = Key::fromPrivatePem(serverSealing.privatePem());
     CHECK(engine.deliver(envelope, payload, kNow, engineSealing, alice.fingerprint(), {}).delivered);
     CHECK(storage.passCount(alice.fingerprint()) == 2);
@@ -301,9 +277,7 @@ int main()
         storage.setUserQuota(alice.fingerprint(), heavy.size() * 2);
         const std::size_t before = storage.passCount(alice.fingerprint());
 
-        const Bytes admitted = sealEnvelope(sealingPublic,
-            {{"class", "content"}, {"mailbox", alice.fingerprint()},
-                {"pass", toBase64(passForBob)}, {"deliveryId", "msg-heavy"}});
+        const Bytes admitted = sealEnvelope(sealingPublic, alice.fingerprint(), "msg-heavy", passForBob);
         CHECK(engine.deliver(admitted, heavy, kNow, engineSealing, alice.fingerprint(), {}).delivered);
         CHECK(storage.passCount(alice.fingerprint()) == before);
         storage.ackBlob(alice.fingerprint(), "msg-heavy", "alicedev");
@@ -523,9 +497,7 @@ int main()
         const std::string path = "/v1/messaging/account?user=" + alice.fingerprint();
         const Bytes payload = {'l', 'a', 's', 't'};
         CHECK(engine
-                  .deliver(sealEnvelope(sealingPublic,
-                               {{"class", "content"}, {"mailbox", alice.fingerprint()},
-                                   {"pass", toBase64(passForBob)}, {"deliveryId", "msg-last"}}),
+                  .deliver(sealEnvelope(sealingPublic, alice.fingerprint(), "msg-last", passForBob),
                       payload, kNow, engineSealing, alice.fingerprint(), {})
                   .delivered);
         CHECK(storage.usage(alice.fingerprint()) > 0);

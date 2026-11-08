@@ -1,5 +1,6 @@
 // Bazarish project (c) 2026
 #include "EventGate.hpp"
+#include "TestUtil.hpp"
 
 #include <utility>
 
@@ -10,14 +11,6 @@
 #include <cstdio>
 #include <memory>
 #include <thread>
-
-#define CHECK(condition)                                                                           \
-    do {                                                                                           \
-        if (!(condition)) {                                                                        \
-            std::printf("CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, #condition);            \
-            return 1;                                                                              \
-        }                                                                                          \
-    } while (false)
 
 int main()
 {

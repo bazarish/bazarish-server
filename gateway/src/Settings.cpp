@@ -1,6 +1,8 @@
 // Bazarish project (c) 2026
 #include "Settings.hpp"
 
+#include <OpsSettings.hpp>
+
 #include <bazarish/I2p.hpp>
 #include <bazarish/Links.hpp>
 #include <bazarish/PrivateFile.hpp>
@@ -46,7 +48,7 @@ std::string publicAddressFrom(const std::string& text)
     }
     std::string rest;
     for (const char* const scheme : {kSecureScheme, kPlainScheme}) {
-        if (text.rfind(scheme, 0) == 0) {
+        if (text.starts_with(scheme)) {
             rest = text.substr(std::string(scheme).size());
         }
     }
@@ -153,13 +155,7 @@ Settings Settings::from(const ConfigView& config)
         settings.server = serverLinkFrom(document.at("server"));
     }
 
-    if (const std::string named = config.text("i2p.privacy"); !named.empty()) {
-        const std::optional<i2p::Privacy> privacy = i2p::privacyFromString(named);
-        if (!privacy.has_value()) {
-            throw std::runtime_error("\"i2p.privacy\" is minimal, middle or max");
-        }
-        settings.tunnelPrivacy = *privacy;
-    }
+    settings.tunnelPrivacy = server::configPrivacy(config, settings.tunnelPrivacy);
 
     settings.streamPool = poolDepth(config, "pools.stream", kDefaultStreamPool);
     settings.callPool = poolDepth(config, "pools.call", kDefaultCallPool);

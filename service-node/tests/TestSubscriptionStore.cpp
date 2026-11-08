@@ -1,5 +1,6 @@
 // Bazarish project (c) 2026
 #include "SubscriptionStore.hpp"
+#include "TestUtil.hpp"
 
 #include <bazarish/Bytes.hpp>
 
@@ -7,15 +8,6 @@
 #include <cstdlib>
 #include <filesystem>
 #include <stdexcept>
-
-#define CHECK(condition)                                                            \
-    do {                                                                            \
-        if (!(condition)) {                                                         \
-            std::fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, \
-                #condition);                                                        \
-            std::exit(1);                                                           \
-        }                                                                           \
-    } while (false)
 
 using namespace bazarish;
 using namespace bazarish::service;
@@ -32,8 +24,7 @@ std::string makeUser(const unsigned char fill)
 int main()
 {
     const std::filesystem::path root
-        = std::filesystem::temp_directory_path() / "bazarish-subscription-test";
-    std::filesystem::remove_all(root);
+        = testutil::freshDir("subscription-test");
     SubscriptionStore store(root);
 
     const std::string alice = makeUser(0x01);

@@ -3,7 +3,6 @@
 
 #include <bazarish/ConfigFile.hpp>
 
-#include <stdexcept>
 #include <utility>
 
 namespace bazarish::server {
@@ -24,44 +23,30 @@ const char* const kUrlKey = "url";
 const char* const kGatewayListenKey = "gatewayListen";
 const char* const kGatewaysKey = "gateways";
 
+void persistServerSettings(
+    ConfigFile& file, const ServerSettingsValues& values, const ServerSettingsValues& before)
+{
+    setIfChanged(file, {kLogLevelKey}, values.logLevel, before.logLevel);
+    setIfChanged(file, {kI2pKey, kI2pLogKey}, values.i2pLog, before.i2pLog);
+    setIfChanged(file, {kI2pKey, kI2pPrivacyKey}, values.i2pPrivacy, before.i2pPrivacy);
+    setIfChanged(file, {kListenKey, kHostKey}, values.listenHost, before.listenHost);
+    setIfChanged(file, {kListenKey, kPortKey}, values.listenPort, before.listenPort);
+    setIfChanged(
+        file, {kServiceNodeKey, kUrlKey}, values.serviceNodeUrl, before.serviceNodeUrl);
+    if (!values.gatewayListenHost.empty()) {
+        setIfChanged(file, {kGatewayListenKey, kHostKey}, values.gatewayListenHost,
+            before.gatewayListenHost);
+        setIfChanged(file, {kGatewayListenKey, kPortKey}, values.gatewayListenPort,
+            before.gatewayListenPort);
+    }
+    setIfChanged(file, {kGatewaysKey}, values.gateways, before.gateways);
+}
+
 }  // namespace
 
 ServerSettings::ServerSettings(fs::path configPath, Values initial)
-    : configPath_(std::move(configPath))
-    , values_(std::move(initial))
+    : SettingsFile(std::move(configPath), std::move(initial), persistServerSettings)
 {
-}
-
-ServerSettings::Values ServerSettings::get() const
-{
-    const std::lock_guard<std::mutex> lock(mutex_);
-    return values_;
-}
-
-void ServerSettings::set(const Values& values)
-{
-    const std::lock_guard<std::mutex> lock(mutex_);
-    persist(values);
-    values_ = values;
-}
-
-void ServerSettings::persist(const Values& values) const
-{
-    ConfigFile file(configPath_);
-    setIfChanged(file, {kLogLevelKey}, values.logLevel, values_.logLevel);
-    setIfChanged(file, {kI2pKey, kI2pLogKey}, values.i2pLog, values_.i2pLog);
-    setIfChanged(file, {kI2pKey, kI2pPrivacyKey}, values.i2pPrivacy, values_.i2pPrivacy);
-    setIfChanged(file, {kListenKey, kHostKey}, values.listenHost, values_.listenHost);
-    setIfChanged(file, {kListenKey, kPortKey}, values.listenPort, values_.listenPort);
-    setIfChanged(
-        file, {kServiceNodeKey, kUrlKey}, values.serviceNodeUrl, values_.serviceNodeUrl);
-    if (!values.gatewayListenHost.empty()) {
-        setIfChanged(file, {kGatewayListenKey, kHostKey}, values.gatewayListenHost,
-            values_.gatewayListenHost);
-        setIfChanged(file, {kGatewayListenKey, kPortKey}, values.gatewayListenPort,
-            values_.gatewayListenPort);
-    }
-    setIfChanged(file, {kGatewaysKey}, values.gateways, values_.gateways);
 }
 
 }  // namespace bazarish::server

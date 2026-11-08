@@ -1,5 +1,7 @@
 // Bazarish project (c) 2026
 #include "AccountApi.hpp"
+#include "HttpTestUtil.hpp"
+#include "TestUtil.hpp"
 
 #include "SubscriptionStore.hpp"
 
@@ -26,19 +28,14 @@
 #include <map>
 #include <thread>
 
-#define CHECK(condition)                                                            \
-    do {                                                                            \
-        if (!(condition)) {                                                         \
-            std::fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, \
-                #condition);                                                        \
-            std::exit(1);                                                           \
-        }                                                                           \
-    } while (false)
-
 using namespace bazarish;
 using namespace bazarish::service;
 
 namespace {
+
+using testutil::Headers;
+using testutil::call;
+using testutil::signedHeaders;
 
 constexpr const char* kServedDest = "servedaddressb33";
 constexpr const char* kSealingPem = "sealing-pem";
@@ -49,31 +46,6 @@ constexpr std::size_t kSessionSecretBytes = 32;
 constexpr std::size_t kSessionIdChars = 32;
 
 namespace http = bazarish::http;
-
-using Headers = std::map<std::string, std::string>;
-
-http::ClientResponse call(const int port, const std::string& method, const std::string& path,
-    const Headers& headers = {}, const std::string& body = {})
-{
-    http::ClientRequest request;
-    request.method = method;
-    request.target = path;
-    request.headers = headers;
-    request.body = body;
-    if (!body.empty()) {
-        request.contentType = "application/json";
-    }
-    return http::request("127.0.0.1", port, request, {});
-}
-
-Headers makeHeaders(const Identity& identity, const std::string& method,
-    const std::string& path, const std::string& body)
-{
-    const auth::Headers signed_ = auth::signRequest(identity,
-        static_cast<std::int64_t>(std::time(nullptr)), method, path,
-        Bytes(body.begin(), body.end()));
-    return Headers(signed_.begin(), signed_.end());
-}
 
 Bytes botCard(const Identity& owner, const std::int64_t issuedAt, const std::string& dest = {},
     const Bytes& sealingDer = {}, const Bytes& servingDer = {})
@@ -92,8 +64,7 @@ Bytes botCard(const Identity& owner, const std::int64_t issuedAt, const std::str
 int main()
 {
     const std::filesystem::path root
-        = std::filesystem::temp_directory_path() / "bazarish-account-test";
-    std::filesystem::remove_all(root);
+        = testutil::freshDir("account-test");
     SubscriptionStore store(root);
     GrantStore grants(root);
 
@@ -170,7 +141,7 @@ int main()
         const Bytes card = botCard(alice, now);
         const std::string body = nlohmann::json{{"card", toBase64(card)}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
-            makeHeaders(alice, "POST", "/v1/account/card", body), body);
+            signedHeaders(alice, "POST", "/v1/account/card", body), body);
         CHECK(result.status == 200);
         const nlohmann::json reply = nlohmann::json::parse(result.body);
         CHECK(reply.at("quotaBytes") == kQuota);
@@ -186,7 +157,7 @@ int main()
         const Bytes forged = hybrid::signJson(forgedBody, mallory);
         const std::string body = nlohmann::json{{"card", toBase64(forged)}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
-            makeHeaders(mallory, "POST", "/v1/account/card", body), body);
+            signedHeaders(mallory, "POST", "/v1/account/card", body), body);
         CHECK(result.status == 400);
     }
 
@@ -194,7 +165,7 @@ int main()
         const Bytes card = botCard(mallory, now);
         const std::string body = nlohmann::json{{"card", toBase64(card)}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
-            makeHeaders(mallory, "POST", "/v1/account/card", body), body);
+            signedHeaders(mallory, "POST", "/v1/account/card", body), body);
         CHECK(result.status == 404);
         CHECK(nlohmann::json::parse(result.body).at("error").at("code") == "ACCOUNT_UNKNOWN");
     }
@@ -209,13 +180,13 @@ int main()
             = botCard(alice, now + 1, dest, sealing.publicDer(), servingKey);
         const std::string body = nlohmann::json{{"card", toBase64(card)}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
-            makeHeaders(alice, "POST", "/v1/account/card", body), body);
+            signedHeaders(alice, "POST", "/v1/account/card", body), body);
         CHECK(result.status == 200);
         CHECK(nlohmann::json::parse(result.body).at("quotaBytes") == kQuota);
 
         const http::ClientResponse looked
             = call(port, "GET", "/v1/account/card?user=" + alice.fingerprint(),
-                makeHeaders(serverIdentity, "GET", "/v1/account/card", ""));
+                signedHeaders(serverIdentity, "GET", "/v1/account/card", ""));
         CHECK(looked.status == 200);
         const ContactCard fetched = ContactCard::verify(
             fromBase64(nlohmann::json::parse(looked.body).at("card").get<std::string>()));
@@ -229,19 +200,19 @@ int main()
                 alice, now, oldDest, sealing.publicDer(), servingKey);
             const std::string staleBody = nlohmann::json{{"card", toBase64(stale)}}.dump();
             CHECK(call(port, "POST", "/v1/account/card",
-                      makeHeaders(alice, "POST", "/v1/account/card", staleBody), staleBody)
+                      signedHeaders(alice, "POST", "/v1/account/card", staleBody), staleBody)
                       .status
                 == 409);
             const Bytes sameAge = botCard(
                 alice, now + 1, oldDest, sealing.publicDer(), servingKey);
             const std::string sameBody = nlohmann::json{{"card", toBase64(sameAge)}}.dump();
             CHECK(call(port, "POST", "/v1/account/card",
-                      makeHeaders(alice, "POST", "/v1/account/card", sameBody), sameBody)
+                      signedHeaders(alice, "POST", "/v1/account/card", sameBody), sameBody)
                       .status
                 == 409);
             const http::ClientResponse again
                 = call(port, "GET", "/v1/account/card?user=" + alice.fingerprint(),
-                    makeHeaders(serverIdentity, "GET", "/v1/account/card", ""));
+                    signedHeaders(serverIdentity, "GET", "/v1/account/card", ""));
             CHECK(ContactCard::verify(fromBase64(
                       nlohmann::json::parse(again.body).at("card").get<std::string>()))
                       .dest
@@ -251,7 +222,7 @@ int main()
                 sealing.publicDer(), servingKey);
             const std::string futureBody = nlohmann::json{{"card", toBase64(future)}}.dump();
             CHECK(call(port, "POST", "/v1/account/card",
-                      makeHeaders(alice, "POST", "/v1/account/card", futureBody), futureBody)
+                      signedHeaders(alice, "POST", "/v1/account/card", futureBody), futureBody)
                       .status
                 == 400);
         }
@@ -259,7 +230,7 @@ int main()
 
         const http::ClientResponse unknown
             = call(port, "GET", "/v1/account/card?user=" + mallory.fingerprint(),
-                    makeHeaders(serverIdentity, "GET", "/v1/account/card", ""));
+                    signedHeaders(serverIdentity, "GET", "/v1/account/card", ""));
         CHECK(unknown.status == 404);
     }
 
@@ -274,12 +245,12 @@ int main()
             {"sealingKey", kSealingPem}, {"signingKey", kSigningPem}}
                                      .dump();
         const http::ClientResponse stranger = call(port, "POST", "/v1/account/i2p-dest",
-            makeHeaders(mallory, "POST", "/v1/account/i2p-dest", body), body);
+            signedHeaders(mallory, "POST", "/v1/account/i2p-dest", body), body);
         CHECK(stranger.status == 404);
         CHECK(nlohmann::json::parse(stranger.body).at("error").at("code") == "ACCOUNT_UNKNOWN");
         CHECK(pubCalls == 0);
         const http::ClientResponse withoutKeys = call(port, "POST", "/v1/account/i2p-dest",
-            makeHeaders(alice, "POST", "/v1/account/i2p-dest", keyless), keyless);
+            signedHeaders(alice, "POST", "/v1/account/i2p-dest", keyless), keyless);
         CHECK(withoutKeys.status == 400);
         CHECK(pubCalls == 0);
         {
@@ -292,7 +263,7 @@ int main()
                 {"expiresUnix", expires}, {"sealingKey", kSealingPem}, {"signingKey", kSigningPem}}
                                            .dump();
             CHECK(call(port, "POST", "/v1/account/i2p-dest",
-                      makeHeaders(alice, "POST", "/v1/account/i2p-dest", forged), forged)
+                      signedHeaders(alice, "POST", "/v1/account/i2p-dest", forged), forged)
                       .status
                 == 400);
             const std::string misdated
@@ -300,7 +271,7 @@ int main()
                     {"sealingKey", kSealingPem}, {"signingKey", kSigningPem}}
                       .dump();
             CHECK(call(port, "POST", "/v1/account/i2p-dest",
-                      makeHeaders(alice, "POST", "/v1/account/i2p-dest", misdated), misdated)
+                      signedHeaders(alice, "POST", "/v1/account/i2p-dest", misdated), misdated)
                       .status
                 == 400);
             CHECK(pubCalls == 0);
@@ -308,7 +279,7 @@ int main()
 
         CHECK(!grants.peekApproval(alice.fingerprint())->pending());
         const http::ClientResponse ok = call(port, "POST", "/v1/account/i2p-dest",
-            makeHeaders(alice, "POST", "/v1/account/i2p-dest", body), body);
+            signedHeaders(alice, "POST", "/v1/account/i2p-dest", body), body);
         CHECK(ok.status == 200);
         CHECK(pubCalls == 1);
         CHECK(pubUser == alice.fingerprint());
@@ -323,10 +294,10 @@ int main()
         {
             pubAccepts = false;
             const http::ClientResponse refused = call(port, "POST", "/v1/account/i2p-dest",
-                makeHeaders(alice, "POST", "/v1/account/i2p-dest", body), body);
+                signedHeaders(alice, "POST", "/v1/account/i2p-dest", body), body);
             CHECK(refused.status == 503);
             const http::ClientResponse status = call(port, "GET", "/v1/account/i2p-status",
-                makeHeaders(alice, "GET", "/v1/account/i2p-status", {}));
+                signedHeaders(alice, "GET", "/v1/account/i2p-status", {}));
             CHECK(status.status == 200);
             const nlohmann::json reply = nlohmann::json::parse(status.body);
             CHECK(reply.at("transientExpires") == expires);
@@ -335,7 +306,7 @@ int main()
 
         const std::string revokeBody = nlohmann::json::object().dump();
         const http::ClientResponse revoked = call(port, "POST", "/v1/account/i2p-dest",
-            makeHeaders(alice, "POST", "/v1/account/i2p-dest", revokeBody), revokeBody);
+            signedHeaders(alice, "POST", "/v1/account/i2p-dest", revokeBody), revokeBody);
         CHECK(revoked.status == 200);
         CHECK(pubCalls == 3);
         CHECK(pubTransient.empty());
@@ -345,7 +316,7 @@ int main()
 
     {
         const http::ClientResponse result = call(port, "DELETE", "/v1/account/registration",
-            makeHeaders(alice, "DELETE", "/v1/account/registration", ""));
+            signedHeaders(alice, "DELETE", "/v1/account/registration", ""));
         CHECK(result.status == 200);
         CHECK(pubCalls == 4);
         CHECK(pubTransient.empty());
@@ -353,13 +324,13 @@ int main()
         CHECK(forgottenMailbox == alice.fingerprint());
 
         const http::ClientResponse again = call(port, "DELETE", "/v1/account/registration",
-            makeHeaders(alice, "DELETE", "/v1/account/registration", ""));
+            signedHeaders(alice, "DELETE", "/v1/account/registration", ""));
         CHECK(again.status == 200);
 
         const std::string body
             = nlohmann::json{{"transient", "after-closing"}, {"expiresUnix", now + 3600}}.dump();
         const http::ClientResponse orphan = call(port, "POST", "/v1/account/i2p-dest",
-            makeHeaders(alice, "POST", "/v1/account/i2p-dest", body), body);
+            signedHeaders(alice, "POST", "/v1/account/i2p-dest", body), body);
         CHECK(orphan.status == 404);
         CHECK(pubCalls == 4);
     }
@@ -456,7 +427,7 @@ int main()
         const std::string banBody = nlohmann::json{{"user", ben.fingerprint()}}.dump();
         std::thread banning([&]() {
             CHECK(call(opsPort, "POST", "/v1/account/ban",
-                      makeHeaders(operatorIdentity, "POST", "/v1/account/ban", banBody), banBody)
+                      signedHeaders(operatorIdentity, "POST", "/v1/account/ban", banBody), banBody)
                       .status
                 == 200);
         });
@@ -464,7 +435,7 @@ int main()
         std::atomic<int> delegatedStatus{0};
         std::thread delegating([&]() {
             delegatedStatus = call(port, "POST", "/v1/account/i2p-dest",
-                makeHeaders(ben, "POST", "/v1/account/i2p-dest", delegated), delegated)
+                signedHeaders(ben, "POST", "/v1/account/i2p-dest", delegated), delegated)
                                   .status;
         });
         while (!publishing.load() && options.userLocks->holders(ben.fingerprint()) < 2) {

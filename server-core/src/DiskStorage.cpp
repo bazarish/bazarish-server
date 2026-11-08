@@ -483,9 +483,7 @@ std::uint64_t DiskStorage::userQuota(const std::string& user, const std::uint64_
     if (!fs::exists(path)) {
         return fallback;
     }
-    std::ifstream in(path, std::ios::binary);
-    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    return static_cast<std::uint64_t>(std::stoull(text));
+    return static_cast<std::uint64_t>(std::stoull(readFileText(path)));
 }
 
 std::uint64_t DiskStorage::usageLocked(const std::string& user) const

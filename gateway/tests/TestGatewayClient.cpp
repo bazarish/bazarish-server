@@ -60,8 +60,7 @@ http::SocketDial dialFor(const int port)
 int main()
 {
     const std::filesystem::path root
-        = std::filesystem::temp_directory_path() / "bazarish-gateway-client-test";
-    std::filesystem::remove_all(root);
+        = testutil::freshDir("gateway-client-test");
     std::filesystem::create_directories(root);
 
     Settings settings;

@@ -36,7 +36,7 @@ struct HttpApiOptions {
     std::function<void()> requestRestart;
     std::string stateDirectory;
     std::string fingerprint;
-    std::uint64_t defaultQuotaBytes = 50 * 1024 * 1024;
+    std::uint64_t defaultQuotaBytes = kDefaultQuotaBytes;
     std::vector<std::string> operatorFingerprints;
     std::string version;
     std::function<DestinationAssignment(const std::string& user,

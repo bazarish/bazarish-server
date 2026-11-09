@@ -267,7 +267,7 @@ std::string PortalApi::page(const http::Request& request, const std::string& tit
     const std::string lang = language(request);
     const std::string drawn = assets_.render("page.html",
         {
-            {"title", htmlEscape(title)},
+            {"title", htmlEscape(messages_.translate(title, lang))},
             {"strapline",
                 htmlEscape(messages_.text(
                     "page.strapline", lang, {options_.serverFingerprint}))},

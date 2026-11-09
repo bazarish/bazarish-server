@@ -80,6 +80,7 @@ body {
     display: flex;
     flex-wrap: wrap;
     gap: 0.35rem;
+    margin-bottom: 1rem;
     border-bottom: 1px solid var(--bz-line);
 }
 
@@ -590,15 +591,6 @@ body {
 .view {
     flex: 1 0 auto;
     padding-bottom: 1rem;
-}
-
-.tabs {
-    position: sticky;
-    top: 0;
-    z-index: 2;
-    margin-top: 1.25rem;
-    padding-top: 0.5rem;
-    background: var(--bz-bg);
 }
 
 .masthead {

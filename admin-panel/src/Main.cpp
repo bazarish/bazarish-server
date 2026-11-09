@@ -2,6 +2,7 @@
 #include "Config.hpp"
 #include "HttpApi.hpp"
 #include "PanelSettings.hpp"
+#include <CommandLine.hpp>
 
 #include <BuildVersion.hpp>
 #include <Restart.hpp>
@@ -12,12 +13,12 @@
 #include <bazarish/Tls.hpp>
 
 #include <cstdio>
-#include <cstring>
 #include <filesystem>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <variant>
 
 namespace {
 
@@ -45,30 +46,16 @@ int main(const int argc, const char** argv)
 {
     using namespace bazarish::admin;
 
-    if (argc == 2 && std::strcmp(argv[1], "--version") == 0) {
-        std::printf("bazarish-admin-panel %s\n", bazarish::kBuildVersion);
-        return 0;
+    const std::variant<std::filesystem::path, int> argument = bazarish::server::configArgument(
+        argc, argv, std::string("bazarish-admin-panel ") + bazarish::kBuildVersion, printUsage);
+    if (const int* const status = std::get_if<int>(&argument)) {
+        return *status;
     }
-
-    std::string configPath;
-    for (int i = 1; i < argc;) {
-        const std::string flag = argv[i];
-        if (flag == "--config" && i + 1 < argc) {
-            configPath = argv[i + 1];
-            i += 2;
-        } else {
-            printUsage();
-            return 2;
-        }
-    }
-    if (configPath.empty()) {
-        printUsage();
-        return 2;
-    }
+    const std::filesystem::path configPath = std::get<std::filesystem::path>(argument);
 
     Config config;
     try {
-        config = Config::fromFile(configPath);
+        config = Config::fromFile(configPath.string());
     } catch (const std::exception& error) {
         std::fprintf(stderr, "config: %s\n", error.what());
         return 2;

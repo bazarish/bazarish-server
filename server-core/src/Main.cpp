@@ -14,6 +14,7 @@
 #include "HttpApi.hpp"
 #include "NodeCards.hpp"
 #include "PerUserDestinations.hpp"
+#include <CommandLine.hpp>
 
 #include <BuildVersion.hpp>
 #include <bazarish/Certificates.hpp>
@@ -35,6 +36,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <variant>
 
 namespace {
 
@@ -72,18 +74,16 @@ using bazarish::writePrivateFile;
 
 int main(const int argc, const char** argv)
 {
-    if (argc == 2 && std::strcmp(argv[1], "--version") == 0) {
-        std::printf("bazarish-server %s\n", bazarish::kBuildVersion);
-        return 0;
+    const std::variant<fs::path, int> argument = bazarish::server::configArgument(
+        argc, argv, std::string("bazarish-server ") + bazarish::kBuildVersion, printUsage);
+    if (const int* const status = std::get_if<int>(&argument)) {
+        return *status;
     }
-    if (argc != 3 || std::strcmp(argv[1], "--config") != 0) {
-        printUsage();
-        return 2;
-    }
+    const fs::path configPath = std::get<fs::path>(argument);
 
     bazarish::ConfigView config(nlohmann::json::object());
     try {
-        config = bazarish::ConfigView(bazarish::ConfigFile(fs::path(argv[2])).read());
+        config = bazarish::ConfigView(bazarish::ConfigFile(configPath).read());
     } catch (const std::exception& error) {
         std::fprintf(stderr, "config: %s\n", error.what());
         return 2;
@@ -240,7 +240,7 @@ int main(const int argc, const char** argv)
     settingValues.gatewayListenPort = gatewayListen.has_value() ? gatewayListen->port : 0;
     settingValues.gateways = gatewayPins;
     httpOptions.settings = std::make_shared<bazarish::server::ServerSettings>(
-        fs::path(argv[2]), settingValues);
+        configPath, settingValues);
     httpOptions.stateDirectory = stateDir.string();
     httpOptions.fingerprint = identity->fingerprint();
     httpOptions.sealingKey = sealing;

@@ -7,6 +7,7 @@
 
 #include "FacadeAddress.hpp"
 #include "I2pFront.hpp"
+#include <CommandLine.hpp>
 
 #include <BuildVersion.hpp>
 #include <bazarish/ConfigFile.hpp>
@@ -15,11 +16,11 @@
 #include <bazarish/Tls.hpp>
 
 #include <cstdio>
-#include <cstring>
 #include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
+#include <variant>
 
 namespace {
 
@@ -53,18 +54,15 @@ void printUsage()
 
 int main(const int argc, const char** argv)
 {
-    if (argc == 2 && std::strcmp(argv[1], "--version") == 0) {
-        std::printf("bazarish-facade-http %s\n", bazarish::kBuildVersion);
-        return 0;
+    const std::variant<std::filesystem::path, int> argument = bazarish::server::configArgument(
+        argc, argv, std::string("bazarish-facade-http ") + bazarish::kBuildVersion, printUsage);
+    if (const int* const status = std::get_if<int>(&argument)) {
+        return *status;
     }
-
-    if (argc != 3 || std::strcmp(argv[1], "--config") != 0) {
-        printUsage();
-        return 2;
-    }
+    const std::filesystem::path configPath = std::get<std::filesystem::path>(argument);
     bazarish::ConfigView config(nlohmann::json::object());
     try {
-        config = bazarish::ConfigView(bazarish::ConfigFile(std::filesystem::path(argv[2])).read());
+        config = bazarish::ConfigView(bazarish::ConfigFile(configPath).read());
     } catch (const std::exception& error) {
         std::fprintf(stderr, "config: %s\n", error.what());
         return 2;
@@ -140,7 +138,7 @@ int main(const int argc, const char** argv)
     settingValues.i2pPrivacy = std::string(bazarish::i2p::privacyName(privacy));
     settingValues.i2pTunnelQuantity = tunnelQuantity;
     options.settings = std::make_shared<bazarish::facade::FacadeSettings>(
-        std::filesystem::path(argv[2]), settingValues);
+        configPath, settingValues);
     options.stateDirectory = stateDir.string();
     const bazarish::tls::Credential credential = bazarish::tls::selfSigned(stateDir);
     options.tlsCertificate = credential.certificate.string();

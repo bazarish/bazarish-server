@@ -1,5 +1,6 @@
 // Bazarish project (c) 2026
 #include "HttpApi.hpp"
+#include "bazarish/JsonRead.hpp"
 #include "EventGate.hpp"
 #include "HttpTestUtil.hpp"
 #include "TestUtil.hpp"
@@ -298,7 +299,7 @@ int main()
         const http::ClientResponse fetched = call(port, "POST", "/v1/messaging/fetch",
             makeHeaders(alice, "POST", "/v1/messaging/fetch", fetchBody, "alicedev"), fetchBody);
         CHECK(fetched.status == 200);
-        const nlohmann::json items = nlohmann::json::from_cbor(fetched.body).at("items");
+        const nlohmann::json items = bazarish::parseCbor(std::string_view(fetched.body)).at("items");
         CHECK(items.size() == 1);
         CHECK(items[0].at("id") == "msg-1");
         CHECK(Bytes(items[0].at("blob").get_binary().begin(), items[0].at("blob").get_binary().end())
@@ -348,7 +349,7 @@ int main()
         const http::ClientResponse again = call(port, "POST", "/v1/messaging/fetch",
             makeHeaders(alice, "POST", "/v1/messaging/fetch", body, "alicedev"), body);
         CHECK(again.status == 200);
-        CHECK(nlohmann::json::from_cbor(again.body).at("items").empty());
+        CHECK(bazarish::parseCbor(std::string_view(again.body)).at("items").empty());
         storage.ackBlob(alice.fingerprint(), "seen-here", "alicephone");
         storage.unregisterClient(alice.fingerprint(), "alicephone");
     }

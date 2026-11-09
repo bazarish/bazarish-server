@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #include "Gateway.hpp"
 #include "Settings.hpp"
+#include <CommandLine.hpp>
 
 #include <BuildVersion.hpp>
 #include <Restart.hpp>
@@ -11,8 +12,9 @@
 
 #include <chrono>
 #include <cstdio>
-#include <cstring>
 #include <filesystem>
+#include <variant>
+#include <string>
 
 namespace {
 
@@ -42,19 +44,17 @@ void printUsage()
 
 int main(const int argc, const char** argv)
 {
-    if (argc == 2 && std::strcmp(argv[1], "--version") == 0) {
-        std::printf("bazarish-gateway %s\n", bazarish::kBuildVersion);
-        return 0;
+    const std::variant<std::filesystem::path, int> argument = bazarish::server::configArgument(
+        argc, argv, std::string("bazarish-gateway ") + bazarish::kBuildVersion, printUsage);
+    if (const int* const status = std::get_if<int>(&argument)) {
+        return *status;
     }
-    if (argc != 3 || std::strcmp(argv[1], "--config") != 0) {
-        printUsage();
-        return 2;
-    }
+    const std::filesystem::path configPath = std::get<std::filesystem::path>(argument);
 
     bazarish::gateway::Settings settings;
     try {
         const bazarish::ConfigView config(
-            bazarish::ConfigFile(std::filesystem::path(argv[2])).read());
+            bazarish::ConfigFile(configPath).read());
         settings = bazarish::gateway::Settings::from(config);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "config: %s\n", error.what());
@@ -77,7 +77,7 @@ int main(const int argc, const char** argv)
     bazarish::RestartSwitch restart([&stopped]() { stopped.stop(); });
     bazarish::gateway::Gateway gateway(settings, router,
         bazarish::gateway::OpsControl{
-            std::filesystem::path(argv[2]), [&restart]() { restart.request(); }});
+            configPath, [&restart]() { restart.request(); }});
     const int port = gateway.start();
     std::printf("bazarish-gateway %s listening on %s:%d\n", bazarish::kBuildVersion, settings.listenHost.c_str(),
         port);

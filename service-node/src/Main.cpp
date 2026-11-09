@@ -13,6 +13,7 @@
 #include "OperatorPush.hpp"
 #include "PortalApi.hpp"
 #include "SubscriptionStore.hpp"
+#include <CommandLine.hpp>
 
 #include <BuildVersion.hpp>
 #include <bazarish/Bytes.hpp>
@@ -38,6 +39,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <variant>
 
 namespace {
 
@@ -169,15 +171,14 @@ bazarish::service::LoginConsumer portalConsumer(const NodeConfig& config)
 
 int main(const int argc, const char** argv)
 {
-    if (argc == 2 && std::strcmp(argv[1], "--version") == 0) {
-        std::printf("bazarish-service-node %s\n", bazarish::kBuildVersion);
-        return 0;
+    const bool fingerprintOnly = argc == 4 && std::strcmp(argv[3], "--fingerprint") == 0;
+    const std::variant<fs::path, int> argument = bazarish::server::configArgument(
+        fingerprintOnly ? 3 : argc, argv,
+        std::string("bazarish-service-node ") + bazarish::kBuildVersion, printUsage);
+    if (const int* const status = std::get_if<int>(&argument)) {
+        return *status;
     }
-    if (argc < 3 || std::strcmp(argv[1], "--config") != 0) {
-        printUsage();
-        return 2;
-    }
-    const fs::path configPath(argv[2]);
+    const fs::path configPath = std::get<fs::path>(argument);
     NodeConfig nodeConfig;
     try {
         nodeConfig = loadNodeConfig(configPath);
@@ -191,16 +192,11 @@ int main(const int argc, const char** argv)
     }
     const fs::path stateDir(nodeConfig.stateDir);
 
-    if (argc == 4 && std::strcmp(argv[3], "--fingerprint") == 0) {
+    if (fingerprintOnly) {
         fs::create_directories(stateDir);
         std::printf("%s\n", bazarish::server::loadOrCreateIdentity(stateDir).fingerprint().c_str());
         return 0;
     }
-    if (argc != 3) {
-        printUsage();
-        return 2;
-    }
-
     if (nodeConfig.messaging.port <= 0) {
         std::fprintf(stderr, "config: \"messaging\" is required - a node whose messaging server"
                              " it cannot reach\ncan register an account and then serve nobody\n");

@@ -161,6 +161,7 @@ private:
         const http::SocketPtr& answerTo);
     void pump(const std::shared_ptr<Session>& session,
         const std::shared_ptr<StreamEntry>& entry);
+    void wakeFlows();
 
     Settings settings_;
     OpsControl control_;
@@ -176,6 +177,8 @@ private:
     std::unique_ptr<DestinationPool> watchPool_;
     SessionStore sessions_;
     mutable std::mutex mutex_;
+    // A window, a control socket or a stop that a reader or an acceptor waits for, under mutex_.
+    std::condition_variable flowChanged_;
     mutable auth::ReplayCache operatorReplays_;
     std::map<http::SocketPtr, Connection> connections_;
     // A raw socket that has not yet joined a session or made one, and how often it missed.

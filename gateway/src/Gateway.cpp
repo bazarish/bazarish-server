@@ -653,6 +653,7 @@ void Gateway::retire(const std::shared_ptr<Session>& session)
             endpoint->running.store(false);
             endpoints.push_back(endpoint);
         }
+        flowChanged_.notify_all();
         for (const auto& [id, stream] : session->streams) {
             (void)id;
             streams.push_back(stream);
@@ -664,6 +665,7 @@ void Gateway::retire(const std::shared_ptr<Session>& session)
     for (const std::shared_ptr<StreamEntry>& stream : streams) {
         orphan(stream);
         stream->running.store(false);
+        wakeFlows();
         if (stream->stream) {
             stream->stream->close();
         }
@@ -860,6 +862,7 @@ void Gateway::onHello(const http::SocketPtr& socket, const Frame& frame)
         connection = found->second;
         replaced = connection.session->control;
         connection.session->control = socket;
+        flowChanged_.notify_all();
         connection.session->replayDue = connection.session->streams.empty()
             ? std::chrono::steady_clock::time_point{}
             : std::chrono::steady_clock::now() + kReplayGrace;
@@ -905,7 +908,6 @@ namespace {
 
 constexpr std::chrono::seconds kAcceptWait{1};
 constexpr std::chrono::milliseconds kDatagramWait{200};
-constexpr std::chrono::milliseconds kWindowWait{10};
 
 std::shared_ptr<EndpointEntry> endpointOf(const Session& session, const std::uint32_t id)
 {
@@ -1212,6 +1214,7 @@ std::shared_ptr<EndpointEntry> Gateway::stopEndpoint(
             return nullptr;
         }
         entry->running.store(false);
+        flowChanged_.notify_all();
         session->endpoints.erase(id);
         unpublishLocked(*entry);
         for (auto at = session->streams.begin(); at != session->streams.end();) {
@@ -1229,6 +1232,7 @@ std::shared_ptr<EndpointEntry> Gateway::stopEndpoint(
     for (const std::shared_ptr<StreamEntry>& stranded : orphans) {
         orphan(stranded);
         stranded->running.store(false);
+        wakeFlows();
         if (stranded->stream) {
             stranded->stream->close();
         }
@@ -1608,6 +1612,7 @@ void Gateway::pump(
     const std::shared_ptr<Session>& session, const std::shared_ptr<StreamEntry>& entry)
 {
     const std::lock_guard<std::mutex> lock(mutex_);
+    flowChanged_.notify_all();
     const http::SocketPtr out = outletFor(*session, *entry);
     if (!out) {
         return;
@@ -1678,15 +1683,11 @@ void Gateway::acceptLoop(
             continue;
         }
         http::SocketPtr control;
-        while (entry->running.load()) {
-            {
-                const std::lock_guard<std::mutex> lock(mutex_);
-                control = session->control;
-            }
-            if (control) {
-                break;
-            }
-            std::this_thread::sleep_for(kWindowWait);
+        {
+            std::unique_lock<std::mutex> lock(mutex_);
+            flowChanged_.wait(lock,
+                [&]() { return !entry->running.load() || session->control != nullptr; });
+            control = session->control;
         }
         if (!control) {
             {
@@ -1724,7 +1725,10 @@ void Gateway::readLoop(
         }
         if (room == 0) {
             pump(session, entry);
-            std::this_thread::sleep_for(kWindowWait);
+            std::unique_lock<std::mutex> lock(mutex_);
+            flowChanged_.wait(lock, [&]() {
+                return !entry->running.load() || entry->book.room() > entry->waiting.size();
+            });
             continue;
         }
         std::size_t got = 0;
@@ -1815,6 +1819,8 @@ void Gateway::onStreamCredit(const std::shared_ptr<Session>& session,
     entry->book.peerCredited(decodeCredit(frame));
     if (paired) {
         pump(session, entry);
+    } else {
+        wakeFlows();
     }
 }
 
@@ -1878,9 +1884,19 @@ void Gateway::orphan(const std::shared_ptr<StreamEntry>& entry)
     pump(theirs, peer);
 }
 
+// For a change made outside mutex_: taking it orders the change before any waiter's check.
+void Gateway::wakeFlows()
+{
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+    }
+    flowChanged_.notify_all();
+}
+
 void Gateway::teardown(const std::shared_ptr<StreamEntry>& entry)
 {
     entry->running.store(false);
+    wakeFlows();
     if (entry->stream) {
         entry->stream->close();
     }

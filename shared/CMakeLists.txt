@@ -1,5 +1,6 @@
 # Bazarish project (c) 2026
 add_library(bazarish_server_shared STATIC
+    CommandLine.cpp
     Health.cpp
     LoginRelay.cpp
     OpsClient.cpp
@@ -36,6 +37,7 @@ function(bazarish_server_test name library)
     add_test(NAME ${name} COMMAND ${name})
 endfunction()
 
+bazarish_server_test(TestCommandLine bazarish_server_shared TestCommandLine.cpp)
 bazarish_server_test(TestRestart bazarish_server_shared TestRestart.cpp)
 bazarish_server_test(TestHealth bazarish_server_shared TestHealth.cpp)
 bazarish_server_test(TestRateLimiter bazarish_server_shared TestRateLimiter.cpp)

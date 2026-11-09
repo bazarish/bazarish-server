@@ -247,6 +247,20 @@
       "zh": "未知",
       "ar": "غير معروف"
     },
+    "signin.tabScan": {
+      "en": "QR sign-in",
+      "ru": "Вход по QR",
+      "es": "Entrar con QR",
+      "zh": "扫码登录",
+      "ar": "الدخول برمز QR"
+    },
+    "signin.tabCopy": {
+      "en": "Copy",
+      "ru": "Скопировать",
+      "es": "Copiar",
+      "zh": "复制",
+      "ar": "نسخ"
+    },
     "signin.scan": {
       "en": "Scan the code in the Bazarish app",
       "ru": "Отсканируйте код в приложении Bazarish",

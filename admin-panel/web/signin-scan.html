@@ -1,5 +1,13 @@
-    <div class="signin-code" data-sign-wait="/login/wait?nonce={{nonce}}">
-      <div class="qr-code">{{qr}}</div>
-      <p class="panel-note" data-t="Scan the code in the Bazarish app">Scan the code in the Bazarish app</p>
-      <p class="notice is-error" data-sign-expired hidden data-t="The challenge has expired, reload the page">The challenge has expired, reload the page</p>
+    <div data-signin-tabs hidden>
+      <div class="tabs">
+        <button class="tab is-on" type="button" data-signin-show="scan" data-t="QR sign-in">QR sign-in</button>
+        <button class="tab" type="button" data-signin-show="copy" data-t="Copy">Copy</button>
+      </div>
+    </div>
+    <div data-signin-pane="scan" hidden>
+      <div class="signin-code" data-sign-wait="/login/wait?nonce={{nonce}}">
+        <div class="qr-code">{{qr}}</div>
+        <p class="panel-note" data-t="Scan the code in the Bazarish app">Scan the code in the Bazarish app</p>
+        <p class="notice is-error" data-sign-expired hidden data-t="The challenge has expired, reload the page">The challenge has expired, reload the page</p>
+      </div>
     </div>

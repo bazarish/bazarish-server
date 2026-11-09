@@ -96,6 +96,32 @@
         }, kSignInPollMs);
     }
 
+    function offerSignInTabs() {
+        var bar = document.querySelector("[data-signin-tabs]");
+        if (!bar) {
+            return;
+        }
+        var panes = document.querySelectorAll("[data-signin-pane]");
+        var tabs = bar.querySelectorAll("[data-signin-show]");
+        var show = function (name) {
+            for (var p = 0; p < panes.length; ++p) {
+                panes[p].hidden = panes[p].dataset.signinPane !== name;
+            }
+            for (var t = 0; t < tabs.length; ++t) {
+                tabs[t].classList.toggle("is-on", tabs[t].dataset.signinShow === name);
+            }
+        };
+        bar.hidden = false;
+        bar.addEventListener("click", function (event) {
+            if (event.target.dataset && event.target.dataset.signinShow) {
+                show(event.target.dataset.signinShow);
+            }
+        });
+        show(document.querySelector("[data-signin-pane=copy] .is-error") ? "copy" : "scan");
+    }
+
+    offerSignInTabs();
+
     var waiting = document.querySelectorAll("[data-sign-wait]");
     for (var k = 0; k < waiting.length; ++k) {
         watchSignIn(waiting[k]);

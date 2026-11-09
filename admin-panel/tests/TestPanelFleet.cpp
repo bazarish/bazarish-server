@@ -303,7 +303,13 @@ int main()
         CHECK(shown.body.find("class=\"qr-code\"><svg") != std::string::npos);
         const std::size_t start = shown.body.find(kChallengeField)
             + std::char_traits<char>::length(kChallengeField);
-        const std::string challenge = shown.body.substr(start, shown.body.find('"', start) - start);
+        const std::string pasted = shown.body.substr(start, shown.body.find('"', start) - start);
+        CHECK(!service::readLoginCallback(pasted).has_value());
+        CHECK(shown.body.find("<div data-signin-tabs hidden>") != std::string::npos);
+        const std::string challenge = [&]() {
+            const std::lock_guard<std::mutex> lock(guard);
+            return expected.at("challenge").get<std::string>();
+        }();
         const std::optional<service::LoginCallback> callback = service::readLoginCallback(challenge);
         CHECK(callback.has_value() && callback->host == facadeHost);
         std::string token;

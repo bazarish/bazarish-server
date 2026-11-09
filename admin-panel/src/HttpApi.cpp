@@ -233,9 +233,8 @@ std::string HttpApi::loginForm(const std::string& error, http::Response& respons
     const std::optional<ServiceEntry> node = serviceOfKind(std::string(), kServiceNodeKind);
     const std::string facade = node.has_value() ? loginFacade(*node) : std::string();
     std::string scan;
-    std::string challenge;
     if (!facade.empty()) {
-        challenge = auth_.issueChallenge(now, loginrelay::callbackUrl(facade));
+        const std::string challenge = auth_.issueChallenge(now, loginrelay::callbackUrl(facade));
         const std::string token = newSignInToken();
         const Bytes key = newLinkKey();
         const JsonResult expected = callJson(*node, identity_, credential_, "POST",
@@ -248,12 +247,9 @@ std::string HttpApi::loginForm(const std::string& error, http::Response& respons
         } else {
             bazarish::log::warn("sign-in shows no code: the service node refused it ({})",
                 failureText(expected));
-            challenge.clear();
         }
     }
-    if (challenge.empty()) {
-        challenge = auth_.issueChallenge(now);
-    }
+    const std::string challenge = auth_.issueChallenge(now);
     return assets_.render("login.html",
         {
             {"challenge", htmlEscape(challenge)},

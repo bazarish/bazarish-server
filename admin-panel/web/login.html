@@ -19,16 +19,18 @@
     <section class="panel-box">
       <p class="view-title" data-t="Sign in">Sign in</p>
       {{scan}}
-      {{error}}
-      <p class="panel-note" data-t="Sign this challenge with your Bazarish account key and paste the signature">Sign this challenge with your Bazarish account key and paste the signature</p>
-      <p class="field-label" data-t="Challenge">Challenge</p>
-      <pre class="copy">{{challenge}}</pre>
-      <form method="post" action="/login">
-        <input type="hidden" name="challenge" value="{{challenge}}">
-        <label class="field-label" for="blob" data-t="Signature">Signature</label>
-        <textarea class="field" id="blob" name="blob" required autofocus></textarea>
-        <button class="btn" type="submit" data-t="Sign in">Sign in</button>
-      </form>
+      <div data-signin-pane="copy">
+        {{error}}
+        <p class="panel-note" data-t="Sign this challenge with your Bazarish account key and paste the signature">Sign this challenge with your Bazarish account key and paste the signature</p>
+        <p class="field-label" data-t="Challenge">Challenge</p>
+        <pre class="copy">{{challenge}}</pre>
+        <form method="post" action="/login">
+          <input type="hidden" name="challenge" value="{{challenge}}">
+          <label class="field-label" for="blob" data-t="Signature">Signature</label>
+          <textarea class="field" id="blob" name="blob" required autofocus></textarea>
+          <button class="btn" type="submit" data-t="Sign in">Sign in</button>
+        </form>
+      </div>
     </section>
   </main>
   <footer class="colophon"><span data-t="Control panel of a Bazarish messenger server">Control panel of a Bazarish messenger server</span>

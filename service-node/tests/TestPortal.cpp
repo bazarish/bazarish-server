@@ -268,11 +268,15 @@ void testWebFlow()
         const http::ClientResponse shown = call(port, "GET", "/");
         CHECK(shown.status == 200);
         CHECK(shown.body.find("class=\"qr-code\"><svg") != std::string::npos);
-        const std::string scanned = between(shown.body, "<pre class=\"copy\">", "</pre>");
+        const std::string pasted = between(shown.body, "<pre class=\"copy\">", "</pre>");
+        CHECK(!readLoginCallback(pasted).has_value());
+        CHECK(shown.body.find("<div data-signin-tabs hidden>") != std::string::npos);
+        CHECK(shown.body.find("<div data-signin-pane=\"scan\" hidden>")
+            < shown.body.find("<div data-signin-pane=\"copy\">"));
+        const std::string nonce = between(shown.body, "data-sign-wait=\"/login/wait?nonce=", "\"");
+        const std::string scanned = options.logins->held(nonce, now())->challenge;
         const std::optional<LoginCallback> callback = readLoginCallback(scanned);
         CHECK(callback.has_value() && callback->host == facade && callback->path == "/login/callback");
-        const std::string nonce = loginrelay::nonceOf(scanned);
-        CHECK(shown.body.find("data-sign-wait=\"/login/wait?nonce=" + nonce + "\"") != std::string::npos);
         const std::string token = between(shown.headers.at("set-cookie") + ";", "signin=", ";");
         CHECK(shown.headers.at("set-cookie").find("Path=/login") != std::string::npos);
         const auto wait = [&](const std::string& cookie) {
@@ -294,7 +298,9 @@ void testWebFlow()
         CHECK(wait(token) == "gone");
 
         const http::ClientResponse forged = call(port, "GET", "/");
-        const std::string other = between(forged.body, "<pre class=\"copy\">", "</pre>");
+        const std::string other = options.logins
+            ->held(between(forged.body, "data-sign-wait=\"/login/wait?nonce=", "\""), now())
+            ->challenge;
         const std::string otherToken = between(forged.headers.at("set-cookie") + ";", "signin=", ";");
         const std::string otherNonce = loginrelay::nonceOf(other);
         nlohmann::json edited = nlohmann::json::parse(decodeLoginChallenge(other));

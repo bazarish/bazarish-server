@@ -333,31 +333,26 @@ std::string PortalApi::signInPanel(const std::string& error, http::Response& res
 {
     const std::int64_t now = nowSeconds();
     const std::vector<std::string> facades = settings().facades;
-    const auto pasteOnly = [&]() {
+    const auto withScan = [&](const std::string& scan) {
         return assets_.render("signin.html",
             {
                 {"challenge", htmlEscape(login_.issue(now))},
                 {"error", notice(error, "is-error")},
-                {"scan", std::string()},
+                {"scan", scan},
             });
     };
     if (facades.empty() || !isB32I2pHost(facades.front())) {
-        return pasteOnly();
+        return withScan(std::string());
     }
     const std::string& facade = facades.front();
     const std::string challenge = login_.issue(now, loginrelay::callbackUrl(facade));
     const std::string token = newSignInToken();
     const Bytes key = newLinkKey();
     if (!options_.logins->expect(challenge, token, key, now)) {
-        return pasteOnly();
+        return withScan(std::string());
     }
     setCookie(response, kSignInCookie, token, kSignInCookieAttributes);
-    return assets_.render("signin.html",
-        {
-            {"challenge", htmlEscape(challenge)},
-            {"error", notice(error, "is-error")},
-            {"scan", signInScan(assets_, facade, challenge, key)},
-        });
+    return withScan(signInScan(assets_, facade, challenge, key));
 }
 
 std::string PortalApi::homePage(const http::Request& request, const std::string& user,

@@ -504,19 +504,27 @@ int main()
 
         CHECK(call(opsPort, "DELETE", path).status == 403);
         CHECK(call(opsPort, "DELETE", path,
-                   makeHeaders(Identity::generate(), "DELETE", "/v1/messaging/account", "", ""))
+                   makeHeaders(Identity::generate(), "DELETE", path, "", ""))
+                  .status
+            == 403);
+        const std::string other
+            = "/v1/messaging/account?user=" + Identity::generate().fingerprint();
+        CHECK(call(opsPort, "DELETE", path, makeHeaders(operatorIdentity, "DELETE", other, "", ""))
+                  .status
+            == 403);
+        CHECK(call(opsPort, "DELETE", path,
+                  makeHeaders(operatorIdentity, "DELETE", "/v1/messaging/account", "", ""))
                   .status
             == 403);
 
         const http::ClientResponse deleted = call(opsPort, "DELETE", path,
-            makeHeaders(operatorIdentity, "DELETE", "/v1/messaging/account", "", ""));
+            makeHeaders(operatorIdentity, "DELETE", path, "", ""));
         CHECK(deleted.status == 200);
         CHECK(forgottenUser == alice.fingerprint());
         CHECK(storage.usage(alice.fingerprint()) == 0);
         CHECK(storage.listClients(alice.fingerprint()).empty());
         CHECK(storage.passCount(alice.fingerprint()) == 0);
-        CHECK(call(opsPort, "DELETE", path,
-                   makeHeaders(operatorIdentity, "DELETE", "/v1/messaging/account", "", ""))
+        CHECK(call(opsPort, "DELETE", path, makeHeaders(operatorIdentity, "DELETE", path, "", ""))
                   .status
             == 200);
     }

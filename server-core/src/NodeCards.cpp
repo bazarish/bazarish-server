@@ -41,7 +41,7 @@ std::optional<HeldCard> NodeCards::card(const std::string& user)
     http::ClientRequest lookup;
     lookup.method = "GET";
     lookup.target = std::string(fleet::kAccountCard) + "?user=" + user;
-    lookup.headers = auth::signRequest(*identity_, now, "GET", fleet::kAccountCard, {});
+    lookup.headers = auth::signRequest(*identity_, now, "GET", lookup.target, {});
     http::ClientOptions options;
     options.tls = node_.tls;
     options.pin = node_.pin;

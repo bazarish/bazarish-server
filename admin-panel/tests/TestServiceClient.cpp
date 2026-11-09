@@ -53,7 +53,7 @@ int main()
     const auto authorize = [&panel, &replays](const http::Request& request) -> bool {
         try {
             auth::authorizeRequest(collectAuthHeaders(request), nowSeconds(), request.method,
-                request.path, Bytes(request.body.begin(), request.body.end()),
+                request.target, Bytes(request.body.begin(), request.body.end()),
                 {panel.fingerprint()}, replays);
             return true;
         } catch (const std::exception&) {

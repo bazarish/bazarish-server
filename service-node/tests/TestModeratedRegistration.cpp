@@ -117,7 +117,8 @@ int main()
 
     const auto cardServed = [&]() {
         return call(port, "GET", "/v1/account/card?user=" + alice.fingerprint(),
-            signedHeaders(serverIdentity, "GET", "/v1/account/card", ""))
+            signedHeaders(
+                serverIdentity, "GET", "/v1/account/card?user=" + alice.fingerprint(), ""))
             .status;
     };
     CHECK(cardServed() == 404);
@@ -134,7 +135,7 @@ int main()
 
     {
         const http::ClientResponse result = call(opsPort, "GET", "/v1/account/users?state=pending",
-            signedHeaders(panel, "GET", "/v1/account/users", ""));
+            signedHeaders(panel, "GET", "/v1/account/users?state=pending", ""));
         CHECK(result.status == 200);
         const nlohmann::json users = nlohmann::json::parse(result.body).at("users");
         CHECK(users.size() == 1);
@@ -162,7 +163,7 @@ int main()
         CHECK(pubCalls == 1);
 
         const http::ClientResponse pending = call(opsPort, "GET", "/v1/account/users?state=pending",
-            signedHeaders(panel, "GET", "/v1/account/users", ""));
+            signedHeaders(panel, "GET", "/v1/account/users?state=pending", ""));
         CHECK(nlohmann::json::parse(pending.body).at("users").empty());
     }
 

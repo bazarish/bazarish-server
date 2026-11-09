@@ -45,11 +45,10 @@ using bazarish::nowSeconds;
 http::ClientResponse call(const int port, const Identity& identity, const std::string& method,
     const std::string& target, const std::string& body = {})
 {
-    const std::string path = target.substr(0, target.find('?'));
     http::ClientRequest request;
     request.method = method;
     request.target = target;
-    request.headers = signedHeaders(identity, method, path, body);
+    request.headers = signedHeaders(identity, method, target, body);
     request.body = body;
     if (!body.empty()) {
         request.contentType = "application/json";

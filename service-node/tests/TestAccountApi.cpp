@@ -189,7 +189,7 @@ int main()
 
         const http::ClientResponse looked
             = call(port, "GET", "/v1/account/card?user=" + alice.fingerprint(),
-                signedHeaders(serverIdentity, "GET", "/v1/account/card", ""));
+                signedHeaders(serverIdentity, "GET", "/v1/account/card?user=" + alice.fingerprint(), ""));
         CHECK(looked.status == 200);
         CHECK(nlohmann::json::parse(looked.body).at("cardKey") == kCardKeyText);
         const ContactCard fetched = ContactCard::verify(
@@ -216,7 +216,7 @@ int main()
                 == 409);
             const http::ClientResponse again
                 = call(port, "GET", "/v1/account/card?user=" + alice.fingerprint(),
-                    signedHeaders(serverIdentity, "GET", "/v1/account/card", ""));
+                    signedHeaders(serverIdentity, "GET", "/v1/account/card?user=" + alice.fingerprint(), ""));
             CHECK(ContactCard::verify(fromBase64(
                       nlohmann::json::parse(again.body).at("card").get<std::string>()))
                       .dest
@@ -234,7 +234,7 @@ int main()
 
         const http::ClientResponse unknown
             = call(port, "GET", "/v1/account/card?user=" + mallory.fingerprint(),
-                    signedHeaders(serverIdentity, "GET", "/v1/account/card", ""));
+                    signedHeaders(serverIdentity, "GET", "/v1/account/card?user=" + mallory.fingerprint(), ""));
         CHECK(unknown.status == 404);
     }
 

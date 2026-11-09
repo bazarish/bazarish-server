@@ -741,7 +741,7 @@ void AccountApi::setupRoutes()
         return [this, handler](const http::Request& request, http::Response& response) {
             try {
                 auth::authorizeRequest(collectAuthHeaders(request), nowSeconds(), request.method,
-                    request.path, bodyBytes(request), {options_.serverFingerprint}, replayCache_);
+                    request.target, bodyBytes(request), {options_.serverFingerprint}, replayCache_);
             } catch (const std::exception& error) {
                 respondError(response, 403, ErrorCode::eRequestFailed, error.what());
                 return;

@@ -141,7 +141,7 @@ Caller TunnelFace::authenticate(const http::Request& request)
         }
         try {
             const std::uint64_t seq = auth::verifyMac(authHeaders, session->key, nowSeconds(),
-                request.method, request.path, bodyBytes(request), clientId);
+                request.method, request.target, bodyBytes(request), clientId);
             if (!sessions_.acceptSeq(handle, seq, nowSeconds())) {
                 return Caller{
                     {}, errorResponse(401, ErrorCode::eSessionInvalid, "sequence replayed")};
@@ -152,7 +152,7 @@ Caller TunnelFace::authenticate(const http::Request& request)
         return Caller{session->user, std::nullopt};
     }
     try {
-        return Caller{auth::verifyRequest(authHeaders, nowSeconds(), request.method, request.path,
+        return Caller{auth::verifyRequest(authHeaders, nowSeconds(), request.method, request.target,
                           bodyBytes(request), replays_, clientId),
             std::nullopt};
     } catch (const std::exception& error) {

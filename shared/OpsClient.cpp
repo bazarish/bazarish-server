@@ -14,9 +14,8 @@ http::ClientResponse opsCall(const OpsTarget& target, const Identity& signer,
 {
     const http::Url address = http::parseUrl(target.url);
     const std::string full = address.path + pathAndQuery;
-    const std::string path = full.substr(0, full.find('?'));
     const auth::Headers signature
-        = auth::signRequest(signer, nowSeconds(), method, path, Bytes(body.begin(), body.end()));
+        = auth::signRequest(signer, nowSeconds(), method, full, Bytes(body.begin(), body.end()));
     http::ClientRequest out;
     out.method = method;
     out.target = full;

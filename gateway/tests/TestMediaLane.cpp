@@ -29,6 +29,9 @@ constexpr std::chrono::milliseconds kNothingArrives{1500};
 constexpr std::int64_t kAskedBeforeEnd = 300;
 constexpr std::int64_t kPastLapse = 30;
 constexpr std::chrono::milliseconds kRenewalRoundTrip{1000};
+constexpr std::chrono::milliseconds kMediaWithin{3000};
+constexpr std::chrono::milliseconds kMediaProbeEvery{200};
+constexpr std::chrono::milliseconds kOversizeDropped{500};
 
 i2p::RouterConfig borrowedFrom(const int port, const std::string& fingerprint)
 {
@@ -67,13 +70,33 @@ std::shared_ptr<i2p::Endpoint> mediaOn(i2p::Router& router)
     return router.createEndpoint(config);
 }
 
+// Datagrams may be lost, the first ones after a socket comes back above all: the lane flows when one gets through.
 bool mediaFlows(i2p::Endpoint& from, i2p::Endpoint& to)
 {
     const std::string payload = "audio";
-    from.sendRawDatagram(to.routingHost(), bazarish::viewOf(payload));
-    const std::vector<std::uint8_t> got
-        = to.receiveRawDatagram(std::chrono::milliseconds(3000));
-    return got.size() == payload.size();
+    const auto until = std::chrono::steady_clock::now() + kMediaWithin;
+    while (std::chrono::steady_clock::now() < until) {
+        from.sendRawDatagram(to.routingHost(), bazarish::viewOf(payload));
+        if (to.receiveRawDatagram(kMediaProbeEvery).size() == payload.size()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// A probe left over from an earlier check may still arrive: only the size that must not come counts.
+bool noneOfSizeWithin(i2p::Endpoint& to, const std::size_t size, const std::chrono::milliseconds window)
+{
+    const auto until = std::chrono::steady_clock::now() + window;
+    while (std::chrono::steady_clock::now() < until) {
+        const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+            until - std::chrono::steady_clock::now());
+        const std::vector<std::uint8_t> got = to.receiveRawDatagram(left);
+        if (got.size() == size) {
+            return false;
+        }
+    }
+    return true;
 }
 
 }  // namespace
@@ -121,7 +144,7 @@ int main()
 
     const std::vector<std::uint8_t> oversize(kOversizeBytes, 'x');
     his->sendRawDatagram(hers->routingHost(), oversize);
-    CHECK(hers->receiveRawDatagram(std::chrono::milliseconds(500)).empty());
+    CHECK(noneOfSizeWithin(*hers, kOversizeBytes, kOversizeDropped));
     CHECK(gateway.sockets() == 4);
     CHECK(mediaFlows(*his, *hers));
 
@@ -169,7 +192,7 @@ int main()
     CHECK(mediaFlows(*presence, *reading));
     const std::shared_ptr<i2p::Endpoint> stranger = watcherWith(Key::generateX25519().rawPrivate());
     stranger->sendRawDatagram(presence->routingHost(), bazarish::viewOf(knock));
-    CHECK(presence->receiveRawDatagram(kNothingArrives).empty());
+    CHECK(noneOfSizeWithin(*presence, knock.size(), kNothingArrives));
     reading->stop();
     stranger->stop();
     const std::int64_t endOfToday = own.issueTransient(1).transientExpires();

@@ -1040,9 +1040,6 @@
 
         says = section(form, N_("Messages"));
         says.hidden = !data.requireApproval;
-        var portalMessage = textareaBlock(says, N_("Before registering"), data.portalMessage,
-            N_("About this server and registration"),
-            N_("Shown to a client that connects without registering first"));
         var waiting = textareaBlock(says, N_("While waiting"), data.registrationMessage,
             N_("Contacts for approval"),
             N_("Shown to accounts waiting for approval"));
@@ -1054,7 +1051,6 @@
                     method: "PUT", path: withFleet("/api/settings"),
                     body: {
                         requireApproval: moderated(),
-                        portalMessage: portalMessage.value.trim(),
                         registrationMessage: waiting.value.trim()
                     }
                 };

@@ -17,7 +17,6 @@ public:
     struct Values {
         bool requireApproval = false;
         std::string registrationMessage;
-        std::string portalMessage;
         LoginConsumer loginConsumer;
         std::vector<std::string> facades;
         std::vector<std::string> reseeds;

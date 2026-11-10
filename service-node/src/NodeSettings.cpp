@@ -19,7 +19,6 @@ const char* const kMessageKey = "message";
 const char* const kIdleDaysKey = "idleDeleteDays";
 const char* const kQuotaKey = "freeStorageBytes";
 const char* const kPortalKey = "portal";
-const char* const kPortalMessageKey = "message";
 const char* const kPortalNameKey = "name";
 const char* const kPortalAddressKey = "address";
 const char* const kPortalRoleKey = "role";
@@ -73,8 +72,6 @@ void NodeSettings::persist(const Values& values) const
     setIfChanged(
         file, {kRegistrationKey, kIdleDaysKey}, values.idleDeleteDays, values_.idleDeleteDays);
     setIfChanged(file, {kQuotaKey}, values.defaultQuotaBytes, values_.defaultQuotaBytes);
-    setIfChanged(file, {kPortalKey, kPortalMessageKey}, values.portalMessage,
-        values_.portalMessage);
     setIfChanged(file, {kPortalKey, kPortalNameKey}, values.loginConsumer.name,
         values_.loginConsumer.name);
     setIfChanged(file, {kPortalKey, kPortalAddressKey}, values.loginConsumer.place,

@@ -51,7 +51,6 @@ constexpr int kDefaultOpsPort = bazarish::fleet::kNodeOpsPort;
 constexpr std::size_t kPortalSecretBytes = 16;
 constexpr std::chrono::hours kIdleSweepInterval{1};
 constexpr std::chrono::seconds kBackendWaitBudget{60};
-constexpr const char* kDefaultPortalMessage = "Registration here is confirmed by hand";
 constexpr const char* kDefaultRegistrationMessage
     = "Send a few sentences about yourself and your key fingerprint to me@example.com";
 
@@ -77,7 +76,6 @@ void printUsage()
 using bazarish::readFileBytes;
 
 struct PortalConfig {
-    std::string message = kDefaultPortalMessage;
     std::string name;
     std::vector<std::string> address;
     std::string role;
@@ -132,7 +130,6 @@ NodeConfig loadNodeConfig(const fs::path& path)
     }
     config.freeStorageBytes = static_cast<std::uint64_t>(
         view.number("freeStorageBytes", static_cast<std::int64_t>(config.freeStorageBytes)));
-    config.portal.message = view.text("portal.message", config.portal.message);
     config.portal.name = view.text("portal.name");
     config.portal.address = view.list("portal.address");
     config.portal.role = view.text("portal.role");
@@ -235,7 +232,6 @@ int main(const int argc, const char** argv)
         bazarish::service::NodeSettings::Values{
             .requireApproval = nodeConfig.registration.requireApproval,
             .registrationMessage = nodeConfig.registration.message,
-            .portalMessage = nodeConfig.portal.message,
             .loginConsumer = portalConsumer(nodeConfig),
             .facades = nodeConfig.portal.facades,
             .reseeds = nodeConfig.portal.reseeds,

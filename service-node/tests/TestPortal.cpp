@@ -61,19 +61,14 @@ void testLoginVerification()
     CHECK_THROWS(verifyLoginBlob(blob + "x", now(), challenge));
 }
 
-void testPortalDiscovery()
+void testLoginCallback()
 {
     namespace fs = std::filesystem;
     const fs::path root = fs::temp_directory_path() / ("bazarish-portal-" + toHex(randomBytes(8)));
     SubscriptionStore store(root);
     GrantStore grants(root);
 
-    NodeSettings::Values values;
-    values.portalMessage = "Register at the portal";
-    values.portalLinks = {"https://portal.example/a", "http://abc.onion/b"};
-    values.defaultQuotaBytes = 20 * 1024 * 1024;
-    values.requireApproval = true;
-    values.registrationMessage = "write to the operator";
+    const NodeSettings::Values values;
     AccountApiOptions options;
     options.serverFingerprint = "server-fp";
     const fs::path configPath = root / "node.json";
@@ -89,26 +84,6 @@ void testPortalDiscovery()
     AccountApi api(store, grants, options);
     const int port = api.bind("127.0.0.1", 0);
     CHECK(port > 0);
-    const http::ClientResponse response = call(port, "GET", "/v1/account/portal");
-    CHECK(response.status == 200);
-
-    const nlohmann::json body = nlohmann::json::parse(response.body);
-    CHECK(body.at("message").get<std::string>() == "Register at the portal");
-    CHECK(body.at("links").size() == 2);
-    const nlohmann::json& registration = body.at("registration");
-    CHECK(registration.at("requiresApproval").get<bool>());
-    CHECK(registration.at("message").get<std::string>() == "write to the operator");
-    CHECK(body.at("quotaBytes").get<std::uint64_t>() == 20 * 1024 * 1024);
-
-    NodeSettings::Values opened = values;
-    opened.requireApproval = false;
-    options.settings->set(opened);
-    const nlohmann::json open
-        = nlohmann::json::parse(call(port, "GET", "/v1/account/portal").body);
-    CHECK(!open.at("registration").at("requiresApproval").get<bool>());
-    CHECK(open.at("message").get<std::string>().empty());
-    CHECK(open.at("registration").at("message").get<std::string>().empty());
-
     {
         LoginChallenge panel("panel-secret",
             LoginConsumer{"Bazarish admin panel", {"https://panel.example"}, "Administrator"});
@@ -147,7 +122,6 @@ void testPortalDiscovery()
         CHECK(claim.state == LoginMailbox::State::eSigned);
         CHECK(panel.verify(claim.challenge, claim.blob, now()) == signer.fingerprint());
     }
-    CHECK(open.at("links").size() == 2);
 
     api.stop();
     fs::remove_all(root);
@@ -391,7 +365,7 @@ void testWebFlow()
 int main()
 {
     testLoginVerification();
-    testPortalDiscovery();
+    testLoginCallback();
     testWebFlow();
     std::printf("TestPortal: all checks passed\n");
     return 0;

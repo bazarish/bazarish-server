@@ -157,9 +157,6 @@ void editSettings(const nlohmann::json& body, bazarish::service::NodeSettings::V
         values.registrationMessage
             = body.at("registrationMessage").get<std::string>();
     }
-    if (body.contains("portalMessage")) {
-        values.portalMessage = body.at("portalMessage").get<std::string>();
-    }
     if (body.contains("loginConsumer")) {
         const nlohmann::json& consumer = body.at("loginConsumer");
         bazarish::service::LoginConsumer wanted;
@@ -523,7 +520,6 @@ void AccountApi::setupOpsRoutes()
                 {
                     {"requireApproval", values.requireApproval},
                     {"registrationMessage", values.registrationMessage},
-                    {"portalMessage", values.portalMessage},
                     {"loginConsumer",
                         {
                             {"name", values.loginConsumer.name},
@@ -982,23 +978,6 @@ void AccountApi::setupRoutes()
                     {"message", values.requireApproval ? values.registrationMessage
                                                        : std::string()}});
         });
-
-    const auto portalHandler = [this](const http::Request&, http::Response& response) {
-        const NodeSettings::Values live = settings();
-        respondJson(response,
-            {
-                {"message", live.requireApproval ? live.portalMessage : std::string()},
-                {"links", live.portalLinks},
-                {"registration",
-                    {
-                        {"requiresApproval", live.requireApproval},
-                        {"message", live.requireApproval ? live.registrationMessage
-                                                         : std::string()},
-                    }},
-                {"quotaBytes", live.defaultQuotaBytes},
-            });
-    };
-    http_->get("/v1/account/portal", filled(portalHandler));
 }
 
 }  // namespace bazarish::service

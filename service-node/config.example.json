@@ -22,9 +22,6 @@
   "portal": {
     "listen": {"host": "0.0.0.0", "port": 8431},
     "assets": "/opt/bazarish/bazarish-server/service-node/portal",
-    // What a client is told before it registers here. Shown only while
-    // requireApproval is on.
-    "message": "Registration here is confirmed by hand.",
     // What the portal calls itself and where users open it. A client shows these
     // words before it signs a login, and the user compares them with the address
     // bar, so "address" has to be the address they actually opened. Left out,
@@ -42,7 +39,7 @@
   },
 
   // Two modes and no third. requireApproval false: proving a key is the whole
-  // registration, and neither notice is shown to anyone. true: the account is
+  // registration, and the notice is shown to no one. true: the account is
   // created the same way and waits for an operator, and "message" is what it is
   // shown meanwhile. idleDeleteDays is how long an account with no destination
   // delegated here is kept before it is deleted - the delegation is the only

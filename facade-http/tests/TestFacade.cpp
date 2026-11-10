@@ -246,7 +246,7 @@ int main()
     for (const auto& [method, path] : std::initializer_list<std::pair<const char*, const char*>>{
              {"GET", "/"}, {"GET", "/healthz"}, {"GET", "/settings"},
              {"POST", "/v1/messaging/self"}, {"GET", "/v1/messaging/pending"},
-             {"POST", "/v1/account/registration"}, {"GET", "/v1/account/portal"},
+             {"POST", "/v1/account/registration"},
              {"POST", "/t/more"}, {"PUT", "/t"}, {"DELETE", "/n"}}) {
         const http::ClientResponse refused = call(facadePort, method, path, {}, "{}");
         CHECK(refused.status == 404);

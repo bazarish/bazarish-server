@@ -106,11 +106,10 @@ int main()
         std::mutex mutex;
         std::condition_variable told;
         bool ended = false;
+        // Notified under the lock: the waiter destroys the condition as soon as it wakes.
         served->whenEnded([&]() {
-            {
-                const std::lock_guard<std::mutex> lock(mutex);
-                ended = true;
-            }
+            const std::lock_guard<std::mutex> lock(mutex);
+            ended = true;
             told.notify_all();
         });
         client->close();

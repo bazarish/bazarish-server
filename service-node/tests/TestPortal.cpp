@@ -217,7 +217,7 @@ void testWebFlow()
     CHECK(port > 0);
     const http::ClientResponse page = call(port, "GET", "/");
     CHECK(page.status == 200);
-    CHECK(page.body.find("is-plain\">Sign in<") != std::string::npos);
+    CHECK(page.body.find("<h2 class=\"view-title\">Sign in<") != std::string::npos);
 
     for (const char* const code : {"en", "ru", "es", "zh", "ar"}) {
         const http::ClientResponse drawn

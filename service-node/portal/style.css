@@ -140,8 +140,13 @@ body {
     content: "/";
 }
 
-.panel-title.is-plain::before {
-    content: none;
+.view-title {
+    margin: 0 0 1.5rem;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--bz-key-dim);
 }
 
 .panel-note,

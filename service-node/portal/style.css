@@ -838,3 +838,7 @@ body {
 .signin-code .panel-note {
     margin-top: 0.6rem;
 }
+
+.signin .panel-note {
+    font-size: 0.78rem;
+}

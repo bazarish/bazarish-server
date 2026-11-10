@@ -79,13 +79,13 @@ body {
 .tabs {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.35rem;
+    gap: 0.15rem;
     margin-bottom: 1rem;
     border-bottom: 1px solid var(--bz-line);
 }
 
 .tab {
-    padding: 0.5rem 0.85rem;
+    padding: 0.5rem 0.4rem;
     background: transparent;
     border: 0;
     border-bottom: 2px solid transparent;
@@ -93,7 +93,7 @@ body {
     text-decoration: none;
     font: inherit;
     font-size: 0.72rem;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.05em;
     text-transform: uppercase;
     cursor: pointer;
 }
@@ -827,14 +827,14 @@ body {
     box-shadow: 0 0 0 2px var(--bz-surface-2), 0 0 0 4px var(--bz-key);
 }
 
-.signin-note {
-    font-size: 0.78rem;
-}
-
 .signin-code .qr-code {
     width: min(100%, 16rem);
-    margin-top: 1rem;
+    margin: 0 0 1rem;
     padding: 0.6rem;
     background: #ffffff;
     border-radius: var(--bz-radius-sm);
+}
+
+.signin-code .panel-note {
+    margin-top: 0.6rem;
 }

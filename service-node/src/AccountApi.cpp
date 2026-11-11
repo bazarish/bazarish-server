@@ -257,6 +257,9 @@ AccountApi::AccountApi(
     , startedAt_(nowSeconds())
     , tunnel_(options_.sealingKey)
 {
+    if (!options_.publishQuota || !options_.publishCardChanged) {
+        throw std::invalid_argument("the node tells its messaging server of every quota and card");
+    }
 }
 
 AccountApi::~AccountApi() = default;

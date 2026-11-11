@@ -9,22 +9,20 @@ startup), from which it takes the server fingerprint a card must name.
 Authenticated requests carry the caller's hybrid identity, and a caller may only
 act on its own account.
 
-Names are not this node's business: an alias belongs to `alias-resolver`, which
-is a service of its own and is not reached through here.
+An alias belongs to `alias-resolver`, which is a service of its own.
 
 ## What it does
 
-- **Registration**, in one of two modes and no third. Open: proving a key is the
+- **Registration**, in one of two modes. Open: proving a key is the
   registration, whether it is proven in the portal or by a client calling
   `POST /v1/account/registration`. Moderated (`registration.requireApproval`):
   the account is created the same way and waits for an operator, which the client
-  learns as `ACCOUNT_PENDING_APPROVAL`. An account has **no term** - it lives
-  while its owner keeps a destination delegated here, and an idle one is swept
+  learns as `ACCOUNT_PENDING_APPROVAL`. An account lives while its owner keeps a destination delegated here, and an idle one is swept
   after `registration.idleDeleteDays`.
 - **The user's own destination.** `POST /v1/account/i2p-dest` takes the offline
   transient that lets the messaging server operate the address and answers with
   the `{dest, servingKey}` that destination now serves under, so the client can
-  issue its card from one answer instead of asking again; `i2p-status`
+  issue its card from that one answer; `i2p-status`
   says how long the current one lasts so any device knows when to issue the next;
   `undelegate` takes an account out of service without deleting it. A transient
   over a different address replaces the destination outright - the old one is

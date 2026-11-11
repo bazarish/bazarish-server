@@ -27,9 +27,8 @@ sealed to the server's sealing key.
 - **HTTP API** - two routes a facade can see: the server card and the sealed
   tunnel every client request travels inside, carrying `/v1/messaging/*` (client
   registry, passes and their revocation, pending fetch/ack, the write a device
-  makes into its own account's mailbox). There is no send endpoint: a client
-  delivers its own outgoing mail, so this server is never told whom its users
-  write to.
+  makes into its own account's mailbox). A client delivers its own outgoing
+  mail, so this server is never told whom its users write to.
 - **Federation** - serves **each user's own destination** over I2P; there is no
   destination for the server as a whole. It admits what arrives and signs its
   confirmation with that destination's own key.
@@ -65,13 +64,12 @@ operator's - health, settings, restart, quotas, destinations, the service node's
 card signed with this server's root, the reseed archive the portal serves - and
 admits only a certificate listed in `opsClients`: the
 admin panel's and the service node's. The node beside it is named the same way,
-`"serviceNode": {"url": "https://...", "pin": "..."}`, and the pin is not
-optional: without one the dial is refused rather than trusted.
+`"serviceNode": {"url": "https://...", "pin": "..."}`, and the pin is
+required: without one the dial is refused.
 
 `gatewayListen` is optional and serves the gateways of the same operator, each
 admitted by the key listed for it in `gateways`. A gateway learns there every
 destination this server serves and carries its users' streams to them without
 I2P (`gateway/PROTOCOL.md`, The server link). The admin panel writes both.
 
-The I2P router is **in this process**: `common` carries the engine, so there is
-no daemon to install and no SAM bridge to run beside it.
+The I2P router is **in this process**: `common` carries the engine.

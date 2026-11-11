@@ -21,21 +21,17 @@ it needs nothing from the rest.
 The components stay separate processes and separate deployment units - a facade
 compromise still must not reach the server. They reach each other over TLS,
 pinned by the key each one prints when it starts, so a fleet can be spread over
-several machines without a tunnel between them. Sharing a repository only
-removes the per-component submodule bump and the per-component rebuild of the
-embedded I2P router.
+several machines without a tunnel between them. The shared repository gives
+them one `common` submodule and one build of the embedded I2P router.
 
 Every component takes exactly one flag: `--config <path>`. Values live in that
-file (JSON, comments allowed) rather than in unit files, so nothing is settable
-twice, and the admin panel can change a setting without disturbing the rest of
+file (JSON, comments allowed), so nothing is settable twice, and the admin panel can change a setting without disturbing the rest of
 the file. Each component ships a `config.example.json`.
 
 ## Building
 
 The target platform is **Debian 13**: that is what these components are built,
-tested and deployed on, and the only one their behaviour is stated for. They are
-server processes and are not meant to run anywhere else - the desktop client is
-the part that goes wherever the user is.
+tested and deployed on, and the only one their behaviour is stated for.
 
 ```
 git clone --recurse-submodules https://github.com/bazarish/bazarish-server

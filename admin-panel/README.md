@@ -5,9 +5,8 @@ A single web interface to monitor and manage the Bazarish fleet: `server-core`,
 
 ## Authentication
 
-Access is restricted to the configured Bazarish identities. There are no passwords
-and no account database: the operator places their own fingerprint in the
-configuration, and signing in consists of signing a challenge with the client.
+Access is restricted to the configured Bazarish identities: the operator places
+their own fingerprint in the configuration, and signing in consists of signing a challenge with the client.
 
 1. Take the account's fingerprint from the client (its signature window shows it)
    and enter it in the configuration field `admin`.
@@ -27,7 +26,7 @@ be replayed here, and a challenge from anywhere else is visibly not this panel.
 
 By default the panel calls itself "Bazarish admin panel" (plus the fleet name,
 when the config names one) at the address it listens on. Front it behind a name
-of your own and the address you open no longer matches what your client shows:
+of your own and the address you open does not match what your client shows:
 set `consumer` in the config to the words you want compared.
 
 ## Talking to services: identity-signed, no shared secrets
@@ -46,8 +45,8 @@ its own on first start and prints the hash of its key; the panel is configured
 with that hash per service and accepts no other, and the service's operator
 socket accepts only the key the panel presents, which it prints the same way. A
 service URL that is not `https://`, or one with no key named, refuses to load.
-Nothing about who may call what moves into the certificates: that is still the
-signature and the `"operators"` list. What the certificates add is that the two
+Who may call what is decided by the signature and the `"operators"` list, not
+by the certificates. What the certificates add is that the two
 sockets know each other, which is what lets them be on different machines.
 
 ## What it shows
@@ -66,8 +65,7 @@ be logged into. The panel's web files live where the config's `assets` points (`
 repository) - edit them to restyle the panel, then restart it.
 
 Every service keeps the operator's endpoints on a socket of its own, the one
-its `opsListen` opens, and the panel is configured with that address rather than
-the one clients reach. Nothing an operator asks for is on a client-facing socket:
+its `opsListen` opens, and the panel is configured with that address. Nothing an operator asks for is on a client-facing socket:
 on the facade anyone holding its address could reach it, and the same reasoning
 holds for the rest. Because
 the link is pinned TLS in both directions, those sockets do not have to be on
@@ -83,11 +81,9 @@ reached unauthenticated. Each deployment is one `server-core`, the one
 `service-node` bound to it, and any number of facades and gateways; every service
 in it has a name of its own, and a configuration with two of a name, or a second
 core or node, refuses to load. Several deployments can be listed, and the account
-views act on the one chosen in the sidebar. The alias service is not here: it is
-one central service for the whole project, not part of an operator's server.
+views act on the one chosen in the sidebar.
 
-The facades' addresses are not configured here or on the node: each facade mints
-its own and reports it, and the panel writes them into the server descriptor
+Each facade mints its own address and reports it, and the panel writes them into the server descriptor
 whenever the panel is claimed, the service list is saved or a facade is given a
 new address. A new
 address also rewrites any gateway's direct route to the old one.

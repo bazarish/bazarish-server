@@ -107,9 +107,7 @@ nearly right is an oracle, and an oracle turns a secret path into a search.
 
 **The gateway is answerable for this on its own.** It emits one 404, from one
 template, in one time, for every request that is not on its path, and it does
-not rely on anything in front of it to have refused first. A daemon whose safety
-depends on somebody else's configuration being right is a daemon that is unsafe
-by default, and configurations are edited by people in a hurry.
+not rely on anything in front of it to have refused first.
 
 Everything that is not the gateway is the **operator's front**, and it can be
 whatever they like - a real site, a holding page, a `proxy_pass` to somebody
@@ -118,8 +116,7 @@ is otherwise honestly whatever it claims to be.
 
 Over plain `http` the path is in the request line for anybody on the wire to
 read, and over `https` whose certificate nobody checks, for anybody who sits in
-the middle. The path lets its holder **use** the gateway, as a token did before
-it; it does not let anybody read a session, which the channel below keeps to the
+the middle. The path lets its holder **use** the gateway; it does not let anybody read a session, which the channel below keeps to the
 two ends.
 
 ### The channel
@@ -200,11 +197,11 @@ while two files move holds four.
 A WebSocket message cannot be interleaved with another, and the delay is anyway
 not the message but the queue behind it: the file sender keeps 128 KiB
 outstanding, which is a fifth of a second on a mobile uplink and a full second
-on a poor one. No frame size fixes that. A socket of its own gives a flow its
+on a poor one. A socket of its own gives a flow its
 own queue, its own kernel buffer and its own losses, so a call waits for its own
-packets, a file waits for its own, and neither waits for the other. Two files no
-longer share a window either: the link splits between two TCP flows the way the
-network means it to, rather than between two streams inside one.
+packets, a file waits for its own, and neither waits for the other. Two files do
+not share a window either: the link splits between two TCP flows the way the
+network means it to.
 
 ### Attaching
 
@@ -225,12 +222,11 @@ A stream on a shared destination - a facade link, a lookup - stays on the main
 socket. Those are a request and an answer, and a connection each would be a
 connection for nothing.
 
- The counts make a
+The counts make a
 move lossless; they do not make it ordered. Frames already queued on the socket
 being left arrive behind frames on the one being joined, and for a stream that
-is a corrupted transfer rather than a slow one. Ordering a live move would need
-a sequence number this wire does not carry, and carrying one to serve a case
-nobody has measured is not a trade worth making yet. A realtime endpoint takes
+is a corrupted transfer rather than a slow one; this wire carries no sequence
+number to order a live move. A realtime endpoint takes
 its socket at creation, before there is anything to reorder; a stream stays
 where it started. What `attach` is for, then, is a socket that died and is being
 replaced - where there is nothing in flight on the old one because there is no
@@ -258,7 +254,7 @@ one, so it gets its own queue as soon as there is room. It keeps two of them bac
 for control: the socket it has, and the one that replaces it before the gateway
 has noticed the first go. A session filled to the limit could not be handed a new
 control socket at all. A data frame for a flow that is not attached to the socket it
-arrived on is refused with `wrong-lane` rather than quietly carried: a lane that
+arrived on is refused with `wrong-lane`: a lane that
 works by accident is one that stops working under load, which is exactly when it
 was supposed to matter.
 
@@ -289,7 +285,7 @@ and how many connections there are. One WebSocket carrying a trickle of small
 messages for six hours is not what a browser does, and that shape is the whole
 of what a watcher needs.
 
-Two things are done about it, and both are in version 1.
+Two things are done about it.
 
 ### Decoy requests
 
@@ -302,8 +298,7 @@ The next one follows after a delay drawn between `kDecoyMinDelay` and
 
 Random in, random out. **The client does not say how much comes back**: the
 length of the answer is drawn by the gateway between `kDecoyMinBytes` and
-`kDecoyMaxBytes`, and a client that could ask for a size would be a client whose
-own behaviour decides what the host's traffic looks like. It is the gateway that
+`kDecoyMaxBytes`. It is the gateway that
 has to resemble a host, so it is the gateway that chooses. The request's own
 length is drawn between `kDecoyRequestMinBytes` and `kDecoyRequestMaxBytes`,
 which keeps it the shape of a request rather than an upload.
@@ -323,9 +318,8 @@ the client waits up to `kControlGapMax` before opening the next one. A socket is
 not dropped while it is carrying anything: the draw is taken at the next quiet
 moment instead.
 
-What the observer stops seeing is one connection that lives for hours. What they
-see instead is a host being fetched from, at intervals, the way a host is
-fetched from.
+What the observer sees is a host being fetched from, at intervals, the way a
+host is fetched from.
 
 This rides the machinery that is already there for a phone: the reconnect is an
 ordinary join by ticket, and the session outliving its socket is what makes a
@@ -366,8 +360,7 @@ One WebSocket message carries exactly one frame.
 ```
 
 The body of a control frame is JSON (the library is already a dependency of
-`common`). The body of a data frame is the bytes themselves: base64 over a
-16 KiB chunk of a file would be a third of the connection spent on nothing.
+`common`). The body of a data frame is the bytes themselves.
 
 A frame longer than `kMaxFrameBytes` is a protocol violation and closes the
 socket. The cap is not only a memory bound: one connection carries a bulk
@@ -444,8 +437,7 @@ negotiation, because there is one version.
 `endpoints` and `streams` are what is still standing, and that is the whole
 statement: a destination or a stream the list does not name is gone, whether the
 session was rejoined without it or is a new session that never held it. The
-client resets those locally on every attach, and needs no separate account of
-what died - one would say the same thing twice and could disagree. Each stream
+client resets those locally on every attach. Each stream
 reports how many payload bytes the **gateway** has received on it. The client
 answers `resume` with the same count for its own direction, and then both sides:
 
@@ -473,25 +465,19 @@ it is dropped, because audio kept back and delivered late has been played past
 already. `kDatagramQueue` bounds what the receiving client holds for a reader
 that has not come for it yet, oldest dropped.
 
-### Why counts and not acknowledgements
+### Counts
 
 Each side reports one cumulative number per stream per direction, and that is
-the whole of the durability mechanism. Numbering every frame and acknowledging
-each would be more machinery for less:
+the whole of the durability mechanism:
 
 - Under a flow is one TCP socket, which does not reorder and does not lose in
   the middle. The only way a stream loses anything is a **truncation** when the
   socket dies, and a truncation is exactly what one cumulative number repairs.
-  Sequence numbers and selective acknowledgement solve reordering and holes,
-  neither of which can happen here.
 - The number is already on the wire. `stream-credit` says how many bytes have
   left the receiver's hands, which is the same count the resume exchange asks
-  for, so flow control and durability are one mechanism instead of two that can
-  disagree.
+  for, so flow control and durability are one mechanism.
 - It is idempotent and stateless. Reattaching twice, or reattaching after having
-  already resent, converges on the same place; an acknowledgement scheme has a
-  retransmit queue keyed by sequence and a dedup table at the far end, both of
-  which have to be got right for a case that does not arise.
+  already resent, converges on the same place.
 - Steady state costs nothing: no acknowledgement frames, no timers.
 
 What a byte count does not cover is anything that is not a byte stream, and with
@@ -514,8 +500,7 @@ wearing it, which is two sets of bytes arriving as one.
 carries the whole picture: the endpoints that exist and the streams that exist.
 A snapshot on every attach supersedes any sequence of pushes that
 might have been missed, which is why `endpoint-status` and `stream-inbound` need
-no numbering of their own. This is the reason the resume state is a list and not
-a log.
+no numbering of their own. This is the reason the resume state is a list.
 
 ## Destinations
 
@@ -531,8 +516,7 @@ gateway -> ok              ref=2  {"host": "<b33>.b32.i2p", "kind": "raw"}
 ```
 
 The address is the routing host, the blinded b33 form this project publishes,
-and it is the only form the client asks for: no client site wants the
-destination's base64, only the host it gives a peer.
+and it is the only form the client asks for.
 
 `kind` is exclusive and there are two:
 
@@ -541,14 +525,9 @@ destination's base64, only the host it gives a peer.
 | `stream` | TCP-like streams, dialled and accepted | The facade link, a lookup, an outbound lease, both ends of a file transfer |
 | `raw` | Raw, non-repliable datagrams, no per-packet sender identity | A call's media, and presence |
 
-Repliable datagrams are not in version 1. Nothing in the client sends or
-receives one, and a kind that no caller has is a kind that cannot be tested.
-
 On the client's side of the seam this is `EndpointConfig::traffic`, said by
 whoever raises the destination. It is not read off `realtime`: that names the
-lane a destination belongs on, which is a different question from what rides it,
-and the two coinciding in one client today is not a reason to make one speak for
-the other.
+lane a destination belongs on, which is a different question from what rides it.
 
 `endpoint-create` deliberately does **not** carry a label or an owner. Those
 name what a destination is for and whose it is; they exist for a status view on
@@ -565,7 +544,7 @@ are is the gateway's own setting, `i2p.privacy` in its configuration, one for
 everyone it serves (minimal unless set), and a destination keeps three tunnels
 each way, the same as a client's own, which is not a setting. `endpoint-create` says what a destination is
 for and nothing about its tunnels. The exception is
-fixed rather than configured: a realtime `raw` destination carries a call's media
+fixed: a realtime `raw` destination carries a call's media
 and is always built with one hop each way, because a voice that waits for three
 hops is a voice that arrives late. Presence is `raw` and not realtime, and is
 built on the gateway's settings.
@@ -609,7 +588,7 @@ published destination of one of its sessions, a facade, or a destination
 server-core serves - gets no I2P destination at all. The gateway mints the keys,
 builds nothing, answers `ok` with the address those keys give, and the first
 `endpoint-status` says `ready` and `localRoute`. Any other target, and no target,
-is served from the pool as before.
+is served from the pool.
 
 Such a destination dials its target and nothing else; another host is
 `refused`. When the route goes - the published destination stops, server-core
@@ -668,17 +647,15 @@ no clock for any of this.
 `EndpointConfig::keys` is optional and absent means "the transport mints this".
 A client leaves it empty everywhere but the presence address: every other
 destination it raises is one-time and none of them looks at the key afterwards.
-Under a gateway a key handed to this backend without readers is **refused**
-rather than ignored - one that travelled would widen the exception above, and
-one quietly ignored would leave the caller believing an address is its key's.
+Under a gateway a key handed to this backend without readers is **refused**:
+one that travelled would widen the exception above.
 
-There is no `Router::generateKeys()`. A caller that wants a key of its own - the
+A caller that wants a key of its own - the
 account's own destination, which belongs to the user and is never operated here -
 mints it with `Keys::generate()`, which needs no router. On this backend
-`Endpoint::privateBlob()` and `Endpoint::publicBase64()` throw. That is not a gap
-to be papered over with an empty string: a caller that wants the private key of a
-destination it does not hold is a caller that is about to be wrong about
-something.
+`Endpoint::privateBlob()` and `Endpoint::publicBase64()` throw: a caller that
+wants the private key of a destination it does not hold is a caller that is
+about to be wrong about something.
 
 ## Streams
 
@@ -687,9 +664,8 @@ and no longer than `kMaxDialDeadline`; a longer one is a `bad-frame`. A session
 holds at most `kMaxDialsPerSession` dials at once, `kMaxEndpointsPerSession`
 destinations and `kMaxStreamsPerSession` streams; one more is `refused`.
 The gateway re-issues the dial every `kDialRetryDelay` until that deadline, and
-only a failure that is not "unreachable" is terminal. This is the SAM backend's
-lesson, learned against a live router and not against a fake: a LeaseSet that is
-not in the netDb yet is a reason to try again, not a reason to fail.
+only a failure that is not "unreachable" is terminal: a LeaseSet that is
+not in the netDb yet is a reason to try again.
 
 A host the server link covers skips the router: the gateway opens a pinned TLS
 socket to the service that serves it - a facade's `directListen`, or
@@ -739,29 +715,27 @@ data, not the main one. Sent on the main socket they would overtake bytes still
 queued on the flow's, and a reader would be told the stream had ended before it
 had.
 
-The window is what makes `pendingBytes()` answerable at all, and it means the
-same thing it always did: bytes handed over that have not left this device yet,
-which is written minus credited.
+The window is what makes `pendingBytes()` answerable: bytes handed over that
+have not left this device yet, which is written minus credited.
 
 `setReadTimeout` sends nothing: it governs how long the client waits on its own
 buffer.
 
 `stream-close` means the sender has no more data; the identifier is retired when
-both sides have closed. A `readSome` of a stream whose far side closed returns 0,
-as it always did.
+both sides have closed. A `readSome` of a stream whose far side closed returns 0.
 
 ## Datagrams
 
 Raw datagrams are best effort, exactly as the router treats them. The gateway
 drops a payload the router would drop and says nothing, and so is a datagram
 for an endpoint whose socket is not attached. The client keeps at most
-`kDatagramQueue` received datagrams per endpoint and drops the oldest, which is
-what the embedded path already does. A raw datagram carries no sender identity,
+`kDatagramQueue` received datagrams per endpoint and drops the oldest, as the
+embedded path does. A raw datagram carries no sender identity,
 so `raw-recv` carries none either.
 
 Media has a socket to itself, so none of what a file transfer queues stands
 between a 20 ms Opus frame and the wire. What is left is what the lane cannot
-fix, and it should be written down rather than discovered later.
+fix.
 
 A media packet on this leg travels over TCP, and TCP will retransmit it until it
 arrives. The embedded path sends the same packet as a RAW I2P datagram, where a
@@ -770,11 +744,6 @@ packet is resent, arrives after the jitter buffer has played past it, is
 discarded, and holds up the packets behind it while it is being fetched. The
 lane keeps somebody else's file out of that queue; it does not make the queue
 unnecessary.
-
-Removing it needs a datagram leg - QUIC or DTLS between the client and the
-gateway - and that is not in version 1. Nothing has been measured: what settles
-whether it is worth building is a call over the lane, with its one-way delay and
-jitter measured against the same call on a device running its own router.
 
 ## Meeting on the gateway
 
@@ -790,12 +759,9 @@ client granted. Bytes from one side wait in the other's queue until that side's
 window has room, and only what has actually left is credited back - crediting a
 queue would be telling a sender its bytes had gone when they had only moved.
 
-The point is the call. Two friends on one gateway currently send audio out
-through their own tunnels, across the network and back in through the other's,
-paying a round trip and a share of every tunnel's loss to reach a destination
-that is in the same process. Connecting them directly costs the media nothing
-but the gateway's own loop, and a file between them moves at the speed of the
-machine rather than of a pair of tunnels.
+The point is the call. Between two users of one gateway the media costs nothing
+but the gateway's own loop, with no round trip through tunnels and no share of
+their loss, and a file between them moves at the speed of the machine.
 
 The rules are narrow:
 
@@ -813,9 +779,7 @@ The rules are narrow:
 - The destination says it was routed here, and nothing else changes: both
   ends' `endpoint-status` carry `localRoute: true` from the first stream or
   datagram joined inside the gateway on, as does a destination that dialled a
-  `direct` route. It is shown and never acted on, because a transport that
-  behaves differently depending on who is listening is one with two behaviours
-  to test instead of one. The users of one gateway learn from it that they share
+  `direct` route. It is shown and never acted on. The users of one gateway learn from it that they share
   that gateway; they already share its operator, who sees all of it.
 - A published destination is still built and still published. The gateway
   cannot know who will dial an address before the address exists, so the
@@ -826,7 +790,7 @@ What this reveals, stated plainly: two peers can tell from the timing that they
 are on the same gateway. That is new information about each other, not about the
 operator, who already sees both of them and every address either one dials.
 
-The servers refuse this shortcut among themselves and must keep refusing it:
+The servers refuse this shortcut among themselves:
 mail federates over I2P even between two accounts on one host, because a bypass
 there would tell a server operator's users which of them share a server, and a
 server is not a node its users picked. A gateway is, and so the users of a
@@ -912,22 +876,20 @@ tunnel and looked nothing up, and a destination minted for a local target has
 neither.
 
 `localDestinations()` returns this session's endpoints and nothing else. A
-gateway serves several clients and each one sees its own, which is not a filter
-applied for politeness: the endpoints of another session are not in this
-session's registry to begin with, and the gateway is never asked for a list.
+gateway serves several clients and each one sees its own: the endpoints of
+another session are not in this session's registry, and the gateway is never
+asked for a list.
 
 After a reconnect the client joins its registry to the `endpoints` list of
 `ready` by identifier, and drops every destination that list does not name. The
-panel then shows what actually survived, rather than what the client last
-remembered.
+panel then shows what actually survived.
 
 ### What is not shown
 
 The panel's other half, for a router in this process, is the router itself:
 routers known, floodfills, tunnels, transport peers. None of it appears under a
 gateway and none of it is sent. Those numbers describe the gateway's machine and
-everyone else using it, not this account, and a panel that showed them would be
-telling a device that runs no router that it knows four thousand of them.
+everyone else using it, not this account.
 
 In their place the panel says where the router is - the host, without the path
 that opens it - and nothing more. There is no state here to put a light on: the
@@ -972,7 +934,7 @@ An operation the gateway cannot perform is an error. It is never a zero, an
 empty list or a quiet success: a transport that hides what it did not do is
 worse than one that cannot do it.
 
-An end is the exception, and not because it is convenient: a `stream-close` or
+An end is the exception: a `stream-close` or
 `stream-reset` naming a stream the gateway has already retired says exactly what
 the gateway already did. The far side ended and the client is saying so a moment
 later, or a dial never landed and the client is closing what was never opened.
@@ -1015,26 +977,24 @@ Both sides agree, so there is nothing to refuse.
 
 ## What this asks of the client
 
-1. `Backend::eGateway` beside `eEmbedded` and `eSam`, and `RouterConfig` gains
+1. `Backend::eGateway` beside `eEmbedded` and `eSam`, and `RouterConfig` carries
    the gateway's secret URL, whether it is `https`, and its fingerprint.
 2. Nothing client-side mints a key for a destination but the presence address:
    elsewhere `EndpointConfig::keys` stays empty and the transport mints.
-   `privateBlob()` and `publicBase64()` throw rather than answer with something
-   empty, which is where an assumption that the address came from a key of the
-   caller's is caught.
+   `privateBlob()` and `publicBase64()` throw, which is where an assumption that
+   the address came from a key of the caller's is caught.
 3. `EndpointConfig::target`, the one host an unpublished destination will dial,
    travels in `endpoint-create`; `endpoint-lost` makes `lost()` true.
 4. `common/src/I2pGateway.cpp`: `RouterBackend`, `EndpointBackend` and
    `StreamBackend` over the session's sockets, built by `makeGatewayRouter`. It
    attaches a socket to every realtime endpoint and every file transfer, reuses
    TLS tickets, and sends control before unattached stream data on the main one.
-5. `setSocksProxy` is called unconditionally when the client builds its router;
-   it has to ask `capabilities().proxy` first.
+5. The client asks `capabilities().proxy` before it calls `setSocksProxy` when
+   it builds its router.
 6. A decoy timer, and a control socket the client replaces on purpose. Both are
    the client's own business: the gateway only answers.
-7. The status view distinguishes two backends today and will have to
-   distinguish three: it names the gateway beside the router numbers, drops the
-   proxy row, and stops reading the on-disk netDb count, which means nothing
-   when there is no local netDb.
+7. The status view distinguishes three backends: under a gateway it names the
+   gateway beside the router numbers, drops the proxy row, and does not read the
+   on-disk netDb count, which means nothing when there is no local netDb.
 8. One global setting switches the router off. The library stays linked, because
    the account's own destination is still minted on the device.

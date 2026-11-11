@@ -51,8 +51,7 @@ descriptor. It answers at `/`. The key is minted at the first start and kept in
 `POST /new-address` on the ops socket mints a new key, answers with the new
 address and the old one, and restarts the facade to publish it; a client that
 knows only the old address loses the server until it is given the new one. The
-reseed archive is not here - it is served by the portal, which is what faces the
-clearnet. Anything else - an unknown path, `/healthz` - is the same bare 404.
+reseed archive is served by the portal, which is what faces the clearnet. Anything else - an unknown path, `/healthz` - is the same bare 404.
 
 `opsListen` opens a second, private socket carrying everything that is the
 operator's: the signed `/healthz`, `GET`/`PUT /settings` (which also reports the

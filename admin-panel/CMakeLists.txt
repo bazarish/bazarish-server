@@ -37,6 +37,8 @@ target_include_directories(bazarish_admin_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
 target_link_libraries(bazarish_admin_lib PUBLIC Bazarish::Common Threads::Threads bazarish_server_shared
     bazarish_server_qr)
 target_compile_options(bazarish_admin_lib PRIVATE -Wall -Wextra -Werror)
+# GCC pairs Asio's inlined coroutine frame with plain delete: a false positive, silenced here.
+set_source_files_properties(src/LogWindows.cpp PROPERTIES COMPILE_OPTIONS -Wno-mismatched-new-delete)
 
 add_executable(bazarish-admin-panel src/Main.cpp)
 bazarish_stamp_version(bazarish-admin-panel)

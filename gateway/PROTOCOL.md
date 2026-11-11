@@ -884,21 +884,14 @@ After a reconnect the client joins its registry to the `endpoints` list of
 `ready` by identifier, and drops every destination that list does not name. The
 panel then shows what actually survived.
 
-### What is not shown
+### The gateway's own state
 
-The panel's other half, for a router in this process, is the router itself:
-routers known, floodfills, tunnels, transport peers. None of it appears under a
-gateway and none of it is sent. Those numbers describe the gateway's machine and
-everyone else using it, not this account.
-
-In their place the panel says where the router is - the host, without the path
-that opens it - and nothing more. There is no state here to put a light on: the
-destinations below carry their own.
-
-The proxy row is absent for the same reason, and the netDb count the panel reads
-off the disk while a router is stopped is an embedded-only fact: there is no
-local netDb under a gateway, and a count left from an earlier run would be a
-number about nothing.
+Under a gateway the panel names the gateway's host, without the path that opens
+it, above this session's destinations. The gateway's own state - routers known,
+floodfills, tunnels, transport peers, its proxy, its netDb - describes its
+machine and everyone else using it, so it is neither sent to a client nor shown
+there; the router figures, the proxy row and the netDb count belong to a router
+running in the client's process.
 
 ## The health report
 
@@ -994,7 +987,7 @@ Both sides agree, so there is nothing to refuse.
 6. A decoy timer, and a control socket the client replaces on purpose. Both are
    the client's own business: the gateway only answers.
 7. The status view distinguishes three backends: under a gateway it names the
-   gateway beside the router numbers, drops the proxy row, and does not read the
-   on-disk netDb count, which means nothing when there is no local netDb.
+   gateway's host and shows this session's destinations, and shows none of the
+   gateway's own state (The status panel).
 8. One global setting switches the router off. The library stays linked, because
    the account's own destination is still minted on the device.

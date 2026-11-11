@@ -51,11 +51,14 @@ constexpr std::size_t kSessionIdChars = 32;
 
 namespace http = bazarish::http;
 
+constexpr char kCardTypeName[] = "contact-card";
+
 const std::string kCardDest = "dlkbeyqjykssca6o7qlbwgq4fr2hry7kw2ursn2sh3lt3acox6gq.b32.i2p";
 
 Bytes botCard(const Identity& owner, const std::int64_t issuedAt,
     const std::string& dest = kCardDest,
-    const Bytes& sealingDer = {}, const Bytes& servingDer = {})
+    const Bytes& sealingDer = Key::generateSealing().publicDer(),
+    const Bytes& servingDer = Key::generateSealing().publicDer())
 {
     ContactCard card;
     card.kind = AccountKind::eBot;
@@ -163,7 +166,11 @@ int main()
     }
 
     {
-        const Bytes card = botCard(alice, now + 1, "");
+        const nlohmann::json destless = {{"v", kCertificateFormatVersion}, {"t", kCardTypeName},
+            {"issuedAt", now + 1}, {"kind", "bot"}, {"dest", ""},
+            {"sealingKey", toBase64(Key::generateSealing().publicDer())},
+            {"servingKey", toBase64(Key::generateSealing().publicDer())}};
+        const Bytes card = hybrid::signJson(destless, alice);
         const std::string body = nlohmann::json{{"card", toBase64(card)}, {"cardKey", kCardKeyText}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
             signedHeaders(alice, "POST", "/v1/account/card", body), body);

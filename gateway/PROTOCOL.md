@@ -33,9 +33,9 @@ The operator of a gateway sees:
 - every destination the client dials, and every address the client publishes,
 - which of its own users are talking to each other, since it connects them,
 - the keys of every destination the gateway operates, because it mints them,
-- the account's presence secret, a one-day delegation of its presence address
-  and the presence keys of up to 100 contacts, once the client shows or watches
-  presence through it (Presence, below),
+- for each day the client shows or watches presence through it, the day's
+  presence address as a delegation, the account's reader secret for the day and
+  the day's reader keys of up to 100 contacts (Presence, below),
 - the timing and the volume of all of the client's I2P traffic,
 - the client's IP address.
 
@@ -55,9 +55,8 @@ the account's serving destination.
 Turning the gateway on is therefore an explicit, informed choice, and the one
 invariant the protocol keeps is narrow and exact:
 
-> **No key the client owns is ever sent to the gateway, except the account's
-> presence secret and a one-day delegation of its presence address, and every
-> destination the gateway mints is one-time.**
+> **No key the client owns is ever sent to the gateway, except the presence keys
+> of one day, and every destination the gateway mints is one-time.**
 
 The client's durable key material is the account identity and the master of its
 serving destination. Neither is ever operated locally, so neither has any reason
@@ -66,26 +65,21 @@ discarded with it: the facade link, a lookup, an outbound lease, a file
 transfer and the media destination of a call.
 
 Presence is the exception, and it travels because presence cannot work without
-it: the account's presence address is in its contact card, so it is the same
-address every time, and a lease set readable only by named contacts is read by
-the router that looks it up, which here is the gateway's. The master key of that
-address never travels; the gateway is given a delegation that ends with the UTC
-day and asks the client for the next one itself. What the operator holds is
-bounded, and only the secret is lasting:
+it: a lease set readable only by named contacts is read by the router that looks
+it up, which here is the gateway's. Every presence key is derived on the device
+from the account's presence seed for one UTC day (`docs-main/Presence.md`), and
+the seed never travels. What the operator holds is bounded by the day:
 
-- With the delegation it can run the account's presence address until the
+- With the delegation it can run the day's presence address until the
   delegation ends, and so keep it silent: contacts then see the account offline.
-  Once the client stops renewing it, the gateway cannot raise the address again.
-  It cannot answer for the account either, since every answer is sealed under a
-  key agreed inside a request sealed to the account's sealing key, which never
-  travels.
-- With the reader list it learns the presence keys of up to 100 contacts. A
-  presence key is in each contact's card, so this names them to an operator that
-  holds those cards.
-- With the account's presence secret it can read the lease set of every contact
-  who lets this account see their presence, and so see when each of them is
-  online, for as long as that secret stands. Leaving the gateway does not take
-  this back; the secret is permanent by design and a new one means a new card.
+  Once the client stops renewing it, the gateway cannot raise the address again,
+  and contacts stop looking for it when the day ends. It cannot answer for the
+  account either, since every answer is sealed under a key agreed inside a
+  request sealed to the account's sealing key, which never travels.
+- With the reader list it learns the day's reader keys of up to 100 contacts.
+- With the account's reader secret for the day it can read that day's lease set
+  of every contact who lets this account see their presence, and so see when
+  each of them is online that day. It opens no other day's.
 
 ## Transport
 
@@ -607,15 +601,16 @@ shapes:
 
 - **The presence address**, a published `raw` destination built from a
   delegation of the account's presence address: `keys` is the I2P base64 of an
-  offline transient that ends with the current UTC day, with the day's b33
-  blinding key, and `readers` the I2P base64 of the 32-byte X25519 public key of
-  each reader, the account's own first. Its lease set is encrypted, and only a
-  router holding one of those readers' secrets can read it (I2P proposal 123, DH
-  client authorisation). The answer names the address the delegation gives,
-  which is the one in the account's card. A master key is refused.
+  offline transient that ends with a UTC day, with the b33 blinding key of each
+  day it covers, and `readers` the I2P base64 of the 32-byte X25519 public key of
+  each reader. Its lease set is encrypted, and only a router holding one of
+  those readers' secrets can read it (I2P proposal 123, DH client
+  authorisation). The answer names the address the delegation gives, which is
+  the one in the account's schedule for the day. A master key is refused.
 - **A watching address**, a published `raw` destination the gateway mints as
   usual, with `readerKey`: the I2P base64 of the account's 32-byte X25519
-  presence secret, which lets it read the lease sets that list the account.
+  reader secret for the day, which lets it read the day's lease sets that list
+  the account.
 
 The gateway refuses with `bad-frame` a request whose `keys` comes without
 `readers`, whose `readers` come without `keys`, that names more than
@@ -628,7 +623,9 @@ belongs to one of those readers (Meeting on the gateway), the check its
 encrypted lease set makes in I2P.
 
 A new reader list is a new destination: the client stops the old one and
-creates the address again with the new list.
+creates the address again with the new list. A new day is a new destination as well: the
+client creates the next day's address and watching address 5 minutes before
+00:00 UTC and stops the old ones 5 minutes after.
 
 **Renewal is the gateway's to ask for.** `kDelegationAskLead` before a
 delegation ends, the gateway sends `endpoint-renew` with its end in Unix seconds,
@@ -640,7 +637,7 @@ address, or one that ends no later than the one it holds. A destination never
 outlives its delegation: `kDelegationLapseLead` before the end, with no new one,
 the gateway stops it and sends `endpoint-lost`, and the client raises the
 address again with a fresh delegation when it next wants it. The client keeps
-no clock for any of this.
+no clock for renewal.
 
 ### What this costs the client's seam
 

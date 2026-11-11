@@ -40,7 +40,8 @@ const std::string kCardDest = "dlkbeyqjykssca6o7qlbwgq4fr2hry7kw2ursn2sh3lt3acox
 
 Bytes botCard(const Identity& owner, const std::int64_t issuedAt,
     const std::string& dest = kCardDest,
-    const Bytes& sealingDer = {}, const Bytes& servingDer = {})
+    const Bytes& sealingDer = Key::generateSealing().publicDer(),
+    const Bytes& servingDer = Key::generateSealing().publicDer())
 {
     ContactCard card;
     card.kind = AccountKind::eBot;

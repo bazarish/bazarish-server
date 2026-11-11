@@ -4,6 +4,7 @@
 namespace bazarish::fleet {
 
 inline constexpr char kMessagingAccount[] = "/v1/messaging/account";
+inline constexpr char kMessagingCard[] = "/v1/messaging/card";
 inline constexpr char kMessagingI2pDest[] = "/v1/messaging/i2p-dest";
 inline constexpr char kMessagingNodeCard[] = "/v1/messaging/node-card";
 inline constexpr char kMessagingQuota[] = "/v1/messaging/quota";

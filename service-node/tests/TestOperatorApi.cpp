@@ -84,6 +84,7 @@ int main()
         revokedTransient = transientB64;
         return ServedDestination{};
     };
+    options.publishCardChanged = [](const std::string&) {};
     options.publishQuota = [&](const std::string& user, const std::uint64_t quotaBytes) {
         quotaUser = user;
         quotaPushed = quotaBytes;

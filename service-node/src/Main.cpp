@@ -275,6 +275,12 @@ int main(const int argc, const char** argv)
                 bazarish::log::redact(user));
         }
     };
+    options.publishCardChanged = [&promptPush](const std::string& user) {
+        if (!promptPush.publishCardChanged(user)) {
+            bazarish::log::warn("the messaging server keeps the old card of {} until it expires",
+                bazarish::log::redact(user));
+        }
+    };
     const auto restartHook = std::make_shared<std::function<void()>>();
     options.requestRestart = [restartHook]() { (*restartHook)(); };
 

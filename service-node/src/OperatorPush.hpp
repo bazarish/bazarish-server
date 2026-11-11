@@ -54,6 +54,7 @@ public:
     bool forgetMailbox(const std::string& user) const;
 
     bool publishQuota(const std::string& user, std::uint64_t quotaBytes) const;
+    bool publishCardChanged(const std::string& user) const;
 
     std::string reseedArchive() const;
 

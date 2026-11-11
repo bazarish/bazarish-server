@@ -184,6 +184,11 @@ bool OperatorPush::publishQuota(const std::string& user, const std::uint64_t quo
     return put(fleet::kMessagingQuota, body.dump());
 }
 
+bool OperatorPush::publishCardChanged(const std::string& user) const
+{
+    return put(fleet::kMessagingCard, nlohmann::json{{"user", user}}.dump());
+}
+
 std::optional<ServedDestination> OperatorPush::publish(const std::string& user,
     const std::string& transientB64, const std::int64_t expiresUnix,
     const AddressKeys& keys) const

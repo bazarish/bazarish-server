@@ -23,6 +23,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <atomic>
+#include <vector>
 #include <filesystem>
 #include <functional>
 #include <future>
@@ -50,7 +51,10 @@ constexpr std::size_t kSessionIdChars = 32;
 
 namespace http = bazarish::http;
 
-Bytes botCard(const Identity& owner, const std::int64_t issuedAt, const std::string& dest = {},
+const std::string kCardDest = "dlkbeyqjykssca6o7qlbwgq4fr2hry7kw2ursn2sh3lt3acox6gq.b32.i2p";
+
+Bytes botCard(const Identity& owner, const std::int64_t issuedAt,
+    const std::string& dest = kCardDest,
     const Bytes& sealingDer = {}, const Bytes& servingDer = {})
 {
     ContactCard card;
@@ -128,6 +132,9 @@ int main()
         quotaPushed = quotaBytes;
         ++quotaCalls;
     };
+    std::vector<std::string> cardsChanged;
+    options.publishCardChanged
+        = [&cardsChanged](const std::string& user) { cardsChanged.push_back(user); };
     AccountApi api(store, grants, options);
 
     const int port = api.bind("127.0.0.1", 0);
@@ -152,6 +159,16 @@ int main()
         CHECK(quotaCalls == 1);
         CHECK(quotaUser == alice.fingerprint());
         CHECK(quotaPushed == kQuota);
+        CHECK(cardsChanged == std::vector<std::string>{alice.fingerprint()});
+    }
+
+    {
+        const Bytes card = botCard(alice, now + 1, "");
+        const std::string body = nlohmann::json{{"card", toBase64(card)}, {"cardKey", kCardKeyText}}.dump();
+        const http::ClientResponse result = call(port, "POST", "/v1/account/card",
+            signedHeaders(alice, "POST", "/v1/account/card", body), body);
+        CHECK(result.status == 400);
+        CHECK(cardsChanged.size() == 1);
     }
 
     {

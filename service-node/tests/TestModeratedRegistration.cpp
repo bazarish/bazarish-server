@@ -36,7 +36,10 @@ namespace http = bazarish::http;
 
 constexpr int kDelegationDays = 7;
 
-Bytes botCard(const Identity& owner, const std::int64_t issuedAt, const std::string& dest = {},
+const std::string kCardDest = "dlkbeyqjykssca6o7qlbwgq4fr2hry7kw2ursn2sh3lt3acox6gq.b32.i2p";
+
+Bytes botCard(const Identity& owner, const std::int64_t issuedAt,
+    const std::string& dest = kCardDest,
     const Bytes& sealingDer = {}, const Bytes& servingDer = {})
 {
     ContactCard card;
@@ -81,6 +84,7 @@ int main()
     options.settings = std::make_shared<NodeSettings>(std::filesystem::path(), values);
     options.forgetMailbox = [](const std::string&) { return true; };
     options.publishQuota = [](const std::string&, std::uint64_t) {};
+    options.publishCardChanged = [](const std::string&) {};
     int pubCalls = 0;
     options.publishI2pTransient = [&pubCalls](const std::string&, const std::string&,
                                       std::int64_t, const AddressKeys&)

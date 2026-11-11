@@ -17,6 +17,7 @@
 #include <bazarish/HttpResponses.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <bazarish/I2p.hpp>
+#include <bazarish/I2pAddress.hpp>
 #include <bazarish/JsonRead.hpp>
 #include <bazarish/KeyedSeal.hpp>
 #include <bazarish/Limits.hpp>
@@ -771,6 +772,11 @@ void AccountApi::setupRoutes()
                     "this card was signed by somebody else");
                 return;
             }
+            if (!isB32I2pHost(card.dest)) {
+                respondError(response, 400, ErrorCode::eRequestFailed,
+                    "a card names the destination its account is reached at");
+                return;
+            }
             if (const std::optional<GrantStore::Ban> ban = grants_.peekBan(user);
                 ban.has_value()) {
                 respondError(response, 403, ErrorCode::eRequestFailed, ban->reason);
@@ -822,6 +828,7 @@ void AccountApi::setupRoutes()
             record.cardKey = cardKey;
             store_.putAccount(record);
             options_.publishQuota(user, quota);
+            options_.publishCardChanged(user);
 
             grants_.recordRegistration(user, now, !settings().requireApproval);
             const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);

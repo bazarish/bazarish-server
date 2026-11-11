@@ -44,6 +44,7 @@ struct HttpApiOptions {
         const std::string& sealingKeyPem, const std::string& signingKeyPem)>
         provisionI2pDest;
     std::function<void(const std::string& user)> forgetI2pDest;
+    std::function<void(const std::string& user)> forgetCard;
     std::function<bool(const std::string& user)> accountKnown;
     AssignDestinationFn assignDestination;
 

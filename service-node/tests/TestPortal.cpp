@@ -79,6 +79,7 @@ void testLoginCallback()
     options.settings = std::make_shared<NodeSettings>(configPath, values);
     options.forgetMailbox = [](const std::string&) { return true; };
     options.publishQuota = [](const std::string&, std::uint64_t) {};
+    options.publishCardChanged = [](const std::string&) {};
     options.logins = std::make_shared<LoginMailbox>();
 
     AccountApi api(store, grants, options);

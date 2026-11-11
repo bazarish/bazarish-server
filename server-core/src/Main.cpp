@@ -225,6 +225,8 @@ int main(const int argc, const char** argv)
             nodeCards.forget(user);
             perUserDests->forget(user);
         };
+        httpOptions.forgetCard
+            = [&nodeCards](const std::string& user) { nodeCards.forget(user); };
         httpOptions.accountKnown = [&nodeCards](const std::string& user) {
             return nodeCards.card(user).has_value();
         };

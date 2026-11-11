@@ -324,6 +324,11 @@ void HttpApi::setupOpsRoutes()
         return jsonResponse({{"usedBytes", options_.diskUsage()}});
     }));
 
+    ops_->put(fleet::kMessagingCard, operatorOnly([this](const bazarish::http::Request& request) {
+        options_.forgetCard(bazarish::parseJson(request.body).at("user").get<std::string>());
+        return jsonResponse({{"ok", true}});
+    }));
+
     ops_->put(fleet::kMessagingQuota,
         operatorOnly([&store](const bazarish::http::Request& request) {
             const nlohmann::json body = bazarish::parseJson(request.body);

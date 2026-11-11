@@ -5,10 +5,11 @@
 #include <bazarish/Clock.hpp>
 
 #include <map>
+#include <utility>
 
 namespace bazarish::server {
 
-http::ClientResponse opsCall(const OpsTarget& target, const Identity& signer,
+OpsExchange opsExchange(const OpsTarget& target, const Identity& signer,
     const std::string& method, const std::string& pathAndQuery, const std::string& body,
     const OpsTimeouts& timeouts)
 {
@@ -32,7 +33,15 @@ http::ClientResponse opsCall(const OpsTarget& target, const Identity& signer,
     options.connectTimeout = timeouts.connect;
     options.readTimeout = timeouts.exchange;
     options.writeTimeout = timeouts.exchange;
-    return http::request(address.host, address.port, out, options);
+    return OpsExchange{address.host, address.port, std::move(out), std::move(options)};
+}
+
+http::ClientResponse opsCall(const OpsTarget& target, const Identity& signer,
+    const std::string& method, const std::string& pathAndQuery, const std::string& body,
+    const OpsTimeouts& timeouts)
+{
+    const OpsExchange exchange = opsExchange(target, signer, method, pathAndQuery, body, timeouts);
+    return http::request(exchange.host, exchange.port, exchange.request, exchange.options);
 }
 
 }  // namespace bazarish::server

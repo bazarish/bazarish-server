@@ -13,6 +13,8 @@
 #include <bazarish/Auth.hpp>
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Crypto.hpp>
+#include <LogFeed.hpp>
+#include <LogRing.hpp>
 #include <Restart.hpp>
 #include <TunnelFace.hpp>
 
@@ -57,6 +59,7 @@ struct AccountApiOptions {
     std::string tlsCertificate;
     std::string tlsKey;
     std::vector<std::string> opsClientPins;
+    std::shared_ptr<server::LogRing> logRing = std::make_shared<server::LogRing>();
 };
 
 class AccountApi {
@@ -95,6 +98,7 @@ private:
     // Last: the servers go first, while what their handlers touch is still here.
     std::unique_ptr<bazarish::http::Server> http_;
     std::unique_ptr<bazarish::http::Server> ops_;
+    std::unique_ptr<server::LogFeed> logFeed_;
 };
 
 }  // namespace bazarish::service

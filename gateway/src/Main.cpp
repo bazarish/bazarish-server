@@ -2,6 +2,7 @@
 #include "Gateway.hpp"
 #include "Settings.hpp"
 #include <CommandLine.hpp>
+#include <LogRing.hpp>
 
 #include <BuildVersion.hpp>
 #include <Restart.hpp>
@@ -61,6 +62,11 @@ int main(const int argc, const char** argv)
         return 2;
     }
 
+    bazarish::log::setComponent("gateway");
+    bazarish::log::setLevel(settings.logLevel);
+    const auto logRing = std::make_shared<bazarish::server::LogRing>();
+    const bazarish::server::LogCapture logCapture(logRing);
+
     bazarish::StopGate stopped;
     const bazarish::SignalWaiter signalWaiter([&stopped]() { stopped.stop(); });
 
@@ -72,12 +78,12 @@ int main(const int argc, const char** argv)
 
     bazarish::i2p::Router router(routerConfig);
     router.start();
-    bazarish::log::info("gateway: router {} starting", bazarish::i2p::routerVersion());
+    bazarish::log::info("router {} starting", bazarish::i2p::routerVersion());
 
     bazarish::RestartSwitch restart([&stopped]() { stopped.stop(); });
     bazarish::gateway::Gateway gateway(settings, router,
         bazarish::gateway::OpsControl{
-            configPath, [&restart]() { restart.request(); }});
+            configPath, [&restart]() { restart.request(); }, logRing});
     const int port = gateway.start();
     std::printf("bazarish-gateway %s listening on %s:%d\n", bazarish::kBuildVersion, settings.listenHost.c_str(),
         port);
@@ -85,14 +91,14 @@ int main(const int argc, const char** argv)
 
     if (!stopped.waitFor(kRouterWarmup)) {
         if (router.ready()) {
-            bazarish::log::info("gateway: the router has tunnels");
+            bazarish::log::info("the router has tunnels");
         } else {
-            bazarish::log::warn("gateway: the router still has no tunnels");
+            bazarish::log::warn("the router still has no tunnels");
         }
         stopped.wait();
     }
 
-    bazarish::log::info("gateway: stopping");
+    bazarish::log::info("stopping");
     gateway.stop();
     router.stop();
     return restart.requested() ? bazarish::kRestartExitCode : 0;

@@ -67,6 +67,15 @@ admin panel's and the service node's. The node beside it is named the same way,
 `"serviceNode": {"url": "https://...", "pin": "..."}`, and the pin is
 required: without one the dial is refused.
 
+`GET /v1/messaging/logs?after=N` on `opsListen` answers the log lines this
+process wrote after line N, out of the last 2000 it keeps, as
+`{"instance", "first", "lines"}`: each line is `{"seq", "t", "level", "text"}`
+with `t` in Unix milliseconds, `instance` is new at every start and `first` is
+the oldest line still kept. With no line past N the answer waits up to 25
+seconds for one and then comes back empty; an `after` past the newest line is
+answered at once. One answer carries at most 500 lines. The i2pd lines are among
+them while the i2pd log is on (`i2pLog` in the settings, applied at once).
+
 `gatewayListen` is optional and serves the gateways of the same operator, each
 admitted by the key listed for it in `gateways`. A gateway learns there every
 destination this server serves and carries its users' streams to them without

@@ -35,8 +35,10 @@ An alias belongs to `alias-resolver`, which is a service of its own.
   server, which would otherwise keep serving its own default.
 - **The operator's face**: on a socket of its own (`opsListen`, TLS, answering
   only the keys in `opsClients`): listing and searching accounts, ban/unban,
-  approve, live settings and a restart request - all signed with an identity, and
-  what `admin-panel` drives.
+  approve, live settings, a restart request and the log
+  (`GET /v1/account/logs?after=N`, answered as server-core's
+  `/v1/messaging/logs`) - all signed with an identity, and what `admin-panel`
+  drives.
 
 ## Build
 

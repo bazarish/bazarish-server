@@ -6,6 +6,7 @@
 #include <bazarish/HttpClient.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <bazarish/I2p.hpp>
+#include <bazarish/Log.hpp>
 #include <bazarish/Tls.hpp>
 
 #include "TestRouter.hpp"
@@ -130,7 +131,11 @@ int main()
 
     i2p::Router engine(i2p::offlineRouter(root / "i2p"));
     std::atomic<int> restarts{0};
-    Gateway gateway(settings, engine, OpsControl{configPath, [&restarts]() { ++restarts; }});
+    const auto logRing = std::make_shared<server::LogRing>();
+    logRing->append(log::Level::eWarn, "a gateway line", nowMillis());
+    log::setLevel(log::Level::eWarn);
+    Gateway gateway(
+        settings, engine, OpsControl{configPath, [&restarts]() { ++restarts; }, logRing});
     const int port = gateway.start();
     CHECK(port > 0);
     CHECK(gateway.pooled() == kStreamPool + kCallPool + kWatchPool);
@@ -151,10 +156,11 @@ int main()
     CHECK(before.at("callPool") == kCallPool);
     CHECK(before.at("watchPool") == kWatchPool);
     CHECK(before.at("direct").empty());
+    CHECK(before.at("logLevel") == "info");
 
     for (const nlohmann::json& wrong : {nlohmann::json{{"streamPool", kMaxPoolDepth + 1}},
              nlohmann::json{{"callPool", -1}}, nlohmann::json{{"watchPool", -1}},
-             nlohmann::json{{"i2pPrivacy", "short"}},
+             nlohmann::json{{"i2pPrivacy", "short"}}, nlohmann::json{{"logLevel", "loud"}},
              nlohmann::json{{"i2pPrivacy", "max"},
                  {"direct", {{{"dest", kServerDest}, {"host", "127.0.0.1"}, {"port", 1}}}}}}) {
         CHECK(askOps(settings.opsPort, pin, "PUT", "/settings", &operatorIdentity, wrong.dump())
@@ -197,6 +203,29 @@ int main()
     CHECK(written.direct.front().dest == kServerDest);
     CHECK(written.basePath == kPath);
     CHECK(gateway.pooled() == kStreamPool + kCallPool + kWatchPool);
+    CHECK(written.logLevel == log::Level::eInfo);
+    CHECK(log::level() == log::Level::eWarn);
+
+    const http::ClientResponse louder = askOps(settings.opsPort, pin, "PUT", "/settings",
+        &operatorIdentity, nlohmann::json{{"logLevel", "debug"}}.dump());
+    CHECK(louder.status == 200);
+    CHECK(nlohmann::json::parse(louder.body).at("logLevel") == "debug");
+    CHECK(log::level() == log::Level::eDebug);
+    CHECK(Settings::from(ConfigView(ConfigFile(configPath).read())).logLevel
+        == log::Level::eDebug);
+    CHECK(nlohmann::json::parse(
+              askOps(settings.opsPort, pin, "GET", "/settings", &operatorIdentity).body)
+              .at("logLevel")
+        == "debug");
+    log::setLevel(log::Level::eError);
+
+    CHECK(askOps(settings.opsPort, pin, "GET", "/logs?after=0", nullptr).status == 403);
+    const http::ClientResponse logs
+        = askOps(settings.opsPort, pin, "GET", "/logs?after=0", &operatorIdentity);
+    CHECK(logs.status == 200);
+    const nlohmann::json page = nlohmann::json::parse(logs.body);
+    CHECK(page.at("instance") == logRing->instance());
+    CHECK(page.at("lines").at(0).at("text") == "a gateway line");
 
     i2p::Router bob(borrowedFrom(port, gateway.fingerprint()));
     bob.start();

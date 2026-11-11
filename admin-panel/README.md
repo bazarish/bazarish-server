@@ -60,6 +60,18 @@ A sidebar with two views, drawn by a small script from the panel's own JSON API:
   does the searching), filter by approval state, open an account to read its
   terms, set its storage quota in megabytes, or approve it.
 
+The settings page of server-core, the service node, each facade and each gateway
+has a Logs section with the service's log level. Its `[open]` opens the
+service's log in a browser window of its own, one per service: lines coloured by
+level, following the end unless paused, at most 2000 kept, with a mark where
+lines were skipped or where the service restarted. The window reads a WebSocket
+at `/api/logs`, which admits only a signed-in administrator from a page of the
+panel's own origin. For each window the panel holds the service's signed log
+call open in turn and forwards what it answers; the socket closes when the
+session ends, when that administrator is removed or when the service answers
+with an error, and the window then offers to reconnect. At most 8 log windows
+are open at once.
+
 The sign-in page needs no JavaScript, so a fleet that is entirely down can still
 be logged into. The panel's web files live where the config's `assets` points (`web/` in this
 repository) - edit them to restyle the panel, then restart it.

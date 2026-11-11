@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #include "ServiceClient.hpp"
 
+#include <LogFeed.hpp>
 #include <OpsClient.hpp>
 
 #include <bazarish/JsonRead.hpp>
@@ -109,6 +110,17 @@ JsonResult callJson(const ServiceEntry& service, const Identity& identity,
         result.error = response.error.empty() ? response.body : response.error;
     }
     return result;
+}
+
+server::OpsExchange logsExchange(const ServiceEntry& service, const Identity& identity,
+    const bazarish::tls::Credential& credential, const std::string& pathAndQuery)
+{
+    return bazarish::server::opsExchange(
+        bazarish::server::OpsTarget{service.url, service.pin, credential.certificate.string(),
+            credential.key.string()},
+        identity, "GET", pathAndQuery, std::string(),
+        bazarish::server::OpsTimeouts{std::chrono::seconds(kConnectTimeoutSeconds),
+            bazarish::server::kLogWait + std::chrono::seconds(kExchangeTimeoutSeconds)});
 }
 
 std::string failureText(const JsonResult& result)

@@ -31,6 +31,7 @@ add_library(bazarish_admin_lib STATIC
     src/ServiceClient.cpp
     src/FleetSync.cpp
     src/HttpApi.cpp
+    src/LogWindows.cpp
 )
 target_include_directories(bazarish_admin_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(bazarish_admin_lib PUBLIC Bazarish::Common Threads::Threads bazarish_server_shared
@@ -54,6 +55,9 @@ target_compile_definitions(TestLoginPage
     PRIVATE BAZARISH_PANEL_WEB_DIR="${CMAKE_CURRENT_SOURCE_DIR}/web")
 bazarish_server_test(TestPanelFleet bazarish_admin_lib)
 target_compile_definitions(TestPanelFleet
+    PRIVATE BAZARISH_PANEL_WEB_DIR="${CMAKE_CURRENT_SOURCE_DIR}/web")
+bazarish_server_test(TestPanelLogs bazarish_admin_lib)
+target_compile_definitions(TestPanelLogs
     PRIVATE BAZARISH_PANEL_WEB_DIR="${CMAKE_CURRENT_SOURCE_DIR}/web")
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)

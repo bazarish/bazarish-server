@@ -3,6 +3,8 @@
 
 #include "Config.hpp"
 
+#include <OpsClient.hpp>
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -52,5 +54,9 @@ JsonResult callJson(const ServiceEntry& service, const Identity& identity,
     const std::string& body = {});
 
 std::string failureText(const JsonResult& result);
+
+// Held by the service until a line comes, so it waits longer than any other call.
+server::OpsExchange logsExchange(const ServiceEntry& service, const Identity& identity,
+    const tls::Credential& credential, const std::string& pathAndQuery);
 
 }  // namespace bazarish::admin

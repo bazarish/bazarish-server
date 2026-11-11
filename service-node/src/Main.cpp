@@ -2,6 +2,7 @@
 #include "AccountApi.hpp"
 
 #include <FleetPorts.hpp>
+#include <LogRing.hpp>
 #include <OpsSettings.hpp>
 #include <Restart.hpp>
 #include <StateIdentity.hpp>
@@ -202,6 +203,8 @@ int main(const int argc, const char** argv)
 
     bazarish::log::setComponent("service-node");
     bazarish::log::setLevel(nodeConfig.logLevel);
+    const auto logRing = std::make_shared<bazarish::server::LogRing>();
+    const bazarish::server::LogCapture logCapture(logRing);
 
     const bazarish::Bytes cardDer = readFileBytes(fs::path(nodeConfig.serverCard));
     const bazarish::ServerCard card
@@ -253,6 +256,7 @@ int main(const int argc, const char** argv)
     options.version = bazarish::kBuildVersion;
     options.operatorFingerprints = nodeConfig.operators;
     options.settings = settings;
+    options.logRing = logRing;
     const auto logins = std::make_shared<bazarish::service::LoginMailbox>();
     options.logins = logins;
     options.tlsCertificate = credential.certificate.string();

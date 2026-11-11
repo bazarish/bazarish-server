@@ -23,14 +23,17 @@
 #include <bazarish/Log.hpp>
 #include <bazarish/Percent.hpp>
 #include <bazarish/WebAssets.hpp>
+#include <bazarish/WebSocket.hpp>
 
 #include <nlohmann/json.hpp>
 
+#include <charconv>
 #include <cstdint>
 #include <exception>
 #include <functional>
 #include <future>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -57,6 +60,8 @@ const char* const kCookieName = "adminsession";
 const char* const kCookieAttributes = "; HttpOnly; SameSite=Strict; Path=/";
 const char* const kSignInCookie = "adminsignin";
 const char* const kSignInCookieAttributes = "; HttpOnly; SameSite=Strict; Path=/login";
+const char* const kLogsSocketPath = "/api/logs";
+const char* const kLogsPagePath = "/logs";
 
 void sendError(http::Response& response, const int status, const std::string& message)
 {
@@ -133,6 +138,57 @@ std::string restartPathOf(const std::string& kind)
     return {};
 }
 
+std::string logsPathOf(const std::string& kind)
+{
+    if (kind == bazarish::admin::kServerCoreKind) {
+        return fleet::kMessagingLogs;
+    }
+    if (kind == bazarish::admin::kServiceNodeKind) {
+        return fleet::kAccountLogs;
+    }
+    if (kind == bazarish::admin::kFacadeKind || kind == bazarish::admin::kGatewayKind) {
+        return fleet::kOpsLogs;
+    }
+    return {};
+}
+
+std::optional<std::uint64_t> lineNumber(const std::string& text)
+{
+    if (text.empty()) {
+        return 0;
+    }
+    std::uint64_t value = 0;
+    const char* const end = text.data() + text.size();
+    const std::from_chars_result parsed = std::from_chars(text.data(), end, value);
+    if (parsed.ec != std::errc() || parsed.ptr != end) {
+        return std::nullopt;
+    }
+    return value;
+}
+
+// A WebSocket upgrade is not held to the same-origin rule, so the panel holds it to it.
+bool sameOrigin(const http::Request& request)
+{
+    const std::string host = request.header("Host");
+    const std::string origin = request.header("Origin");
+    if (host.empty()) {
+        return false;
+    }
+    for (const char* const scheme : {"http://", "https://"}) {
+        if (origin == scheme + host) {
+            return true;
+        }
+    }
+    return false;
+}
+
+http::Response refusal(const int status, const std::string& message)
+{
+    http::Response response;
+    sendError(response, status, message);
+    return response;
+}
+
 std::string humanizeUptime(const std::int64_t seconds)
 {
     using bazarish::kSecondsPerDay;
@@ -162,6 +218,7 @@ HttpApi::HttpApi(std::shared_ptr<PanelSettings> settings, const Identity& identi
     , auth_(settings_)
     , sessions_(options_.sessionTtlSeconds)
     , assets_(options_.assetsDirectory)
+    , logWindows_(identity_, credential_)
 {
 }
 
@@ -209,6 +266,32 @@ std::optional<ServiceEntry> HttpApi::serviceOfKind(
         }
     }
     return std::nullopt;
+}
+
+std::optional<ServiceEntry> HttpApi::logSource(const http::Request& request) const
+{
+    const std::string name = request.query("service");
+    const std::string kind = request.query("kind");
+    std::optional<ServiceEntry> service;
+    if (!name.empty()) {
+        service = serviceNamed(request.query("fleet"), name);
+    } else if (kind == kServerCoreKind || kind == kServiceNodeKind) {
+        service = serviceOfKind(request.query("fleet"), kind);
+    }
+    if (!service.has_value() || logsPathOf(service->kind).empty()) {
+        return std::nullopt;
+    }
+    return service;
+}
+
+bool HttpApi::sessionAdmin(const std::string& token)
+{
+    const std::optional<std::string> holder = sessions_.holder(token, nowSeconds());
+    if (!holder.has_value()) {
+        return false;
+    }
+    const std::vector<std::string> admins = settings_->get().admins;
+    return std::find(admins.begin(), admins.end(), *holder) != admins.end();
 }
 
 std::string HttpApi::loginFacade(const ServiceEntry& node)
@@ -285,13 +368,7 @@ void HttpApi::registerRoutes()
     }
 
     const auto signedIn = [this](const http::Request& request) {
-        const std::optional<std::string> holder
-            = sessions_.holder(request.cookie(kCookieName), nowSeconds());
-        if (!holder.has_value()) {
-            return false;
-        }
-        const std::vector<std::string> admins = settings_->get().admins;
-        return std::find(admins.begin(), admins.end(), *holder) != admins.end();
+        return sessionAdmin(request.cookie(kCookieName));
     };
 
     const auto setupPage = [this](const std::string& error) {
@@ -423,6 +500,46 @@ void HttpApi::registerRoutes()
         }
         sendHtml(response, assets_.render("index.html", {{"version", options_.version}}));
     }));
+
+    http_->get(kLogsPagePath, filled([this, signedIn](
+                                  const http::Request& request, http::Response& response) {
+        if (!signedIn(request)) {
+            redirectTo(response, "/login");
+            return;
+        }
+        sendHtml(response, assets_.render("logs.html", {}));
+    }));
+
+    http::SocketRoutes logs;
+    logs.admit = [this, signedIn](const http::Request& request) -> std::optional<http::Response> {
+        if (!signedIn(request)) {
+            return refusal(401, "not signed in");
+        }
+        if (!sameOrigin(request)) {
+            return refusal(403, "a log window opens only from this panel's own pages");
+        }
+        const std::optional<std::uint64_t> after = lineNumber(request.query("after"));
+        if (!after.has_value() || (*after > 0 && request.query("instance").empty())) {
+            return refusal(400, "\"after\" is a line number of the named \"instance\"");
+        }
+        if (!logSource(request).has_value()) {
+            return refusal(404, "this deployment has no such service");
+        }
+        return std::nullopt;
+    };
+    logs.opened = [this](const http::SocketPtr& socket, const http::Request& request) {
+        const std::optional<ServiceEntry> service = logSource(request);
+        if (!service.has_value()) {
+            refuseLogWindow(*socket, "this deployment has no such service");
+            return;
+        }
+        const std::string token = request.cookie(kCookieName);
+        logWindows_.open(http_->executor(), socket,
+            LogWindow{*service, logsPathOf(service->kind),
+                lineNumber(request.query("after")).value_or(0), request.query("instance"),
+                [this, token]() { return sessionAdmin(token); }});
+    };
+    http_->upgrade(kLogsSocketPath, std::move(logs));
 
     const auto api = [this, signedIn](auto handler) {
         return filled([this, signedIn, handler](
@@ -841,6 +958,11 @@ int HttpApi::bind(const std::string& host, const int port)
         bazarish::log::error("cannot listen on {}:{}: {}", host, port, error.what());
         return 0;
     }
+}
+
+std::size_t HttpApi::logWindowsOpen() const
+{
+    return logWindows_.count();
 }
 
 void HttpApi::wait()

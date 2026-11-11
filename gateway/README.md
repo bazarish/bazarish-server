@@ -113,9 +113,13 @@ health report; the log says when the router has its tunnels.
 ## Settings and restart
 
 The same socket, with the same signature, carries `GET`/`PUT /settings` and
-`POST /restart`. `/settings` shows and writes into the config file the tunnels
-(`i2pPrivacy`), the three pools (`streamPool`, `callPool`, `watchPool`), the
-`server` link and the `direct` routes; it never shows the path. The
-link and the routes apply at once; the tunnels and the pools at the next start,
-since the pools are built then. `POST /restart` exits with code 90, which a unit with `Restart=on-failure`
-brings back.
+`POST /restart`. `/settings` shows and writes into the config file the log level
+(`logLevel`: `error`, `warn`, `info` or `debug`, `info` when the file names
+none), the tunnels (`i2pPrivacy`), the three pools (`streamPool`, `callPool`,
+`watchPool`), the `server` link and the `direct` routes; it never shows the
+path. The log level, the link and the routes apply at once; the tunnels and the
+pools at the next start, since the pools are built then. `POST /restart` exits
+with code 90, which a unit with `Restart=on-failure` brings back.
+
+`GET /logs?after=N` on the same socket answers the log lines this process wrote
+after line N, as server-core's `/v1/messaging/logs` does.

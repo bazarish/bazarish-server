@@ -18,6 +18,13 @@ constexpr int kBadRequest = 400;
 
 }  // namespace
 
+Refusal operatorCheck(const std::vector<std::string>& operators, auth::ReplayCache& replays)
+{
+    return [&operators, &replays](const http::Request& request) {
+        return http::operatorRefusal(request, nowSeconds(), operators, replays);
+    };
+}
+
 http::Handler operatorOnly(
     const std::vector<std::string>& operators, auth::ReplayCache& replays, http::Handler handler)
 {

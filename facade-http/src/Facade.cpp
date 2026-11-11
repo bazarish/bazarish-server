@@ -221,6 +221,9 @@ void Facade::setupOpsRoutes()
             options_.operatorFingerprints, operatorReplays_, std::move(handler));
     };
 
+    logFeed_ = std::make_unique<server::LogFeed>(*ops_, fleet::kOpsLogs, options_.logRing,
+        server::operatorCheck(options_.operatorFingerprints, operatorReplays_));
+
     ops_->get("/healthz", operatorOnly([this](const bazarish::http::Request&) {
         const Load::Sample sample = load_.sample(nowSeconds());
         nlohmann::json report = bazarish::parseJson(

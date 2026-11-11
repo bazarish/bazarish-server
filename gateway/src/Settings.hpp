@@ -7,6 +7,7 @@
 
 #include <bazarish/ConfigFile.hpp>
 #include <bazarish/I2p.hpp>
+#include <bazarish/Log.hpp>
 
 #include <cstddef>
 #include <filesystem>
@@ -44,6 +45,7 @@ struct Settings {
     std::size_t streamPool = kDefaultStreamPool;
     std::size_t callPool = kDefaultCallPool;
     std::size_t watchPool = kDefaultWatchPool;
+    log::Level logLevel = log::Level::eInfo;
 
     static Settings from(const ConfigView& config);
 };

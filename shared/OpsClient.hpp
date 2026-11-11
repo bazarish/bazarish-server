@@ -21,7 +21,18 @@ struct OpsTimeouts {
     std::chrono::seconds exchange;
 };
 
+struct OpsExchange {
+    std::string host;
+    int port = 0;
+    http::ClientRequest request;
+    http::ClientOptions options;
+};
+
 // The signature leaves out the query, as the receiving side does.
+OpsExchange opsExchange(const OpsTarget& target, const Identity& signer,
+    const std::string& method, const std::string& pathAndQuery, const std::string& body,
+    const OpsTimeouts& timeouts);
+
 http::ClientResponse opsCall(const OpsTarget& target, const Identity& signer,
     const std::string& method, const std::string& pathAndQuery, const std::string& body,
     const OpsTimeouts& timeouts);

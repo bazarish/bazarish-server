@@ -3,6 +3,7 @@
 
 #include "AdminAuth.hpp"
 #include "Config.hpp"
+#include "LogWindows.hpp"
 #include "PanelSettings.hpp"
 
 #include <bazarish/Tls.hpp>
@@ -49,6 +50,7 @@ public:
     int bind(const std::string& host, int port);
     void wait();
     void stop();
+    std::size_t logWindowsOpen() const;
 
 private:
     void registerRoutes();
@@ -57,6 +59,8 @@ private:
         const std::string& fleet, const std::string& kind) const;
     std::optional<ServiceEntry> serviceNamed(
         const std::string& fleet, const std::string& name) const;
+    std::optional<ServiceEntry> logSource(const bazarish::http::Request& request) const;
+    bool sessionAdmin(const std::string& token);
     std::string loginFacade(const ServiceEntry& node);
     std::string loginForm(const std::string& error, bazarish::http::Response& response);
 
@@ -70,6 +74,7 @@ private:
     AdminAuth auth_;
     PanelSessions sessions_;
     WebAssets assets_;
+    LogWindows logWindows_;
     std::unique_ptr<bazarish::http::Server> http_;
     bazarish::StopGate stopGate_;
 };

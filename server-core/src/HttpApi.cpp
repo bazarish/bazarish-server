@@ -304,6 +304,9 @@ void HttpApi::setupOpsRoutes()
             return jsonResponse({{"logLevel", values.logLevel}, {"i2pLog", values.i2pLog}});
         }));
 
+    logFeed_ = std::make_unique<LogFeed>(*ops_, fleet::kMessagingLogs, options_.logRing,
+        operatorCheck(options_.operatorFingerprints, replayCache_));
+
     ops_->post(fleet::kMessagingRestart,
         operatorOnly([this](const bazarish::http::Request&) {
             bazarish::log::info("restarting at the operator's request");

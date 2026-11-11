@@ -3,6 +3,7 @@
 
 #include <FleetPorts.hpp>
 #include <Health.hpp>
+#include <LogRing.hpp>
 #include <OpsSettings.hpp>
 #include <Restart.hpp>
 #include <StateIdentity.hpp>
@@ -127,6 +128,8 @@ int main(const int argc, const char** argv)
 
     bazarish::log::setComponent("server-core");
     bazarish::log::setLevel(logLevel);
+    const auto logRing = std::make_shared<bazarish::server::LogRing>();
+    const bazarish::server::LogCapture logCapture(logRing);
     if (i2pLog) {
         bazarish::i2p::setI2pLogging(true);
     }
@@ -199,6 +202,7 @@ int main(const int argc, const char** argv)
 
     bazarish::server::HttpApiOptions httpOptions;
     httpOptions.operatorFingerprints = operatorFingerprints;
+    httpOptions.logRing = logRing;
     httpOptions.version = bazarish::kBuildVersion;
     httpOptions.defaultQuotaBytes = engineOptions.defaultQuotaBytes;
     httpOptions.reseedSample

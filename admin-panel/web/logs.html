@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title data-t="Logs">Logs</title>
+<link rel="icon" href="favicon.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="log-page">
+<header class="log-head">
+  <h1 class="log-title" id="logTitle"></h1>
+  <span class="log-state" id="logState" data-t="Connecting">Connecting</span>
+  <button class="chip" type="button" id="logPause" data-t="Pause">Pause</button>
+  <button class="chip" type="button" id="logReconnect" data-t="Reconnect" hidden>Reconnect</button>
+</header>
+<div class="log-lines" id="logLines" role="log"></div>
+<script src="messages.js" defer></script>
+<script src="i18n.js" defer></script>
+<script src="logs.js" defer></script>
+</body>
+</html>

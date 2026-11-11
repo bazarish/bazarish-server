@@ -4,6 +4,8 @@
 #include "FacadeSettings.hpp"
 
 #include <FleetPorts.hpp>
+#include <LogFeed.hpp>
+#include <LogRing.hpp>
 #include <Restart.hpp>
 #include "Load.hpp"
 
@@ -40,6 +42,7 @@ struct FacadeOptions {
     std::string tlsCertificate;
     std::string tlsKey;
     std::vector<std::string> opsClientPins;
+    std::shared_ptr<server::LogRing> logRing = std::make_shared<server::LogRing>();
 };
 
 class Facade {
@@ -70,6 +73,7 @@ private:
     std::unique_ptr<bazarish::http::Server> http_;
     std::unique_ptr<bazarish::http::Server> ops_;
     std::unique_ptr<bazarish::http::Server> direct_;
+    std::unique_ptr<server::LogFeed> logFeed_;
 };
 
 }  // namespace bazarish::facade

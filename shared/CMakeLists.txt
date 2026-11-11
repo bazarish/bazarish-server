@@ -2,6 +2,8 @@
 add_library(bazarish_server_shared STATIC
     CommandLine.cpp
     Health.cpp
+    LogFeed.cpp
+    LogRing.cpp
     LoginRelay.cpp
     OpsClient.cpp
     OpsGate.cpp
@@ -44,3 +46,5 @@ bazarish_server_test(TestRateLimiter bazarish_server_shared TestRateLimiter.cpp)
 bazarish_server_test(TestTlsPipe bazarish_server_shared TestTlsPipe.cpp)
 bazarish_server_test(TestSessionStore bazarish_server_shared TestSessionStore.cpp)
 bazarish_server_test(TestQrSvg bazarish_server_qr TestQrSvg.cpp)
+bazarish_server_test(TestLogRing bazarish_server_shared TestLogRing.cpp)
+bazarish_server_test(TestLogFeed bazarish_server_shared TestLogFeed.cpp)

@@ -60,6 +60,7 @@ nlohmann::json editable(const Settings& written, const std::string& fingerprint)
             {{"dest", route.dest}, {"host", route.host}, {"port", route.port}, {"pin", route.pin}});
     }
     return {
+        {"logLevel", std::string(log::levelName(written.logLevel))},
         {"i2pPrivacy", std::string(i2p::privacyName(written.tunnelPrivacy))},
         {"callPrivacy", std::string(i2p::privacyName(kCallPrivacy))},
         {"streamPool", written.streamPool},
@@ -244,8 +245,14 @@ http::Response Gateway::settingsChanged(const http::Request& request)
     std::vector<std::pair<std::vector<std::string>, nlohmann::json>> writes;
     std::optional<std::vector<DirectRoute>> direct;
     std::optional<std::optional<ServerLink>> link;
+    std::optional<log::Level> logLevel;
     try {
         const nlohmann::json body = bazarish::parseJson(request.body);
+        if (body.contains("logLevel")) {
+            const std::string named = server::logLevelIn(body, {});
+            logLevel = log::levelFromString(named);
+            writes.push_back({{"logLevel"}, named});
+        }
         if (body.contains("i2pPrivacy")) {
             writes.push_back({{"i2p", "privacy"}, server::privacyIn(body, {})});
         }
@@ -286,12 +293,15 @@ http::Response Gateway::settingsChanged(const http::Request& request)
         {
             const std::lock_guard<std::mutex> lock(directMutex_);
             direct_ = std::move(*direct);
-            bazarish::log::info("gateway: {} direct route(s) now", direct_.size());
+            bazarish::log::info("{} direct route(s) now", direct_.size());
         }
         dropUnrouted();
     }
     if (link.has_value()) {
         setServerLink(std::move(*link));
+    }
+    if (logLevel.has_value()) {
+        log::setLevel(*logLevel);
     }
     return {200, "application/json", {}, editable(
         writtenSettings(control_.configPath), identity_.fingerprint()).dump()};
@@ -307,7 +317,7 @@ http::Response Gateway::restart(const http::Request& request)
         return opsRefusal(503, "this gateway cannot restart itself: it was started without a"
                                " supervisor");
     }
-    bazarish::log::info("gateway: restarting at the operator's request");
+    bazarish::log::info("restarting at the operator's request");
     control_.requestRestart();
     return {200, "application/json", {}, R"({"restarting":true})"};
 }
@@ -359,7 +369,7 @@ int Gateway::start()
         settings_.watchPool, DestinationPool::Use::eWatching);
     bindOps();
     const int bound = server_.start();
-    bazarish::log::info("gateway: its fingerprint, which a link carries: {}", identity_.fingerprint());
+    bazarish::log::info("its fingerprint, which a link carries: {}", identity_.fingerprint());
     running_.store(true);
     status_ = std::thread([this]() { statusLoop(); });
     link_ = std::thread([this]() { linkLoop(); });
@@ -386,6 +396,8 @@ void Gateway::bindOps()
     ops_->put(fleet::kOpsSettings,
         [this](const http::Request& request) { return settingsChanged(request); });
     ops_->post(fleet::kOpsRestart, [this](const http::Request& request) { return restart(request); });
+    logFeed_ = std::make_unique<server::LogFeed>(*ops_, fleet::kOpsLogs, control_.logRing,
+        [this](const http::Request& request) { return operatorRefusal(request); });
     ops_->start();
     bazarish::log::info("ops listening on {}:{}, key {}", settings_.opsHost, settings_.opsPort,
         credential.pin);
@@ -496,7 +508,7 @@ void Gateway::rawMessage(const http::SocketPtr& raw, const std::vector<unsigned 
     }
     const std::optional<Bytes> opened = channel->openRecord(Bytes(message.begin(), message.end()));
     if (!opened.has_value()) {
-        bazarish::log::debug("gateway: a record that does not open; the socket is closed");
+        bazarish::log::debug("a record that does not open; the socket is closed");
         raw->close();
         return;
     }
@@ -721,7 +733,7 @@ void Gateway::socketMessage(
         fail(socket, 0, error.fault(), error.what());
         socket->close();
     } catch (const std::exception& error) {
-        bazarish::log::warn("gateway: a frame ended badly: {}", error.what());
+        bazarish::log::warn("a frame ended badly: {}", error.what());
         fail(socket, 0, Fault::eInternal, "the gateway failed at this");
         socket->close();
     }
@@ -1037,7 +1049,7 @@ void Gateway::onEndpointCreate(const std::shared_ptr<Session>& session,
     }
     if (routable && !local) {
         bazarish::log::info(
-            "gateway: a destination for {} goes into I2P, not routed here; the server lists {}",
+            "a destination for {} goes into I2P, not routed here; the server lists {}",
             target, servedHere);
     }
     std::shared_ptr<i2p::Endpoint> endpoint;
@@ -1049,7 +1061,7 @@ void Gateway::onEndpointCreate(const std::shared_ptr<Session>& session,
             endpoint = endpointFor(config);
             publicBase64 = endpoint->publicBase64();
         } catch (const std::exception& error) {
-            bazarish::log::warn("gateway: a destination was not made: {}", error.what());
+            bazarish::log::warn("a destination was not made: {}", error.what());
             const Bytes refusal = encodeJson(FrameType::eError, frame.ref,
                 {{"code", faultName(Fault::eRefused)}, {"message", error.what()}});
             ++refused_;
@@ -1098,7 +1110,7 @@ void Gateway::onEndpointCreate(const std::shared_ptr<Session>& session,
             }
             return;
         } catch (const std::system_error& error) {
-            bazarish::log::warn("gateway: no thread for a destination: {}", error.what());
+            bazarish::log::warn("no thread for a destination: {}", error.what());
             unpublishLocked(*entry);
             entry->running.store(false);
             session->endpoints.erase(entry->id);
@@ -1184,7 +1196,7 @@ void Gateway::lapseDelegations(const std::int64_t now)
         if (!stopAsLost(session, id)) {
             continue;
         }
-        bazarish::log::info("gateway: a presence address outlived its delegation and was stopped");
+        bazarish::log::info("a presence address outlived its delegation and was stopped");
     }
 }
 
@@ -1316,7 +1328,7 @@ void Gateway::datagramLoop(const std::shared_ptr<EndpointEntry>& entry)
         try {
             payload = entry->endpoint->receiveRawDatagram(kDatagramWait);
         } catch (const std::exception& error) {
-            bazarish::log::debug("gateway: datagrams stopped: {}", error.what());
+            bazarish::log::debug("datagrams stopped: {}", error.what());
             break;
         }
         if (payload.empty()) {
@@ -1411,7 +1423,7 @@ void Gateway::onStreamOpen(const std::shared_ptr<Session>& session,
         }
         ++dials_;
     } catch (const std::system_error& error) {
-        bazarish::log::warn("gateway: no thread for a dial: {}", error.what());
+        bazarish::log::warn("no thread for a dial: {}", error.what());
         {
             const std::lock_guard<std::mutex> lock(mutex_);
             session->dialling.erase(frame.ref);
@@ -1474,7 +1486,7 @@ void Gateway::dial(const std::shared_ptr<Session>& session,
                 opened = overI2p(from->endpoint->connect(host, left));
             }
         } catch (const std::exception& error) {
-            bazarish::log::debug("gateway: a dial did not open: {}", error.what());
+            bazarish::log::debug("a dial did not open: {}", error.what());
             opened.reset();
         }
         if (opened != nullptr) {
@@ -1538,7 +1550,7 @@ bool Gateway::startReaderLocked(
         entry->reader = std::thread([this, session, entry]() { readLoop(session, entry); });
         return true;
     } catch (const std::system_error& error) {
-        bazarish::log::warn("gateway: no thread for a stream: {}", error.what());
+        bazarish::log::warn("no thread for a stream: {}", error.what());
         session->streams.erase(entry->id);
         return false;
     }
@@ -1656,7 +1668,7 @@ void Gateway::acceptLoop(
         try {
             caller = entry->endpoint->accept(peer, kAcceptWait);
         } catch (const std::exception& error) {
-            bazarish::log::debug("gateway: accepting stopped: {}", error.what());
+            bazarish::log::debug("accepting stopped: {}", error.what());
             break;
         }
         if (caller == nullptr) {
@@ -1678,7 +1690,7 @@ void Gateway::acceptLoop(
             }
         }
         if (full) {
-            bazarish::log::info("gateway: an inbound stream refused: the session is full");
+            bazarish::log::info("an inbound stream refused: the session is full");
             inbound->stream->close();
             continue;
         }
@@ -1735,7 +1747,7 @@ void Gateway::readLoop(
         try {
             got = entry->stream->readSome(ByteBuffer(buffer).first(room));
         } catch (const std::exception& error) {
-            bazarish::log::debug("gateway: a stream stopped reading: {}", error.what());
+            bazarish::log::debug("a stream stopped reading: {}", error.what());
             break;
         }
         if (got == 0) {
@@ -1982,7 +1994,7 @@ void Gateway::statusLoop()
         try {
             local = router_.localDestinations();
         } catch (const std::exception& error) {
-            bazarish::log::warn("gateway: the router's destinations could not be read: {}",
+            bazarish::log::warn("the router's destinations could not be read: {}",
                 error.what());
             continue;
         }
@@ -2099,7 +2111,7 @@ void Gateway::dropUnrouted()
         if (!stopAsLost(session, id)) {
             continue;
         }
-        bazarish::log::info("gateway: a destination lost its route and was stopped");
+        bazarish::log::info("a destination lost its route and was stopped");
     }
 }
 
@@ -2134,7 +2146,7 @@ void Gateway::linkLoop()
             }
             const std::string ask = nlohmann::json({{"watch", true}}).dump() + "\n";
             pipe->writeAll(viewOf(ask));
-            bazarish::log::info("gateway: linked to the server at {}:{}", link.host, link.port);
+            bazarish::log::info("linked to the server at {}:{}", link.host, link.port);
             lastFailure.clear();
             for (;;) {
                 const nlohmann::json listed
@@ -2148,13 +2160,13 @@ void Gateway::linkLoop()
                     const std::lock_guard<std::mutex> lock(linkMutex_);
                     served_ = std::move(served);
                 }
-                bazarish::log::info("gateway: the server serves {} destination(s)", count);
+                bazarish::log::info("the server serves {} destination(s)", count);
                 dropUnrouted();
             }
         } catch (const std::exception& error) {
             if (running_.load() && lastFailure != error.what()) {
                 lastFailure = error.what();
-                bazarish::log::warn("gateway: the server link: {}", lastFailure);
+                bazarish::log::warn("the server link: {}", lastFailure);
             }
         }
         {

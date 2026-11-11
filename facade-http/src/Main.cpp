@@ -2,6 +2,7 @@
 #include "Facade.hpp"
 
 #include <FleetPorts.hpp>
+#include <LogRing.hpp>
 #include <OpsSettings.hpp>
 #include <Restart.hpp>
 
@@ -122,6 +123,9 @@ int main(const int argc, const char** argv)
 
     bazarish::log::setComponent("facade-http");
     bazarish::log::setLevel(logLevel);
+    const auto logRing = std::make_shared<bazarish::server::LogRing>();
+    const bazarish::server::LogCapture logCapture(logRing);
+    options.logRing = logRing;
 
     bazarish::facade::FacadeSettings::Values settingValues;
     settingValues.logLevel = config.text("logLevel").empty() ? "info" : config.text("logLevel");

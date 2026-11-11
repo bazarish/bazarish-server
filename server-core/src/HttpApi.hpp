@@ -8,6 +8,8 @@
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Clock.hpp>
 #include <bazarish/HttpServer.hpp>
+#include <LogFeed.hpp>
+#include <LogRing.hpp>
 #include <Restart.hpp>
 #include <TunnelFace.hpp>
 
@@ -57,6 +59,7 @@ struct HttpApiOptions {
     std::string tlsKey;
     std::vector<std::string> opsClientPins;
     std::function<void(const std::vector<std::string>& gateways)> gatewaysChanged;
+    std::shared_ptr<LogRing> logRing = std::make_shared<LogRing>();
 };
 
 class HttpApi {
@@ -93,6 +96,7 @@ private:
 
     std::unique_ptr<bazarish::http::Server> http_;
     std::unique_ptr<bazarish::http::Server> ops_;
+    std::unique_ptr<LogFeed> logFeed_;
     TunnelFace tunnel_;
     std::int64_t startedAt_ = 0;
 

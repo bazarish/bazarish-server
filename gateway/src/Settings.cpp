@@ -155,6 +155,7 @@ Settings Settings::from(const ConfigView& config)
     }
 
     settings.tunnelPrivacy = server::configPrivacy(config, settings.tunnelPrivacy);
+    settings.logLevel = server::configLogLevel(config);
 
     settings.streamPool = poolDepth(config, "pools.stream", kDefaultStreamPool);
     settings.callPool = poolDepth(config, "pools.call", kDefaultCallPool);

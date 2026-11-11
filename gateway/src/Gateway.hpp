@@ -13,6 +13,8 @@
 #include <bazarish/I2p.hpp>
 #include <bazarish/WebSocket.hpp>
 
+#include <LogFeed.hpp>
+#include <LogRing.hpp>
 #include <TlsPipe.hpp>
 
 #include <atomic>
@@ -35,6 +37,7 @@ namespace bazarish::gateway {
 struct OpsControl {
     std::filesystem::path configPath;
     std::function<void()> requestRestart;
+    std::shared_ptr<server::LogRing> logRing = std::make_shared<server::LogRing>();
 };
 
 class Gateway {
@@ -172,6 +175,7 @@ private:
     const gateway::Cover cover_;
     http::Server server_;
     std::unique_ptr<http::Server> ops_;
+    std::unique_ptr<server::LogFeed> logFeed_;
     std::unique_ptr<DestinationPool> streamPool_;
     std::unique_ptr<DestinationPool> callPool_;
     std::unique_ptr<DestinationPool> watchPool_;

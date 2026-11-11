@@ -658,6 +658,9 @@
     var kServiceKinds = ["server-core", "service-node", "facade", "gateway"];
     var kPrivacyLevels = ["minimal", "middle", "max"];
     var kRestartWaitMs = 10000;
+    var kLogWindowWidth = 960;
+    var kLogWindowHeight = 600;
+    var logWindows = {};
     var kPanelSettings = "#/settings/panel";
     var kSvgNamespace = "http://www.w3.org/2000/svg";
     var kRestartIconPath = "M 20 12 A 8 8 0 1 1 17 5.7 M 15.83 1.88 L 17 5.7 L 13.18 6.88";
@@ -967,6 +970,29 @@
         footer.appendChild(button);
     }
 
+    function openLogs(target) {
+        var name = "bazarish-logs:" + fleet + "/" + (target.service || target.kind);
+        var known = logWindows[name];
+        if (known && !known.closed) {
+            known.focus();
+            return;
+        }
+        logWindows[name] = window.open(withFleet("/logs?" + serviceQuery(target)), name,
+            "popup,width=" + kLogWindowWidth + ",height=" + kLogWindowHeight);
+    }
+
+    function logsSection(form, target) {
+        var block = section(form, N_("Logs"));
+        var opener = element("a", "block-action", t("[open]"));
+        opener.href = withFleet("/logs?" + serviceQuery(target));
+        opener.addEventListener("click", function (event) {
+            event.preventDefault();
+            openLogs(target);
+        });
+        block.firstChild.appendChild(opener);
+        return block;
+    }
+
     function portRead(input, what) {
         var port = Number(input.value);
         if (!Number.isInteger(port) || port < kMinPort || port > kMaxPort) {
@@ -1163,7 +1189,9 @@
         var messaging = endpointRow(wiring, N_("Messaging server"), data.messaging,
             N_("The server-core this node works with"),
             true);
-        var level = chipRow(wiring, N_("Log level"), N_("Applies at once"),
+
+        var talk = logsSection(form, { kind: "service-node" });
+        var level = chipRow(talk, N_("Log level"), N_("Applies at once"),
             kLogLevels.map(function (name) { return { value: name, label: name, raw: true }; }),
             data.logLevel || "info");
 
@@ -1233,7 +1261,7 @@
     }
 
     function renderServerTab(form, data) {
-        var talk = section(form, N_("Logs"));
+        var talk = logsSection(form, { kind: "server-core" });
         var level = chipRow(talk, N_("Log level"), N_("Applies at once"),
             kLogLevels.map(function (name) { return { value: name, label: name, raw: true }; }),
             data.logLevel || "info");
@@ -1369,7 +1397,7 @@
                 });
         }));
 
-        var talk = section(form, N_("Logs"));
+        var talk = logsSection(form, { service: name });
         var level = chipRow(talk, N_("Log level"), N_("Applies at once"),
             kLogLevels.map(function (level) { return { value: level, label: level, raw: true }; }),
             data.logLevel || "info");
@@ -1463,6 +1491,11 @@
 
     function renderGatewayPage(form, name, data) {
         itemHead(form, "gateways", N_("all gateways"), name);
+        var talk = logsSection(form, { service: name });
+        var level = chipRow(talk, N_("Log level"), N_("Applies at once"),
+            kLogLevels.map(function (level) { return { value: level, label: level, raw: true }; }),
+            data.logLevel || "info");
+
         var tunnels = section(form, N_("Tunnels"));
         var privacy = chipRow(tunnels, N_("Privacy"), t("Tunnel length: minimal is one, max is three. Calls always use %1.",
             data.callPrivacy),
@@ -1520,12 +1553,13 @@
             return value;
         }
 
-        var footer = saveFooter(form, N_("Applies after a restart"),
+        var footer = saveFooter(form, N_("Logging applies now, the rest after a restart"),
             function () {
                 return {
                     method: "PUT",
                     path: withFleet("/api/service-settings?service=" + encodeURIComponent(name)),
                     body: {
+                        logLevel: level(),
                         i2pPrivacy: privacy(),
                         streamPool: count(streamPool, N_("The stream pool"), 0, data.poolMax),
                         callPool: count(callPool, N_("The call pool"), 0, data.poolMax),

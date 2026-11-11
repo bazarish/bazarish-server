@@ -378,6 +378,9 @@ void AccountApi::setupOpsRoutes()
         return server::operatorOnly(options_.operatorFingerprints, replayCache_, std::move(handler));
     };
 
+    logFeed_ = std::make_unique<server::LogFeed>(*ops_, fleet::kAccountLogs, options_.logRing,
+        server::operatorCheck(options_.operatorFingerprints, replayCache_));
+
     ops_->post(fleet::kLoginExpect,
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = bazarish::parseJson(request.body);

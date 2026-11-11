@@ -194,8 +194,8 @@
             api("GET", "/api/services").then(function (data) {
                 groups.innerHTML = "";
                 if (!data.services.length) {
-                    groups.appendChild(element("p", "muted",
-                        t("No services yet. Add them in Settings, Panel.")));
+                    groups.appendChild(linkedText("muted",
+                        t("No services yet. Add them in [the Panel]"), kPanelSettings));
                     return;
                 }
                 data.fleets.forEach(function (name) {
@@ -658,6 +658,9 @@
     var kServiceKinds = ["server-core", "service-node", "facade", "gateway"];
     var kPrivacyLevels = ["minimal", "middle", "max"];
     var kRestartWaitMs = 10000;
+    var kPanelSettings = "#/settings/panel";
+    var kSvgNamespace = "http://www.w3.org/2000/svg";
+    var kRestartIconPath = "M 20 12 A 8 8 0 1 1 17 5.7 M 15.83 1.88 L 17 5.7 L 13.18 6.88";
     var settingsTab = kSettingsTabs[0].id;
     var settingsItem = "";
 
@@ -694,9 +697,33 @@
     }
 
     function restartBadge() {
-        var badge = element("span", "badge-restart", t("restart"));
+        var badge = element("span", "badge-restart");
         badge.title = t("Takes effect at the next start of the service");
+        badge.setAttribute("role", "img");
+        badge.setAttribute("aria-label", badge.title);
+        var icon = document.createElementNS(kSvgNamespace, "svg");
+        icon.setAttribute("viewBox", "0 0 24 24");
+        icon.setAttribute("aria-hidden", "true");
+        var path = document.createElementNS(kSvgNamespace, "path");
+        path.setAttribute("d", kRestartIconPath);
+        icon.appendChild(path);
+        badge.appendChild(icon);
         return badge;
+    }
+
+    function linkedText(className, text, href) {
+        var paragraph = element("p", className);
+        var open = text.indexOf("[");
+        var close = text.indexOf("]", open);
+        if (open < 0 || close < 0) {
+            throw new Error("a linked text marks its link with brackets: " + text);
+        }
+        paragraph.appendChild(document.createTextNode(text.slice(0, open)));
+        var link = element("a", "item-link", text.slice(open + 1, close));
+        link.href = href;
+        paragraph.appendChild(link);
+        paragraph.appendChild(document.createTextNode(text.slice(close + 1)));
+        return paragraph;
     }
 
     function fieldRow(block, label, value, spec) {
@@ -1117,13 +1144,14 @@
         reported.forEach(function (address, index) {
             readOnlyRow(reach, index === 0 ? N_("Facades") : "", address);
         });
-        reach.appendChild(element("p", "hint", t("Reported by the facades. Order: Settings, Panel.")));
+        reach.appendChild(linkedText("hint", t("Appear in the list on their own and are set up in [the Panel]"),
+            kPanelSettings));
         var reseeds = textareaBlock(reach, N_("Reseeds"), (data.reseeds || []).join("\n"),
             "https://host:port/<base path>",
             N_("One per line. Clients without an I2P router start from these."),
             true);
         var descriptorRow = readOnlyRow(reach, N_("Descriptor"), data.descriptor,
-            N_("Users paste it into the app to connect"));
+            N_("Used to connect clients"));
         if (data.descriptor) {
             shareButtons(descriptorRow, data.descriptor);
         }
@@ -1210,13 +1238,13 @@
             kLogLevels.map(function (name) { return { value: name, label: name, raw: true }; }),
             data.logLevel || "info");
         var i2pLog = chipRow(talk, N_("i2pd log"),
-            N_("libi2pd log. Verbose."),
+            N_("libi2pd log"),
             [{ value: false, label: N_("off") }, { value: true, label: N_("on") }],
             Boolean(data.i2pLog));
 
         var i2p = section(form, N_("I2P"));
         var privacy = chipRow(i2p, N_("Privacy"),
-            N_("Hops in each tunnel: minimal is one, max is three"),
+            N_("Tunnel length: minimal is one, max is three"),
             kPrivacyLevels.map(function (name) { return { value: name, label: name, raw: true }; }),
             data.i2pPrivacy || "max", { restart: true });
 
@@ -1288,8 +1316,8 @@
                 "is-error"));
         }
         if (!data.facades.length) {
-            form.appendChild(element("p", "muted",
-                t("No facades yet. Add them in Settings, Panel.")));
+            form.appendChild(linkedText("muted",
+                t("No facades yet. Add them in [the Panel]"), kPanelSettings));
             return;
         }
         var list = element("ul", "facts");
@@ -1360,7 +1388,7 @@
 
         var i2p = section(form, N_("I2P"));
         var privacy = chipRow(i2p, N_("Privacy"),
-            N_("Hops in each tunnel: minimal is one, max is three"),
+            N_("Tunnel length: minimal is one, max is three"),
             kPrivacyLevels.map(function (level) { return { value: level, label: level, raw: true }; }),
             data.i2pPrivacy || "max", { restart: true });
         var tunnels = fieldRow(i2p, N_("Tunnels"), data.i2pTunnelQuantity, {
@@ -1417,8 +1445,8 @@
             return service.kind === "gateway" && (!fleet || service.fleet === fleet);
         });
         if (!mine.length) {
-            form.appendChild(element("p", "muted",
-                t("No gateways yet. Add them in Settings, Panel.")));
+            form.appendChild(linkedText("muted",
+                t("No gateways yet. Add them in [the Panel]"), kPanelSettings));
             return;
         }
         var list = element("ul", "facts");
@@ -1436,7 +1464,7 @@
     function renderGatewayPage(form, name, data) {
         itemHead(form, "gateways", N_("all gateways"), name);
         var tunnels = section(form, N_("Tunnels"));
-        var privacy = chipRow(tunnels, N_("Privacy"), t("Hops in each tunnel: minimal is one, max is three. Calls always use %1.",
+        var privacy = chipRow(tunnels, N_("Privacy"), t("Tunnel length: minimal is one, max is three. Calls always use %1.",
             data.callPrivacy),
             kPrivacyLevels.map(function (level) { return { value: level, label: level, raw: true }; }),
             data.i2pPrivacy || "minimal", { restart: true });
@@ -1444,17 +1472,17 @@
         var pools = section(form, N_("Warm pools"));
         var streamPool = fieldRow(pools, N_("Streams"), data.streamPool, {
             type: "number", narrow: true, min: 0, max: data.poolMax,
-            unit: t("of %1", data.poolMax), restart: true,
+            restart: true,
             hint: N_("Built in advance for connections, lookups and files. 0 builds them on demand.")
         });
         var callPool = fieldRow(pools, N_("Calls"), data.callPool, {
             type: "number", narrow: true, min: 0, max: data.poolMax,
-            unit: t("of %1", data.poolMax), restart: true,
+            restart: true,
             hint: N_("Built in advance for calls")
         });
         var watchPool = fieldRow(pools, N_("Watching"), data.watchPool, {
             type: "number", narrow: true, min: 0, max: data.poolMax,
-            unit: t("of %1", data.poolMax), restart: true,
+            restart: true,
             hint: N_("Built in advance for online status")
         });
 
@@ -1471,8 +1499,8 @@
 
         var clients = section(form, N_("Clients"));
         var publicAddress = fieldRow(clients, N_("Public address"), data.publicAddress, {
-            placeholder: "https://gateway.example",
-            hint: N_("The HTTPS address clients connect to, without a path")
+            placeholder: "http(s)://address[:port]",
+            hint: N_("Base URL for clients. Schemes https and http; the address is a domain, IPv4 or IPv6 (in square brackets)")
         });
         var linkRow = readOnlyRow(clients, N_("Link"), data.link,
             N_("Give it only to your users"));

@@ -1085,15 +1085,20 @@ body.centred {
 }
 
 .badge-restart {
-    padding: 0.15rem 0.4rem;
-    border: 1px solid var(--bz-warn-line);
-    border-radius: var(--bz-radius-sm);
-    background: var(--bz-warn-bg);
+    display: inline-flex;
+    align-items: center;
     color: var(--bz-warn);
-    font-size: 0.62rem;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    white-space: nowrap;
+    cursor: help;
+}
+
+.badge-restart svg {
+    width: 1rem;
+    height: 1rem;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
 }
 
 .service {

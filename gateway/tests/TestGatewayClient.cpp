@@ -161,7 +161,7 @@ int main()
     wanted.tunnelQuantity = 2;
     wanted.published = false;
     wanted.label = "Test";
-    wanted.owner = "an account";
+    wanted.accountLabel = "an account";
     const std::shared_ptr<i2p::Endpoint> mine = borrowed.createEndpoint(wanted);
     CHECK(mine != nullptr);
     const std::string host = mine->routingHost();
@@ -198,7 +198,7 @@ int main()
     CHECK(seen.size() == 1);
     CHECK(seen.front().host == host);
     CHECK(seen.front().label == "Test");
-    CHECK(seen.front().owner == "an account");
+    CHECK(seen.front().accountLabel == "an account");
 
     mine->stop();
     borrowed.stop();

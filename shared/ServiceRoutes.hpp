@@ -1,7 +1,7 @@
 // Bazarish project (c) 2026
 #pragma once
 
-namespace bazarish::fleet {
+namespace bazarish::routes {
 
 inline constexpr char kMessagingAccount[] = "/v1/messaging/account";
 inline constexpr char kMessagingCard[] = "/v1/messaging/card";
@@ -31,4 +31,4 @@ inline constexpr char kOpsLogs[] = "/logs";
 inline constexpr char kOpsRestart[] = "/restart";
 inline constexpr char kOpsSettings[] = "/settings";
 
-}  // namespace bazarish::fleet
+}  // namespace bazarish::routes

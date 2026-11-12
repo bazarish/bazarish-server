@@ -1,7 +1,7 @@
 // Bazarish project (c) 2026
 #include "Facade.hpp"
 
-#include <FleetRoutes.hpp>
+#include <ServiceRoutes.hpp>
 #include <Health.hpp>
 #include <LoginRelay.hpp>
 #include <OpsGate.hpp>
@@ -221,7 +221,7 @@ void Facade::setupOpsRoutes()
             options_.operatorFingerprints, operatorReplays_, std::move(handler));
     };
 
-    logFeed_ = std::make_unique<server::LogFeed>(*ops_, fleet::kOpsLogs, options_.logRing,
+    logFeed_ = std::make_unique<server::LogFeed>(*ops_, routes::kOpsLogs, options_.logRing,
         server::operatorCheck(options_.operatorFingerprints, operatorReplays_));
 
     ops_->get("/healthz", operatorOnly([this](const bazarish::http::Request&) {
@@ -236,7 +236,7 @@ void Facade::setupOpsRoutes()
         return bazarish::http::Response{200, "application/json", {}, report.dump()};
     }));
 
-    ops_->get(fleet::kOpsSettings, operatorOnly([this](const bazarish::http::Request&) {
+    ops_->get(routes::kOpsSettings, operatorOnly([this](const bazarish::http::Request&) {
         const FacadeSettings::Values values = options_.settings->get();
         return bazarish::http::Response{200, "application/json", {},
             nlohmann::json{
@@ -251,13 +251,14 @@ void Facade::setupOpsRoutes()
                 {"i2pPrivacy", values.i2pPrivacy},
                 {"i2pTunnelQuantity", values.i2pTunnelQuantity},
                 {"i2pTunnelQuantityMax", bazarish::i2p::kMaxTunnelQuantity},
+                {"i2pLogLevel", values.i2pLogLevel},
                 {"stateDirectory", options_.stateDirectory},
                 {"version", options_.version},
             }
                 .dump()};
     }));
 
-    ops_->put(fleet::kOpsSettings, operatorOnly([this](const bazarish::http::Request& request) {
+    ops_->put(routes::kOpsSettings, operatorOnly([this](const bazarish::http::Request& request) {
         FacadeSettings::Values values = options_.settings->get();
         const nlohmann::json body = bazarish::parseJson(request.body);
         values.logLevel = bazarish::server::logLevelIn(body, values.logLevel);
@@ -269,16 +270,19 @@ void Facade::setupOpsRoutes()
         values.i2pPrivacy = bazarish::server::privacyIn(body, values.i2pPrivacy);
         values.i2pTunnelQuantity
             = bazarish::server::tunnelQuantityIn(body, values.i2pTunnelQuantity);
+        values.i2pLogLevel = bazarish::server::i2pLogLevelIn(body, values.i2pLogLevel);
 
-        const std::string levelBefore = options_.settings->get().logLevel;
+        const FacadeSettings::Values before = options_.settings->get();
         try {
             options_.settings->set(values);
         } catch (const std::exception& error) {
             return refusal(500, error.what());
         }
-        bazarish::server::applyLogLevel(levelBefore, values.logLevel);
+        bazarish::server::applyLogLevel(before.logLevel, values.logLevel);
+        bazarish::server::applyI2pLogLevel(before.i2pLogLevel, values.i2pLogLevel);
         return bazarish::http::Response{200, "application/json", {},
-            nlohmann::json{{"logLevel", values.logLevel}}.dump()};
+            nlohmann::json{{"logLevel", values.logLevel}, {"i2pLogLevel", values.i2pLogLevel}}
+                .dump()};
     }));
 
     ops_->post("/new-address", operatorOnly([this](const bazarish::http::Request&) {
@@ -292,7 +296,7 @@ void Facade::setupOpsRoutes()
                 .dump()};
     }));
 
-    ops_->post(fleet::kOpsRestart, operatorOnly([this](const bazarish::http::Request&) {
+    ops_->post(routes::kOpsRestart, operatorOnly([this](const bazarish::http::Request&) {
         bazarish::log::info("restarting at the operator's request");
         options_.requestRestart();
         return bazarish::http::Response{200, "application/json", {}, R"({"restarting":true})"};

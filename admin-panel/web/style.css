@@ -1072,18 +1072,6 @@ body.centred {
     color: var(--bz-line-2);
 }
 
-.fleets {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.35rem;
-    margin-bottom: 1.25rem;
-}
-
-.fleets .sidebar-note {
-    flex: 1 1 100%;
-    margin: 0 0 0.25rem;
-}
-
 .badge-restart {
     display: inline-flex;
     align-items: center;
@@ -1103,11 +1091,6 @@ body.centred {
 
 .service {
     margin-top: 0.6rem;
-}
-
-.service-fleet {
-    margin-top: 1.6rem;
-    color: var(--bz-ink-dim);
 }
 
 .service-head,

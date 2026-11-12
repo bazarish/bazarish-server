@@ -8,6 +8,7 @@
 #include <LoginRelay.hpp>
 #include <bazarish/HttpClient.hpp>
 #include <bazarish/HttpServer.hpp>
+#include <bazarish/I2p.hpp>
 #include <nlohmann/json.hpp>
 #include <bazarish/Certificates.hpp>
 #include <bazarish/Auth.hpp>
@@ -156,6 +157,7 @@ int main()
     facadeValues.directPort = kDirectPort;
     facadeValues.i2pPrivacy = "max";
     facadeValues.i2pTunnelQuantity = 3;
+    facadeValues.i2pLogLevel = "none";
     const auto facadeSettings
         = std::make_shared<bazarish::facade::FacadeSettings>(configPath, facadeValues);
     options.settings = facadeSettings;
@@ -273,8 +275,9 @@ int main()
         CHECK(values.at("i2pTunnelQuantity").get<int>() == 3);
         CHECK(values.at("directListen").at("port").get<int>() == kDirectPort);
         CHECK(values.at("serviceNode").at("port").get<int>() == nodePort);
+        CHECK(values.at("i2pLogLevel").get<std::string>() == "none");
 
-        const nlohmann::json wanted = {{"i2pTunnelQuantity", 8},
+        const nlohmann::json wanted = {{"i2pTunnelQuantity", 8}, {"i2pLogLevel", "debug"},
             {"directListen", {{"host", "127.0.0.1"}, {"port", kMovedDirectPort}}},
             {"serviceNode", {{"host", "127.0.0.1"}, {"port", kMovedNodePort}}}};
         const std::string body = wanted.dump();
@@ -282,10 +285,12 @@ int main()
                   .status
             == 200);
         CHECK(facadeSettings->get().directPort == kMovedDirectPort);
+        CHECK(bazarish::i2p::i2pLogLevel() == bazarish::i2p::I2pLogLevel::eDebug);
 
         std::ifstream written(configPath);
         const nlohmann::json onDisk = nlohmann::json::parse(written);
         CHECK(onDisk.at("i2p").at("tunnelQuantity").get<int>() == 8);
+        CHECK(onDisk.at("i2p").at("logLevel").get<std::string>() == "debug");
         CHECK(onDisk.at("directListen").at("port").get<int>() == kMovedDirectPort);
         CHECK(onDisk.at("serviceNode").at("port").get<int>() == kMovedNodePort);
 
@@ -294,6 +299,16 @@ int main()
                   .status
             == 400);
         CHECK(facadeSettings->get().i2pTunnelQuantity == 8);
+        const std::string loud = nlohmann::json{{"i2pLogLevel", "verbose"}}.dump();
+        CHECK(callTls(opsPort, facadeCredential.pin, "PUT", path, signedHeaders(operatorIdentity, "PUT", path, loud), loud)
+                  .status
+            == 400);
+        CHECK(facadeSettings->get().i2pLogLevel == "debug");
+        const std::string quiet = nlohmann::json{{"i2pLogLevel", "none"}}.dump();
+        CHECK(callTls(opsPort, facadeCredential.pin, "PUT", path, signedHeaders(operatorIdentity, "PUT", path, quiet), quiet)
+                  .status
+            == 200);
+        CHECK(bazarish::i2p::i2pLogLevel() == bazarish::i2p::I2pLogLevel::eNone);
 
         const std::string restart = "/restart";
         CHECK(callTls(opsPort, facadeCredential.pin, "POST", restart).status == 403);

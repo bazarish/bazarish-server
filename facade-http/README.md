@@ -56,7 +56,9 @@ reseed archive is served by the portal, which is what faces the clearnet. Anythi
 `opsListen` opens a second, private socket carrying everything that is the
 operator's: the signed `/healthz`, `GET`/`PUT /settings` (which also reports the
 facade's address), `POST /new-address`, `POST /restart` and `GET /logs?after=N`
-(the log, answered as server-core's `/v1/messaging/logs`). It is
+(the log, answered as server-core's `/v1/messaging/logs`). The log carries
+libi2pd's lines down to `i2p.logLevel` (`i2pLogLevel` in the settings: `none`,
+`error`, `warn`, `info` or `debug`; `none` when absent; applied at once). It is
 never published to clients - on the public socket anyone holding the address
 could reach it. It speaks TLS and
 answers only the key the admin panel presents, named in `opsClients`; the facade

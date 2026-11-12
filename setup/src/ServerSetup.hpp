@@ -3,22 +3,20 @@
 
 #include <filesystem>
 
-#include <FleetPorts.hpp>
-#include <string>
+#include <ServicePorts.hpp>
 
 namespace bazarish::setup {
 
-using fleet::kPanelPort;
+using ports::kPanelPort;
 
 struct Layout {
     std::filesystem::path configDir;
     std::filesystem::path stateDir;
     std::filesystem::path panelAssets;
     std::filesystem::path portalAssets;
-    std::string fleetName;
 };
 
 // False, with nothing written, once any of the four configs is there.
-bool setUpFleet(const Layout& layout);
+bool setUpServer(const Layout& layout);
 
 }  // namespace bazarish::setup

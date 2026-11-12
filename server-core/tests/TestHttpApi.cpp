@@ -100,6 +100,7 @@ int main()
     bazarish::server::ServerSettings::Values initialSettings;
     initialSettings.logLevel = "info";
     initialSettings.i2pPrivacy = "max";
+    initialSettings.i2pLogLevel = "none";
     initialSettings.listenHost = "127.0.0.1";
     initialSettings.listenPort = 8420;
     initialSettings.serviceNodeUrl = "http://127.0.0.1:8421";
@@ -540,19 +541,23 @@ int main()
         const nlohmann::json values = nlohmann::json::parse(shown.body);
         CHECK(!values.contains("i2pTunnelQuantity"));
         CHECK(values.at("i2pPrivacy").get<std::string>() == "max");
+        CHECK(values.at("i2pLogLevel").get<std::string>() == "none");
+        CHECK(!values.contains("i2pLog"));
 
         const std::string body = nlohmann::json{{"logLevel", "debug"},
-            {"i2pPrivacy", "middle"}}
+            {"i2pPrivacy", "middle"}, {"i2pLogLevel", "info"}}
                                      .dump();
         CHECK(call(opsPort, "PUT", path, makeHeaders(operatorIdentity, "PUT", path, body, {}), body)
                   .status
             == 200);
         CHECK(bazarish::log::level() == bazarish::log::Level::eDebug);
+        CHECK(bazarish::i2p::i2pLogLevel() == bazarish::i2p::I2pLogLevel::eInfo);
 
         std::ifstream written(configPath);
         const nlohmann::json onDisk = nlohmann::json::parse(written);
         CHECK(onDisk.at("logLevel").get<std::string>() == "debug");
         CHECK(onDisk.at("i2p").at("privacy").get<std::string>() == "middle");
+        CHECK(onDisk.at("i2p").at("logLevel").get<std::string>() == "info");
         CHECK(onDisk.at("state").get<std::string>() == "/var/lib/bazarish/server-core");
 
         const std::string nonsense = nlohmann::json{{"i2pPrivacy", "invisible"}}.dump();
@@ -560,6 +565,11 @@ int main()
                   makeHeaders(operatorIdentity, "PUT", path, nonsense, {}), nonsense)
                   .status
             == 400);
+        const std::string loud = nlohmann::json{{"i2pLogLevel", "warning"}}.dump();
+        CHECK(call(opsPort, "PUT", path, makeHeaders(operatorIdentity, "PUT", path, loud, {}), loud)
+                  .status
+            == 400);
+        CHECK(bazarish::i2p::i2pLogLevel() == bazarish::i2p::I2pLogLevel::eInfo);
         const std::string moved = nlohmann::json{{"serviceNode", "https://127.0.0.1:9421"}}.dump();
         CHECK(call(opsPort, "PUT", path, makeHeaders(operatorIdentity, "PUT", path, moved, {}), moved)
                   .status
@@ -567,7 +577,8 @@ int main()
         std::ifstream rewritten(configPath);
         CHECK(nlohmann::json::parse(rewritten).at("serviceNode").at("url").get<std::string>()
             == "https://127.0.0.1:9421");
-        const std::string quiet = nlohmann::json{{"logLevel", "info"}}.dump();
+        const std::string quiet
+            = nlohmann::json{{"logLevel", "info"}, {"i2pLogLevel", "none"}}.dump();
         CHECK(call(opsPort, "PUT", path, makeHeaders(operatorIdentity, "PUT", path, quiet, {}), quiet)
                   .status
             == 200);

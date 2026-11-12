@@ -1,5 +1,5 @@
 // Bazarish project (c) 2026
-#include "FleetSync.hpp"
+#include "ServiceSync.hpp"
 #include "TestUtil.hpp"
 
 #include <bazarish/Crypto.hpp>
@@ -115,11 +115,9 @@ int main()
     const int idlePort = idle->start();
 
     const std::string pin = services.pin;
-    Fleet home{"home",
-        {entry("node", kServiceNodeKind, nodePort, pin),
-            entry("second", kFacadeKind, facadeBPort, pin),
-            entry("first", kFacadeKind, facadeAPort, pin),
-            entry("edge", kGatewayKind, gatewayPort, pin)}};
+    const std::vector<ServiceEntry> home{entry("node", kServiceNodeKind, nodePort, pin),
+        entry("second", kFacadeKind, facadeBPort, pin), entry("first", kFacadeKind, facadeAPort, pin),
+        entry("edge", kGatewayKind, gatewayPort, pin)};
 
     CHECK(publishFacades(home, panel, panelKeys).empty());
     CHECK(nodeWrites.size() == 1);
@@ -136,25 +134,26 @@ int main()
     CHECK(askedB.load() == askedBBefore);
     CHECK(nodeWrites.back() == nlohmann::json({{"facades", {kFacadeBRenewed, kFacadeA}}}));
 
-    Fleet broken = home;
-    broken.services[1].url = "https://127.0.0.1:" + std::to_string(idlePort + 1);
-    broken.services[1].pin = panelKeys.pin;
+    std::vector<ServiceEntry> broken = home;
+    broken[1].url = "https://127.0.0.1:" + std::to_string(idlePort + 1);
+    broken[1].pin = panelKeys.pin;
     const std::size_t writesBefore = nodeWrites.size();
     CHECK(!publishFacades(broken, panel, panelKeys).empty());
     CHECK(nodeWrites.size() == writesBefore);
 
-    const Fleet facadeless{"bare", {entry("node", kServiceNodeKind, nodePort, pin)}};
+    const std::vector<ServiceEntry> facadeless{entry("node", kServiceNodeKind, nodePort, pin)};
     CHECK(!publishFacades(facadeless, panel, panelKeys).empty());
     CHECK(nodeWrites.size() == writesBefore);
 
-    const Fleet nodeless{"edge-only", {entry("first", kFacadeKind, facadeAPort, pin)}};
+    const std::vector<ServiceEntry> nodeless{entry("first", kFacadeKind, facadeAPort, pin)};
     const int askedABefore = askedA.load();
     CHECK(publishFacades(nodeless, panel, panelKeys).empty());
     CHECK(askedA.load() == askedABefore);
 
-    const Fleet away{"away", {entry("quiet", kGatewayKind, idlePort, pin)}};
+    std::vector<ServiceEntry> twoGateways = home;
+    twoGateways.push_back(entry("quiet", kGatewayKind, idlePort, pin));
     const std::vector<GatewayRepoint> repointed
-        = repointGateways({home, away}, kFacadeB, kFacadeBRenewed, panel, panelKeys);
+        = repointGateways(twoGateways, kFacadeB, kFacadeBRenewed, panel, panelKeys);
     CHECK(repointed.size() == 2);
     CHECK(repointed[0].name == "edge");
     CHECK(repointed[0].changed);
@@ -208,11 +207,10 @@ int main()
     });
     const int linkedPort = linked->start();
 
-    ServiceEntry linkedEntry = entry("home-gateway", kGatewayKind, linkedPort, pin);
-    const Fleet family{"family",
-        {entry("server-core", kServerCoreKind, corePort, pin),
-            entry("with-direct", kFacadeKind, directFacadePort, pin),
-            entry("without-direct", kFacadeKind, facadeBPort, pin), linkedEntry}};
+    const ServiceEntry linkedEntry = entry("home-gateway", kGatewayKind, linkedPort, pin);
+    const std::vector<ServiceEntry> family{entry("server-core", kServerCoreKind, corePort, pin),
+        entry("with-direct", kFacadeKind, directFacadePort, pin),
+        entry("without-direct", kFacadeKind, facadeBPort, pin), linkedEntry};
     const GatewayLinking first = linkGateways(family, panel, panelKeys);
     CHECK(first.error.empty());
     CHECK(first.gateways.size() == 1);
@@ -249,6 +247,6 @@ int main()
     directFacade->stop();
     linked->stop();
     std::filesystem::remove_all(root);
-    std::printf("TestFleetSync: all checks passed\n");
+    std::printf("TestServiceSync: all checks passed\n");
     return 0;
 }

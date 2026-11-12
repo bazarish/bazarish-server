@@ -54,18 +54,15 @@ public:
 
 private:
     void registerRoutes();
-    std::optional<Fleet> fleetNamed(const std::string& fleet) const;
-    std::optional<ServiceEntry> serviceOfKind(
-        const std::string& fleet, const std::string& kind) const;
-    std::optional<ServiceEntry> serviceNamed(
-        const std::string& fleet, const std::string& name) const;
+    std::optional<ServiceEntry> serviceOfKind(const std::string& kind) const;
+    std::optional<ServiceEntry> serviceNamed(const std::string& name) const;
     std::optional<ServiceEntry> logSource(const bazarish::http::Request& request) const;
     bool sessionAdmin(const std::string& token);
     std::string loginFacade(const ServiceEntry& node);
     std::string loginForm(const std::string& error, bazarish::http::Response& response);
 
-    void proxyToNode(const std::string& fleet, bazarish::http::Response& response,
-        const std::string& method, const std::string& path, const std::string& body);
+    void proxyToNode(bazarish::http::Response& response, const std::string& method,
+        const std::string& path, const std::string& body);
 
     std::shared_ptr<PanelSettings> settings_;
     const Identity& identity_;

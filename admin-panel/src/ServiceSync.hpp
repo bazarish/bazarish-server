@@ -24,9 +24,10 @@ struct FacadeReport {
 };
 
 std::vector<FacadeReport> facadeReports(
-    const Fleet& fleet, const Identity& identity, const tls::Credential& credential);
+    const std::vector<ServiceEntry>& services, const Identity& identity,
+    const tls::Credential& credential);
 
-std::string publishFacades(const Fleet& fleet, const Identity& identity,
+std::string publishFacades(const std::vector<ServiceEntry>& services, const Identity& identity,
     const tls::Credential& credential, const std::map<std::string, std::string>& known = {});
 
 struct GatewayRepoint {
@@ -35,7 +36,7 @@ struct GatewayRepoint {
     std::string error;
 };
 
-std::vector<GatewayRepoint> repointGateways(const std::vector<Fleet>& fleets,
+std::vector<GatewayRepoint> repointGateways(const std::vector<ServiceEntry>& services,
     const std::string& fromAddress, const std::string& toAddress, const Identity& identity,
     const tls::Credential& credential);
 
@@ -45,7 +46,8 @@ struct GatewayLinking {
 };
 
 GatewayLinking linkGateways(
-    const Fleet& fleet, const Identity& identity, const tls::Credential& credential);
+    const std::vector<ServiceEntry>& services, const Identity& identity,
+    const tls::Credential& credential);
 
 std::string hostOf(const std::string& url);
 

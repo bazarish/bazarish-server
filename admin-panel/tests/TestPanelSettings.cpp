@@ -97,8 +97,7 @@ int main()
         wanted.consumer.place = {"https://panel.example", "http://panel.b32.i2p"};
         wanted.consumer.role = "Administrator";
         wanted.listenPort = 9460;
-        wanted.fleets = {Fleet{"alpha", {ServiceEntry{"core", "server-core",
-                                            "https://127.0.0.1:8428", "pin-of-core"}}}};
+        wanted.services = {ServiceEntry{"core", "server-core", "https://127.0.0.1:8428", "pin-of-core"}};
         settings->set(wanted);
 
         const nlohmann::json written = read(path);
@@ -109,15 +108,15 @@ int main()
             == "http://panel.b32.i2p");
         CHECK(written.at("listen").at("port").get<int>() == 9460);
         CHECK(written.at("listen").at("host").get<std::string>() == "127.0.0.1");
-        CHECK(written.at("fleets").at(0).at("services").at(0).at("kind").get<std::string>()
+        CHECK(written.at("services").at(0).at("kind").get<std::string>()
             == "server-core");
         CHECK(written.at("assets").get<std::string>() == "/opt/bazarish/web");
 
         const Config again = Config::fromFile(path.string());
         CHECK(again.listenPort == 9460);
-        CHECK(again.fleets.size() == 1);
-        CHECK(again.fleets.front().services.front().url == "https://127.0.0.1:8428");
-        CHECK(again.fleets.front().services.front().pin == "pin-of-core");
+        CHECK(again.services.size() == 1);
+        CHECK(again.services.front().url == "https://127.0.0.1:8428");
+        CHECK(again.services.front().pin == "pin-of-core");
         fs::remove(path);
     }
 

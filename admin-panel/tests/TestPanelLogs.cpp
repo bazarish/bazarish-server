@@ -279,9 +279,8 @@ int main()
     initial.admins = {admin.fingerprint()};
     initial.consumer
         = service::LoginConsumer{"Bazarish admin panel", {"http://127.0.0.1"}, "Administrator"};
-    initial.fleets = {Fleet{"home",
-        {ServiceEntry{"core", kServerCoreKind, at(corePort), services.pin},
-            ServiceEntry{"edge", kGatewayKind, at(edgePort), services.pin}}}};
+    initial.services = {ServiceEntry{"core", kServerCoreKind, at(corePort), services.pin},
+        ServiceEntry{"edge", kGatewayKind, at(edgePort), services.pin}};
     const auto settings = std::make_shared<PanelSettings>(configPath, initial);
 
     HttpApiOptions options;
@@ -294,7 +293,7 @@ int main()
         CHECK(port > 0);
         std::thread serverThread([&api]() { api.wait(); });
         const std::string cookie = signIn(port, admin);
-        const std::string coreQuery = "fleet=home&kind=server-core";
+        const std::string coreQuery = "kind=server-core";
 
         CHECK(pageStatus(port, std::string()) == kSeeOther);
         CHECK(pageStatus(port, cookie) == kOk);
@@ -303,7 +302,7 @@ int main()
         CHECK(dial(port, coreQuery, "not-a-session", kOwnOrigin)->socket == nullptr);
         CHECK(dial(port, coreQuery, cookie, "http://elsewhere.example")->socket == nullptr);
         CHECK(dial(port, coreQuery, cookie, std::string())->socket == nullptr);
-        CHECK(dial(port, "fleet=home&service=nobody", cookie, kOwnOrigin)->socket == nullptr);
+        CHECK(dial(port, "service=nobody", cookie, kOwnOrigin)->socket == nullptr);
         CHECK(dial(port, coreQuery + "&after=2", cookie, kOwnOrigin)->socket == nullptr);
 
         const std::shared_ptr<Window> watching = dial(port, coreQuery, cookie, kOwnOrigin);
@@ -327,7 +326,7 @@ int main()
         CHECK(watching->frames().back().at("lines")[0].at("seq") == 1);
 
         const std::shared_ptr<Window> edgeWindow
-            = dial(port, "fleet=home&service=edge", cookie, kOwnOrigin);
+            = dial(port, "service=edge", cookie, kOwnOrigin);
         CHECK(testutil::waitFor([&]() { return edgeWindow->hasText("edge one"); }));
         edgeWindow->close();
 

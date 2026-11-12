@@ -1,7 +1,7 @@
 // Bazarish project (c) 2026
 #include "Facade.hpp"
 
-#include <FleetPorts.hpp>
+#include <ServicePorts.hpp>
 #include <LogRing.hpp>
 #include <OpsSettings.hpp>
 #include <Restart.hpp>
@@ -25,8 +25,8 @@
 
 namespace {
 
-constexpr const char* kDefaultHost = bazarish::fleet::kLoopback;
-constexpr int kDefaultPort = bazarish::fleet::kFacadePort;
+constexpr const char* kDefaultHost = bazarish::ports::kLoopback;
+constexpr int kDefaultPort = bazarish::ports::kFacadePort;
 constexpr int kDefaultTunnelQuantity = 16;
 
 void printUsage()
@@ -77,9 +77,11 @@ int main(const int argc, const char** argv)
     const std::filesystem::path stateDir(config.text("state"));
     bazarish::i2p::Privacy privacy = bazarish::i2p::Privacy::eMax;
     bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
+    bazarish::i2p::I2pLogLevel i2pLogLevel = bazarish::i2p::I2pLogLevel::eNone;
     try {
         privacy = bazarish::server::configPrivacy(config, bazarish::i2p::Privacy::eMax);
         logLevel = bazarish::server::configLogLevel(config);
+        i2pLogLevel = bazarish::server::configI2pLogLevel(config);
     } catch (const std::invalid_argument& error) {
         std::fprintf(stderr, "config: %s\n", error.what());
         return 2;
@@ -123,6 +125,7 @@ int main(const int argc, const char** argv)
 
     bazarish::log::setComponent("facade-http");
     bazarish::log::setLevel(logLevel);
+    bazarish::i2p::setI2pLogLevel(i2pLogLevel);
     const auto logRing = std::make_shared<bazarish::server::LogRing>();
     const bazarish::server::LogCapture logCapture(logRing);
     options.logRing = logRing;
@@ -141,6 +144,7 @@ int main(const int argc, const char** argv)
     settingValues.directPort = direct.has_value() ? direct->port : 0;
     settingValues.i2pPrivacy = std::string(bazarish::i2p::privacyName(privacy));
     settingValues.i2pTunnelQuantity = tunnelQuantity;
+    settingValues.i2pLogLevel = std::string(bazarish::i2p::i2pLogLevelName(i2pLogLevel));
     options.settings = std::make_shared<bazarish::facade::FacadeSettings>(
         configPath, settingValues);
     options.stateDirectory = stateDir.string();

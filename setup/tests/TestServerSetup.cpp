@@ -1,5 +1,5 @@
 // Bazarish project (c) 2026
-#include "FleetSetup.hpp"
+#include "ServerSetup.hpp"
 #include "TestUtil.hpp"
 
 #include <StateIdentity.hpp>
@@ -27,7 +27,7 @@ constexpr int kOtherOpsPort = 9439;
 
 bazarish::setup::Layout layoutUnder(const fs::path& root)
 {
-    return {root / "etc", root / "state", "/assets/panel", "/assets/portal", "box"};
+    return {root / "etc", root / "state", "/assets/panel", "/assets/portal"};
 }
 
 void writeGateway(
@@ -65,11 +65,11 @@ bool reachedAt(const nlohmann::json& link, const nlohmann::json& listen, const s
 
 int main()
 {
-    const fs::path root = testutil::freshDir("fleet-setup-test");
+    const fs::path root = testutil::freshDir("server-setup-test");
 
     const bazarish::setup::Layout layout = layoutUnder(root / "fresh");
     writeGateway(layout);
-    CHECK(bazarish::setup::setUpFleet(layout));
+    CHECK(bazarish::setup::setUpServer(layout));
 
     const nlohmann::json core = configOf(layout, "server-core");
     const nlohmann::json node = configOf(layout, "service-node");
@@ -110,9 +110,7 @@ int main()
 
     CHECK(panel.at("assets") == "/assets/panel");
     CHECK(!panel.contains("admin"));
-    CHECK(panel.at("fleets").size() == 1);
-    CHECK(panel.at("fleets")[0].at("name") == "box");
-    const nlohmann::json& services = panel.at("fleets")[0].at("services");
+    const nlohmann::json& services = panel.at("services");
     CHECK(services.size() == 4);
     const auto entry = [&services](const std::string& kind) {
         for (const nlohmann::json& service : services) {
@@ -120,7 +118,7 @@ int main()
                 return service;
             }
         }
-        throw std::runtime_error("the fleet has no " + kind);
+        throw std::runtime_error("the panel lists no " + kind);
     };
     CHECK(entry("server-core").at("url") == reached(core.at("opsListen")));
     CHECK(entry("server-core").at("pin") == corePin);
@@ -132,7 +130,7 @@ int main()
     CHECK(entry("gateway").at("pin") == gatewayPin);
 
     const std::string written = bazarish::readFileText(layout.configDir / "admin-panel.json");
-    CHECK(!bazarish::setup::setUpFleet(layout));
+    CHECK(!bazarish::setup::setUpServer(layout));
     CHECK(bazarish::readFileText(layout.configDir / "admin-panel.json") == written);
     CHECK(configOf(layout, "server-core") == core);
 
@@ -140,7 +138,7 @@ int main()
     writeGateway(administered,
         {{"opsListen", {{"host", "0.0.0.0"}, {"port", kOtherOpsPort}}},
             {"operators", {kOtherPanelFingerprint}}, {"opsClients", {kOtherPanelPin}}});
-    CHECK(bazarish::setup::setUpFleet(administered));
+    CHECK(bazarish::setup::setUpServer(administered));
     {
         const nlohmann::json kept = configOf(administered, "gateway");
         const std::string addedPin
@@ -151,7 +149,7 @@ int main()
         CHECK(kept.at("operators")[0] == kOtherPanelFingerprint);
         CHECK(kept.at("opsClients") == nlohmann::json::array({kOtherPanelPin, addedPin}));
         const nlohmann::json listed
-            = configOf(administered, "admin-panel").at("fleets")[0].at("services");
+            = configOf(administered, "admin-panel").at("services");
         CHECK(listed[3].at("url") == "https://127.0.0.1:" + std::to_string(kOtherOpsPort));
     }
 
@@ -159,11 +157,11 @@ int main()
     writeGateway(partial);
     const std::string gatewayBefore = bazarish::readFileText(partial.configDir / "gateway.json");
     bazarish::writePrivateFile(partial.configDir / "facade.json", "{}\n");
-    CHECK(!bazarish::setup::setUpFleet(partial));
+    CHECK(!bazarish::setup::setUpServer(partial));
     CHECK(bazarish::readFileText(partial.configDir / "gateway.json") == gatewayBefore);
     CHECK(!fs::exists(partial.configDir / "server-core.json"));
 
     fs::remove_all(root);
-    std::printf("TestFleetSetup OK\n");
+    std::printf("TestServerSetup OK\n");
     return 0;
 }

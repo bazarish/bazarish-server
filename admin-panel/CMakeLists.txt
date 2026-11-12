@@ -29,7 +29,7 @@ add_library(bazarish_admin_lib STATIC
     src/AdminAuth.cpp
     src/PanelSessions.cpp
     src/ServiceClient.cpp
-    src/FleetSync.cpp
+    src/ServiceSync.cpp
     src/HttpApi.cpp
     src/LogWindows.cpp
 )
@@ -51,12 +51,12 @@ bazarish_server_test(TestConfig bazarish_admin_lib)
 bazarish_server_test(TestPanelSettings bazarish_admin_lib)
 bazarish_server_test(TestAdminAuth bazarish_admin_lib)
 bazarish_server_test(TestServiceClient bazarish_admin_lib)
-bazarish_server_test(TestFleetSync bazarish_admin_lib)
+bazarish_server_test(TestServiceSync bazarish_admin_lib)
 bazarish_server_test(TestLoginPage bazarish_admin_lib)
 target_compile_definitions(TestLoginPage
     PRIVATE BAZARISH_PANEL_WEB_DIR="${CMAKE_CURRENT_SOURCE_DIR}/web")
-bazarish_server_test(TestPanelFleet bazarish_admin_lib)
-target_compile_definitions(TestPanelFleet
+bazarish_server_test(TestPanelServices bazarish_admin_lib)
+target_compile_definitions(TestPanelServices
     PRIVATE BAZARISH_PANEL_WEB_DIR="${CMAKE_CURRENT_SOURCE_DIR}/web")
 bazarish_server_test(TestPanelLogs bazarish_admin_lib)
 target_compile_definitions(TestPanelLogs

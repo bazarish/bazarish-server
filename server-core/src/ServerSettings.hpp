@@ -12,7 +12,7 @@ namespace bazarish::server {
 
 struct ServerSettingsValues {
     std::string logLevel;
-    bool i2pLog = false;
+    std::string i2pLogLevel;
     std::string i2pPrivacy;
     std::string listenHost;
     int listenPort = 0;

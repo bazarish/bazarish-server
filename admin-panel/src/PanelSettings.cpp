@@ -22,7 +22,7 @@ const char* const kConsumerRoleKey = "role";
 const char* const kListenKey = "listen";
 const char* const kListenHostKey = "host";
 const char* const kListenPortKey = "port";
-const char* const kFleetsKey = "fleets";
+const char* const kServicesKey = "services";
 
 }  // namespace
 
@@ -89,8 +89,8 @@ void PanelSettings::persist(const Config& values) const
         values_.consumer.role);
     setIfChanged(file, {kListenKey, kListenHostKey}, values.listenHost, values_.listenHost);
     setIfChanged(file, {kListenKey, kListenPortKey}, values.listenPort, values_.listenPort);
-    if (values.fleets != values_.fleets) {
-        file.set({kFleetsKey}, fleetsJson(values.fleets));
+    if (values.services != values_.services) {
+        file.set({kServicesKey}, servicesJson(values.services));
     }
 }
 

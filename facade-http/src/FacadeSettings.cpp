@@ -22,6 +22,7 @@ const char* const kPortKey = "port";
 const char* const kI2pKey = "i2p";
 const char* const kI2pPrivacyKey = "privacy";
 const char* const kI2pTunnelsKey = "tunnelQuantity";
+const char* const kI2pLogLevelKey = "logLevel";
 
 void persistFacadeSettings(
     ConfigFile& file, const FacadeSettingsValues& values, const FacadeSettingsValues& before)
@@ -42,6 +43,7 @@ void persistFacadeSettings(
     setIfChanged(file, {kI2pKey, kI2pPrivacyKey}, values.i2pPrivacy, before.i2pPrivacy);
     setIfChanged(
         file, {kI2pKey, kI2pTunnelsKey}, values.i2pTunnelQuantity, before.i2pTunnelQuantity);
+    setIfChanged(file, {kI2pKey, kI2pLogLevelKey}, values.i2pLogLevel, before.i2pLogLevel);
 }
 
 }  // namespace

@@ -1,7 +1,7 @@
 # bazarish-admin-panel
 
-A single web interface to monitor and manage the Bazarish fleet: `server-core`,
-`service-node`, its facades and private gateways.
+A single web interface to monitor and manage one Bazarish server: its
+`server-core`, `service-node`, facades and private gateways.
 
 ## Authentication
 
@@ -24,8 +24,8 @@ verification. The challenge is single-use and names this panel - the words your
 client shows you before signing - so a login blob captured anywhere else cannot
 be replayed here, and a challenge from anywhere else is visibly not this panel.
 
-By default the panel calls itself "Bazarish admin panel" (plus the fleet name,
-when the config names one) at the address it listens on. Front it behind a name
+By default the panel calls itself "Bazarish admin panel" at the address it
+listens on. Front it behind a name
 of your own and the address you open does not match what your client shows:
 set `consumer` in the config to the words you want compared.
 
@@ -61,7 +61,9 @@ A sidebar with two views, drawn by a small script from the panel's own JSON API:
   terms, set its storage quota in megabytes, or approve it.
 
 The settings page of server-core, the service node, each facade and each gateway
-has a Logs section with the service's log level. Its `[open]` opens the
+opens with a Logs section: the service's log level and, for server-core, a facade
+or a gateway, the level of libi2pd's lines in that log (`none`, `error`, `warn`,
+`info`, `debug`). Both apply at once. Its `[open]` opens the
 service's log in a browser window of its own, one per service: lines coloured by
 level, following the end unless paused, at most 2000 kept, with a mark where
 lines were skipped or where the service restarted. The window reads a WebSocket
@@ -72,8 +74,8 @@ session ends, when that administrator is removed or when the service answers
 with an error, and the window then offers to reconnect. At most 8 log windows
 are open at once.
 
-The sign-in page needs no JavaScript, so a fleet that is entirely down can still
-be logged into. The panel's web files live where the config's `assets` points (`web/` in this
+The sign-in page needs no JavaScript, so a panel whose services are all down can
+still be logged into. The panel's web files live where the config's `assets` points (`web/` in this
 repository) - edit them to restyle the panel, then restart it.
 
 Every service keeps the operator's endpoints on a socket of its own, the one
@@ -81,34 +83,33 @@ its `opsListen` opens, and the panel is configured with that address. Nothing an
 on the facade anyone holding its address could reach it, and the same reasoning
 holds for the rest. Because
 the link is pinned TLS in both directions, those sockets do not have to be on
-this host - a fleet can sit on several machines without a tunnel between them.
+this host - the services can sit on several machines without a tunnel between
+them.
 
 ## Configuration
 
 See `config.example.json`: the authorised admin fingerprints (one string or a
-list), the listen address, and the deployments it manages - no secrets. Each
+list), the listen address, and the `services` it manages - no secrets. Each
 service is named by its operator socket and by the `pin` it presents there; an
 `http://` URL or a missing pin refuses to load, so a service cannot quietly be
-reached unauthenticated. Each deployment is one `server-core`, the one
+reached unauthenticated. The list holds one `server-core`, the one
 `service-node` bound to it, and any number of facades and gateways; every service
-in it has a name of its own, and a configuration with two of a name, or a second
-core or node, refuses to load. Several deployments can be listed, and the account
-views act on the one chosen in the sidebar.
+has a name of its own, and a configuration with two of a name, a second core or
+node, or a key the panel does not know refuses to load.
 
 Each facade mints its own address and reports it, and the panel writes them into the server descriptor
 whenever the panel is claimed, the service list is saved or a facade is given a
 new address. A new
 address also rewrites any gateway's direct route to the old one.
 
-The gateways of a deployment are linked to its server-core and facades the same
+The gateways are linked to server-core and the facades the same
 way: whenever the panel is claimed, or the service list or the settings of
 server-core or a facade are saved, the panel writes each gateway's `server` and `direct` and server-core's
 `gateways`. The traffic then goes between them directly.
 
 The panel makes its own certificate in `<state>` on first start and prints the
-hash of its key next to its fingerprint. Both go out to the fleet: the
-fingerprint into each service's `"operators"`, the key hash into its
-`"opsClients"`.
+hash of its key next to its fingerprint. Both go out to every service: the
+fingerprint into its `"operators"`, the key hash into its `"opsClients"`.
 
 ## Build & test
 

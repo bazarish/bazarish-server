@@ -1,7 +1,7 @@
 // Bazarish project (c) 2026
 #include "NodeCards.hpp"
 
-#include <FleetRoutes.hpp>
+#include <ServiceRoutes.hpp>
 
 #include <bazarish/KeyedSeal.hpp>
 #include <bazarish/Auth.hpp>
@@ -40,7 +40,7 @@ std::optional<HeldCard> NodeCards::card(const std::string& user)
     }
     http::ClientRequest lookup;
     lookup.method = "GET";
-    lookup.target = std::string(fleet::kAccountCard) + "?user=" + user;
+    lookup.target = std::string(routes::kAccountCard) + "?user=" + user;
     lookup.headers = auth::signRequest(*identity_, now, "GET", lookup.target, {});
     http::ClientOptions options;
     options.tls = node_.tls;

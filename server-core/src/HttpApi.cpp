@@ -1,7 +1,7 @@
 // Bazarish project (c) 2026
 #include "HttpApi.hpp"
 
-#include <FleetRoutes.hpp>
+#include <ServiceRoutes.hpp>
 #include <Health.hpp>
 #include <OpsGate.hpp>
 #include <OpsSettings.hpp>
@@ -221,7 +221,7 @@ void HttpApi::setupOpsRoutes()
                 "server-core", options_.version, startedAt_, nowSeconds(), std::string())};
     }));
 
-    ops_->get(fleet::kMessagingAccount,
+    ops_->get(routes::kMessagingAccount,
         operatorOnly([this, &store](const bazarish::http::Request& request) {
             const std::string user = request.query("user");
             if (user.empty()) {
@@ -234,7 +234,7 @@ void HttpApi::setupOpsRoutes()
             });
         }));
 
-    ops_->del(fleet::kMessagingAccount,
+    ops_->del(routes::kMessagingAccount,
         operatorOnly([this, &store](const bazarish::http::Request& request) {
             const std::string user = request.query("user");
             if (user.empty()) {
@@ -247,12 +247,12 @@ void HttpApi::setupOpsRoutes()
             return jsonResponse({{"ok", true}});
         }));
 
-    ops_->get(fleet::kMessagingSettings,
+    ops_->get(routes::kMessagingSettings,
         operatorOnly([this](const bazarish::http::Request&) {
             const ServerSettings::Values values = options_.settings->get();
             return jsonResponse({
                 {"logLevel", values.logLevel},
-                {"i2pLog", values.i2pLog},
+                {"i2pLogLevel", values.i2pLogLevel},
                 {"i2pPrivacy", values.i2pPrivacy},
                 {"listen", {{"host", values.listenHost}, {"port", values.listenPort}}},
                 {"serviceNode", values.serviceNodeUrl},
@@ -267,15 +267,13 @@ void HttpApi::setupOpsRoutes()
             });
         }));
 
-    ops_->put(fleet::kMessagingSettings,
+    ops_->put(routes::kMessagingSettings,
         operatorOnly([this](const bazarish::http::Request& request) {
             ServerSettings::Values values = options_.settings->get();
             {
                 const nlohmann::json body = bazarish::parseJson(request.body);
                 values.logLevel = logLevelIn(body, values.logLevel);
-                if (body.contains("i2pLog")) {
-                    values.i2pLog = body.at("i2pLog").get<bool>();
-                }
+                values.i2pLogLevel = i2pLogLevelIn(body, values.i2pLogLevel);
                 values.i2pPrivacy = privacyIn(body, values.i2pPrivacy);
                 readEndpointInto(body, "listen", values.listenHost, values.listenPort);
                 if (body.contains("serviceNode")) {
@@ -295,19 +293,18 @@ void HttpApi::setupOpsRoutes()
                 return errorResponse(500, ErrorCode::eRequestFailed, error.what());
             }
             applyLogLevel(before.logLevel, values.logLevel);
-            if (values.i2pLog != before.i2pLog) {
-                bazarish::i2p::setI2pLogging(values.i2pLog);
-            }
+            applyI2pLogLevel(before.i2pLogLevel, values.i2pLogLevel);
             if (values.gateways != before.gateways) {
                 options_.gatewaysChanged(values.gateways);
             }
-            return jsonResponse({{"logLevel", values.logLevel}, {"i2pLog", values.i2pLog}});
+            return jsonResponse(
+                {{"logLevel", values.logLevel}, {"i2pLogLevel", values.i2pLogLevel}});
         }));
 
-    logFeed_ = std::make_unique<LogFeed>(*ops_, fleet::kMessagingLogs, options_.logRing,
+    logFeed_ = std::make_unique<LogFeed>(*ops_, routes::kMessagingLogs, options_.logRing,
         operatorCheck(options_.operatorFingerprints, replayCache_));
 
-    ops_->post(fleet::kMessagingRestart,
+    ops_->post(routes::kMessagingRestart,
         operatorOnly([this](const bazarish::http::Request&) {
             bazarish::log::info("restarting at the operator's request");
             options_.requestRestart();
@@ -323,16 +320,16 @@ void HttpApi::setupOpsRoutes()
             return bazarish::http::Response{200, "application/octet-stream", {}, archive};
         }));
 
-    ops_->get(fleet::kMessagingStorage, operatorOnly([this](const bazarish::http::Request&) {
+    ops_->get(routes::kMessagingStorage, operatorOnly([this](const bazarish::http::Request&) {
         return jsonResponse({{"usedBytes", options_.diskUsage()}});
     }));
 
-    ops_->put(fleet::kMessagingCard, operatorOnly([this](const bazarish::http::Request& request) {
+    ops_->put(routes::kMessagingCard, operatorOnly([this](const bazarish::http::Request& request) {
         options_.forgetCard(bazarish::parseJson(request.body).at("user").get<std::string>());
         return jsonResponse({{"ok", true}});
     }));
 
-    ops_->put(fleet::kMessagingQuota,
+    ops_->put(routes::kMessagingQuota,
         operatorOnly([&store](const bazarish::http::Request& request) {
             const nlohmann::json body = bazarish::parseJson(request.body);
             store.setUserQuota(body.at("user").get<std::string>(),
@@ -340,7 +337,7 @@ void HttpApi::setupOpsRoutes()
             return jsonResponse({{"ok", true}});
         }));
 
-    ops_->put(fleet::kMessagingI2pDest,
+    ops_->put(routes::kMessagingI2pDest,
         operatorOnly([this](const bazarish::http::Request& request) {
             const nlohmann::json body = bazarish::parseJson(request.body);
             const std::string user = body.at("user").get<std::string>();
@@ -360,7 +357,7 @@ void HttpApi::setupOpsRoutes()
             return jsonResponse({{"dest", served.dest}});
         }));
 
-    ops_->post(fleet::kMessagingNodeCard,
+    ops_->post(routes::kMessagingNodeCard,
         operatorOnly([this](const bazarish::http::Request& request) {
             const nlohmann::json body = bazarish::parseJson(request.body);
             const Key sealing

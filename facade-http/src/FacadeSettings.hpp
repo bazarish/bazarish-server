@@ -21,6 +21,7 @@ struct FacadeSettingsValues {
     std::string directHost;
     int directPort = 0;
     std::string i2pPrivacy;
+    std::string i2pLogLevel;
     int i2pTunnelQuantity = 0;
 };
 

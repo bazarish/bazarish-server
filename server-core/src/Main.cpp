@@ -1,7 +1,7 @@
 // Bazarish project (c) 2026
 #include "DeliveryEngine.hpp"
 
-#include <FleetPorts.hpp>
+#include <ServicePorts.hpp>
 #include <Health.hpp>
 #include <LogRing.hpp>
 #include <OpsSettings.hpp>
@@ -43,9 +43,9 @@ namespace {
 
 namespace fs = std::filesystem;
 
-constexpr const char* kDefaultHost = bazarish::fleet::kLoopback;
-constexpr int kDefaultPort = bazarish::fleet::kCorePort;
-constexpr int kDefaultOpsPort = bazarish::fleet::kCoreOpsPort;
+constexpr const char* kDefaultHost = bazarish::ports::kLoopback;
+constexpr int kDefaultPort = bazarish::ports::kCorePort;
+constexpr int kDefaultOpsPort = bazarish::ports::kCoreOpsPort;
 
 void printUsage()
 {
@@ -117,22 +117,21 @@ int main(const int argc, const char** argv)
     const std::vector<std::string> gatewayPins = config.list("gateways");
     bazarish::i2p::Privacy privacy = bazarish::i2p::Privacy::eMax;
     bazarish::log::Level logLevel = bazarish::log::Level::eInfo;
+    bazarish::i2p::I2pLogLevel i2pLogLevel = bazarish::i2p::I2pLogLevel::eNone;
     try {
         privacy = bazarish::server::configPrivacy(config, bazarish::i2p::Privacy::eMax);
         logLevel = bazarish::server::configLogLevel(config);
+        i2pLogLevel = bazarish::server::configI2pLogLevel(config);
     } catch (const std::invalid_argument& error) {
         std::fprintf(stderr, "config: %s\n", error.what());
         return 2;
     }
-    const bool i2pLog = config.flag("i2p.log", false);
 
     bazarish::log::setComponent("server-core");
     bazarish::log::setLevel(logLevel);
     const auto logRing = std::make_shared<bazarish::server::LogRing>();
     const bazarish::server::LogCapture logCapture(logRing);
-    if (i2pLog) {
-        bazarish::i2p::setI2pLogging(true);
-    }
+    bazarish::i2p::setI2pLogLevel(i2pLogLevel);
 
     fs::create_directories(stateDir);
     const auto identity = std::make_shared<const bazarish::Identity>(
@@ -237,7 +236,7 @@ int main(const int argc, const char** argv)
     }
     bazarish::server::ServerSettings::Values settingValues;
     settingValues.logLevel = config.text("logLevel").empty() ? "info" : config.text("logLevel");
-    settingValues.i2pLog = i2pLog;
+    settingValues.i2pLogLevel = bazarish::i2p::i2pLogLevelName(i2pLogLevel);
     settingValues.i2pPrivacy = bazarish::i2p::privacyName(privacy);
     settingValues.listenHost = host;
     settingValues.listenPort = port;

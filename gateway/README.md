@@ -15,7 +15,7 @@ file alone. The admin panel only watches and tunes it, over `opsListen`.
 
 ## Building
 
-It builds with the rest of the server fleet (the repository's own README), or on
+It builds with the rest of the server components (the repository's own README), or on
 its own:
 
 ```
@@ -103,7 +103,7 @@ admin panel shows this link for the gateway.
 ## Health
 
 `GET /healthz` on the `opsListen` socket, with a signature from a fingerprint in
-`operators`, answers the fleet's health report plus what this gateway holds:
+`operators`, answers the common health report plus what this gateway holds:
 sessions, destinations, streams, sockets, rejoins and refusals. That socket
 admits only the keys in `opsClients`, which is how the admin panel reaches it.
 The public listener has no health path: `<basePath>/healthz` is the same 404 as
@@ -115,9 +115,11 @@ health report; the log says when the router has its tunnels.
 The same socket, with the same signature, carries `GET`/`PUT /settings` and
 `POST /restart`. `/settings` shows and writes into the config file the log level
 (`logLevel`: `error`, `warn`, `info` or `debug`, `info` when the file names
-none), the tunnels (`i2pPrivacy`), the three pools (`streamPool`, `callPool`,
+none), libi2pd's lines in that log (`i2pLogLevel`, written as `i2p.logLevel`:
+`none`, `error`, `warn`, `info` or `debug`, `none` when the file names none),
+the tunnels (`i2pPrivacy`), the three pools (`streamPool`, `callPool`,
 `watchPool`), the `server` link and the `direct` routes; it never shows the
-path. The log level, the link and the routes apply at once; the tunnels and the
+path. The two log levels, the link and the routes apply at once; the tunnels and the
 pools at the next start, since the pools are built then. `POST /restart` exits
 with code 90, which a unit with `Restart=on-failure` brings back.
 

@@ -74,7 +74,9 @@ with `t` in Unix milliseconds, `instance` is new at every start and `first` is
 the oldest line still kept. With no line past N the answer waits up to 25
 seconds for one and then comes back empty; an `after` past the newest line is
 answered at once. One answer carries at most 500 lines. The i2pd lines are among
-them while the i2pd log is on (`i2pLog` in the settings, applied at once).
+them down to the i2pd log level (`i2p.logLevel` in the config, `i2pLogLevel` in
+the settings: `none`, `error`, `warn`, `info` or `debug`; `none` when absent;
+applied at once).
 
 `gatewayListen` is optional and serves the gateways of the same operator, each
 admitted by the key listed for it in `gateways`. A gateway learns there every

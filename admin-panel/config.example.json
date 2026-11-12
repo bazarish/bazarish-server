@@ -4,33 +4,26 @@
   // What the panel says it is when it asks you to sign in. Your client shows
   // these words, and you compare them with the address bar in front of you, so
   // set "place" to the address you actually open when the panel is fronted.
-  // Left out: "Bazarish admin panel" (plus the fleet name, when one is named)
-  // at the address below, as "Administrator".
+  // Left out: "Bazarish admin panel" at the address below, as "Administrator".
   // "consumer": {"name": "...", "place": ["https://panel.example"], "role": "..."},
   "state": "/var/lib/bazarish/admin-panel",
   "assets": "/opt/bazarish/bazarish-server/admin-panel/web",
   "listen": {"host": "127.0.0.1", "port": 8460},
 
-  // One deployment: a messaging server, the node bound to it, and the facades in
-  // front of the pair, plus any gateways. Every service needs a name of its own;
-  // a deployment has one server-core and one service-node. Add more entries to
-  // manage more deployments from here; they
+  // The services of this server: the messaging server, the node bound to it,
+  // the facades in front of the pair, and any gateways. Every service needs a
+  // name of its own; the list has one server-core and one service-node. They
   // only have to be reachable from this host (a private network, a VPN, a tunnel
   // the operator set up - the panel does not care which).
   // Each service is reached on its operator socket, over TLS, and is named by
   // the key it prints when it starts - put that in "pin". There is no other
   // way in: an http URL or a missing pin refuses to load.
-  "fleets": [
-    {
-      "name": "home",
-      "services": [
-        {"name": "server-core",  "kind": "server-core",
-         "url": "https://127.0.0.1:8428", "pin": ""},
-        {"name": "service-node", "kind": "service-node",
-         "url": "https://127.0.0.1:8427", "pin": ""},
-        {"name": "facade",       "kind": "facade",
-         "url": "https://127.0.0.1:8429", "pin": ""}
-      ]
-    }
+  "services": [
+    {"name": "server-core",  "kind": "server-core",
+     "url": "https://127.0.0.1:8428", "pin": ""},
+    {"name": "service-node", "kind": "service-node",
+     "url": "https://127.0.0.1:8427", "pin": ""},
+    {"name": "facade",       "kind": "facade",
+     "url": "https://127.0.0.1:8429", "pin": ""}
   ]
 }

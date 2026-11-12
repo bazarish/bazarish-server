@@ -9,7 +9,6 @@
     var kMillisDigits = 3;
 
     var params = new URLSearchParams(window.location.search);
-    var fleetName = params.get("fleet") || "";
     var serviceName = params.get("service") || "";
     var kindName = params.get("kind") || "";
     var label = serviceName || kindName;
@@ -119,9 +118,6 @@
 
     function socketUrl() {
         var query = new URLSearchParams();
-        if (fleetName) {
-            query.set("fleet", fleetName);
-        }
         if (serviceName) {
             query.set("service", serviceName);
         } else {
@@ -167,6 +163,6 @@
     reconnectButton.addEventListener("click", connect);
 
     document.title = t("Logs: %1", label);
-    document.getElementById("logTitle").textContent = fleetName ? fleetName + " / " + label : label;
+    document.getElementById("logTitle").textContent = label;
     connect();
 }());

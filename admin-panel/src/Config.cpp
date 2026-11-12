@@ -6,6 +6,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <iterator>
 #include <set>
 #include <stdexcept>
 
@@ -17,6 +19,21 @@ namespace {
 
 const char* const kKnownKinds[]
     = {kServerCoreKind, kServiceNodeKind, kFacadeKind, kGatewayKind};
+
+const char* const kKnownKeys[] = {"admin", "state", "assets", "listen", "consumer", "services"};
+
+void requireKnownKeys(const nlohmann::json& json)
+{
+    if (!json.is_object()) {
+        throw std::runtime_error("the config must be a JSON object");
+    }
+    for (const auto& item : json.items()) {
+        const std::string& key = item.key();
+        if (std::find(std::begin(kKnownKeys), std::end(kKnownKeys), key) == std::end(kKnownKeys)) {
+            throw std::runtime_error("unknown config key \"" + key + "\"");
+        }
+    }
+}
 
 }  // namespace
 
@@ -30,77 +47,68 @@ bool isKnownServiceKind(const std::string& kind)
     return false;
 }
 
-void requireCoherentFleet(const Fleet& fleet)
+void requireCoherentServices(const std::vector<ServiceEntry>& services)
 {
     std::set<std::string> names;
     std::size_t cores = 0;
     std::size_t nodes = 0;
-    for (const ServiceEntry& service : fleet.services) {
+    for (const ServiceEntry& service : services) {
         if (!names.insert(service.name).second) {
-            throw std::invalid_argument("two services in \"" + fleet.name + "\" are named \""
+            throw std::invalid_argument("two services are named \""
                 + service.name + "\": each needs a name of its own");
         }
         cores += service.kind == kServerCoreKind ? 1 : 0;
         nodes += service.kind == kServiceNodeKind ? 1 : 0;
     }
     if (cores > 1 || nodes > 1) {
-        throw std::invalid_argument("\"" + fleet.name
-            + "\" holds one server-core and one service-node at most: a second server is a"
-              " deployment of its own");
+        throw std::invalid_argument(
+            "the panel holds one server-core and one service-node at most");
     }
 }
 
-nlohmann::json fleetsJson(const std::vector<Fleet>& fleets)
+nlohmann::json servicesJson(const std::vector<ServiceEntry>& services)
 {
     nlohmann::json list = nlohmann::json::array();
-    for (const Fleet& fleet : fleets) {
-        nlohmann::json services = nlohmann::json::array();
-        for (const ServiceEntry& service : fleet.services) {
-            services.push_back({{"name", service.name}, {"kind", service.kind},
-                {"url", service.url}, {"pin", service.pin}});
-        }
-        list.push_back({{"name", fleet.name}, {"services", services}});
+    for (const ServiceEntry& service : services) {
+        list.push_back({{"name", service.name}, {"kind", service.kind}, {"url", service.url},
+            {"pin", service.pin}});
     }
     return list;
 }
 
-std::vector<Fleet> fleetsFromJson(const nlohmann::json& list)
+std::vector<ServiceEntry> servicesFromJson(const nlohmann::json& list)
 {
-    std::vector<Fleet> fleets;
-    for (const nlohmann::json& entry : list) {
-        Fleet fleet;
-        fleet.name = entry.at("name").get<std::string>();
-        for (const nlohmann::json& item : entry.at("services")) {
-            ServiceEntry service;
-            service.name = item.at("name").get<std::string>();
-            service.kind = item.at("kind").get<std::string>();
-            service.url = item.at("url").get<std::string>();
-            service.pin = item.value("pin", std::string());
-            if (!isKnownServiceKind(service.kind)) {
-                throw std::invalid_argument(
-                    "the panel does not know a service of kind \"" + service.kind + "\"");
-            }
-            if (service.url.empty() || service.name.empty()) {
-                throw std::invalid_argument("a service needs a name and a URL");
-            }
-            if (!service.url.starts_with("https://")) {
-                throw std::invalid_argument("a service is reached over https: " + service.url);
-            }
-            if (service.pin.empty()) {
-                throw std::invalid_argument(
-                    "a service is named by the key it presents: " + service.name);
-            }
-            fleet.services.push_back(std::move(service));
+    std::vector<ServiceEntry> services;
+    for (const nlohmann::json& item : list) {
+        ServiceEntry service;
+        service.name = item.at("name").get<std::string>();
+        service.kind = item.at("kind").get<std::string>();
+        service.url = item.at("url").get<std::string>();
+        service.pin = item.value("pin", std::string());
+        if (!isKnownServiceKind(service.kind)) {
+            throw std::invalid_argument(
+                "the panel does not know a service of kind \"" + service.kind + "\"");
         }
-        requireCoherentFleet(fleet);
-        fleets.push_back(std::move(fleet));
+        if (service.url.empty() || service.name.empty()) {
+            throw std::invalid_argument("a service needs a name and a URL");
+        }
+        if (!service.url.starts_with("https://")) {
+            throw std::invalid_argument("a service is reached over https: " + service.url);
+        }
+        if (service.pin.empty()) {
+            throw std::invalid_argument(
+                "a service is named by the key it presents: " + service.name);
+        }
+        services.push_back(std::move(service));
     }
-    return fleets;
+    requireCoherentServices(services);
+    return services;
 }
 
 Config Config::fromJson(const std::string& text)
 {
     const nlohmann::json json = bazarish::parseJsonWithComments(text);
+    requireKnownKeys(json);
 
     Config config;
     if (json.contains("admin")) {
@@ -129,16 +137,12 @@ Config Config::fromJson(const std::string& text)
         config.consumer.role = consumer.value("role", std::string());
     }
 
-    if (json.contains("fleets")) {
-        config.fleets = fleetsFromJson(json.at("fleets"));
+    if (json.contains("services")) {
+        config.services = servicesFromJson(json.at("services"));
     }
 
     if (config.consumer.name.empty()) {
         config.consumer.name = "Bazarish admin panel";
-        if (json.contains("fleets") && config.fleets.size() == 1
-            && !config.fleets.front().name.empty()) {
-            config.consumer.name += " - " + config.fleets.front().name;
-        }
     }
     if (config.consumer.place.empty()) {
         config.consumer.place

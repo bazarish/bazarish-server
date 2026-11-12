@@ -16,7 +16,6 @@
     var kDefaultHoldMessage = N_("Service for this account has been stopped");
 
     var content = document.getElementById("content");
-    var fleet = window.localStorage.getItem("bazarish.fleet") || "";
     var nav = document.getElementById("nav");
     var pollTimer = null;
 
@@ -29,13 +28,6 @@
             return error.code ? error.message + " (" + error.code + ")" : error.message;
         }
         return "HTTP " + status;
-    }
-
-    function withFleet(path) {
-        if (!fleet) {
-            return path;
-        }
-        return path + (path.indexOf("?") >= 0 ? "&" : "?") + "fleet=" + encodeURIComponent(fleet);
     }
 
     function api(method, path, body) {
@@ -148,9 +140,6 @@
         head.appendChild(element("i", "dot " + (service.up ? "is-up" : "is-down")));
         var name = element("a", "card-name item-link", service.name);
         name.href = settingsHref(service);
-        name.addEventListener("click", function () {
-            pickFleet(service.fleet);
-        });
         head.appendChild(name);
         head.appendChild(element("span", "tag", service.up ? t("up") : t("down")));
         card.appendChild(head);
@@ -198,22 +187,11 @@
                         t("No services yet. Add them in [the Panel]"), kPanelSettings));
                     return;
                 }
-                data.fleets.forEach(function (name) {
-                    var mine = data.services.filter(function (service) {
-                        return service.fleet === name;
-                    });
-                    if (!mine.length) {
-                        return;
-                    }
-                    if (data.fleets.length > 1) {
-                        groups.appendChild(element("h2", "block-title", name));
-                    }
-                    var cards = element("div", "cards");
-                    mine.forEach(function (service) {
-                        cards.appendChild(serviceCard(service));
-                    });
-                    groups.appendChild(cards);
+                var cards = element("div", "cards");
+                data.services.forEach(function (service) {
+                    cards.appendChild(serviceCard(service));
                 });
+                groups.appendChild(cards);
             }).catch(function (error) {
                 groups.innerHTML = "";
                 groups.appendChild(notice(error.message, "is-error"));
@@ -329,7 +307,7 @@
         var devices = fact(N_("devices"), "...");
         facts.appendChild(mailbox);
         facts.appendChild(devices);
-        api("GET", withFleet("/api/account?user=" + encodeURIComponent(user.user))).then(function (data) {
+        api("GET", "/api/account?user=" + encodeURIComponent(user.user)).then(function (data) {
             mailbox.lastChild.textContent = t("%1 of %2",
                 humanBytes(data.usedBytes), humanBytes(data.quotaBytes));
             devices.lastChild.textContent = String(data.devices);
@@ -345,7 +323,7 @@
         if (user.banned) {
             controls(section(box, N_("Ban")), N_("The key may register again"))
                 .appendChild(actionButton(N_("Lift the ban"), "btn-quiet", function (done) {
-                    api("POST", withFleet("/api/unban"), { user: user.user }).then(function () {
+                    api("POST", "/api/unban", { user: user.user }).then(function () {
                         onChanged(t("Ban lifted"));
                     }).catch(function (error) {
                         done();
@@ -373,7 +351,7 @@
                 onError(new Error(t("A quota is a whole number of MiB")));
                 return;
             }
-            api("PUT", withFleet("/api/quota"), {
+            api("PUT", "/api/quota", {
                 user: user.user,
                 quotaBytes: Math.round(megabytes) * kBytesPerMiB
             }).then(function () {
@@ -391,7 +369,7 @@
                     : N_("The account is served from now on"))
                 .appendChild(actionButton(onHold ? N_("Return to service") : N_("Approve"), "",
                     function (done) {
-                        api("POST", withFleet("/api/approve"), { user: user.user }).then(function () {
+                        api("POST", "/api/approve", { user: user.user }).then(function () {
                             onChanged(onHold ? t("Back in service") : t("Approved"));
                         }).catch(function (error) {
                             done();
@@ -419,7 +397,7 @@
                         onError(new Error(t("Write why the account is stopped")));
                         return;
                     }
-                    api("POST", withFleet("/api/undelegate"), {
+                    api("POST", "/api/undelegate", {
                         user: user.user,
                         message: holdNote.value.trim()
                     }).then(function () {
@@ -445,7 +423,7 @@
                     done();
                     return;
                 }
-                api("POST", withFleet("/api/delete"), { user: user.user }).then(function () {
+                api("POST", "/api/delete", { user: user.user }).then(function () {
                     onGone(t("Account deleted"));
                 }).catch(function (error) {
                     done();
@@ -464,7 +442,7 @@
                 done();
                 return;
             }
-            api("POST", withFleet("/api/ban"), {
+            api("POST", "/api/ban", {
                 user: user.user,
                 reason: banReason.value.trim()
             }).then(function () {
@@ -600,7 +578,7 @@
             var query = "/api/users?q=" + encodeURIComponent(search.value.trim())
                 + "&state=" + encodeURIComponent(state)
                 + "&limit=" + kPageSize + "&offset=" + offset;
-            api("GET", withFleet(query)).then(function (data) {
+            api("GET", query).then(function (data) {
                 loading = false;
                 total = data.total;
                 data.users.forEach(addRow);
@@ -655,6 +633,7 @@
         { id: "gateways", label: N_("Gateways") }
     ];
     var kLogLevels = ["error", "warn", "info", "debug"];
+    var kI2pLogLevels = ["none", "error", "warn", "info", "debug"];
     var kServiceKinds = ["server-core", "service-node", "facade", "gateway"];
     var kPrivacyLevels = ["minimal", "middle", "max"];
     var kRestartWaitMs = 10000;
@@ -941,7 +920,7 @@
     function linkNotices(errors, at) {
         (errors || []).forEach(function (failed) {
             at.appendChild(notice(t("Saved, but the gateways were not linked: %1",
-                failed.error || failed), "is-error"));
+                failed), "is-error"));
         });
         return Boolean(errors && errors.length);
     }
@@ -957,7 +936,7 @@
         button.addEventListener("click", function () {
             button.disabled = true;
             button.textContent = t("restarting %1...", label);
-            api("POST", withFleet("/api/restart?" + serviceQuery(target)))
+            api("POST", "/api/restart?" + serviceQuery(target))
                 .then(function () {
                     window.setTimeout(renderSettings, kRestartWaitMs);
                 })
@@ -971,20 +950,26 @@
     }
 
     function openLogs(target) {
-        var name = "bazarish-logs:" + fleet + "/" + (target.service || target.kind);
+        var name = "bazarish-logs:" + (target.service || target.kind);
         var known = logWindows[name];
         if (known && !known.closed) {
             known.focus();
             return;
         }
-        logWindows[name] = window.open(withFleet("/logs?" + serviceQuery(target)), name,
+        logWindows[name] = window.open("/logs?" + serviceQuery(target), name,
             "popup,width=" + kLogWindowWidth + ",height=" + kLogWindowHeight);
+    }
+
+    function i2pLogChips(block, current) {
+        return chipRow(block, N_("i2pd log"), N_("libi2pd log"),
+            kI2pLogLevels.map(function (name) { return { value: name, label: name, raw: true }; }),
+            current || "none");
     }
 
     function logsSection(form, target) {
         var block = section(form, N_("Logs"));
         var opener = element("a", "block-action", t("[open]"));
-        opener.href = withFleet("/logs?" + serviceQuery(target));
+        opener.href = "/logs?" + serviceQuery(target);
         opener.addEventListener("click", function (event) {
             event.preventDefault();
             openLogs(target);
@@ -1036,7 +1021,7 @@
         }
 
         function fill(path, render) {
-            api("GET", withFleet(path)).then(function (data) {
+            api("GET", path).then(function (data) {
                 form.innerHTML = "";
                 render(form, data);
             }).catch(function (error) {
@@ -1064,7 +1049,7 @@
             return;
         }
 
-        api("GET", withFleet("/api/settings")).then(function (data) {
+        api("GET", "/api/settings").then(function (data) {
             form.innerHTML = "";
             if (settingsTab === "registration") {
                 renderRegistrationTab(form, data);
@@ -1101,7 +1086,7 @@
             N_("Applies at once"),
             function () {
                 return {
-                    method: "PUT", path: withFleet("/api/settings"),
+                    method: "PUT", path: "/api/settings",
                     body: {
                         requireApproval: moderated(),
                         registrationMessage: waiting.value.trim()
@@ -1146,7 +1131,7 @@
                     throw new Error(t("A sign-in challenge needs its %1", t(fields[missing[0]])));
                 }
                 return {
-                    method: "PUT", path: withFleet("/api/settings"),
+                    method: "PUT", path: "/api/settings",
                     body: {
                         loginConsumer: signer,
                         portalLinks: links.addresses(),
@@ -1162,6 +1147,11 @@
     }
 
     function renderAddressesTab(form, data) {
+        var talk = logsSection(form, { kind: "service-node" });
+        var level = chipRow(talk, N_("Log level"), N_("Applies at once"),
+            kLogLevels.map(function (name) { return { value: name, label: name, raw: true }; }),
+            data.logLevel || "info");
+
         var reach = section(form, N_("Connecting to the server"));
         var reported = data.facades || [];
         if (reported.length === 0) {
@@ -1190,11 +1180,6 @@
             N_("The server-core this node works with"),
             true);
 
-        var talk = logsSection(form, { kind: "service-node" });
-        var level = chipRow(talk, N_("Log level"), N_("Applies at once"),
-            kLogLevels.map(function (name) { return { value: name, label: name, raw: true }; }),
-            data.logLevel || "info");
-
         var footer = saveFooter(form,
             N_("Applies now. Sockets change after a restart."),
             function () {
@@ -1204,7 +1189,7 @@
                     throw new Error(t("A reseed cannot be a .b32.i2p address: %1", wrongReseed[0]));
                 }
                 return {
-                    method: "PUT", path: withFleet("/api/settings"),
+                    method: "PUT", path: "/api/settings",
                     body: {
                         reseeds: reseedList,
                         listen: {
@@ -1251,7 +1236,7 @@
                     throw new Error(t("Storage is a whole number of MiB"));
                 }
                 return {
-                    method: "PUT", path: withFleet("/api/settings"),
+                    method: "PUT", path: "/api/settings",
                     body: {
                         defaultQuotaBytes: Math.round(megabytes) * kBytesPerMiB,
                         idleDeleteDays: Math.max(0, Math.round(Number(ttl.value) || 0))
@@ -1265,10 +1250,7 @@
         var level = chipRow(talk, N_("Log level"), N_("Applies at once"),
             kLogLevels.map(function (name) { return { value: name, label: name, raw: true }; }),
             data.logLevel || "info");
-        var i2pLog = chipRow(talk, N_("i2pd log"),
-            N_("libi2pd log"),
-            [{ value: false, label: N_("off") }, { value: true, label: N_("on") }],
-            Boolean(data.i2pLog));
+        var i2pLogLevel = i2pLogChips(talk, data.i2pLogLevel);
 
         var i2p = section(form, N_("I2P"));
         var privacy = chipRow(i2p, N_("Privacy"),
@@ -1280,7 +1262,7 @@
         var listen = endpointRow(wiring, N_("Listens on"), data.listen,
             N_("The facade and the node connect here. Not public."), true);
         var gatewaysAt = endpointRow(wiring, N_("Gateway socket"), data.gatewayListen,
-            N_("Gateways of this deployment connect here without I2P. Not public."), true);
+            N_("Gateways connect here without I2P. Not public."), true);
         var node = fieldRow(wiring, N_("Service node"), data.serviceNode, {
             placeholder: "http://127.0.0.1:8421", restart: true
         });
@@ -1293,7 +1275,7 @@
             function () {
                 var body = {
                     logLevel: level(),
-                    i2pLog: i2pLog(),
+                    i2pLogLevel: i2pLogLevel(),
                     i2pPrivacy: privacy(),
                     listen: {
                         host: listen.host.value.trim(),
@@ -1309,7 +1291,7 @@
                 }
                 return {
                     method: "PUT",
-                    path: withFleet("/api/service-settings?kind=server-core"),
+                    path: "/api/service-settings?kind=server-core",
                     body: body,
                     after: function (answer, at) { return linkNotices(answer.gatewayLinkErrors, at); }
                 };
@@ -1361,6 +1343,12 @@
 
     function renderFacadePage(form, name, data) {
         itemHead(form, "facades", N_("all facades"), name);
+        var talk = logsSection(form, { service: name });
+        var level = chipRow(talk, N_("Log level"), N_("Applies at once"),
+            kLogLevels.map(function (level) { return { value: level, label: level, raw: true }; }),
+            data.logLevel || "info");
+        var i2pLogLevel = i2pLogChips(talk, data.i2pLogLevel);
+
         var address = section(form, N_("Address"));
         var shown = readOnlyRow(address, "I2P", data.address);
         var said = element("div");
@@ -1372,7 +1360,7 @@
                 done();
                 return;
             }
-            api("POST", withFleet("/api/facade/new-address?service=" + encodeURIComponent(name)))
+            api("POST", "/api/facade/new-address?service=" + encodeURIComponent(name))
                 .then(function (answer) {
                     shown.lastChild.textContent = answer.address;
                     said.innerHTML = "";
@@ -1396,11 +1384,6 @@
                     done();
                 });
         }));
-
-        var talk = logsSection(form, { service: name });
-        var level = chipRow(talk, N_("Log level"), N_("Applies at once"),
-            kLogLevels.map(function (level) { return { value: level, label: level, raw: true }; }),
-            data.logLevel || "info");
 
         var sockets = section(form, N_("Sockets"));
         var listen = endpointRow(sockets, "API", data.listen,
@@ -1433,7 +1416,7 @@
             function () {
                 var request = {
                     method: "PUT",
-                    path: withFleet("/api/service-settings?service=" + encodeURIComponent(name)),
+                    path: "/api/service-settings?service=" + encodeURIComponent(name),
                     after: function (answer, at) { return linkNotices(answer.gatewayLinkErrors, at); },
                     body: {
                         logLevel: level(),
@@ -1453,6 +1436,7 @@
                             host: serviceNode.host.value.trim(),
                             port: portRead(serviceNode.port, N_("The service node"))
                         },
+                        i2pLogLevel: i2pLogLevel(),
                         i2pPrivacy: privacy(),
                         i2pTunnelQuantity: Math.round(Number(tunnels.value) || 0)
                     }
@@ -1470,7 +1454,7 @@
 
     function renderGatewayList(form, data) {
         var mine = data.services.filter(function (service) {
-            return service.kind === "gateway" && (!fleet || service.fleet === fleet);
+            return service.kind === "gateway";
         });
         if (!mine.length) {
             form.appendChild(linkedText("muted",
@@ -1495,6 +1479,7 @@
         var level = chipRow(talk, N_("Log level"), N_("Applies at once"),
             kLogLevels.map(function (level) { return { value: level, label: level, raw: true }; }),
             data.logLevel || "info");
+        var i2pLogLevel = i2pLogChips(talk, data.i2pLogLevel);
 
         var tunnels = section(form, N_("Tunnels"));
         var privacy = chipRow(tunnels, N_("Privacy"), t("Tunnel length: minimal is one, max is three. Calls always use %1.",
@@ -1557,9 +1542,10 @@
             function () {
                 return {
                     method: "PUT",
-                    path: withFleet("/api/service-settings?service=" + encodeURIComponent(name)),
+                    path: "/api/service-settings?service=" + encodeURIComponent(name),
                     body: {
                         logLevel: level(),
+                        i2pLogLevel: i2pLogLevel(),
                         i2pPrivacy: privacy(),
                         streamPool: count(streamPool, N_("The stream pool"), 0, data.poolMax),
                         callPool: count(callPool, N_("The call pool"), 0, data.poolMax),
@@ -1592,7 +1578,7 @@
 
         var serviceBlock = section(form, N_("Services this panel manages"));
         var rows = [];
-        function serviceRow(fleetName, service) {
+        function serviceRow(service) {
             var wrap = element("div", "service");
             var row = element("div", "service-row");
             var name = element("input", "field");
@@ -1629,8 +1615,7 @@
             pinRow.appendChild(pin);
             wrap.appendChild(pinRow);
 
-            var entry = { fleet: fleetName, name: name, kind: kind, url: url, pin: pin,
-                dropped: false };
+            var entry = { name: name, kind: kind, url: url, pin: pin, dropped: false };
             drop.addEventListener("click", function () {
                 var named = entry.name.value.trim() || t("this service");
                 if (!window.confirm(t("Remove %1 from the panel? It is dropped when the list is"
@@ -1643,30 +1628,21 @@
             rows.push(entry);
             return wrap;
         }
-        var fleets = data.fleets && data.fleets.length > 0
-            ? data.fleets
-            : [{ name: "server", services: [] }];
-        fleets.forEach(function (entry) {
-            var fleetName = entry.name || "server";
-            if (fleets.length > 1) {
-                serviceBlock.appendChild(element("h4", "block-title service-fleet", fleetName));
-            }
-            var head = element("div", "service-head");
-            [N_("Name"), N_("Kind"), N_("Address")].forEach(function (title) {
-                head.appendChild(element("span", "field-label", t(title)));
-            });
-            serviceBlock.appendChild(head);
-            (entry.services || []).forEach(function (service) {
-                serviceBlock.appendChild(serviceRow(fleetName, service));
-            });
-            var addRow = element("div", "controls");
-            var add = element("button", "chip", t("add service"));
-            add.addEventListener("click", function () {
-                serviceBlock.insertBefore(serviceRow(fleetName, null), addRow);
-            });
-            addRow.appendChild(add);
-            serviceBlock.appendChild(addRow);
+        var head = element("div", "service-head");
+        [N_("Name"), N_("Kind"), N_("Address")].forEach(function (title) {
+            head.appendChild(element("span", "field-label", t(title)));
         });
+        serviceBlock.appendChild(head);
+        (data.services || []).forEach(function (service) {
+            serviceBlock.appendChild(serviceRow(service));
+        });
+        var addRow = element("div", "controls");
+        var add = element("button", "chip", t("add service"));
+        add.addEventListener("click", function () {
+            serviceBlock.insertBefore(serviceRow(null), addRow);
+        });
+        addRow.appendChild(add);
+        serviceBlock.appendChild(addRow);
         serviceBlock.appendChild(element("p", "hint",
             t("Each service must list this panel's fingerprint as an operator. Clients try"
                 + " facades in the listed order.")));
@@ -1701,38 +1677,32 @@
                 var names = {};
                 var singles = {};
                 kept.forEach(function (entry) {
-                    var named = entry.fleet + "\n" + entry.name.value.trim();
+                    var named = entry.name.value.trim();
                     if (names[named]) {
-                        throw new Error(t("Two services in %1 are named %2", entry.fleet,
-                            entry.name.value.trim()));
+                        throw new Error(t("Two services are named %1", named));
                     }
                     names[named] = true;
                     if (entry.kind.value === "server-core" || entry.kind.value === "service-node") {
-                        var single = entry.fleet + "\n" + entry.kind.value;
-                        if (singles[single]) {
-                            throw new Error(t("%1 already has a %2", entry.fleet, entry.kind.value));
+                        if (singles[entry.kind.value]) {
+                            throw new Error(t("The panel already has a %1", entry.kind.value));
                         }
-                        singles[single] = true;
+                        singles[entry.kind.value] = true;
                     }
                 });
-                var byFleet = {};
-                fleets.forEach(function (entry) {
-                    byFleet[entry.name || "server"] = [];
-                });
-                kept.forEach(function (entry) {
-                    byFleet[entry.fleet].push({
+                var services = kept.map(function (entry) {
+                    return {
                         name: entry.name.value.trim(),
                         kind: entry.kind.value,
                         url: entry.url.value.trim(),
                         pin: entry.pin.value.trim()
-                    });
+                    };
                 });
                 return {
                     method: "PUT", path: "/api/panel",
                     after: function (answer, at) {
                         answer.descriptorErrors.forEach(function (failed) {
-                            at.appendChild(notice(t("Saved, but the descriptor of %1 was not"
-                                + " updated: %2", failed.fleet, failed.error), "is-error"));
+                            at.appendChild(notice(t("Saved, but the descriptor was not"
+                                + " updated: %1", failed), "is-error"));
                         });
                         return linkNotices(answer.gatewayLinkErrors, at)
                             || answer.descriptorErrors.length > 0;
@@ -1748,10 +1718,7 @@
                             host: listen.host.value.trim(),
                             port: portRead(listen.port, N_("The panel"))
                         },
-                        fleets: fleets.map(function (entry) {
-                            var fleetName = entry.name || "server";
-                            return { name: fleetName, services: byFleet[fleetName] };
-                        })
+                        services: services
                     }
                 };
             });
@@ -1782,44 +1749,6 @@
         window.location.hash = value;
     }
 
-    var fleetNames = [];
-
-    function pickFleet(name) {
-        if (!name || name === fleet) {
-            return;
-        }
-        fleet = name;
-        window.localStorage.setItem("bazarish.fleet", fleet);
-        renderFleetPicker(fleetNames);
-    }
-
-    function renderFleetPicker(names) {
-        fleetNames = names || [];
-        var slot = document.getElementById("fleets");
-        if (!slot) {
-            return;
-        }
-        slot.innerHTML = "";
-        if (!names || names.length < 2) {
-            fleet = names && names.length ? names[0] : "";
-            return;
-        }
-        if (names.indexOf(fleet) < 0) {
-            fleet = names[0];
-        }
-        slot.appendChild(element("p", "sidebar-note", t("deployment")));
-        names.forEach(function (name) {
-            var chip = element("button", "chip" + (name === fleet ? " is-on" : ""), name);
-            chip.addEventListener("click", function () {
-                fleet = name;
-                window.localStorage.setItem("bazarish.fleet", fleet);
-                renderFleetPicker(names);
-                route();
-            });
-            slot.appendChild(chip);
-        });
-    }
-
     function route() {
         window.clearInterval(pollTimer);
         pollTimer = null;
@@ -1831,15 +1760,7 @@
         views[name](parts[1], parts[2] ? decodeURIComponent(parts[2]) : undefined);
     }
 
-    document.getElementById("languageSlot").appendChild(languagePicker(function () {
-        renderFleetPicker(fleetNames);
-        route();
-    }));
-
-    api("GET", "/api/services").then(function (data) {
-        renderFleetPicker(data.fleets);
-    }).catch(function () {
-    });
+    document.getElementById("languageSlot").appendChild(languagePicker(route));
 
     window.addEventListener("hashchange", function () {
         if (ownHashWrite) {

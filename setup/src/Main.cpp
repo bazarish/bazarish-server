@@ -1,13 +1,7 @@
 // Bazarish project (c) 2026
-#include "FleetSetup.hpp"
+#include "ServerSetup.hpp"
 
-#include <unistd.h>
-
-#include <array>
-#include <climits>
 #include <cstdio>
-#include <stdexcept>
-#include <string>
 
 namespace {
 
@@ -15,15 +9,6 @@ constexpr const char* kConfigDir = "/etc/bazarish";
 constexpr const char* kStateDir = "/var/lib/bazarish";
 constexpr const char* kPanelAssets = "/usr/share/bazarish-server/admin-panel";
 constexpr const char* kPortalAssets = "/usr/share/bazarish-server/portal";
-
-std::string hostName()
-{
-    std::array<char, HOST_NAME_MAX + 1> name{};
-    if (gethostname(name.data(), name.size() - 1) != 0) {
-        throw std::runtime_error("this host has no name");
-    }
-    return name.data();
-}
 
 }  // namespace
 
@@ -40,8 +25,8 @@ int main(const int argc, const char**)
             kConfigDir, kStateDir);
         return 2;
     }
-    if (!bazarish::setup::setUpFleet(
-            {kConfigDir, kStateDir, kPanelAssets, kPortalAssets, hostName()})) {
+    if (!bazarish::setup::setUpServer(
+            {kConfigDir, kStateDir, kPanelAssets, kPortalAssets})) {
         return 0;
     }
     std::printf(

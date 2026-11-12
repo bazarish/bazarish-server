@@ -113,7 +113,7 @@ int main()
 {
     bazarish::log::setLevel(bazarish::log::Level::eError);
     const std::filesystem::path root
-        = testutil::freshDir("panel-fleet-test");
+        = testutil::freshDir("panel-services-test");
     std::filesystem::create_directories(root);
     const tls::Credential services = tls::selfSigned(root / "services");
     const tls::Credential panelKeys = tls::selfSigned(root / "panel");
@@ -191,10 +191,9 @@ int main()
     initial.admins = {admin.fingerprint()};
     initial.consumer
         = service::LoginConsumer{"Bazarish admin panel", {"http://127.0.0.1"}, "Administrator"};
-    initial.fleets = {Fleet{"home",
-        {ServiceEntry{"node", kServiceNodeKind, at(nodePort), services.pin},
-            ServiceEntry{"front", kFacadeKind, at(facadePort), services.pin},
-            ServiceEntry{"edge", kGatewayKind, at(gatewayPort), services.pin}}}};
+    initial.services = {ServiceEntry{"node", kServiceNodeKind, at(nodePort), services.pin},
+        ServiceEntry{"front", kFacadeKind, at(facadePort), services.pin},
+        ServiceEntry{"edge", kGatewayKind, at(gatewayPort), services.pin}};
     const auto settings = std::make_shared<PanelSettings>(configPath, initial);
 
     HttpApiOptions options;
@@ -209,7 +208,7 @@ int main()
     panel.cookie = signIn(panel.port, admin);
 
     {
-        const http::ClientResponse listed = panel.ask("GET", "/api/facades?fleet=home");
+        const http::ClientResponse listed = panel.ask("GET", "/api/facades");
         CHECK(listed.status == 200);
         const nlohmann::json body = nlohmann::json::parse(listed.body);
         CHECK(body.at("facades").size() == 1);
@@ -234,40 +233,41 @@ int main()
 
     {
         nlohmann::json twice = nlohmann::json::parse(panel.ask("GET", "/api/panel").body);
-        nlohmann::json& list = twice.at("fleets")[0].at("services");
+        nlohmann::json& list = twice.at("services");
+        CHECK(list.size() == 3);
         list.push_back(list[1]);
         const http::ClientResponse refused
-            = panel.ask("PUT", "/api/panel", {{"fleets", twice.at("fleets")}});
+            = panel.ask("PUT", "/api/panel", {{"services", list}});
         CHECK(refused.status == 400);
-        CHECK(settings->get().fleets[0].services.size() == 3);
+        CHECK(settings->get().services.size() == 3);
         CHECK(described.empty());
 
         list.erase(list.end() - 1);
         const http::ClientResponse saved
-            = panel.ask("PUT", "/api/panel", {{"fleets", twice.at("fleets")}});
+            = panel.ask("PUT", "/api/panel", {{"services", list}});
         CHECK(saved.status == 200);
         CHECK(nlohmann::json::parse(saved.body).at("descriptorErrors").empty());
         CHECK(described == nlohmann::json::array({kOldAddress}));
         const nlohmann::json listed
-            = nlohmann::json::parse(panel.ask("GET", "/api/facades?fleet=home").body);
+            = nlohmann::json::parse(panel.ask("GET", "/api/facades").body);
         CHECK(listed.at("facades")[0].at("inDescriptor") == true);
         const std::lock_guard<std::mutex> lock(guard);
         CHECK(routes == nlohmann::json::array({{{"dest", "aaaa.b32.i2p"}, {"host", "127.0.0.1"},
                             {"port", 8418}, {"pin", services.pin}}}));
     }
 
-    CHECK(panel.ask("GET", "/api/service-settings?fleet=home&kind=facade").status == 400);
-    CHECK(panel.ask("GET", "/api/service-settings?fleet=home&service=nobody").status == 503);
+    CHECK(panel.ask("GET", "/api/service-settings?kind=facade").status == 400);
+    CHECK(panel.ask("GET", "/api/service-settings?service=nobody").status == 503);
     {
         const http::ClientResponse shown
-            = panel.ask("GET", "/api/service-settings?fleet=home&service=edge");
+            = panel.ask("GET", "/api/service-settings?service=edge");
         CHECK(shown.status == 200);
         CHECK(nlohmann::json::parse(shown.body).at("streamPool") == 4);
     }
 
     {
         const http::ClientResponse renewed
-            = panel.ask("POST", "/api/facade/new-address?fleet=home&service=front");
+            = panel.ask("POST", "/api/facade/new-address?service=front");
         CHECK(renewed.status == 200);
         const nlohmann::json body = nlohmann::json::parse(renewed.body);
         CHECK(body.at("address") == kNewAddress);
@@ -278,16 +278,16 @@ int main()
         CHECK(body.at("gateways")[0].at("changed") == true);
         CHECK(described == nlohmann::json::array({kNewAddress}));
         CHECK(routes[0].at("dest") == "cccc.b32.i2p");
-        CHECK(panel.ask("POST", "/api/facade/new-address?fleet=home&service=edge").status
+        CHECK(panel.ask("POST", "/api/facade/new-address?service=edge").status
             == 404);
     }
 
-    CHECK(panel.ask("POST", "/api/restart?fleet=home&service=edge").status == 200);
+    CHECK(panel.ask("POST", "/api/restart?service=edge").status == 200);
     CHECK(gatewayRestarts == 1);
 
     Panel stranger = panel;
     stranger.cookie = "not-a-session";
-    CHECK(stranger.ask("GET", "/api/facades?fleet=home").status == 401);
+    CHECK(stranger.ask("GET", "/api/facades").status == 401);
 
     {
         const std::string facadeHost = std::string(52, 'f') + ".b32.i2p";
@@ -406,6 +406,6 @@ int main()
     facade->stop();
     gateway->stop();
     std::filesystem::remove_all(root);
-    std::printf("TestPanelFleet OK\n");
+    std::printf("TestPanelServices OK\n");
     return 0;
 }

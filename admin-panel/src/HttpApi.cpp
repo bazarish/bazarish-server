@@ -1,13 +1,13 @@
 // Bazarish project (c) 2026
 #include "HttpApi.hpp"
 
-#include <FleetRoutes.hpp>
+#include <ServiceRoutes.hpp>
 #include <LoginRelay.hpp>
 #include <QrSvg.hpp>
 #include <SignInScan.hpp>
 #include <WebFace.hpp>
 
-#include "FleetSync.hpp"
+#include "ServiceSync.hpp"
 #include "ServiceClient.hpp"
 
 #include <bazarish/Address.hpp>
@@ -50,7 +50,7 @@ using bazarish::server::signInScan;
 namespace {
 
 namespace http = bazarish::http;
-namespace fleet = bazarish::fleet;
+namespace routes = bazarish::routes;
 
 using bazarish::htmlEscape;
 using bazarish::nowSeconds;
@@ -92,34 +92,29 @@ nlohmann::json linkErrorsOf(const bazarish::admin::GatewayLinking& linking)
     return errors;
 }
 
-nlohmann::json syncedFleets(const std::vector<bazarish::admin::Fleet>& fleets,
+nlohmann::json syncedServices(const std::vector<bazarish::admin::ServiceEntry>& services,
     const bazarish::Identity& identity, const bazarish::tls::Credential& credential)
 {
     nlohmann::json descriptors = nlohmann::json::array();
-    nlohmann::json links = nlohmann::json::array();
-    for (const bazarish::admin::Fleet& fleet : fleets) {
-        const std::string error = bazarish::admin::publishFacades(fleet, identity, credential);
-        if (!error.empty()) {
-            descriptors.push_back({{"fleet", fleet.name}, {"error", error}});
-        }
-        for (const nlohmann::json& linkError :
-            linkErrorsOf(bazarish::admin::linkGateways(fleet, identity, credential))) {
-            links.push_back({{"fleet", fleet.name}, {"error", linkError}});
-        }
+    const std::string error = bazarish::admin::publishFacades(services, identity, credential);
+    if (!error.empty()) {
+        descriptors.push_back(error);
     }
-    return {{"descriptorErrors", descriptors}, {"gatewayLinkErrors", links}};
+    return {{"descriptorErrors", descriptors},
+        {"gatewayLinkErrors",
+            linkErrorsOf(bazarish::admin::linkGateways(services, identity, credential))}};
 }
 
 std::string settingsPathOf(const std::string& kind)
 {
     if (kind == bazarish::admin::kServerCoreKind) {
-        return fleet::kMessagingSettings;
+        return routes::kMessagingSettings;
     }
     if (kind == bazarish::admin::kServiceNodeKind) {
-        return fleet::kAccountSettings;
+        return routes::kAccountSettings;
     }
     if (kind == bazarish::admin::kFacadeKind || kind == bazarish::admin::kGatewayKind) {
-        return fleet::kOpsSettings;
+        return routes::kOpsSettings;
     }
     return {};
 }
@@ -127,13 +122,13 @@ std::string settingsPathOf(const std::string& kind)
 std::string restartPathOf(const std::string& kind)
 {
     if (kind == bazarish::admin::kServerCoreKind) {
-        return fleet::kMessagingRestart;
+        return routes::kMessagingRestart;
     }
     if (kind == bazarish::admin::kServiceNodeKind) {
-        return fleet::kAccountRestart;
+        return routes::kAccountRestart;
     }
     if (kind == bazarish::admin::kFacadeKind || kind == bazarish::admin::kGatewayKind) {
-        return fleet::kOpsRestart;
+        return routes::kOpsRestart;
     }
     return {};
 }
@@ -141,13 +136,13 @@ std::string restartPathOf(const std::string& kind)
 std::string logsPathOf(const std::string& kind)
 {
     if (kind == bazarish::admin::kServerCoreKind) {
-        return fleet::kMessagingLogs;
+        return routes::kMessagingLogs;
     }
     if (kind == bazarish::admin::kServiceNodeKind) {
-        return fleet::kAccountLogs;
+        return routes::kAccountLogs;
     }
     if (kind == bazarish::admin::kFacadeKind || kind == bazarish::admin::kGatewayKind) {
-        return fleet::kOpsLogs;
+        return routes::kOpsLogs;
     }
     return {};
 }
@@ -224,24 +219,9 @@ HttpApi::HttpApi(std::shared_ptr<PanelSettings> settings, const Identity& identi
 
 HttpApi::~HttpApi() = default;
 
-std::optional<Fleet> HttpApi::fleetNamed(const std::string& fleet) const
+std::optional<ServiceEntry> HttpApi::serviceNamed(const std::string& name) const
 {
-    for (const Fleet& candidate : settings_->get().fleets) {
-        if (fleet.empty() || candidate.name == fleet) {
-            return candidate;
-        }
-    }
-    return std::nullopt;
-}
-
-std::optional<ServiceEntry> HttpApi::serviceNamed(
-    const std::string& fleet, const std::string& name) const
-{
-    const std::optional<Fleet> found = fleetNamed(fleet);
-    if (!found.has_value()) {
-        return std::nullopt;
-    }
-    for (const ServiceEntry& service : found->services) {
+    for (const ServiceEntry& service : settings_->get().services) {
         if (service.name == name) {
             return service;
         }
@@ -249,20 +229,11 @@ std::optional<ServiceEntry> HttpApi::serviceNamed(
     return std::nullopt;
 }
 
-std::optional<ServiceEntry> HttpApi::serviceOfKind(
-    const std::string& fleet, const std::string& kind) const
+std::optional<ServiceEntry> HttpApi::serviceOfKind(const std::string& kind) const
 {
-    for (const Fleet& candidate : settings_->get().fleets) {
-        if (!fleet.empty() && candidate.name != fleet) {
-            continue;
-        }
-        for (const ServiceEntry& service : candidate.services) {
-            if (service.kind == kind) {
-                return service;
-            }
-        }
-        if (!fleet.empty()) {
-            return std::nullopt;
+    for (const ServiceEntry& service : settings_->get().services) {
+        if (service.kind == kind) {
+            return service;
         }
     }
     return std::nullopt;
@@ -274,9 +245,9 @@ std::optional<ServiceEntry> HttpApi::logSource(const http::Request& request) con
     const std::string kind = request.query("kind");
     std::optional<ServiceEntry> service;
     if (!name.empty()) {
-        service = serviceNamed(request.query("fleet"), name);
+        service = serviceNamed(name);
     } else if (kind == kServerCoreKind || kind == kServiceNodeKind) {
-        service = serviceOfKind(request.query("fleet"), kind);
+        service = serviceOfKind(kind);
     }
     if (!service.has_value() || logsPathOf(service->kind).empty()) {
         return std::nullopt;
@@ -297,7 +268,7 @@ bool HttpApi::sessionAdmin(const std::string& token)
 std::string HttpApi::loginFacade(const ServiceEntry& node)
 {
     const JsonResult settings
-        = callJson(node, identity_, credential_, "GET", fleet::kAccountSettings);
+        = callJson(node, identity_, credential_, "GET", routes::kAccountSettings);
     if (!settings.ok) {
         bazarish::log::warn("sign-in shows no code: the service node did not answer ({})",
             failureText(settings));
@@ -313,7 +284,7 @@ std::string HttpApi::loginFacade(const ServiceEntry& node)
 std::string HttpApi::loginForm(const std::string& error, http::Response& response)
 {
     const std::int64_t now = nowSeconds();
-    const std::optional<ServiceEntry> node = serviceOfKind(std::string(), kServiceNodeKind);
+    const std::optional<ServiceEntry> node = serviceOfKind(kServiceNodeKind);
     const std::string facade = node.has_value() ? loginFacade(*node) : std::string();
     std::string scan;
     if (!facade.empty()) {
@@ -321,7 +292,7 @@ std::string HttpApi::loginForm(const std::string& error, http::Response& respons
         const std::string token = newSignInToken();
         const Bytes key = newLinkKey();
         const JsonResult expected = callJson(*node, identity_, credential_, "POST",
-            fleet::kLoginExpect,
+            routes::kLoginExpect,
             nlohmann::json{{"challenge", challenge}, {"token", token}, {"key", linkKeyText(key)}}
                 .dump());
         if (expected.ok) {
@@ -341,12 +312,12 @@ std::string HttpApi::loginForm(const std::string& error, http::Response& respons
         });
 }
 
-void HttpApi::proxyToNode(const std::string& fleet, http::Response& response,
-    const std::string& method, const std::string& path, const std::string& body)
+void HttpApi::proxyToNode(http::Response& response, const std::string& method,
+    const std::string& path, const std::string& body)
 {
-    const std::optional<ServiceEntry> node = serviceOfKind(fleet, kServiceNodeKind);
+    const std::optional<ServiceEntry> node = serviceOfKind(kServiceNodeKind);
     if (!node.has_value()) {
-        sendError(response, 503, "this deployment has no service node the panel can reach");
+        sendError(response, 503, "the panel lists no service node it can reach");
         return;
     }
     const JsonResult result = callJson(*node, identity_, credential_, method, path, body);
@@ -411,14 +382,13 @@ void HttpApi::registerRoutes()
         }
         try {
             for (const nlohmann::json& failures :
-                syncedFleets(settings_->get().fleets, identity_, credential_)) {
+                syncedServices(settings_->get().services, identity_, credential_)) {
                 for (const nlohmann::json& failure : failures) {
-                    bazarish::log::warn("deployment {}: {}", failure.at("fleet").get<std::string>(),
-                        failure.at("error").get<std::string>());
+                    bazarish::log::warn("services not linked: {}", failure.get<std::string>());
                 }
             }
         } catch (const std::exception& error) {
-            bazarish::log::warn("the deployments were not written: {}", error.what());
+            bazarish::log::warn("the services were not written: {}", error.what());
         }
     }));
 
@@ -436,12 +406,12 @@ void HttpApi::registerRoutes()
     }));
 
     http_->get("/login/wait", filled([this](const http::Request& request, http::Response& response) {
-        const std::optional<ServiceEntry> node = serviceOfKind(std::string(), kServiceNodeKind);
+        const std::optional<ServiceEntry> node = serviceOfKind(kServiceNodeKind);
         if (!node.has_value()) {
             sendJson(response, nlohmann::json{{"state", "gone"}});
             return;
         }
-        const JsonResult claimed = callJson(*node, identity_, credential_, "POST", fleet::kLoginClaim,
+        const JsonResult claimed = callJson(*node, identity_, credential_, "POST", routes::kLoginClaim,
             nlohmann::json{{"nonce", request.query("nonce")},
                 {"token", request.cookie(kSignInCookie)}}
                 .dump());
@@ -523,14 +493,14 @@ void HttpApi::registerRoutes()
             return refusal(400, "\"after\" is a line number of the named \"instance\"");
         }
         if (!logSource(request).has_value()) {
-            return refusal(404, "this deployment has no such service");
+            return refusal(404, "the panel lists no such service");
         }
         return std::nullopt;
     };
     logs.opened = [this](const http::SocketPtr& socket, const http::Request& request) {
         const std::optional<ServiceEntry> service = logSource(request);
         if (!service.has_value()) {
-            refuseLogWindow(*socket, "this deployment has no such service");
+            refuseLogWindow(*socket, "the panel lists no such service");
             return;
         }
         const std::string token = request.cookie(kCookieName);
@@ -557,16 +527,10 @@ void HttpApi::registerRoutes()
     };
 
     http_->get("/api/services", api([this](const http::Request&, http::Response& response) {
-        const Config panel = settings_->get();
-        std::vector<std::pair<std::string, ServiceEntry>> all;
-        for (const Fleet& fleet : panel.fleets) {
-            for (const ServiceEntry& service : fleet.services) {
-                all.emplace_back(fleet.name, service);
-            }
-        }
+        const std::vector<ServiceEntry> all = settings_->get().services;
         std::vector<std::future<HealthResult>> probes;
         probes.reserve(all.size());
-        for (const auto& [fleet, service] : all) {
+        for (const ServiceEntry& service : all) {
             probes.push_back(std::async(std::launch::async,
                 [this, service]() { return probeHealth(service, identity_, credential_); }));
         }
@@ -574,10 +538,9 @@ void HttpApi::registerRoutes()
         for (std::size_t i = 0; i < all.size(); ++i) {
             const HealthResult health = probes[i].get();
             services.push_back(nlohmann::json{
-                {"fleet", all[i].first},
-                {"name", all[i].second.name},
-                {"kind", all[i].second.kind},
-                {"url", all[i].second.url},
+                {"name", all[i].name},
+                {"kind", all[i].kind},
+                {"url", all[i].url},
                 {"up", health.reachable},
                 {"status", health.status},
                 {"error", health.error},
@@ -597,11 +560,7 @@ void HttpApi::registerRoutes()
                 {"router", health.router},
             });
         }
-        nlohmann::json fleets = nlohmann::json::array();
-        for (const Fleet& fleet : panel.fleets) {
-            fleets.push_back(fleet.name);
-        }
-        sendJson(response, nlohmann::json{{"services", services}, {"fleets", fleets}});
+        sendJson(response, nlohmann::json{{"services", services}});
     }));
 
     http_->get("/api/users", api([this](const http::Request& request, http::Response& response) {
@@ -613,7 +572,7 @@ void HttpApi::registerRoutes()
         if (const std::string offset = request.query("offset"); !offset.empty()) {
             query += "&offset=" + percentEncode(offset);
         }
-        proxyToNode(request.query("fleet"), response, "GET", query, std::string());
+        proxyToNode(response, "GET", query, std::string());
     }));
 
     http_->post("/api/qr", api([](const http::Request& request, http::Response& response) {
@@ -623,14 +582,14 @@ void HttpApi::registerRoutes()
 
     http_->post("/api/approve", api([this](const http::Request& request, http::Response& response) {
         const nlohmann::json body = bazarish::parseJson(request.body);
-        proxyToNode(request.query("fleet"), response, "POST", fleet::kAccountApprove,
+        proxyToNode(response, "POST", routes::kAccountApprove,
             nlohmann::json{{"user", body.at("user")}}.dump());
     }));
 
     http_->post("/api/undelegate", api([this](
                                        const http::Request& request, http::Response& response) {
         const nlohmann::json body = bazarish::parseJson(request.body);
-        proxyToNode(request.query("fleet"), response, "POST", fleet::kAccountUndelegate,
+        proxyToNode(response, "POST", routes::kAccountUndelegate,
             nlohmann::json{{"user", body.at("user")},
                 {"message", body.value("message", std::string())}}
                 .dump());
@@ -638,27 +597,26 @@ void HttpApi::registerRoutes()
 
     http_->post("/api/delete", api([this](const http::Request& request, http::Response& response) {
         const nlohmann::json body = bazarish::parseJson(request.body);
-        proxyToNode(request.query("fleet"), response, "DELETE",
+        proxyToNode(response, "DELETE",
             "/v1/account/user?user=" + percentEncode(body.at("user").get<std::string>()), {});
     }));
 
     http_->post("/api/ban", api([this](const http::Request& request, http::Response& response) {
         const nlohmann::json body = bazarish::parseJson(request.body);
-        proxyToNode(request.query("fleet"), response, "POST", fleet::kAccountBan,
+        proxyToNode(response, "POST", routes::kAccountBan,
             nlohmann::json{{"user", body.at("user")}, {"reason", body.value("reason", std::string())}}
                 .dump());
     }));
 
     http_->post("/api/unban", api([this](const http::Request& request, http::Response& response) {
         const nlohmann::json body = bazarish::parseJson(request.body);
-        proxyToNode(request.query("fleet"), response, "POST", fleet::kAccountUnban,
+        proxyToNode(response, "POST", routes::kAccountUnban,
             nlohmann::json{{"user", body.at("user")}}.dump());
     }));
 
     http_->get("/api/account", api([this](
                                    const http::Request& request, http::Response& response) {
-        const std::optional<ServiceEntry> core
-            = serviceOfKind(request.query("fleet"), kServerCoreKind);
+        const std::optional<ServiceEntry> core = serviceOfKind(kServerCoreKind);
         if (!core.has_value()) {
             sendError(response, 503, "no server-core configured in this panel");
             return;
@@ -674,16 +632,14 @@ void HttpApi::registerRoutes()
         sendJsonText(response, account.body, account.status);
     }));
 
-    http_->get("/api/settings", api([this](
-                                    const http::Request& request, http::Response& response) {
-        const std::optional<ServiceEntry> node
-            = serviceOfKind(request.query("fleet"), kServiceNodeKind);
+    http_->get("/api/settings", api([this](const http::Request&, http::Response& response) {
+        const std::optional<ServiceEntry> node = serviceOfKind(kServiceNodeKind);
         if (!node.has_value()) {
-            sendError(response, 503, "this deployment has no service node the panel can reach");
+            sendError(response, 503, "the panel lists no service node it can reach");
             return;
         }
         const JsonResult settings
-            = callJson(*node, identity_, credential_, "GET", fleet::kAccountSettings);
+            = callJson(*node, identity_, credential_, "GET", routes::kAccountSettings);
         if (!settings.ok) {
             bazarish::log::warn("service-node settings unavailable: {}", settings.error);
             sendJsonText(response, settings.body, settings.status == 0 ? 502 : settings.status);
@@ -692,11 +648,10 @@ void HttpApi::registerRoutes()
         nlohmann::json merged = bazarish::parseJson(settings.body);
         merged["diskUsedBytes"] = nullptr;
         merged["diskError"] = "no server-core configured in this panel";
-        if (const std::optional<ServiceEntry> core
-            = serviceOfKind(request.query("fleet"), kServerCoreKind);
+        if (const std::optional<ServiceEntry> core = serviceOfKind(kServerCoreKind);
             core.has_value()) {
             const JsonResult disk
-                = callJson(*core, identity_, credential_, "GET", fleet::kMessagingStorage);
+                = callJson(*core, identity_, credential_, "GET", routes::kMessagingStorage);
             if (disk.ok) {
                 merged["diskUsedBytes"] = bazarish::parseJson(disk.body).at("usedBytes");
                 merged["diskError"] = "";
@@ -709,7 +664,7 @@ void HttpApi::registerRoutes()
     }));
 
     http_->put("/api/settings", api([this](const http::Request& request, http::Response& response) {
-        proxyToNode(request.query("fleet"), response, "PUT", fleet::kAccountSettings, request.body);
+        proxyToNode(response, "PUT", routes::kAccountSettings, request.body);
     }));
 
     const auto toService = [this](const http::Request& request, http::Response& response,
@@ -718,18 +673,18 @@ void HttpApi::registerRoutes()
         const std::string kind = request.query("kind");
         std::optional<ServiceEntry> service;
         if (!name.empty()) {
-            service = serviceNamed(request.query("fleet"), name);
+            service = serviceNamed(name);
         } else if (kind == kServerCoreKind || kind == kServiceNodeKind) {
-            service = serviceOfKind(request.query("fleet"), kind);
+            service = serviceOfKind(kind);
         } else {
             sendError(response, 400,
-                "a deployment has one " + std::string(kServerCoreKind) + " and one "
+                "the panel has one " + std::string(kServerCoreKind) + " and one "
                     + kServiceNodeKind + "; anything else is asked for by name");
             return;
         }
         if (!service.has_value()) {
             sendError(response, 503,
-                "this deployment has no " + (name.empty() ? kind : "\"" + name + "\"")
+                "the panel lists no " + (name.empty() ? kind : "\"" + name + "\"")
                     + " the panel can reach");
             return;
         }
@@ -748,29 +703,24 @@ void HttpApi::registerRoutes()
             return;
         }
         const bool linksGateways = service->kind == kServerCoreKind || service->kind == kFacadeKind;
-        const std::optional<Fleet> fleet = fleetNamed(request.query("fleet"));
-        if (method != "PUT" || restarting || !result.ok || !linksGateways || !fleet.has_value()) {
+        if (method != "PUT" || restarting || !result.ok || !linksGateways) {
             sendJsonText(response, result.body, result.status);
             return;
         }
         nlohmann::json answer = bazarish::parseJson(result.body);
-        answer["gatewayLinkErrors"] = linkErrorsOf(linkGateways(*fleet, identity_, credential_));
+        answer["gatewayLinkErrors"]
+            = linkErrorsOf(linkGateways(settings_->get().services, identity_, credential_));
         sendJson(response, answer, result.status);
     };
 
-    http_->get("/api/facades", api([this](const http::Request& request,
-                                       http::Response& response) {
-        const std::optional<Fleet> fleet = fleetNamed(request.query("fleet"));
-        if (!fleet.has_value()) {
-            sendError(response, 404, "no such deployment");
-            return;
-        }
+    http_->get("/api/facades", api([this](const http::Request&, http::Response& response) {
+        const std::vector<ServiceEntry> services = settings_->get().services;
         nlohmann::json described = nlohmann::json::array();
-        std::string describedError = "this deployment has no service node";
-        if (const std::optional<ServiceEntry> node = serviceOfKind(fleet->name, kServiceNodeKind);
+        std::string describedError = "the panel lists no service node";
+        if (const std::optional<ServiceEntry> node = serviceOfKind(kServiceNodeKind);
             node.has_value()) {
             const JsonResult shown
-                = callJson(*node, identity_, credential_, "GET", fleet::kAccountSettings);
+                = callJson(*node, identity_, credential_, "GET", routes::kAccountSettings);
             if (shown.ok) {
                 described = bazarish::parseJson(shown.body).value(
                     "facades", nlohmann::json::array());
@@ -779,10 +729,10 @@ void HttpApi::registerRoutes()
                 describedError = failureText(shown);
             }
         }
-        const std::vector<FacadeReport> reports = facadeReports(*fleet, identity_, credential_);
+        const std::vector<FacadeReport> reports = facadeReports(services, identity_, credential_);
         nlohmann::json facades = nlohmann::json::array();
         std::size_t next = 0;
-        for (const ServiceEntry& service : fleet->services) {
+        for (const ServiceEntry& service : services) {
             if (service.kind != kFacadeKind) {
                 continue;
             }
@@ -807,11 +757,10 @@ void HttpApi::registerRoutes()
 
     http_->post("/api/facade/new-address", api([this](const http::Request& request,
                                                   http::Response& response) {
-        const std::optional<Fleet> fleet = fleetNamed(request.query("fleet"));
-        const std::optional<ServiceEntry> facade
-            = serviceNamed(request.query("fleet"), request.query("service"));
-        if (!fleet.has_value() || !facade.has_value() || facade->kind != kFacadeKind) {
-            sendError(response, 404, "this deployment has no such facade");
+        const std::vector<ServiceEntry> services = settings_->get().services;
+        const std::optional<ServiceEntry> facade = serviceNamed(request.query("service"));
+        if (!facade.has_value() || facade->kind != kFacadeKind) {
+            sendError(response, 404, "the panel lists no such facade");
             return;
         }
         const JsonResult minted
@@ -824,11 +773,11 @@ void HttpApi::registerRoutes()
         const std::string address = answer.at("address").get<std::string>();
         const std::string previous = answer.at("previousAddress").get<std::string>();
         bazarish::log::info("facade {} has a new address", facade->name);
-        const std::string descriptorError = publishFacades(
-            *fleet, identity_, credential_, {{facade->name, address}});
+        const std::string descriptorError
+            = publishFacades(services, identity_, credential_, {{facade->name, address}});
         nlohmann::json gateways = nlohmann::json::array();
-        for (const GatewayRepoint& repointed : repointGateways(
-                 settings_->get().fleets, previous, address, identity_, credential_)) {
+        for (const GatewayRepoint& repointed :
+            repointGateways(services, previous, address, identity_, credential_)) {
             gateways.push_back({{"name", repointed.name}, {"changed", repointed.changed},
                 {"error", repointed.error}});
         }
@@ -863,7 +812,7 @@ void HttpApi::registerRoutes()
                     {{"name", panel.consumer.name}, {"place", panel.consumer.place},
                         {"role", panel.consumer.role}}},
                 {"listen", {{"host", panel.listenHost}, {"port", panel.listenPort}}},
-                {"fleets", fleetsJson(panel.fleets)},
+                {"services", servicesJson(panel.services)},
                 {"fingerprint", identity_.fingerprint()},
                 {"configPath", settings_->configPath().string()},
                 {"stateDir", panel.stateDir},
@@ -920,11 +869,11 @@ void HttpApi::registerRoutes()
                     edited.consumer = wanted;
                 }
                 readEndpointInto(body, "listen", edited.listenHost, edited.listenPort);
-                if (body.contains("fleets")) {
-                    edited.fleets = fleetsFromJson(body.at("fleets"));
+                if (body.contains("services")) {
+                    edited.services = servicesFromJson(body.at("services"));
                 }
             });
-            nlohmann::json answer = syncedFleets(panel.fleets, identity_, credential_);
+            nlohmann::json answer = syncedServices(panel.services, identity_, credential_);
             answer["admins"] = panel.admins;
             sendJson(response, answer);
         } catch (const std::invalid_argument& error) {
@@ -938,7 +887,7 @@ void HttpApi::registerRoutes()
 
     http_->put("/api/quota", api([this](const http::Request& request, http::Response& response) {
         const nlohmann::json body = bazarish::parseJson(request.body);
-        proxyToNode(request.query("fleet"), response, "PUT", fleet::kAccountQuota,
+        proxyToNode(response, "PUT", routes::kAccountQuota,
             nlohmann::json{{"user", body.at("user")}, {"quotaBytes", body.at("quotaBytes")}}
                 .dump());
     }));

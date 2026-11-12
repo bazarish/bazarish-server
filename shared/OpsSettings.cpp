@@ -21,6 +21,18 @@ std::string logLevelIn(const nlohmann::json& body, const std::string& current)
     return level;
 }
 
+std::string i2pLogLevelIn(const nlohmann::json& body, const std::string& current)
+{
+    if (!body.contains("i2pLogLevel")) {
+        return current;
+    }
+    const std::string level = body.at("i2pLogLevel").get<std::string>();
+    if (!i2p::i2pLogLevelFromString(level).has_value()) {
+        throw std::invalid_argument("not an i2pd log level: " + level);
+    }
+    return level;
+}
+
 std::string privacyIn(const nlohmann::json& body, const std::string& current)
 {
     if (!body.contains("i2pPrivacy")) {
@@ -72,6 +84,19 @@ log::Level configLogLevel(const ConfigView& config)
     return *parsed;
 }
 
+i2p::I2pLogLevel configI2pLogLevel(const ConfigView& config)
+{
+    const std::string level = config.text("i2p.logLevel");
+    if (level.empty()) {
+        return i2p::I2pLogLevel::eNone;
+    }
+    const std::optional<i2p::I2pLogLevel> parsed = i2p::i2pLogLevelFromString(level);
+    if (!parsed.has_value()) {
+        throw std::invalid_argument("i2p.logLevel is not one of none, error, warn, info, debug");
+    }
+    return *parsed;
+}
+
 void applyLogLevel(const std::string& before, const std::string& after)
 {
     if (after == before) {
@@ -82,6 +107,18 @@ void applyLogLevel(const std::string& before, const std::string& after)
         throw std::invalid_argument("not a log level: " + after);
     }
     log::setLevel(*level);
+}
+
+void applyI2pLogLevel(const std::string& before, const std::string& after)
+{
+    if (after == before) {
+        return;
+    }
+    const std::optional<i2p::I2pLogLevel> level = i2p::i2pLogLevelFromString(after);
+    if (!level.has_value()) {
+        throw std::invalid_argument("not an i2pd log level: " + after);
+    }
+    i2p::setI2pLogLevel(*level);
 }
 
 }  // namespace bazarish::server

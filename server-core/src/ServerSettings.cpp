@@ -13,7 +13,7 @@ namespace fs = std::filesystem;
 
 const char* const kLogLevelKey = "logLevel";
 const char* const kI2pKey = "i2p";
-const char* const kI2pLogKey = "log";
+const char* const kI2pLogLevelKey = "logLevel";
 const char* const kI2pPrivacyKey = "privacy";
 const char* const kListenKey = "listen";
 const char* const kHostKey = "host";
@@ -27,7 +27,7 @@ void persistServerSettings(
     ConfigFile& file, const ServerSettingsValues& values, const ServerSettingsValues& before)
 {
     setIfChanged(file, {kLogLevelKey}, values.logLevel, before.logLevel);
-    setIfChanged(file, {kI2pKey, kI2pLogKey}, values.i2pLog, before.i2pLog);
+    setIfChanged(file, {kI2pKey, kI2pLogLevelKey}, values.i2pLogLevel, before.i2pLogLevel);
     setIfChanged(file, {kI2pKey, kI2pPrivacyKey}, values.i2pPrivacy, before.i2pPrivacy);
     setIfChanged(file, {kListenKey, kHostKey}, values.listenHost, before.listenHost);
     setIfChanged(file, {kListenKey, kPortKey}, values.listenPort, before.listenPort);

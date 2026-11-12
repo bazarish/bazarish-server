@@ -46,6 +46,7 @@ struct Settings {
     std::size_t callPool = kDefaultCallPool;
     std::size_t watchPool = kDefaultWatchPool;
     log::Level logLevel = log::Level::eInfo;
+    i2p::I2pLogLevel i2pLogLevel = i2p::I2pLogLevel::eNone;
 
     static Settings from(const ConfigView& config);
 };

@@ -1,7 +1,7 @@
 // Bazarish project (c) 2026
 #pragma once
 
-namespace bazarish::fleet {
+namespace bazarish::ports {
 
 inline constexpr const char* kLoopback = "127.0.0.1";
 
@@ -16,4 +16,4 @@ inline constexpr int kFacadeOpsPort = 8429;
 inline constexpr int kGatewayOpsPort = 8439;
 inline constexpr int kPanelPort = 8460;
 
-}  // namespace bazarish::fleet
+}  // namespace bazarish::ports

@@ -892,7 +892,7 @@ running in the client's process.
 
 ## The health report
 
-`GET /healthz` on the operator socket (`opsListen`) answers the fleet's health
+`GET /healthz` on the operator socket (`opsListen`) answers the health
 report and what this gateway is holding: sessions, destinations, streams,
 sockets, rejoins and refusals. The socket speaks TLS and admits only the keys
 the operator listed in `opsClients`, and the request carries a signature from a

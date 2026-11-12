@@ -3,7 +3,7 @@
 
 #include "FacadeSettings.hpp"
 
-#include <FleetPorts.hpp>
+#include <ServicePorts.hpp>
 #include <LogFeed.hpp>
 #include <LogRing.hpp>
 #include <Restart.hpp>
@@ -20,9 +20,9 @@
 
 namespace bazarish::facade {
 
-inline constexpr const char* kDefaultUpstreamHost = fleet::kLoopback;
-inline constexpr int kDefaultMessagingPort = fleet::kCorePort;
-inline constexpr int kDefaultServiceNodePort = fleet::kNodePort;
+inline constexpr const char* kDefaultUpstreamHost = ports::kLoopback;
+inline constexpr int kDefaultMessagingPort = ports::kCorePort;
+inline constexpr int kDefaultServiceNodePort = ports::kNodePort;
 
 struct Upstream {
     std::string host;

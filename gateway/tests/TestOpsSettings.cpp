@@ -157,10 +157,12 @@ int main()
     CHECK(before.at("watchPool") == kWatchPool);
     CHECK(before.at("direct").empty());
     CHECK(before.at("logLevel") == "info");
+    CHECK(before.at("i2pLogLevel") == "none");
 
     for (const nlohmann::json& wrong : {nlohmann::json{{"streamPool", kMaxPoolDepth + 1}},
              nlohmann::json{{"callPool", -1}}, nlohmann::json{{"watchPool", -1}},
              nlohmann::json{{"i2pPrivacy", "short"}}, nlohmann::json{{"logLevel", "loud"}},
+             nlohmann::json{{"i2pLogLevel", "warning"}},
              nlohmann::json{{"i2pPrivacy", "max"},
                  {"direct", {{{"dest", kServerDest}, {"host", "127.0.0.1"}, {"port", 1}}}}}}) {
         CHECK(askOps(settings.opsPort, pin, "PUT", "/settings", &operatorIdentity, wrong.dump())
@@ -218,6 +220,19 @@ int main()
               .at("logLevel")
         == "debug");
     log::setLevel(log::Level::eError);
+
+    const http::ClientResponse routerLouder = askOps(settings.opsPort, pin, "PUT", "/settings",
+        &operatorIdentity, nlohmann::json{{"i2pLogLevel", "info"}}.dump());
+    CHECK(routerLouder.status == 200);
+    CHECK(nlohmann::json::parse(routerLouder.body).at("i2pLogLevel") == "info");
+    CHECK(i2p::i2pLogLevel() == i2p::I2pLogLevel::eInfo);
+    CHECK(Settings::from(ConfigView(ConfigFile(configPath).read())).i2pLogLevel
+        == i2p::I2pLogLevel::eInfo);
+    CHECK(askOps(settings.opsPort, pin, "PUT", "/settings", &operatorIdentity,
+              nlohmann::json{{"i2pLogLevel", "none"}}.dump())
+              .status
+        == 200);
+    CHECK(i2p::i2pLogLevel() == i2p::I2pLogLevel::eNone);
 
     CHECK(askOps(settings.opsPort, pin, "GET", "/logs?after=0", nullptr).status == 403);
     const http::ClientResponse logs

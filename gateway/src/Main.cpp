@@ -64,6 +64,7 @@ int main(const int argc, const char** argv)
 
     bazarish::log::setComponent("gateway");
     bazarish::log::setLevel(settings.logLevel);
+    bazarish::i2p::setI2pLogLevel(settings.i2pLogLevel);
     const auto logRing = std::make_shared<bazarish::server::LogRing>();
     const bazarish::server::LogCapture logCapture(logRing);
 

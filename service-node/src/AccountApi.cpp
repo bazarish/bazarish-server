@@ -1,7 +1,7 @@
 // Bazarish project (c) 2026
 #include "AccountApi.hpp"
 
-#include <FleetRoutes.hpp>
+#include <ServiceRoutes.hpp>
 #include <Health.hpp>
 #include <LoginRelay.hpp>
 #include <OpsGate.hpp>
@@ -378,10 +378,10 @@ void AccountApi::setupOpsRoutes()
         return server::operatorOnly(options_.operatorFingerprints, replayCache_, std::move(handler));
     };
 
-    logFeed_ = std::make_unique<server::LogFeed>(*ops_, fleet::kAccountLogs, options_.logRing,
+    logFeed_ = std::make_unique<server::LogFeed>(*ops_, routes::kAccountLogs, options_.logRing,
         server::operatorCheck(options_.operatorFingerprints, replayCache_));
 
-    ops_->post(fleet::kLoginExpect,
+    ops_->post(routes::kLoginExpect,
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = bazarish::parseJson(request.body);
             if (!options_.logins->expect(body.at("challenge").get<std::string>(),
@@ -394,7 +394,7 @@ void AccountApi::setupOpsRoutes()
             respondJson(response, {{"ok", true}});
         })));
 
-    ops_->post(fleet::kLoginClaim,
+    ops_->post(routes::kLoginClaim,
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = bazarish::parseJson(request.body);
             const LoginMailbox::Claim claim = options_.logins->claim(
@@ -456,7 +456,7 @@ void AccountApi::setupOpsRoutes()
                 {{"users", users}, {"total", matched}, {"limit", limit}, {"offset", offset}});
         })));
 
-    ops_->post(fleet::kAccountUndelegate,
+    ops_->post(routes::kAccountUndelegate,
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = bazarish::parseJson(request.body);
             const std::string user = body.at("user").get<std::string>();
@@ -488,7 +488,7 @@ void AccountApi::setupOpsRoutes()
             respondJson(response, {{"ok", true}});
         })));
 
-    ops_->post(fleet::kAccountBan,
+    ops_->post(routes::kAccountBan,
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = bazarish::parseJson(request.body);
             const std::string user = body.at("user").get<std::string>();
@@ -499,7 +499,7 @@ void AccountApi::setupOpsRoutes()
             respondJson(response, userRecord(user, grants_.peekApproval(user)));
         })));
 
-    ops_->post(fleet::kAccountUnban,
+    ops_->post(routes::kAccountUnban,
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = bazarish::parseJson(request.body);
             const std::string user = body.at("user").get<std::string>();
@@ -508,7 +508,7 @@ void AccountApi::setupOpsRoutes()
             respondJson(response, {{"ok", true}});
         })));
 
-    ops_->get(fleet::kAccountSettings,
+    ops_->get(routes::kAccountSettings,
         filled(operatorOnly([this](const http::Request&, http::Response& response) {
             const NodeSettings::Values values = settings();
             std::uint64_t allocated = 0;
@@ -552,7 +552,7 @@ void AccountApi::setupOpsRoutes()
                 });
         })));
 
-    ops_->put(fleet::kAccountSettings,
+    ops_->put(routes::kAccountSettings,
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = bazarish::parseJson(request.body);
             NodeSettings::Values probe = settings();
@@ -584,7 +584,7 @@ void AccountApi::setupOpsRoutes()
                 });
         })));
 
-    ops_->post(fleet::kAccountRestart,
+    ops_->post(routes::kAccountRestart,
         filled(operatorOnly([this](const http::Request&, http::Response& response) {
             bazarish::log::info("restarting at the operator's request");
             options_.requestRestart();
@@ -602,7 +602,7 @@ void AccountApi::setupOpsRoutes()
             respondJson(response, userRecord(user, approval));
         })));
 
-    ops_->put(fleet::kAccountQuota,
+    ops_->put(routes::kAccountQuota,
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = bazarish::parseJson(request.body);
             const std::string user = body.at("user").get<std::string>();
@@ -629,7 +629,7 @@ void AccountApi::setupOpsRoutes()
             respondJson(response, userRecord(user, approval));
         })));
 
-    ops_->post(fleet::kAccountApprove,
+    ops_->post(routes::kAccountApprove,
         filled(operatorOnly([this](const http::Request& request, http::Response& response) {
             const nlohmann::json body = bazarish::parseJson(request.body);
             const std::string user = body.at("user").get<std::string>();
@@ -757,7 +757,7 @@ void AccountApi::setupRoutes()
         http_->route(method, path, filled(authenticated(handler)));
     };
 
-    clientRoute("POST", fleet::kAccountCard,
+    clientRoute("POST", routes::kAccountCard,
         [this](const http::Request& request, http::Response& response,
                           const std::string& user) {
             const nlohmann::json body = bazarish::parseJson(request.body);
@@ -948,7 +948,7 @@ void AccountApi::setupRoutes()
                 });
         });
 
-    http_->get(fleet::kAccountCard,
+    http_->get(routes::kAccountCard,
         filled(fromServer([this](const http::Request& request, http::Response& response) {
             const std::string user = request.query("user");
             std::optional<SubscriptionStore::Account> account;

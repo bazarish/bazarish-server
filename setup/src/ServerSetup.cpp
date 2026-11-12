@@ -1,7 +1,7 @@
 // Bazarish project (c) 2026
-#include "FleetSetup.hpp"
+#include "ServerSetup.hpp"
 
-#include <FleetPorts.hpp>
+#include <ServicePorts.hpp>
 #include <StateIdentity.hpp>
 
 #include <bazarish/ConfigFile.hpp>
@@ -21,16 +21,16 @@ namespace {
 
 namespace fs = std::filesystem;
 
-using fleet::kCoreGatewayPort;
-using fleet::kCoreOpsPort;
-using fleet::kCorePort;
-using fleet::kFacadeDirectPort;
-using fleet::kFacadeOpsPort;
-using fleet::kFacadePort;
-using fleet::kGatewayOpsPort;
-using fleet::kLoopback;
-using fleet::kNodeOpsPort;
-using fleet::kNodePort;
+using ports::kCoreGatewayPort;
+using ports::kCoreOpsPort;
+using ports::kCorePort;
+using ports::kFacadeDirectPort;
+using ports::kFacadeOpsPort;
+using ports::kFacadePort;
+using ports::kGatewayOpsPort;
+using ports::kLoopback;
+using ports::kNodeOpsPort;
+using ports::kNodePort;
 constexpr int kJsonIndent = 2;
 
 constexpr const char* kCoreName = "server-core";
@@ -67,7 +67,7 @@ std::string dialledHost(const std::string& host)
     return host.empty() || host == "0.0.0.0" || host == "::" ? kLoopback : host;
 }
 
-nlohmann::json fleetEntry(const char* kind, const std::string& url, const std::string& pin)
+nlohmann::json serviceEntry(const char* kind, const std::string& url, const std::string& pin)
 {
     return {{"name", kind}, {"kind", kind}, {"url", url}, {"pin", pin}};
 }
@@ -87,7 +87,7 @@ void writeConfig(const fs::path& path, const nlohmann::json& config)
 
 }  // namespace
 
-bool setUpFleet(const Layout& layout)
+bool setUpServer(const Layout& layout)
 {
     const auto configOf = [&layout](const char* name) {
         return layout.configDir / (std::string(name) + ".json");
@@ -145,15 +145,12 @@ bool setUpFleet(const Layout& layout)
     writeConfig(configOf(kPanelName),
         {{"state", stateOf(kPanelName).string()}, {"assets", layout.panelAssets.string()},
             {"listen", endpoint(kPanelPort)},
-            {"fleets",
-                nlohmann::json::array({{{"name", layout.fleetName},
-                    {"services",
-                        nlohmann::json::array({fleetEntry(kCoreName, tlsUrl(kCoreOpsPort), corePin),
-                            fleetEntry(kNodeName, tlsUrl(kNodeOpsPort), nodePin),
-                            fleetEntry(kFacadeName, tlsUrl(kFacadeOpsPort), facadePin),
-                            fleetEntry(kGatewayName,
-                                tlsUrl(dialledHost(gatewayOps->host), gatewayOps->port),
-                                gatewayPin)})}}})}});
+            {"services",
+                nlohmann::json::array({serviceEntry(kCoreName, tlsUrl(kCoreOpsPort), corePin),
+                    serviceEntry(kNodeName, tlsUrl(kNodeOpsPort), nodePin),
+                    serviceEntry(kFacadeName, tlsUrl(kFacadeOpsPort), facadePin),
+                    serviceEntry(kGatewayName,
+                        tlsUrl(dialledHost(gatewayOps->host), gatewayOps->port), gatewayPin)})}});
     return true;
 }
 

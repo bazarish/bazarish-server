@@ -20,7 +20,8 @@
   "serviceNode": {"url": "https://127.0.0.1:8421", "pin": ""},
   "i2p": {
     "privacy": "max",
-    "log": false
+    // libi2pd's lines in this log: none, error, warn, info or debug.
+    "logLevel": "none"
   },
   "logLevel": "info"
 }

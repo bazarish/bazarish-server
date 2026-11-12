@@ -1,7 +1,7 @@
 // Bazarish project (c) 2026
 #include "Gateway.hpp"
 
-#include <FleetRoutes.hpp>
+#include <ServiceRoutes.hpp>
 #include <Health.hpp>
 #include <OpsSettings.hpp>
 #include <StateIdentity.hpp>
@@ -62,6 +62,7 @@ nlohmann::json editable(const Settings& written, const std::string& fingerprint)
     return {
         {"logLevel", std::string(log::levelName(written.logLevel))},
         {"i2pPrivacy", std::string(i2p::privacyName(written.tunnelPrivacy))},
+        {"i2pLogLevel", std::string(i2p::i2pLogLevelName(written.i2pLogLevel))},
         {"callPrivacy", std::string(i2p::privacyName(kCallPrivacy))},
         {"streamPool", written.streamPool},
         {"callPool", written.callPool},
@@ -246,6 +247,7 @@ http::Response Gateway::settingsChanged(const http::Request& request)
     std::optional<std::vector<DirectRoute>> direct;
     std::optional<std::optional<ServerLink>> link;
     std::optional<log::Level> logLevel;
+    std::optional<i2p::I2pLogLevel> i2pLogLevel;
     try {
         const nlohmann::json body = bazarish::parseJson(request.body);
         if (body.contains("logLevel")) {
@@ -255,6 +257,11 @@ http::Response Gateway::settingsChanged(const http::Request& request)
         }
         if (body.contains("i2pPrivacy")) {
             writes.push_back({{"i2p", "privacy"}, server::privacyIn(body, {})});
+        }
+        if (body.contains("i2pLogLevel")) {
+            const std::string named = server::i2pLogLevelIn(body, {});
+            i2pLogLevel = i2p::i2pLogLevelFromString(named);
+            writes.push_back({{"i2p", "logLevel"}, named});
         }
         for (const char* const pool : {"stream", "call", "watch"}) {
             const std::string key = std::string(pool) + "Pool";
@@ -302,6 +309,9 @@ http::Response Gateway::settingsChanged(const http::Request& request)
     }
     if (logLevel.has_value()) {
         log::setLevel(*logLevel);
+    }
+    if (i2pLogLevel.has_value()) {
+        i2p::setI2pLogLevel(*i2pLogLevel);
     }
     return {200, "application/json", {}, editable(
         writtenSettings(control_.configPath), identity_.fingerprint()).dump()};
@@ -391,12 +401,12 @@ void Gateway::bindOps()
     options.clientPins = settings_.opsClients;
     ops_ = std::make_unique<http::Server>(options);
     ops_->get("/healthz", [this](const http::Request& request) { return health(request); });
-    ops_->get(fleet::kOpsSettings,
+    ops_->get(routes::kOpsSettings,
         [this](const http::Request& request) { return settingsShown(request); });
-    ops_->put(fleet::kOpsSettings,
+    ops_->put(routes::kOpsSettings,
         [this](const http::Request& request) { return settingsChanged(request); });
-    ops_->post(fleet::kOpsRestart, [this](const http::Request& request) { return restart(request); });
-    logFeed_ = std::make_unique<server::LogFeed>(*ops_, fleet::kOpsLogs, control_.logRing,
+    ops_->post(routes::kOpsRestart, [this](const http::Request& request) { return restart(request); });
+    logFeed_ = std::make_unique<server::LogFeed>(*ops_, routes::kOpsLogs, control_.logRing,
         [this](const http::Request& request) { return operatorRefusal(request); });
     ops_->start();
     bazarish::log::info("ops listening on {}:{}, key {}", settings_.opsHost, settings_.opsPort,

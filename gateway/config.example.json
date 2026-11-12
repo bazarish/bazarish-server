@@ -18,7 +18,7 @@
 
     "sessionTtlSeconds": 300,
 
-    "i2p": { "privacy": "minimal" },
+    "i2p": { "privacy": "minimal", "logLevel": "none" },
     "pools": { "stream": 4, "call": 2, "watch": 2 },
 
     "logLevel": "info",

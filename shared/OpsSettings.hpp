@@ -13,13 +13,16 @@ namespace bazarish::server {
 
 // A field the body leaves out keeps `current`; a wrong one throws.
 std::string logLevelIn(const nlohmann::json& body, const std::string& current);
+std::string i2pLogLevelIn(const nlohmann::json& body, const std::string& current);
 std::string privacyIn(const nlohmann::json& body, const std::string& current);
 int tunnelQuantityIn(const nlohmann::json& body, int current);
 
 // A wrong value in the config throws.
 i2p::Privacy configPrivacy(const ConfigView& config, i2p::Privacy absent);
 log::Level configLogLevel(const ConfigView& config);
+i2p::I2pLogLevel configI2pLogLevel(const ConfigView& config);
 
 void applyLogLevel(const std::string& before, const std::string& after);
+void applyI2pLogLevel(const std::string& before, const std::string& after);
 
 }  // namespace bazarish::server

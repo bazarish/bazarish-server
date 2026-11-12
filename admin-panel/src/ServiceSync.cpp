@@ -1,7 +1,7 @@
 // Bazarish project (c) 2026
-#include "FleetSync.hpp"
+#include "ServiceSync.hpp"
 
-#include <FleetRoutes.hpp>
+#include <ServiceRoutes.hpp>
 
 #include "ServiceClient.hpp"
 
@@ -19,8 +19,8 @@ namespace bazarish::admin {
 
 namespace {
 
-constexpr const char* kFacadeSettingsPath = fleet::kOpsSettings;
-constexpr const char* kGatewaySettingsPath = fleet::kOpsSettings;
+constexpr const char* kFacadeSettingsPath = routes::kOpsSettings;
+constexpr const char* kGatewaySettingsPath = routes::kOpsSettings;
 constexpr const char* kSchemeMark = "://";
 
 FacadeReport reportOf(const ServiceEntry& facade, const Identity& identity,
@@ -73,11 +73,11 @@ std::string hostOf(const std::string& url)
     return url.substr(start, end == std::string::npos ? std::string::npos : end - start);
 }
 
-std::vector<FacadeReport> facadeReports(
-    const Fleet& fleet, const Identity& identity, const tls::Credential& credential)
+std::vector<FacadeReport> facadeReports(const std::vector<ServiceEntry>& services,
+    const Identity& identity, const tls::Credential& credential)
 {
     std::vector<std::future<FacadeReport>> asked;
-    for (const ServiceEntry& service : fleet.services) {
+    for (const ServiceEntry& service : services) {
         if (service.kind != kFacadeKind) {
             continue;
         }
@@ -93,11 +93,11 @@ std::vector<FacadeReport> facadeReports(
     return reports;
 }
 
-std::string publishFacades(const Fleet& fleet, const Identity& identity,
+std::string publishFacades(const std::vector<ServiceEntry>& services, const Identity& identity,
     const tls::Credential& credential, const std::map<std::string, std::string>& known)
 {
     std::optional<ServiceEntry> node;
-    for (const ServiceEntry& service : fleet.services) {
+    for (const ServiceEntry& service : services) {
         if (service.kind == kServiceNodeKind) {
             node = service;
         }
@@ -106,10 +106,10 @@ std::string publishFacades(const Fleet& fleet, const Identity& identity,
         return {};
     }
 
-    Fleet unknown{fleet.name, {}};
-    for (const ServiceEntry& service : fleet.services) {
+    std::vector<ServiceEntry> unknown;
+    for (const ServiceEntry& service : services) {
         if (service.kind == kFacadeKind && !known.contains(service.name)) {
-            unknown.services.push_back(service);
+            unknown.push_back(service);
         }
     }
     std::map<std::string, std::string> addresses = known;
@@ -122,15 +122,15 @@ std::string publishFacades(const Fleet& fleet, const Identity& identity,
     }
 
     nlohmann::json ordered = nlohmann::json::array();
-    for (const ServiceEntry& service : fleet.services) {
+    for (const ServiceEntry& service : services) {
         if (service.kind == kFacadeKind) {
             ordered.push_back(addresses.at(service.name));
         }
     }
     if (ordered.empty()) {
-        return "this deployment has no facade, so the descriptor keeps the addresses it has";
+        return "the panel lists no facade, so the descriptor keeps the addresses it has";
     }
-    const JsonResult written = callJson(*node, identity, credential, "PUT", fleet::kAccountSettings,
+    const JsonResult written = callJson(*node, identity, credential, "PUT", routes::kAccountSettings,
         nlohmann::json{{"facades", ordered}}.dump());
     if (!written.ok) {
         return "the service node did not take the addresses: " + failureText(written);
@@ -138,22 +138,22 @@ std::string publishFacades(const Fleet& fleet, const Identity& identity,
     return {};
 }
 
-GatewayLinking linkGateways(
-    const Fleet& fleet, const Identity& identity, const tls::Credential& credential)
+GatewayLinking linkGateways(const std::vector<ServiceEntry>& services,
+    const Identity& identity, const tls::Credential& credential)
 {
     GatewayLinking linking;
     nlohmann::json pins = nlohmann::json::array();
-    for (const ServiceEntry& service : fleet.services) {
+    for (const ServiceEntry& service : services) {
         if (service.kind == kGatewayKind) {
             pins.push_back(service.pin);
         }
     }
     nlohmann::json server = nullptr;
-    for (const ServiceEntry& service : fleet.services) {
+    for (const ServiceEntry& service : services) {
         if (service.kind != kServerCoreKind) {
             continue;
         }
-        const JsonResult shown = callJson(service, identity, credential, "GET", fleet::kMessagingSettings);
+        const JsonResult shown = callJson(service, identity, credential, "GET", routes::kMessagingSettings);
         if (!shown.ok) {
             linking.error = "server-core did not show its settings: " + failureText(shown);
             return linking;
@@ -161,7 +161,7 @@ GatewayLinking linkGateways(
         const nlohmann::json settings = bazarish::parseJson(shown.body);
         if (settings.value("gateways", nlohmann::json::array()) != pins) {
             const JsonResult written = callJson(service, identity, credential, "PUT",
-                fleet::kMessagingSettings, nlohmann::json{{"gateways", pins}}.dump());
+                routes::kMessagingSettings, nlohmann::json{{"gateways", pins}}.dump());
             if (!written.ok) {
                 linking.error = "server-core did not take the gateways: " + failureText(written);
                 return linking;
@@ -173,7 +173,7 @@ GatewayLinking linkGateways(
         }
     }
     nlohmann::json direct = nlohmann::json::array();
-    for (const ServiceEntry& service : fleet.services) {
+    for (const ServiceEntry& service : services) {
         if (service.kind != kFacadeKind) {
             continue;
         }
@@ -193,7 +193,7 @@ GatewayLinking linkGateways(
         route["dest"] = address;
         direct.push_back(std::move(route));
     }
-    for (const ServiceEntry& service : fleet.services) {
+    for (const ServiceEntry& service : services) {
         if (service.kind != kGatewayKind) {
             continue;
         }
@@ -220,49 +220,47 @@ GatewayLinking linkGateways(
     return linking;
 }
 
-std::vector<GatewayRepoint> repointGateways(const std::vector<Fleet>& fleets,
+std::vector<GatewayRepoint> repointGateways(const std::vector<ServiceEntry>& services,
     const std::string& from, const std::string& to, const Identity& identity,
     const tls::Credential& credential)
 {
     std::vector<GatewayRepoint> results;
-    for (const Fleet& fleet : fleets) {
-        for (const ServiceEntry& service : fleet.services) {
-            if (service.kind != kGatewayKind) {
-                continue;
-            }
-            GatewayRepoint result;
-            result.name = service.name;
-            const JsonResult shown
-                = callJson(service, identity, credential, "GET", kGatewaySettingsPath);
-            if (!shown.ok) {
-                result.error = failureText(shown);
-                results.push_back(std::move(result));
-                continue;
-            }
-            nlohmann::json direct;
-            try {
-                direct = bazarish::parseJson(shown.body).at("direct");
-            } catch (const std::exception& error) {
-                result.error = error.what();
-                results.push_back(std::move(result));
-                continue;
-            }
-            for (nlohmann::json& route : direct) {
-                if (route.value("dest", std::string()) == from) {
-                    route["dest"] = to;
-                    result.changed = true;
-                }
-            }
-            if (result.changed) {
-                const JsonResult written = callJson(service, identity, credential, "PUT",
-                    kGatewaySettingsPath, nlohmann::json{{"direct", direct}}.dump());
-                if (!written.ok) {
-                    result.changed = false;
-                    result.error = failureText(written);
-                }
-            }
-            results.push_back(std::move(result));
+    for (const ServiceEntry& service : services) {
+        if (service.kind != kGatewayKind) {
+            continue;
         }
+        GatewayRepoint result;
+        result.name = service.name;
+        const JsonResult shown
+            = callJson(service, identity, credential, "GET", kGatewaySettingsPath);
+        if (!shown.ok) {
+            result.error = failureText(shown);
+            results.push_back(std::move(result));
+            continue;
+        }
+        nlohmann::json direct;
+        try {
+            direct = bazarish::parseJson(shown.body).at("direct");
+        } catch (const std::exception& error) {
+            result.error = error.what();
+            results.push_back(std::move(result));
+            continue;
+        }
+        for (nlohmann::json& route : direct) {
+            if (route.value("dest", std::string()) == from) {
+                route["dest"] = to;
+                result.changed = true;
+            }
+        }
+        if (result.changed) {
+            const JsonResult written = callJson(service, identity, credential, "PUT",
+                kGatewaySettingsPath, nlohmann::json{{"direct", direct}}.dump());
+            if (!written.ok) {
+                result.changed = false;
+                result.error = failureText(written);
+            }
+        }
+        results.push_back(std::move(result));
     }
     return results;
 }

@@ -1,7 +1,7 @@
 // Bazarish project (c) 2026
 #include "AccountApi.hpp"
 
-#include <FleetPorts.hpp>
+#include <ServicePorts.hpp>
 #include <LogRing.hpp>
 #include <OpsSettings.hpp>
 #include <Restart.hpp>
@@ -46,9 +46,9 @@ namespace {
 
 namespace fs = std::filesystem;
 
-constexpr const char* kDefaultHost = bazarish::fleet::kLoopback;
-constexpr int kDefaultPort = bazarish::fleet::kNodePort;
-constexpr int kDefaultOpsPort = bazarish::fleet::kNodeOpsPort;
+constexpr const char* kDefaultHost = bazarish::ports::kLoopback;
+constexpr int kDefaultPort = bazarish::ports::kNodePort;
+constexpr int kDefaultOpsPort = bazarish::ports::kNodeOpsPort;
 constexpr std::size_t kPortalSecretBytes = 16;
 constexpr std::chrono::hours kIdleSweepInterval{1};
 constexpr std::chrono::seconds kBackendWaitBudget{60};

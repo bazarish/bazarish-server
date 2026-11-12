@@ -3,7 +3,7 @@
 
 #include <bazarish/Portal.hpp>
 
-#include <FleetPorts.hpp>
+#include <ServicePorts.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -26,20 +26,13 @@ struct ServiceEntry {
     friend bool operator==(const ServiceEntry&, const ServiceEntry&) = default;
 };
 
-struct Fleet {
-    std::string name;
-    std::vector<ServiceEntry> services;
-
-    friend bool operator==(const Fleet&, const Fleet&) = default;
-};
-
 bool isKnownServiceKind(const std::string& kind);
 
-void requireCoherentFleet(const Fleet& fleet);
-// Throws std::invalid_argument on a malformed fleet.
-std::vector<Fleet> fleetsFromJson(const nlohmann::json& list);
+void requireCoherentServices(const std::vector<ServiceEntry>& services);
+// Throws std::invalid_argument on a malformed list.
+std::vector<ServiceEntry> servicesFromJson(const nlohmann::json& list);
 
-nlohmann::json fleetsJson(const std::vector<Fleet>& fleets);
+nlohmann::json servicesJson(const std::vector<ServiceEntry>& services);
 
 struct Config {
     std::vector<std::string> admins;
@@ -47,8 +40,8 @@ struct Config {
     std::string assetsDir;
     service::LoginConsumer consumer;
     std::string listenHost = "127.0.0.1";
-    int listenPort = fleet::kPanelPort;
-    std::vector<Fleet> fleets;
+    int listenPort = ports::kPanelPort;
+    std::vector<ServiceEntry> services;
 
     static Config fromJson(const std::string& text);
 

@@ -1,7 +1,7 @@
 // Bazarish project (c) 2026
 #include "OperatorPush.hpp"
 
-#include <FleetRoutes.hpp>
+#include <ServiceRoutes.hpp>
 #include <OpsClient.hpp>
 
 #include <bazarish/Auth.hpp>
@@ -75,7 +75,7 @@ std::optional<MailboxUsage> OperatorPush::accountUsage(
     const std::string& user) const
 {
     const bazarish::http::ClientResponse response
-        = call("GET", std::string(fleet::kMessagingAccount) + "?user=" + user, {});
+        = call("GET", std::string(routes::kMessagingAccount) + "?user=" + user, {});
     if (response.status != 200) {
         bazarish::log::warn("mailbox usage unavailable (HTTP {}): {}", response.status,
             response.error.empty() ? response.body : response.error);
@@ -118,8 +118,8 @@ std::optional<std::string> OperatorPush::putBody(
 
 bool OperatorPush::forgetMailbox(const std::string& user) const
 {
-    return send("DELETE", fleet::kMessagingAccount,
-        std::string(fleet::kMessagingAccount) + "?user=" + user, std::string())
+    return send("DELETE", routes::kMessagingAccount,
+        std::string(routes::kMessagingAccount) + "?user=" + user, std::string())
         .has_value();
 }
 
@@ -165,7 +165,7 @@ std::optional<Bytes> OperatorPush::nodeCard(const Bytes& sealingPublicKeyDer) co
 {
     const nlohmann::json body = {{"sealingKey", toBase64(sealingPublicKeyDer)}};
     const std::optional<std::string> answer
-        = send("POST", fleet::kMessagingNodeCard, fleet::kMessagingNodeCard, body.dump());
+        = send("POST", routes::kMessagingNodeCard, routes::kMessagingNodeCard, body.dump());
     if (!answer.has_value()) {
         return std::nullopt;
     }
@@ -181,12 +181,12 @@ std::optional<Bytes> OperatorPush::nodeCard(const Bytes& sealingPublicKeyDer) co
 bool OperatorPush::publishQuota(const std::string& user, const std::uint64_t quotaBytes) const
 {
     const nlohmann::json body = {{"user", user}, {"quotaBytes", quotaBytes}};
-    return put(fleet::kMessagingQuota, body.dump());
+    return put(routes::kMessagingQuota, body.dump());
 }
 
 bool OperatorPush::publishCardChanged(const std::string& user) const
 {
-    return put(fleet::kMessagingCard, nlohmann::json{{"user", user}}.dump());
+    return put(routes::kMessagingCard, nlohmann::json{{"user", user}}.dump());
 }
 
 std::optional<ServedDestination> OperatorPush::publish(const std::string& user,
@@ -200,7 +200,7 @@ std::optional<ServedDestination> OperatorPush::publish(const std::string& user,
         body["sealingKey"] = keys.sealingPem;
         body["signingKey"] = keys.signingPem;
     }
-    const std::optional<std::string> answer = putBody(fleet::kMessagingI2pDest, body.dump());
+    const std::optional<std::string> answer = putBody(routes::kMessagingI2pDest, body.dump());
     if (!answer.has_value()) {
         return std::nullopt;
     }

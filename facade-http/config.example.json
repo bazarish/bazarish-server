@@ -17,6 +17,7 @@
   "opsClients": [],
   // Its destination key, minted at the first start: the facade's address.
   "state": "/var/lib/bazarish/facade",
-  "i2p": {"privacy": "minimal", "tunnelQuantity": 16},
+  // "logLevel": libi2pd's lines in this log - none, error, warn, info or debug.
+  "i2p": {"privacy": "minimal", "tunnelQuantity": 16, "logLevel": "none"},
   "logLevel": "info"
 }

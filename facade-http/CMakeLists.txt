@@ -43,3 +43,4 @@ enable_testing()
 
 bazarish_server_test(TestFacade bazarish_facade_lib)
 bazarish_server_test(TestRelay bazarish_facade_lib)
+bazarish_server_test(TestHeldRelay bazarish_facade_lib)

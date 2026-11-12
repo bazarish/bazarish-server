@@ -42,8 +42,13 @@ constexpr const char* kPath = "/f3a9c2e1b7d4";
 constexpr const char* kHealthPath = "/healthz";
 constexpr int kSweepGraceSeconds = 5;
 constexpr int kDialDeadlineSeconds = 4;
-constexpr std::size_t kDecoyLow = 1024;
-constexpr std::size_t kDecoyHigh = 4096;
+constexpr double kPageMedian = 6000;
+constexpr double kPageLow = 4000;
+constexpr double kPageHigh = 9000;
+constexpr double kResourceMedian = 600;
+constexpr double kResourceHigh = 1500;
+constexpr double kNarrowSigma = 0.2;
+constexpr int kDecoyDraws = 24;
 
 struct Answer {
     unsigned status = 0;
@@ -165,15 +170,20 @@ Dialled dial(asio::io_context& io, const int port, const std::string& fingerprin
 
 void send(Dialled& dialled, const Bytes& frame)
 {
-    writeRaw(*dialled.socket, dialled.records->seal(frame));
+    shape::SystemRandom random;
+    writeRaw(*dialled.socket, dialled.records->seal(padRecord(frame, 0, random)));
 }
 
 Frame receive(Dialled& dialled)
 {
     while (true) {
-        const std::optional<Bytes> opened = dialled.records->open(readRaw(*dialled.socket));
+        const Bytes record = readRaw(*dialled.socket);
+        CHECK(record.size() >= static_cast<std::size_t>(kRecordPadFloor) + kAeadTagBytes);
+        const std::optional<Bytes> opened = dialled.records->open(record);
         CHECK(opened.has_value());
-        const Frame frame = decode(*opened);
+        const std::optional<RecordBody> carried = unpadRecord(*opened);
+        CHECK(carried.has_value());
+        const Frame frame = decode(carried->frame);
         if (frame.type != FrameType::eTickets) {
             return frame;
         }
@@ -205,8 +215,8 @@ int main()
     settings.listenPort = 0;
     settings.basePath = kPath;
     settings.stateDir = root / "state";
-    settings.decoyMinBytes = kDecoyLow;
-    settings.decoyMaxBytes = kDecoyHigh;
+    settings.decoyPage = {{{1, kPageMedian, kNarrowSigma}}, kPageLow, kPageHigh};
+    settings.decoyResource = {{{1, kResourceMedian, kNarrowSigma}}, 1, kResourceHigh};
     settings.notFoundBody = "<html>nothing</html>";
     settings.sessionTtlSeconds = 2;
     const Identity operatorIdentity = Identity::generate();
@@ -249,14 +259,27 @@ int main()
     CHECK(report.contains("sockets"));
     CHECK(report["refused"] == 0);
 
-    const Answer decoyOne = request(port, "POST", kPath);
-    const Answer decoyTwo = request(port, "POST", kPath);
-    CHECK(decoyOne.status == 200);
-    CHECK(decoyOne.body.size() >= kDecoyLow);
-    CHECK(decoyOne.body.size() <= kDecoyHigh);
-    CHECK(decoyTwo.body.size() >= kDecoyLow);
-    CHECK(decoyOne.body != decoyTwo.body);
-    CHECK(decoyOne.server == settings.serverName);
+    const std::string resourcePath = std::string(kPath) + "?" + std::string(kDecoyResourceKey)
+        + "=" + std::string(kDecoyResourceValue);
+    std::set<std::size_t> pageSizes;
+    for (int draw = 0; draw < kDecoyDraws; ++draw) {
+        const Answer page = request(port, "GET", kPath);
+        const Answer pageAgain = request(port, "GET", std::string(kPath) + "?fast=false");
+        const Answer resource = request(port, "GET", resourcePath);
+        CHECK(page.status == 200);
+        CHECK(resource.status == 200);
+        CHECK(page.server == settings.serverName);
+        CHECK(page.contentType == "text/html");
+        CHECK(resource.contentType == "image/jpeg");
+        for (const Answer& asPage : {page, pageAgain}) {
+            CHECK(asPage.body.size() >= kPageLow);
+            CHECK(asPage.body.size() <= kPageHigh);
+        }
+        CHECK(resource.body.size() <= kResourceHigh);
+        CHECK(page.body != pageAgain.body);
+        pageSizes.insert(page.body.size());
+    }
+    CHECK(pageSizes.size() > 1);
 
     asio::io_context io;
 

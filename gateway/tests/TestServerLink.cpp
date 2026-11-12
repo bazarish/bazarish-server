@@ -87,6 +87,9 @@ std::string echoed(i2p::Stream& stream, const std::string& said)
 
 int main()
 {
+    // Routing and tunnel counts reach a client only while it is active.
+    i2p::windowActive(true);
+    i2p::userActed();
     const fs::path root = fs::temp_directory_path()
         / ("bazarish-gateway-server-link-" + toHex(randomBytes(kRandomNameBytes)));
     fs::create_directories(root);

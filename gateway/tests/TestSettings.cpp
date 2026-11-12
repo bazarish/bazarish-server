@@ -20,7 +20,12 @@ const char* kWhole = R"({
     "basePath": "/f3a9c2e1b7d4",
     "state": "/var/lib/bazarish-gateway",
     "reseed": ["https://reseed.example/i2pseeds.su3"],
-    "decoy": { "minBytes": 2048, "maxBytes": 4096 },
+    "decoy": {
+        "page": { "maxBytes": 65536, "parts": [
+            { "weight": 3, "medianBytes": 20000, "sigma": 0.8 },
+            { "weight": 1, "medianBytes": 50000, "sigma": 0.4 } ] },
+        "resource": { "maxBytes": 8192, "parts": [ { "weight": 1, "medianBytes": 2000, "sigma": 1.2 } ] }
+    },
     "serverName": "caddy",
     "sessionTtlSeconds": 120,
     "i2p": { "privacy": "max" },
@@ -36,8 +41,12 @@ int main()
     CHECK(whole.listenPort == 8431);
     CHECK(whole.basePath == "/f3a9c2e1b7d4");
     CHECK(whole.reseedUrls.size() == 1);
-    CHECK(whole.decoyMinBytes == 2048);
-    CHECK(whole.decoyMaxBytes == 4096);
+    CHECK(whole.decoyPage.max == 65536);
+    CHECK(whole.decoyPage.parts.size() == 2);
+    CHECK(whole.decoyPage.parts.front().weight == 3);
+    CHECK(whole.decoyPage.parts.back().median == 50000);
+    CHECK(whole.decoyResource.max == 8192);
+    CHECK(whole.decoyResource.parts.front().sigma == 1.2);
     CHECK(whole.serverName == "caddy");
     CHECK(whole.sessionTtlSeconds == 120);
     CHECK(whole.tunnelPrivacy == i2p::Privacy::eMax);
@@ -49,8 +58,12 @@ int main()
         "basePath": "/secret", "state": "/tmp/s"
     })"));
     CHECK(bare.listenHost == "127.0.0.1");
-    CHECK(bare.decoyMinBytes == kDecoyMinBytes);
-    CHECK(bare.decoyMaxBytes == kDecoyMaxBytes);
+    CHECK(bare.decoyPage.parts.size() == 1);
+    CHECK(bare.decoyPage.parts.front().median == kDecoyPageMedianBytes);
+    CHECK(bare.decoyPage.parts.front().sigma == kDecoyPageSigma);
+    CHECK(bare.decoyPage.max == kDecoyMaxBytes);
+    CHECK(bare.decoyResource.parts.front().median == kDecoyResourceMedianBytes);
+    CHECK(bare.decoyResource.parts.front().sigma == kDecoyResourceSigma);
     CHECK(bare.sessionTtlSeconds == kSessionTtl.count());
     CHECK(bare.serverName == "nginx");
     CHECK(bare.tunnelPrivacy == i2p::Privacy::eMinimal);
@@ -80,13 +93,16 @@ int main()
         R"({"basePath": "/s", "state": "/t", "reseed": ["http://seed.example/"]})")));
     CHECK_THROWS(Settings::from(document(R"({"basePath": "/s"})")));
 
-    CHECK_THROWS(Settings::from(document(R"({
-        "basePath": "/s", "state": "/t",
-        "decoy": { "minBytes": 4096, "maxBytes": 1024 }
-    })")));
-    CHECK_THROWS(Settings::from(document(R"({
-        "basePath": "/s", "state": "/t", "decoy": { "minBytes": 0 }
-    })")));
+    for (const char* const wrong : {
+             R"({"page": {"maxBytes": 1024, "parts": [{"weight": 1, "medianBytes": 4096, "sigma": 1}]}})",
+             R"({"page": {"maxBytes": 1024, "parts": []}})",
+             R"({"resource": {"maxBytes": 0, "parts": [{"weight": 1, "medianBytes": 1, "sigma": 1}]}})",
+             R"({"resource": {"maxBytes": 4096, "parts": [{"weight": 0, "medianBytes": 9, "sigma": 1}]}})",
+             R"({"resource": {"maxBytes": 4096, "parts": [{"weight": 1, "medianBytes": 9, "sigma": 0}]}})",
+             R"({"resource": {"parts": [{"weight": 1, "medianBytes": 9, "sigma": 1}]}})"}) {
+        CHECK_THROWS(Settings::from(document(
+            std::string(R"({"basePath": "/s", "state": "/t", "decoy": )") + wrong + "}")));
+    }
     CHECK_THROWS(Settings::from(document(R"({
         "basePath": "/s", "state": "/t", "sessionTtlSeconds": 0
     })")));

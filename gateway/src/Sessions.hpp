@@ -44,6 +44,8 @@ public:
     // Dials the client ended before they answered: one that opens after is closed, not told.
     std::set<std::uint32_t> abandoned;
     bool retired = false;
+    // As the client's records and pings last said; an idle client hears only readiness change.
+    bool clientActive = false;
     Bytes key;
     std::set<std::string> tickets;
 

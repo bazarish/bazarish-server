@@ -17,6 +17,7 @@
 #include <bazarish/Tls.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -29,9 +30,6 @@
 namespace bazarish::gateway {
 
 namespace {
-
-constexpr std::size_t kDecoyPageBytes = 32 * 1024;
-
 
 constexpr std::chrono::seconds kReplayGrace{5};
 // A closed address's lease set is still found this long: i2pd's TUNNEL_EXPIRATION_TIMEOUT.
@@ -332,14 +330,17 @@ http::Response Gateway::restart(const http::Request& request)
     return {200, "application/json", {}, R"({"restarting":true})"};
 }
 
-http::Response Gateway::decoy() const
+http::Response Gateway::decoy(const http::Request& request) const
 {
-    const std::size_t size = static_cast<std::size_t>(
-        randomBetween(settings_.decoyMinBytes, settings_.decoyMaxBytes));
+    const bool resource
+        = request.query(std::string(kDecoyResourceKey)) == kDecoyResourceValue;
+    const std::size_t size = static_cast<std::size_t>(std::ceil(
+        shape::draw(resource ? settings_.decoyResource : settings_.decoyPage, random_)));
     const Bytes noise = randomBytes(size);
+    ++decoys_;
     http::Response response;
     response.status = 200;
-    response.contentType = size < kDecoyPageBytes ? "text/html" : "image/jpeg";
+    response.contentType = resource ? "image/jpeg" : "text/html";
     response.headers["Server"] = settings_.serverName;
     response.body.assign(noise.begin(), noise.end());
     return response;
@@ -349,7 +350,15 @@ int Gateway::start()
 {
     http::SocketRoutes routes;
     routes.maxMessageBytes = gateway::kMaxRecordBytes;
-    routes.idleTimeout = kKeepalive + kPongTimeout;
+    routes.silenceLimit = kSilenceLimit;
+    routes.pinged = [this](const http::SocketPtr& raw, const std::string& payload) {
+        const std::optional<std::uint8_t> flags = gateway::flagsOfPing(payload);
+        if (!flags.has_value()) {
+            bazarish::log::debug("a ping that carries no state");
+            return;
+        }
+        noteFlags(raw, *flags);
+    };
     routes.admit = [this](const http::Request& request) -> std::optional<http::Response> {
         if (!admitted(request)) {
             return notFound();
@@ -368,7 +377,7 @@ int Gateway::start()
         if (!admitted(request)) {
             return notFound();
         }
-        return decoy();
+        return decoy(request);
     };
     server_.route(http::kAnyMethod, "*", answer);
     streamPool_ = std::make_unique<DestinationPool>(
@@ -516,13 +525,29 @@ void Gateway::rawMessage(const http::SocketPtr& raw, const std::vector<unsigned 
         handshake(raw, Bytes(message.begin(), message.end()));
         return;
     }
-    const std::optional<Bytes> opened = channel->openRecord(Bytes(message.begin(), message.end()));
+    const std::optional<gateway::RecordBody> opened
+        = channel->openRecord(Bytes(message.begin(), message.end()));
     if (!opened.has_value()) {
         bazarish::log::debug("a record that does not open; the socket is closed");
         raw->close();
         return;
     }
-    socketMessage(channel, std::vector<unsigned char>(opened->begin(), opened->end()));
+    noteFlags(raw, opened->flags);
+    socketMessage(channel, std::vector<unsigned char>(opened->frame.begin(), opened->frame.end()));
+}
+
+void Gateway::noteFlags(const http::SocketPtr& raw, const std::uint8_t flags)
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const auto channel = channels_.find(raw);
+    if (channel == channels_.end()) {
+        return;
+    }
+    const auto connection = connections_.find(channel->second);
+    if (connection == connections_.end()) {
+        return;
+    }
+    connection->second.session->clientActive = (flags & gateway::kRecordActive) != 0;
 }
 
 void Gateway::rawClosed(const http::SocketPtr& raw)
@@ -2094,6 +2119,9 @@ void Gateway::statusLoop()
                     if (ready == entry->ready && in == entry->inboundTunnels
                         && out == entry->outboundTunnels && leases == entry->leaseSets
                         && localRoute == entry->reportedLocalRoute) {
+                        continue;
+                    }
+                    if (!session->clientActive && ready == entry->ready) {
                         continue;
                     }
                     entry->ready = ready;

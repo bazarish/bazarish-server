@@ -90,7 +90,7 @@ the seed never travels. What the operator holds is bounded by the day:
 | Server authentication | The gateway's own hybrid key. The link carries its fingerprint, and the gateway proves it in the handshake (The channel, below) |
 | Client authentication | The secret path. A client is given the gateway in one link, `https://bazari.sh/#gateway?v=1&url=<secret URL>&fp=<fingerprint>` |
 | Headers | None of this protocol's own: the upgrade is any upgrade |
-| Keepalive | The gateway pings every `kKeepalive`; no pong within `kPongTimeout` drops the socket |
+| Keepalive | The client pings once it has sent nothing or heard nothing for `kIdleKeepalive`; a ping not answered within `kPongTimeout` ends the socket. The gateway never pings: it answers pings and closes a socket it has heard nothing on for `kSilenceLimit` |
 
 ### Getting in, and not getting in
 
@@ -135,13 +135,47 @@ returning one:
    (ChaCha20-Poly1305, 32 bytes), the salt of this socket and `kTicketsHeld`
    tickets. A client whose join was refused does this on the same socket.
 
-From then on every message is a **record**: the frame of this protocol, whole,
-under ChaCha20-Poly1305 with keys derived (HKDF) from the session key, the
-socket's salt or ticket and the direction, the nonce being a count of records in
-that direction and never on the wire. Type, identifiers and session are inside;
-outside there is a length. A record that does not open closes the socket. A
-record is its frame and a 16-byte tag, so no WebSocket message is longer than
-`kMaxFrameBytes` + 16, the three messages of the handshake included.
+From then on every message is a **record**: the frame of this protocol, whole and
+padded (Padding, below), under ChaCha20-Poly1305 with keys derived (HKDF) from the
+session key, the socket's salt or ticket and the direction, the nonce being a
+count of records in that direction and never on the wire. Type, identifiers and
+session are inside; outside there is a length. A record that does not open, or
+whose padding does not read, closes the socket. No WebSocket message is longer
+than `kMaxPaddedBytes` + 16, the three messages of the handshake included.
+
+### Padding
+
+Both ends pad every record, on the control socket and on every flow socket. The
+plaintext of a record is:
+
+| Bytes | Field |
+|---|---|
+| 1 | Flags. Bit 0: the client is active (Cover). The other bits are zero, and the gateway sends zero |
+| 2 | The frame's length, big-endian |
+| that length | The frame |
+| the rest | Zeros |
+
+A frame that fits, with the three bytes before it, in `kRecordPadCeiling` gets a
+total length drawn from a log-normal of median `kRecordPadMedian` and sigma
+`kRecordPadSigma`, drawn again until it lies between the larger of
+`kRecordPadFloor` and its own length, and `kRecordPadCeiling`. A longer frame,
+which is stream data, gets its own length and a further log-normal amount of
+median `kBulkPadMedian`, sigma `kBulkPadSigma`, at most `kBulkPadMax`.
+
+Every frame the channel carries while the client is idle - a credit, an
+`endpoint-status`, a datagram of a call, the piece of a mail wait's answer - and
+the request of a held mail wait fit under the floor, so for all of them the
+length of the record has one distribution and tells nothing of the frame inside.
+Above the floor a length says only that the frame is at least that long. The
+spread, 1.5 to 4 KB, is the size of a browser's requests and of small objects
+on one host; the values are starting points from published web traffic models,
+not fitted to a capture. The cost falls on calls: each media frame, a couple of
+hundred bytes, goes out at about 2.3 KB.
+
+A keepalive ping carries one byte, the same flags. The gateway keeps the last
+flags a session's client sent in a record or a ping: while they say idle, it
+sends `endpoint-status` only when `ready` changes, and the counts that changed
+meanwhile follow once the client is active again.
 
 The session key belongs to the session and stays until the session ends. Every
 socket the client opens for it - the next control socket, a flow socket, a
@@ -279,56 +313,68 @@ and how many connections there are. One WebSocket carrying a trickle of small
 messages for six hours is not what a browser does, and that shape is the whole
 of what a watcher needs.
 
-Two things are done about it.
+What is done about it depends on whether the user is at the device.
 
-### Decoy requests
+### Activity
 
-On a timer the client sends a decoy to the gateway: an ordinary request to the
-same secret URL, with a body of random bytes and nothing else - no credential
-of any kind, so a decoy says nothing about who sent it. The
-gateway answers with random bytes of its own and the client throws them away.
-The next one follows after a delay drawn between `kDecoyMinDelay` and
-`kDecoyMaxDelay`.
+The client is **active** while its window is in front, the screen is on and the
+user's last input is newer than `kInputIdleAfter`, and while a call or a file
+transfer runs. Otherwise it is **idle**. A window coming to the front is not
+input: activity starts with the first key, click or touch.
 
-Random in, random out. **The client does not say how much comes back**: the
-length of the answer is drawn by the gateway between `kDecoyMinBytes` and
-`kDecoyMaxBytes`. It is the gateway that
-has to resemble a host, so it is the gateway that chooses. The request's own
-length is drawn between `kDecoyRequestMinBytes` and `kDecoyRequestMaxBytes`,
-which keeps it the shape of a request rather than an upload.
+### Active: a page and what it embeds
+
+While active the client behaves as a browser on one host does. A **burst** is a
+page and its resources:
+
+- The page: `GET` of the secret URL on a new keep-alive connection.
+- Then the resources it embeds, their number from a Pareto distribution
+  (`kEmbeddedAlpha` from `kEmbeddedMin`, at most `kEmbeddedMax`), each a `GET` of
+  the secret URL with the query `fast=true`, each asked a gap after the one
+  before, the gap log-normal (median `kInBurstGapMedian`, sigma
+  `kInBurstGapSigma`, at most `kInBurstGapMax`). A resource goes on an idle
+  connection of the burst when there is one, and on a new one while fewer than
+  `kMaxConnectionsPerHost` are open; every connection of a burst closes when it
+  ends.
+- Every request is `kDecoyRequestMinBytes` to `kDecoyRequestMaxBytes` long,
+  log-normal around `kDecoyRequestMedianBytes`, the filler in a cookie. A decoy
+  carries no credential of any kind and says nothing about who sent it.
+
+Between bursts comes a **read pause** from a Pareto distribution (`kReadAlpha`
+from `kReadMin`, at most `kReadMax`). Real traffic during a read pause takes the
+place of the next burst: no decoy is added on top of it, and the next read pause
+starts once the real traffic has been quiet for `kInBurstGapMax`. During a call
+or a file transfer there are no decoys at all. At the start of a burst the
+client replaces its control socket, unless something waits on it.
+
+Going idle sends nothing: the read pause already drawn runs out and no burst
+follows it, so the end of activity looks like any other pause.
+
+### Decoy answers
+
+The gateway answers a decoy with random bytes. The query chooses the kind: with
+`fast=true` a resource, otherwise a page. **The client does not say how much
+comes back**: the gateway draws the length from a log-normal mixture of its own
+(`decoy.page`, `decoy.resource` in its config; README), by default a page of
+median 30 KiB and sigma 1.0 and a resource of median 15 KiB and sigma 1.5, both
+at most 1 MiB. A page is sent as `text/html`, a resource as `image/jpeg`. It is
+the gateway that has to resemble a host, so it is the gateway that chooses, and
+setting the mixtures to resemble what the front serves makes the two populations
+of traffic to one host look like one population.
 
 A decoy off the secret URL is a 404 like everything else, so the gateway is a
 source of random bytes only for whoever already holds its path.
 
-Both distributions are the operator's to set, and setting them to resemble what
-the front serves is what makes the two populations of traffic to one host look
-like one population.
+### Idle: one quiet socket
 
-### A control socket that does not live long
-
-The control socket is closed and opened again on purpose. Its life is drawn
-between `kControlSocketMinLife` and `kControlSocketMaxLife`, and after it closes
-the client waits up to `kControlGapMax` before opening the next one. A socket is
-not dropped while it is carrying anything: the draw is taken at the next quiet
-moment instead.
-
-What the observer sees is a host being fetched from, at intervals, the way a
-host is fetched from.
-
-This rides the machinery that is already there for a phone: the reconnect is an
-ordinary join by ticket, and the session outliving its socket is what makes a
-deliberate disconnect cost nothing. It is worth saying which way round this
-works - the gateway holds the long-lived things, the client's leg is
-intermittent. The held-open request that waits for mail is an I2P stream on the
-gateway, and it stays held while the client has no socket at all; what arrives
-in the gap waits in the stream's window and is delivered on the next attach.
-
-The price is stated plainly: `kControlGapMax` is the longest a message can sit
-at the gateway before the client hears about it, and it is two seconds because
-a break the user can feel is a break not worth taking. That is the trade, and it
-is the operator's to set - all five figures, the two decoy delays and the three
-that pace the socket, are settings with the protocol's own numbers as their
-default.
+While idle the client keeps one WebSocket and does nothing to it: no decoys, no
+replacement of the socket, a ping only after `kIdleKeepalive` of silence, and
+`endpoint-status` only when `ready` changes. A dead socket is found when the
+device moves to another network: the client closes its sockets and opens them
+again at once, and the session carries every stream over. The held-open request
+that waits for mail is an I2P stream on the gateway; it stays held while the
+client has no socket at all, and what arrives meanwhile waits in the stream's
+window until the next attach.
 
 What a replacement must not cost is a byte. A stream riding the control socket
 is put back by the resume exchange: the gateway names what it received, the
@@ -476,7 +522,8 @@ the whole of the durability mechanism:
 - Steady state costs nothing: no acknowledgement frames, no timers.
 
 What a byte count does not cover is anything that is not a byte stream, and with
-a control socket that is deliberately short-lived there are two such things.
+a control socket that is replaced at a burst or after a move to another network
+there are two such things.
 
 **Requests the client sent and never saw answered.** The client re-sends them on
 the next control socket with **the same `ref`**. Identifiers are never reused
@@ -954,15 +1001,6 @@ Both sides agree, so there is nothing to refuse.
 | `kHandshakePadMin`, `kHandshakePadMax` | 64, 4096 | The random padding each message of the handshake carries, so the three have no fixed lengths |
 | `kMaxFrameBytes` | 16384 | A WebSocket message cannot be interleaved with another, so this is the longest anything can be held by one already going out. It matters most on the main socket, where a stream with no socket of its own shares with control |
 | `kMaxSocketsPerSession` | 16 | The main one, a call, and enough transfers that the link is the limit rather than the protocol |
-| `kDecoyMinDelay` | 500 ms | The shortest wait between decoy requests |
-| `kDecoyMaxDelay` | 300 s | The longest. Past this a host looks abandoned rather than read |
-| `kDecoyMinBytes` | 1024 | The smallest decoy answer: a page with nothing on it |
-| `kDecoyMaxBytes` | 262144 | The largest: a page with pictures |
-| `kDecoyRequestMinBytes` | 256 | The smallest decoy request, which is about what a browser's headers weigh |
-| `kDecoyRequestMaxBytes` | 2048 | The largest, past which a request stops looking like one |
-| `kControlSocketMinLife` | 1 s | The shortest life of a control socket before it is replaced |
-| `kControlSocketMaxLife` | 300 s | The longest. A connection older than this stops looking like a page view |
-| `kControlGapMax` | 2 s | The longest wait before the next control socket, and therefore the longest a message can sit at the gateway. The break is the client's own doing and must not be felt; what an observer sees is how many connections there were and how long each lived, not the dead time between them, so a short gap costs the cover nothing |
 | `kStreamWindowBytes` | 262144 | The in-flight allowance per stream per direction. It is also the retained buffer a reconnect replays from, and the most an unaccepted inbound stream can cost the gateway |
 | `kDialRetryDelay` | 2 s | How often a dial is re-issued while the deadline holds, matching the SAM backend |
 | `kMaxDialDeadline` | 90 s | The longest dial a client makes, a file or a pairing. A dial is a thread at the gateway, so its life is bounded |
@@ -971,8 +1009,19 @@ Both sides agree, so there is nothing to refuse.
 | `kMaxStreamsPerSession` | 1024 | Streams one session holds, dialled and accepted together |
 | `kInboundQueue` | 8 | Unaccepted inbound streams per endpoint before the client resets the oldest |
 | `kDatagramQueue` | 64 | Received datagrams held per endpoint, at either end |
-| `kKeepalive` | 30 s | How often the gateway pings |
-| `kPongTimeout` | 15 s | A silent peer after a ping is a dead socket |
+| `kIdleKeepalive` | 270 s | The silence after which the client pings: under the five minutes a mobile carrier's NAT keeps a silent TCP flow |
+| `kPongTimeout` | 15 s | A ping unanswered this long is a dead socket |
+| `kSilenceLimit` | 285 s | `kIdleKeepalive` + `kPongTimeout`: the gateway closes a socket it has heard nothing on for this long |
+| `kRecordPadFloor`, `kRecordPadCeiling` | 1536, 4096 | The range a padded record's plaintext is drawn in |
+| `kRecordPadMedian`, `kRecordPadSigma` | 1800, 0.5 | The log-normal it is drawn from |
+| `kBulkPadMedian`, `kBulkPadSigma`, `kBulkPadMax` | 256, 1.0, 4096 | The padding added to a frame longer than the ceiling |
+| `kMaxPaddedBytes` | 20483 | Three bytes, `kMaxFrameBytes` and `kBulkPadMax`: the longest plaintext of a record |
+| `kInputIdleAfter` | 120 s | Input older than this leaves the client idle |
+| `kEmbeddedAlpha`, `kEmbeddedMin`, `kEmbeddedMax` | 2.4, 1, 30 | Resources per page (SURGE, Barford and Crovella 1998) |
+| `kInBurstGapMedian`, `kInBurstGapSigma`, `kInBurstGapMax` | 80 ms, 1.0, 2 s | The gap between a burst's requests |
+| `kReadAlpha`, `kReadMin`, `kReadMax` | 1.5, 3 s, 600 s | The read pause between bursts (SURGE) |
+| `kDecoyRequestMedianBytes`, `kDecoyRequestSigma` | 600, 0.45 | A decoy request's length, between `kDecoyRequestMinBytes` 300 and `kDecoyRequestMaxBytes` 1500 |
+| `kMaxConnectionsPerHost` | 6 | Connections one burst holds at once: Chrome's limit per host over HTTP/1.1 |
 | `kDelegationAskLead` | 600 s | How long before a presence delegation ends the gateway asks for the next; ten minutes leave room for a client that is between sockets |
 | `kDelegationAskEvery` | 60 s | How often the ask is repeated while no new delegation has come |
 | `kDelegationLapseLead` | 60 s | How long before its delegation ends a presence address is stopped, as server-core does with its own delegated destinations |
@@ -995,8 +1044,9 @@ Both sides agree, so there is nothing to refuse.
    TLS tickets, and sends control before unattached stream data on the main one.
 5. The client asks `capabilities().proxy` before it calls `setSocksProxy` when
    it builds its router.
-6. A decoy timer, and a control socket the client replaces on purpose. Both are
-   the client's own business: the gateway only answers.
+6. Activity, bursts, a control socket replaced at a burst's start, pings only
+   after silence: the client's own business, the gateway only answers. Padding is
+   done by both ends.
 7. The status view distinguishes three backends: under a gateway it names the
    gateway's host and shows this session's destinations, and shows none of the
    gateway's own state (The status panel).

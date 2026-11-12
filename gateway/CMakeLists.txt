@@ -44,6 +44,8 @@ target_compile_options(bazarish-gateway PRIVATE -Wall -Wextra -Werror)
 
 enable_testing()
 bazarish_server_test(TestControlChurn bazarish_gateway_lib)
+bazarish_server_test(TestDecoyBurst bazarish_gateway_lib)
+bazarish_server_test(TestIdleStatus bazarish_gateway_lib)
 bazarish_server_test(TestGateway bazarish_gateway_lib)
 bazarish_server_test(TestGatewayClient bazarish_gateway_lib)
 bazarish_server_test(TestLocalMeeting bazarish_gateway_lib)

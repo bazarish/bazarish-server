@@ -48,6 +48,7 @@ enable_testing()
 
 bazarish_server_test(TestDiskStorage bazarish_server_lib)
 bazarish_server_test(TestEventGate bazarish_server_lib)
+bazarish_server_test(TestHeldMailWait bazarish_server_lib)
 bazarish_server_test(TestHttpApi bazarish_server_lib)
 bazarish_server_test(TestFederation bazarish_server_lib)
 bazarish_server_test(TestGatewayLink bazarish_server_lib)

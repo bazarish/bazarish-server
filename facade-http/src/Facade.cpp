@@ -39,6 +39,7 @@ namespace {
 
 constexpr int kUpstreamTimeoutSeconds = 60;
 constexpr int kFrontReadSlackSeconds = 30;
+constexpr int kNoReadDeadline = 0;
 
 using bazarish::nowSeconds;
 
@@ -199,7 +200,8 @@ void Facade::setupRoutes(bazarish::http::Server& server)
                 upstreamOptions.tls = true;
                 upstreamOptions.pin = upstream.pin;
                 upstreamOptions.connectTimeout = std::chrono::seconds(kUpstreamTimeoutSeconds);
-                upstreamOptions.readTimeout = std::chrono::seconds(kUpstreamTimeoutSeconds);
+                // A held mail wait inside the tunnel is answered only when mail arrives.
+                upstreamOptions.readTimeout = std::chrono::seconds(kNoReadDeadline);
                 upstreamOptions.writeTimeout = std::chrono::seconds(kUpstreamTimeoutSeconds);
                 const bazarish::http::Response answer = co_await bazarish::http::fetch(
                     executor, upstream.host, upstream.port, forwarded, upstreamOptions);

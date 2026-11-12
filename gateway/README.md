@@ -39,7 +39,7 @@ One file, given with `--config`. `config.example.json` is a starting point.
 | `publicAddress` | Where the front answers clients, `http(s)://host[:port]` with no path; the host may be an IPv4 or `[IPv6]` address. Only builds the link the admin panel shows |
 | `state` | Where the router keeps its netDb, keys and tunnels, and the gateway its own identity and sealing key |
 | `reseed` | su3 archives a router with no peers starts from. Empty leaves the engine its built-in hosts |
-| `decoy.minBytes`, `decoy.maxBytes` | The length of a decoy answer, drawn between them |
+| `decoy.page`, `decoy.resource` | The length of a decoy answer, for a page and for a resource (asked with `?fast=true`): `maxBytes` and a list of `parts`, each a log-normal of `weight`, `medianBytes` and `sigma`. Every median lies between 1 and `maxBytes`. Unset: a page of median 30 KiB and sigma 1.0, a resource of median 15 KiB and sigma 1.5, both at most 1 MiB |
 | `sessionTtlSeconds` | How long a session outlives its last socket |
 | `i2p.privacy` | How long the tunnels of every client's destinations are: one setting for everyone, since a client on a gateway sets none. `minimal` unless given. Each destination keeps three tunnels each way, the client's own count, and that is not a setting; call media is always one hop and six tunnels each way, its path picked by measured round trip |
 | `pools.stream`, `pools.call`, `pools.watch` | How many destinations are kept built ahead of asking: unpublished stream destinations with the tunnels above, call-media destinations, and published datagram destinations for watching presence. 4, 2 and 2 unless given, at most 16; 0 builds every one on demand |

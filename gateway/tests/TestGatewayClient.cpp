@@ -68,8 +68,6 @@ int main()
     settings.listenPort = 0;
     settings.basePath = kPath;
     settings.stateDir = root / "state";
-    settings.decoyMinBytes = 512;
-    settings.decoyMaxBytes = 1024;
     settings.notFoundBody = "<html>nothing</html>";
 
     i2p::Router router(i2p::offlineRouter(root / "i2p"));
@@ -78,15 +76,16 @@ int main()
     const int port = gateway.start();
     CHECK(port > 0);
 
-    const http::Probe reached = http::probeHost(dialFor(port), std::string("noise"));
-    CHECK(reached.reached);
-    CHECK(reached.status == 200);
-
-    http::SocketDial elsewhere = dialFor(port);
-    elsewhere.path = std::string(kPath) + "/elsewhere";
-    const http::Probe refused = http::probeHost(elsewhere, std::string("noise"));
-    CHECK(refused.reached);
-    CHECK(refused.status == 404);
+    {
+        http::KeptConnection decoys(dialFor(port));
+        CHECK(decoys.connected());
+        const http::KeptAnswer reached = decoys.get(kPath, {});
+        CHECK(reached.reached);
+        CHECK(reached.status == 200);
+        const http::KeptAnswer refused = decoys.get(std::string(kPath) + "/elsewhere", {});
+        CHECK(refused.reached);
+        CHECK(refused.status == 404);
+    }
 
     const ChannelOpened wrongKey = openChannel(dialFor(port), Identity::generate().fingerprint(),
         std::nullopt, [](const http::SocketPtr&, const std::vector<unsigned char>&) {},

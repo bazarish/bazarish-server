@@ -40,6 +40,33 @@ std::size_t poolDepth(const ConfigView& config, const std::string& path, const s
 
 }  // namespace
 
+shape::LogNormalMixture defaultDecoyPage()
+{
+    return {{{1, kDecoyPageMedianBytes, kDecoyPageSigma}}, kDecoyMinBytes, kDecoyMaxBytes};
+}
+
+shape::LogNormalMixture defaultDecoyResource()
+{
+    return {{{1, kDecoyResourceMedianBytes, kDecoyResourceSigma}}, kDecoyMinBytes, kDecoyMaxBytes};
+}
+
+shape::LogNormalMixture decoyMixtureFrom(const nlohmann::json& item, const std::string& name)
+{
+    shape::LogNormalMixture mixture;
+    mixture.min = kDecoyMinBytes;
+    mixture.max = item.at("maxBytes").get<double>();
+    for (const nlohmann::json& part : item.at("parts")) {
+        mixture.parts.push_back({part.at("weight").get<double>(),
+            part.at("medianBytes").get<double>(), part.at("sigma").get<double>()});
+    }
+    try {
+        shape::validate(mixture);
+    } catch (const std::invalid_argument& error) {
+        throw std::runtime_error("\"decoy." + name + "\": " + error.what());
+    }
+    return mixture;
+}
+
 std::string publicAddressFrom(const std::string& text)
 {
     if (text.empty()) {
@@ -125,12 +152,13 @@ Settings Settings::from(const ConfigView& config)
         settings.reseedUrls.push_back(url);
     }
 
-    settings.decoyMinBytes = static_cast<std::size_t>(
-        config.number("decoy.minBytes", static_cast<std::int64_t>(kDecoyMinBytes)));
-    settings.decoyMaxBytes = static_cast<std::size_t>(
-        config.number("decoy.maxBytes", static_cast<std::int64_t>(kDecoyMaxBytes)));
-    if (settings.decoyMinBytes == 0 || settings.decoyMinBytes > settings.decoyMaxBytes) {
-        throw std::runtime_error("\"decoy.minBytes\" and \"decoy.maxBytes\" name a range");
+    if (const auto decoy = config.document().find("decoy"); decoy != config.document().end()) {
+        if (const auto page = decoy->find("page"); page != decoy->end()) {
+            settings.decoyPage = decoyMixtureFrom(*page, "page");
+        }
+        if (const auto resource = decoy->find("resource"); resource != decoy->end()) {
+            settings.decoyResource = decoyMixtureFrom(*resource, "resource");
+        }
     }
 
     for (const std::string& fingerprint : config.list("operators")) {

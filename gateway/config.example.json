@@ -9,7 +9,10 @@
 
     "reseed": [],
 
-    "decoy": { "minBytes": 1024, "maxBytes": 262144 },
+    "decoy": {
+        "page": { "maxBytes": 1048576, "parts": [ { "weight": 1, "medianBytes": 30720, "sigma": 1.0 } ] },
+        "resource": { "maxBytes": 1048576, "parts": [ { "weight": 1, "medianBytes": 15360, "sigma": 1.5 } ] }
+    },
 
     "direct": [],
 

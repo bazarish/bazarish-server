@@ -36,10 +36,6 @@ i2p::RouterConfig borrowedFrom(const int port, const std::string& fingerprint)
     config.gatewayPath = kPath;
     config.gatewayFingerprint = fingerprint;
     config.gatewayTls = false;
-    config.gatewayControlMinLife = std::chrono::seconds(600);
-    config.gatewayControlMaxLife = std::chrono::seconds(600);
-    config.gatewayDecoyMin = std::chrono::milliseconds(600000);
-    config.gatewayDecoyMax = std::chrono::milliseconds(600000);
     return config;
 }
 

@@ -7,7 +7,7 @@ namespace bazarish::server {
 
 void EventGate::notify(const std::string& user)
 {
-    std::vector<std::weak_ptr<boost::asio::steady_timer>> woken;
+    std::vector<Waiter> woken;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
         const auto found = waiters_.find(user);
@@ -18,8 +18,8 @@ void EventGate::notify(const std::string& user)
         woken.swap(found->second);
         waiters_.erase(found);
     }
-    for (const std::weak_ptr<boost::asio::steady_timer>& held : woken) {
-        if (const std::shared_ptr<boost::asio::steady_timer> timer = held.lock()) {
+    for (const Waiter& held : woken) {
+        if (const std::shared_ptr<boost::asio::steady_timer> timer = held.timer.lock()) {
             timer->cancel();
         }
     }
@@ -33,8 +33,8 @@ void EventGate::forget(
     if (found == waiters_.end()) {
         return;
     }
-    std::erase_if(found->second, [&timer](const std::weak_ptr<boost::asio::steady_timer>& held) {
-        const std::shared_ptr<boost::asio::steady_timer> alive = held.lock();
+    std::erase_if(found->second, [&timer](const Waiter& held) {
+        const std::shared_ptr<boost::asio::steady_timer> alive = held.timer.lock();
         return !alive || alive == timer;
     });
     if (found->second.empty()) {
@@ -48,7 +48,7 @@ std::size_t EventGate::waiting() const
     std::size_t total = 0;
     for (const auto& entry : waiters_) {
         total += static_cast<std::size_t>(std::count_if(entry.second.begin(), entry.second.end(),
-            [](const std::weak_ptr<boost::asio::steady_timer>& held) { return !held.expired(); }));
+            [](const Waiter& held) { return !held.timer.expired(); }));
     }
     return total;
 }

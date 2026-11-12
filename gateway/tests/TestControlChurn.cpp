@@ -6,6 +6,7 @@
 
 #include <bazarish/I2p.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <string>
@@ -21,6 +22,8 @@ constexpr const char* kPath = "/7c1e93b52fa8";
 constexpr int kWaitSeconds = 60;
 constexpr std::size_t kPieceBytes = 32 * 1024;
 constexpr int kRounds = 8;
+// A move drops the control socket and every flow socket; the session must carry the stream over.
+constexpr std::chrono::milliseconds kMoveEvery{1500};
 
 i2p::RouterConfig borrowedFrom(const int port, const std::string& fingerprint)
 {
@@ -31,11 +34,6 @@ i2p::RouterConfig borrowedFrom(const int port, const std::string& fingerprint)
     config.gatewayPath = kPath;
     config.gatewayFingerprint = fingerprint;
     config.gatewayTls = false;
-    config.gatewayDecoyMin = std::chrono::milliseconds(300);
-    config.gatewayDecoyMax = std::chrono::milliseconds(600);
-    config.gatewayControlMinLife = std::chrono::seconds(1);
-    config.gatewayControlMaxLife = std::chrono::seconds(2);
-    config.gatewayControlMaxGap = std::chrono::seconds(1);
     return config;
 }
 
@@ -52,8 +50,6 @@ int main()
     settings.listenPort = 0;
     settings.basePath = kPath;
     settings.stateDir = root / "state";
-    settings.decoyMinBytes = 512;
-    settings.decoyMaxBytes = 2048;
     settings.notFoundBody = "<html>nothing</html>";
 
     i2p::Router engine(i2p::offlineRouter(root / "i2p"));
@@ -85,6 +81,14 @@ int main()
         = hers->accept(caller, std::chrono::seconds(kWaitSeconds));
     CHECK(in != nullptr);
 
+    std::atomic<bool> moving{true};
+    std::thread mover([&moving]() {
+        while (moving.load()) {
+            std::this_thread::sleep_for(kMoveEvery);
+            i2p::networkChanged();
+        }
+    });
+
     std::string sent;
     for (int round = 0; round < kRounds; ++round) {
         std::string piece;
@@ -114,6 +118,8 @@ int main()
             gateway.refusals(), gateway.sockets());
         std::fflush(stdout);
     }
+    moving.store(false);
+    mover.join();
     CHECK(got.size() == sent.size());
     CHECK(got == sent);
 

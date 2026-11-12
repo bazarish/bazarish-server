@@ -67,6 +67,9 @@ std::string readAll(i2p::Stream& stream, const std::size_t expected)
 
 int main()
 {
+    // Routing and tunnel counts reach a client only while it is active.
+    i2p::windowActive(true);
+    i2p::userActed();
     const std::filesystem::path root
         = testutil::freshDir("gateway-meeting-test");
     std::filesystem::create_directories(root);

@@ -8,6 +8,7 @@
 #include <bazarish/I2p.hpp>
 #include <bazarish/Tls.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
@@ -27,6 +28,7 @@ constexpr int kWaitSeconds = 20;
 constexpr int kRequests = 30;
 constexpr int kLongestAnswerDelayMs = 1500;
 constexpr std::size_t kAnswerBytes = 3000;
+constexpr std::chrono::milliseconds kMoveEvery{1500};
 
 }  // namespace
 
@@ -77,15 +79,20 @@ int main()
     config.gatewayPath = kPath;
     config.gatewayFingerprint = gateway.fingerprint();
     config.gatewayTls = false;
-    config.gatewayControlMinLife = std::chrono::seconds(1);
-    config.gatewayControlMaxLife = std::chrono::seconds(1);
-    config.gatewayControlMaxGap = std::chrono::seconds(1);
     i2p::Router client(config);
     client.start();
 
     i2p::EndpointConfig dialling;
     dialling.published = false;
     const std::shared_ptr<i2p::Endpoint> link = client.createEndpoint(dialling);
+
+    std::atomic<bool> moving{true};
+    std::thread mover([&moving]() {
+        while (moving.load()) {
+            std::this_thread::sleep_for(kMoveEvery);
+            i2p::networkChanged();
+        }
+    });
 
     int whole = 0;
     for (int request = 0; request < kRequests; ++request) {
@@ -110,6 +117,8 @@ int main()
         }
         whole += heard.find(std::string(kAnswerBytes, 'z')) != std::string::npos ? 1 : 0;
     }
+    moving.store(false);
+    mover.join();
     std::printf("%d of %d answers whole, %zu rejoins\n", whole, kRequests, gateway.rejoins());
     CHECK(whole == kRequests);
     CHECK(gateway.rejoins() >= 2);

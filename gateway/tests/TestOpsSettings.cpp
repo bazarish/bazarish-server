@@ -93,6 +93,9 @@ http::ClientResponse askOps(const int port, const std::string& pin, const std::s
 
 int main()
 {
+    // Routing and tunnel counts reach a client only while it is active.
+    i2p::windowActive(true);
+    i2p::userActed();
     const std::filesystem::path root
         = testutil::freshDir("gateway-ops-test");
     std::filesystem::create_directories(root);

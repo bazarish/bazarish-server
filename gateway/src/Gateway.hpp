@@ -55,6 +55,7 @@ public:
     std::size_t rejoins() const { return rejoins_.load(); }
     std::size_t refusals() const { return refused_.load(); }
     std::size_t dials() const { return dials_.load(); }
+    std::size_t decoys() const { return decoys_.load(); }
     std::string fingerprint() const { return identity_.fingerprint(); }
     std::size_t pooled() const;
     void lapseDelegations(std::int64_t now);
@@ -62,7 +63,7 @@ public:
 private:
     http::Response notFound() const;
     bool admitted(const http::Request& request) const;
-    http::Response decoy() const;
+    http::Response decoy(const http::Request& request) const;
     std::optional<http::Response> operatorRefusal(const http::Request& request) const;
     http::Response health(const http::Request& request) const;
     http::Response settingsShown(const http::Request& request) const;
@@ -73,6 +74,7 @@ private:
     void rawOpened(const http::SocketPtr& raw);
     void rawMessage(const http::SocketPtr& raw, const std::vector<unsigned char>& message);
     void rawClosed(const http::SocketPtr& raw);
+    void noteFlags(const http::SocketPtr& raw, std::uint8_t flags);
     void handshake(const http::SocketPtr& raw, const Bytes& message);
     void establish(const http::SocketPtr& raw, std::shared_ptr<gateway::Records> records,
         const std::shared_ptr<Session>& session, bool resumed);
@@ -175,6 +177,7 @@ private:
     const Key sealing_;
     const Bytes card_;
     const gateway::Cover cover_;
+    mutable shape::SystemRandom random_;
     http::Server server_;
     std::unique_ptr<http::Server> ops_;
     std::unique_ptr<server::LogFeed> logFeed_;
@@ -205,6 +208,7 @@ private:
     std::atomic<std::size_t> rejoins_{0};
     std::atomic<std::size_t> refused_{0};
     std::atomic<std::size_t> dials_{0};
+    mutable std::atomic<std::size_t> decoys_{0};
     std::mutex dialMutex_;
     std::condition_variable dialDone_;
     struct DialThread {

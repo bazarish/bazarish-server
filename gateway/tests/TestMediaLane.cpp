@@ -42,10 +42,6 @@ i2p::RouterConfig borrowedFrom(const int port, const std::string& fingerprint)
     config.gatewayPath = kPath;
     config.gatewayFingerprint = fingerprint;
     config.gatewayTls = false;
-    config.gatewayControlMinLife = std::chrono::seconds(600);
-    config.gatewayControlMaxLife = std::chrono::seconds(600);
-    config.gatewayDecoyMin = std::chrono::milliseconds(600000);
-    config.gatewayDecoyMax = std::chrono::milliseconds(600000);
     return config;
 }
 
@@ -103,6 +99,9 @@ bool noneOfSizeWithin(i2p::Endpoint& to, const std::size_t size, const std::chro
 
 int main()
 {
+    // Routing and tunnel counts reach a client only while it is active.
+    i2p::windowActive(true);
+    i2p::userActed();
     const std::filesystem::path root
         = testutil::freshDir("gateway-media-lane-test");
     std::filesystem::create_directories(root);

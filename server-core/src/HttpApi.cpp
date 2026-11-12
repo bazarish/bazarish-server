@@ -25,7 +25,6 @@
 
 #include <nlohmann/json.hpp>
 
-#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <set>
@@ -43,7 +42,8 @@ using bazarish::ErrorCode;
 
 constexpr std::size_t kReseedRouters = 60;
 constexpr std::int64_t kReseedRefreshSeconds = 3600;
-constexpr int kMaxEventWaitSeconds = 30;
+constexpr char kHoldKey[] = "hold";
+constexpr char kHoldValue[] = "1";
 
 using bazarish::nowSeconds;
 
@@ -437,16 +437,10 @@ void HttpApi::setupRoutes()
             if (!waiting.empty()) {
                 return jsonResponse({{"pending", waiting}});
             }
-            int wait = kMaxEventWaitSeconds;
-            const std::string asked = request.query("wait");
-            if (!asked.empty()) {
-                try {
-                    wait = std::clamp(std::stoi(asked), 0, kMaxEventWaitSeconds);
-                } catch (const std::exception& error) {
-                    bazarish::log::debug("bad wait '{}': {}", asked, error.what());
-                }
+            if (request.query(kHoldKey) != kHoldValue) {
+                return jsonResponse({{"pending", waiting}});
             }
-            eventGate_.wait(http_->executor(), user, std::chrono::seconds(wait),
+            eventGate_.wait(http_->executor(), user, clientId,
                 [&store, user, clientId, respond]() {
                     nlohmann::json items = nlohmann::json::array();
                     try {

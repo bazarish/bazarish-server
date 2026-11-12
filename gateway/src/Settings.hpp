@@ -8,6 +8,7 @@
 #include <bazarish/ConfigFile.hpp>
 #include <bazarish/I2p.hpp>
 #include <bazarish/Log.hpp>
+#include <bazarish/TrafficShape.hpp>
 
 #include <cstddef>
 #include <filesystem>
@@ -22,6 +23,18 @@ inline constexpr std::size_t kDefaultCallPool = 2;
 inline constexpr std::size_t kDefaultWatchPool = 2;
 inline constexpr std::size_t kMaxPoolDepth = 16;
 
+// Starting values from SURGE (Barford and Crovella, 1998), not fitted to a capture.
+inline constexpr double kDecoyPageMedianBytes = 30 * 1024;
+inline constexpr double kDecoyPageSigma = 1.0;
+inline constexpr double kDecoyResourceMedianBytes = 15 * 1024;
+inline constexpr double kDecoyResourceSigma = 1.5;
+inline constexpr double kDecoyMinBytes = 1;
+inline constexpr double kDecoyMaxBytes = 1024 * 1024;
+
+shape::LogNormalMixture defaultDecoyPage();
+shape::LogNormalMixture defaultDecoyResource();
+shape::LogNormalMixture decoyMixtureFrom(const nlohmann::json& item, const std::string& name);
+
 struct Settings {
     std::string listenHost = "127.0.0.1";
     int listenPort = 0;
@@ -30,8 +43,8 @@ struct Settings {
     std::string publicAddress;
     std::filesystem::path stateDir;
     std::vector<std::string> reseedUrls;
-    std::size_t decoyMinBytes = kDecoyMinBytes;
-    std::size_t decoyMaxBytes = kDecoyMaxBytes;
+    shape::LogNormalMixture decoyPage = defaultDecoyPage();
+    shape::LogNormalMixture decoyResource = defaultDecoyResource();
     std::string notFoundBody;
     std::string serverName = "nginx";
     std::vector<std::string> operators;

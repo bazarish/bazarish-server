@@ -95,6 +95,8 @@ private:
         const http::SocketPtr& socket, const Frame& frame);
     void onEndpointStop(const std::shared_ptr<Session>& session, const http::SocketPtr& socket,
         const Frame& frame);
+    void onLeaseSetRefresh(const std::shared_ptr<Session>& session,
+        const http::SocketPtr& socket, const Frame& frame);
     void onStreamOpen(const std::shared_ptr<Session>& session, const http::SocketPtr& socket,
         const Frame& frame);
     void onStreamData(const std::shared_ptr<Session>& session, const http::SocketPtr& socket,

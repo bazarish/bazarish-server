@@ -392,6 +392,7 @@ endpoint's identifier is the `ref` of its `endpoint-create`.
 | 0x13 | `endpoint-lost` | gateway | endpoint | `{}`: the gateway stopped it |
 | 0x14 | `endpoint-renew` | gateway | endpoint | `{"expires": n}`: a presence delegation ends at n, send the next one |
 | 0x15 | `endpoint-delegate` | client | endpoint | `{"keys": "<i2p base64>"}`: the next delegation of a presence address |
+| 0x16 | `lease-set-refresh` | client | request | `{"endpoint": n, "host": "..."}`: look the host's lease set up again from that destination, answered `ok` with `{"before": {...}, "after": {...}}` |
 | 0x20 | `stream-open` | client | stream | `{"endpoint": n, "host": "...", "deadline": 60}` |
 | 0x21 | `stream-opened` | gateway | stream | `{}` |
 | 0x22 | `stream-inbound` | gateway | stream | `{"endpoint": n, "peer": "<base64>"}` |
@@ -542,6 +543,18 @@ fixed: a realtime `raw` destination carries a call's media
 and is always built with one hop each way, because a voice that waits for three
 hops is a voice that arrives late. Presence is `raw` and not realtime, and is
 built on the gateway's settings.
+
+### Looking a lease set up again
+
+`lease-set-refresh` drops what the client's destination holds of the host's
+lease set and asks the netDb for it again from the gateway's router, in a thread
+of its own; the answer comes when the netDb answers. `ok` carries `before` (what
+the destination held) and `after` (what came back), each `null` or
+`{"published": s, "expires": s}` in Unix seconds as the lease set states them.
+A destination the session does not hold is `error` `no-endpoint`; a lookup that
+fails is `error` `unreachable`. A client sends it after a delivery that got no
+answer and when something arrives from that recipient, to learn whether the
+recipient has published a newer lease set (`docs-main/api/Federation.md`).
 
 ### Warm pools
 
@@ -843,6 +856,7 @@ operator of both already had.
 | `netDbSample` | false | A slice of the netDb is what a server packs into a private reseed. A client never asks for one |
 | `proxy` | false | The gateway's clearnet side is its operator's configuration, not a client's |
 | `offlineKeys` | false | `refreshOfflineSignature` throws. No client destination is offline-keyed: the one that is belongs to the server and is never operated here |
+| `leaseSetRefresh` | true | `lease-set-refresh`, above: the lookup runs on the gateway's router, from the client's own destination |
 
 ## The status panel
 

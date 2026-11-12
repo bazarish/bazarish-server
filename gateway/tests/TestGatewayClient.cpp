@@ -194,6 +194,13 @@ int main()
     }
     CHECK(proxyRefused);
 
+    CHECK(what.leaseSetRefresh);
+    const std::string stranger = i2p::routingHost(i2p::Keys::generate().publicBase64());
+    const i2p::LeaseSetRefresh lookedUp = borrowed.refreshLeaseSet(host, stranger);
+    CHECK(!lookedUp.before.has_value());
+    CHECK(!lookedUp.after.has_value());
+    CHECK_THROWS(borrowed.refreshLeaseSet(stranger, host));
+
     const std::vector<i2p::LocalDestination> seen = borrowed.localDestinations();
     CHECK(seen.size() == 1);
     CHECK(seen.front().host == host);

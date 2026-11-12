@@ -844,6 +844,7 @@ void Gateway::onFrame(const http::SocketPtr& socket, const Frame& frame)
         case FrameType::eEndpointCreate: onEndpointCreate(session, socket, frame); return;
         case FrameType::eEndpointStop: onEndpointStop(session, socket, frame); return;
         case FrameType::eEndpointDelegate: onEndpointDelegate(session, socket, frame); return;
+        case FrameType::eLeaseSetRefresh: onLeaseSetRefresh(session, socket, frame); return;
         case FrameType::eStreamOpen: onStreamOpen(session, socket, frame); return;
         case FrameType::eStreamData: onStreamData(session, socket, frame); return;
         case FrameType::eStreamCredit: onStreamCredit(session, socket, frame); return;
@@ -1174,6 +1175,59 @@ void Gateway::onEndpointDelegate(const std::shared_ptr<Session>& session,
         entry->delegationAskedAt = 0;
     }
     socket->send(encode(FrameType::eOk, frame.ref));
+}
+
+void Gateway::onLeaseSetRefresh(const std::shared_ptr<Session>& session,
+    const http::SocketPtr& socket, const Frame& frame)
+{
+    const nlohmann::json body = bodyJson(frame);
+    const std::string host = body.value("host", std::string());
+    if (host.empty()) {
+        fail(socket, frame.ref, Fault::eBadFrame, "a lease set lookup names a host");
+        return;
+    }
+    std::shared_ptr<i2p::Endpoint> endpoint;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        const std::shared_ptr<EndpointEntry> entry
+            = endpointOf(*session, body.value("endpoint", 0U));
+        if (entry != nullptr) {
+            endpoint = entry->endpoint;
+        }
+    }
+    if (endpoint == nullptr) {
+        fail(socket, frame.ref, Fault::eNoEndpoint, "no such destination on this session");
+        return;
+    }
+    reapDials(false);
+    try {
+        const std::shared_ptr<std::atomic<bool>> done = std::make_shared<std::atomic<bool>>(false);
+        std::thread looking([this, session, endpoint, host, ref = frame.ref, socket, done]() {
+            Bytes answer;
+            try {
+                answer = encodeJson(FrameType::eOk, ref,
+                    leaseSetRefreshJson(router_.refreshLeaseSet(endpoint->routingHost(), host)));
+            } catch (const std::exception& error) {
+                bazarish::log::debug("a lease set lookup failed: {}", error.what());
+                answer = encodeJson(FrameType::eError, ref,
+                    {{"code", faultName(Fault::eUnreachable)}, {"message", error.what()}});
+            }
+            http::SocketPtr out;
+            {
+                const std::lock_guard<std::mutex> lock(mutex_);
+                out = answerOn(*session, socket);
+            }
+            if (out) {
+                out->send(answer);
+            }
+            done->store(true);
+        });
+        const std::lock_guard<std::mutex> lock(dialMutex_);
+        dialThreads_.push_back(DialThread{std::move(looking), done});
+    } catch (const std::system_error& error) {
+        bazarish::log::warn("no thread for a lease set lookup: {}", error.what());
+        fail(socket, frame.ref, Fault::eRefused, "the gateway has no room for another lookup");
+    }
 }
 
 void Gateway::lapseDelegations(const std::int64_t now)

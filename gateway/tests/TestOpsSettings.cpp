@@ -167,7 +167,11 @@ int main()
              nlohmann::json{{"i2pPrivacy", "short"}}, nlohmann::json{{"logLevel", "loud"}},
              nlohmann::json{{"i2pLogLevel", "warning"}},
              nlohmann::json{{"i2pPrivacy", "max"},
-                 {"direct", {{{"dest", kServerDest}, {"host", "127.0.0.1"}, {"port", 1}}}}}}) {
+                 {"direct", {{{"dest", kServerDest}, {"host", "127.0.0.1"}, {"port", 1}}}}},
+             nlohmann::json{{"direct", {{{"dest", kServerDest}, {"host", "127.0.0.1"},
+                 {"port", 1}, {"pin", "ab12"}, {"weight", 1}}}}},
+             nlohmann::json{{"server", {{"host", "127.0.0.1"}, {"port", 1}, {"pin", "ab12"},
+                 {"token", "t"}}}}}) {
         CHECK(askOps(settings.opsPort, pin, "PUT", "/settings", &operatorIdentity, wrong.dump())
                   .status
             == 400);

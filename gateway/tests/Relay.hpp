@@ -11,6 +11,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <utility>
@@ -25,6 +26,8 @@ constexpr int kRelayBacklog = 16;
 
 class Relay {
 public:
+    enum class Direction { eUp, eDown };
+
     explicit Relay(const int to)
         : to_(to)
     {
@@ -79,6 +82,14 @@ public:
 
     void stall(const bool holding) { stalling_.store(holding); }
 
+    std::size_t carried(const std::size_t which, const Direction direction) const
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        CHECK(which < counts_.size());
+        const Counts& counts = *counts_[which];
+        return (direction == Direction::eUp ? counts.up : counts.down).load();
+    }
+
     void cut(const std::size_t which)
     {
         const std::lock_guard<std::mutex> lock(mutex_);
@@ -88,6 +99,11 @@ public:
     }
 
 private:
+    struct Counts {
+        std::atomic<std::size_t> up{0};
+        std::atomic<std::size_t> down{0};
+    };
+
     void cutAll()
     {
         const std::lock_guard<std::mutex> lock(mutex_);
@@ -119,16 +135,18 @@ private:
                 ::close(out);
                 continue;
             }
+            const std::shared_ptr<Counts> counts = std::make_shared<Counts>();
             {
                 const std::lock_guard<std::mutex> lock(mutex_);
                 pairs_.emplace_back(in, out);
+                counts_.push_back(counts);
             }
-            pumps_.emplace_back([this, in, out]() { pump(in, out, false); });
-            pumps_.emplace_back([this, in, out]() { pump(out, in, true); });
+            pumps_.emplace_back([this, in, out, counts]() { pump(in, out, false, counts->up); });
+            pumps_.emplace_back([this, in, out, counts]() { pump(out, in, true, counts->down); });
         }
     }
 
-    void pump(const int from, const int to, const bool stallable)
+    void pump(const int from, const int to, const bool stallable, std::atomic<std::size_t>& count)
     {
         std::vector<char> buffer(kRelayBufferBytes);
         for (;;) {
@@ -140,6 +158,7 @@ private:
             while (stallable && stalling_.load() && running_.load()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
+            count.fetch_add(static_cast<std::size_t>(got));
             ssize_t sent = 0;
             while (sent < got) {
                 const ssize_t wrote = ::send(to, buffer.data() + sent,
@@ -163,6 +182,7 @@ private:
     std::vector<std::thread> pumps_;
     mutable std::mutex mutex_;
     std::vector<std::pair<int, int>> pairs_;
+    std::vector<std::shared_ptr<Counts>> counts_;
 };
 
 }  // namespace

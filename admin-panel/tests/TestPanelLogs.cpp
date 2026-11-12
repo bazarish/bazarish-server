@@ -37,7 +37,6 @@ namespace {
 namespace http = bazarish::http;
 
 constexpr const char* kChallengeField = "name=\"challenge\" value=\"";
-constexpr const char* kOwnOrigin = "http://127.0.0.1";
 constexpr std::chrono::milliseconds kFakeHold{50};
 // A refused handshake keeps the dialing loop until this runs out.
 constexpr std::chrono::seconds kRefusedDial{1};
@@ -168,6 +167,11 @@ private:
     std::atomic<bool> closed_{false};
 };
 
+std::string ownOrigin(const int port)
+{
+    return "http://127.0.0.1:" + std::to_string(port);
+}
+
 std::shared_ptr<Window> dial(const int port, const std::string& query, const std::string& cookie,
     const std::string& origin)
 {
@@ -181,9 +185,7 @@ std::shared_ptr<Window> dial(const int port, const std::string& query, const std
     if (!cookie.empty()) {
         target.headers["Cookie"] = "adminsession=" + cookie;
     }
-    if (!origin.empty()) {
-        target.headers["Origin"] = origin;
-    }
+    target.headers["Origin"] = origin;
     const http::SocketDialResult dialed = http::openSocket(
         target,
         [window](const http::SocketPtr&, const std::vector<unsigned char>& message) {
@@ -298,14 +300,14 @@ int main()
         CHECK(pageStatus(port, std::string()) == kSeeOther);
         CHECK(pageStatus(port, cookie) == kOk);
 
-        CHECK(dial(port, coreQuery, std::string(), kOwnOrigin)->socket == nullptr);
-        CHECK(dial(port, coreQuery, "not-a-session", kOwnOrigin)->socket == nullptr);
+        CHECK(dial(port, coreQuery, std::string(), ownOrigin(port))->socket == nullptr);
+        CHECK(dial(port, coreQuery, "not-a-session", ownOrigin(port))->socket == nullptr);
         CHECK(dial(port, coreQuery, cookie, "http://elsewhere.example")->socket == nullptr);
         CHECK(dial(port, coreQuery, cookie, std::string())->socket == nullptr);
-        CHECK(dial(port, "service=nobody", cookie, kOwnOrigin)->socket == nullptr);
-        CHECK(dial(port, coreQuery + "&after=2", cookie, kOwnOrigin)->socket == nullptr);
+        CHECK(dial(port, "service=nobody", cookie, ownOrigin(port))->socket == nullptr);
+        CHECK(dial(port, coreQuery + "&after=2", cookie, ownOrigin(port))->socket == nullptr);
 
-        const std::shared_ptr<Window> watching = dial(port, coreQuery, cookie, kOwnOrigin);
+        const std::shared_ptr<Window> watching = dial(port, coreQuery, cookie, ownOrigin(port));
         CHECK(watching->socket != nullptr);
         CHECK(testutil::waitFor([&]() { return watching->hasText("core two"); }));
         const nlohmann::json opening = watching->frames().front();
@@ -326,12 +328,12 @@ int main()
         CHECK(watching->frames().back().at("lines")[0].at("seq") == 1);
 
         const std::shared_ptr<Window> edgeWindow
-            = dial(port, "service=edge", cookie, kOwnOrigin);
+            = dial(port, "service=edge", cookie, ownOrigin(port));
         CHECK(testutil::waitFor([&]() { return edgeWindow->hasText("edge one"); }));
         edgeWindow->close();
 
         const std::shared_ptr<Window> resumed = dial(
-            port, coreQuery + "&after=1&instance=second-run", cookie, kOwnOrigin);
+            port, coreQuery + "&after=1&instance=second-run", cookie, ownOrigin(port));
         coreLog.add("core resumed");
         CHECK(testutil::waitFor([&]() { return resumed->hasText("core resumed"); }));
         CHECK(!resumed->hasText("core after restart"));
@@ -344,7 +346,7 @@ int main()
         settings->set(initial);
 
         coreLog.fail(true);
-        const std::shared_ptr<Window> failing = dial(port, coreQuery, cookie, kOwnOrigin);
+        const std::shared_ptr<Window> failing = dial(port, coreQuery, cookie, ownOrigin(port));
         CHECK(testutil::waitFor([&]() { return failing->closed(); }));
         CHECK(failing->errorFrame().has_value());
         CHECK(failing->errorFrame()->at("message") == "the log is gone");
@@ -353,11 +355,11 @@ int main()
         CHECK(testutil::waitFor([&]() { return api.logWindowsOpen() == 0; }));
         std::vector<std::shared_ptr<Window>> many;
         for (std::size_t i = 0; i < kMaxLogWindows; ++i) {
-            many.push_back(dial(port, coreQuery, cookie, kOwnOrigin));
+            many.push_back(dial(port, coreQuery, cookie, ownOrigin(port)));
             CHECK(many.back()->socket != nullptr);
         }
         CHECK(testutil::waitFor([&]() { return api.logWindowsOpen() == kMaxLogWindows; }));
-        const std::shared_ptr<Window> oneTooMany = dial(port, coreQuery, cookie, kOwnOrigin);
+        const std::shared_ptr<Window> oneTooMany = dial(port, coreQuery, cookie, ownOrigin(port));
         CHECK(testutil::waitFor([&]() { return oneTooMany->closed(); }));
         CHECK(oneTooMany->errorFrame().has_value());
         CHECK(!oneTooMany->hasText("core one"));

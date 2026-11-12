@@ -86,10 +86,11 @@ the seed never travels. What the operator holds is bounded by the day:
 | | |
 |---|---|
 | Transport | One WebSocket, over `https` or plain `http`, to a host named by a name, an IPv4 address or an `[IPv6]` address. TLS, where there is any, is cover: its certificate is not checked |
+| TLS | The client's handshake is a browser's: Chrome's ClientHello (GREASE, extension order drawn per connection, ECH GREASE, brotli certificate compression, X25519MLKEM768, Trust Anchor IDs). A WebSocket offers ALPN `http/1.1` alone, a decoy connection `h2,http/1.1` with ALPS, as Chrome does; the front answers `http/1.1`, and a client refuses a front that chooses `h2`. Sessions resume per host and port. The certificate is ECDSA or RSA, which Chrome's signature algorithms cover |
 | Frames | Binary only. A text frame closes the socket with 1003 |
 | Server authentication | The gateway's own hybrid key. The link carries its fingerprint, and the gateway proves it in the handshake (The channel, below) |
 | Client authentication | The secret path. A client is given the gateway in one link, `https://bazari.sh/#gateway?v=1&url=<secret URL>&fp=<fingerprint>` |
-| Headers | None of this protocol's own: the upgrade is any upgrade |
+| Headers | None of this protocol's own. The client sends Chrome's upgrade request: its headers, in its order, with a User-Agent of the platform the client runs on |
 | Keepalive | The client pings once it has sent nothing or heard nothing for `kIdleKeepalive`; a ping not answered within `kPongTimeout` ends the socket. The gateway never pings: it answers pings and closes a socket it has heard nothing on for `kSilenceLimit` |
 
 ### Getting in, and not getting in
@@ -145,15 +146,17 @@ than `kMaxPaddedBytes` + 16, the three messages of the handshake included.
 
 ### Padding
 
-Both ends pad every record, on the control socket and on every flow socket. The
-plaintext of a record is:
+Both ends pad every record, on the control socket and on every flow socket, but
+one kind: a datagram (`raw-send`, `raw-recv`) on the socket of a realtime `raw`
+endpoint, which is a call's media, goes with no zeros at all. The plaintext of a
+record is:
 
 | Bytes | Field |
 |---|---|
 | 1 | Flags. Bit 0: the client is active (Cover). The other bits are zero, and the gateway sends zero |
 | 2 | The frame's length, big-endian |
 | that length | The frame |
-| the rest | Zeros |
+| the rest | Zeros; none in a call's media |
 
 A frame that fits, with the three bytes before it, in `kRecordPadCeiling` gets a
 total length drawn from a log-normal of median `kRecordPadMedian` and sigma
@@ -163,14 +166,20 @@ which is stream data, gets its own length and a further log-normal amount of
 median `kBulkPadMedian`, sigma `kBulkPadSigma`, at most `kBulkPadMax`.
 
 Every frame the channel carries while the client is idle - a credit, an
-`endpoint-status`, a datagram of a call, the piece of a mail wait's answer - and
-the request of a held mail wait fit under the floor, so for all of them the
-length of the record has one distribution and tells nothing of the frame inside.
-Above the floor a length says only that the frame is at least that long. The
-spread, 1.5 to 4 KB, is the size of a browser's requests and of small objects
-on one host; the values are starting points from published web traffic models,
-not fitted to a capture. The cost falls on calls: each media frame, a couple of
-hundred bytes, goes out at about 2.3 KB.
+`endpoint-status`, a datagram of a destination that is not a call's, the piece
+of a mail wait's answer - and the request of a held mail wait fit under the
+floor, so for all of them the length of the record has one distribution and
+tells nothing of the frame inside. Above the floor a length says only that the
+frame is at least that long. The spread, 1.5 to 4 KB, is the size of a
+browser's requests and of small objects on one host; the values are starting
+points from published web traffic models, not fitted to a capture.
+
+A call's media is not padded: a voice frame is a couple of hundred bytes,
+several dozen a second, on a socket of its own, and padding would multiply it
+by ten and hide nothing that the rhythm of those records does not show anyway.
+Which records are bare follows from the endpoint the socket was attached to
+(`realtime` in `endpoint-create`); the receiver reads the length either way and
+needs nothing more. Every other frame on that socket is padded.
 
 A keepalive ping carries one byte, the same flags. The gateway keeps the last
 flags a session's client sent in a record or a ping: while they say idle, it
@@ -336,9 +345,12 @@ page and its resources:
   connection of the burst when there is one, and on a new one while fewer than
   `kMaxConnectionsPerHost` are open; every connection of a burst closes when it
   ends.
+- A page is asked as Chrome asks for a page it navigates to, a resource as
+  Chrome asks for an image on that page: their headers, in their order.
 - Every request is `kDecoyRequestMinBytes` to `kDecoyRequestMaxBytes` long,
-  log-normal around `kDecoyRequestMedianBytes`, the filler in a cookie. A decoy
-  carries no credential of any kind and says nothing about who sent it.
+  log-normal around `kDecoyRequestMedianBytes`, the filler in a cookie; a request
+  is never shorter than its headers without the filler. A decoy carries no
+  credential of any kind and says nothing about who sent it.
 
 Between bursts comes a **read pause** from a Pareto distribution (`kReadAlpha`
 from `kReadMin`, at most `kReadMax`). Real traffic during a read pause takes the
@@ -370,8 +382,10 @@ source of random bytes only for whoever already holds its path.
 While idle the client keeps one WebSocket and does nothing to it: no decoys, no
 replacement of the socket, a ping only after `kIdleKeepalive` of silence, and
 `endpoint-status` only when `ready` changes. A dead socket is found when the
-device moves to another network: the client closes its sockets and opens them
-again at once, and the session carries every stream over. The held-open request
+device moves to another network - the platform says so: Android's network
+callback, Qt's `QNetworkInformation` on a desktop, a change of reachability or of
+the transport medium - and otherwise by the keepalive. The client then closes its
+sockets and opens them again at once, and the session carries every stream over. The held-open request
 that waits for mail is an I2P stream on the gateway; it stays held while the
 client has no socket at all, and what arrives meanwhile waits in the stream's
 window until the next attach.

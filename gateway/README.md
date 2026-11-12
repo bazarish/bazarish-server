@@ -31,6 +31,8 @@ the daemon.
 ## Configuring
 
 One file, given with `--config`. `config.example.json` is a starting point.
+These keys are all it reads: a key it does not know, at the top or inside a
+section, stops it at start with an error that names the key.
 
 | Key | What it sets |
 |---|---|
@@ -48,6 +50,7 @@ One file, given with `--config`. `config.example.json` is a starting point.
 | `opsListen` | A TLS socket for the admin panel, answering only the keys in `opsClients`: health, settings and restart. Left out, there is no such socket, and the file is edited by hand |
 | `opsClients` | The keys allowed to open that socket: the panel prints its own |
 | `operators` | Fingerprints allowed to use that socket |
+| `logLevel`, `i2p.logLevel` | The daemon's log level (`error`, `warn`, `info` or `debug`; `info` unless given) and the router's (`none`, `error`, `warn`, `info` or `debug`; `none` unless given) |
 | `serverName` | The `Server` header on the 404 |
 | `notFound` | A file whose contents are that 404. Empty serves nginx's own page |
 
@@ -68,7 +71,11 @@ site belong to the front it listens behind, and that front can be anything - a
 site, a holding page, a `proxy_pass` to somebody else's. TLS is cover only: the
 client does not check the certificate, the channel inside the socket is what
 proves the gateway, so a self-signed certificate or plain `http` on an address
-serves as well.
+serves as well. The certificate's key is ECDSA or RSA: the client's handshake is
+Chrome's, which offers no Ed25519. The front speaks HTTP/1.1 on this host, with
+HTTP/2 off (in nginx no `http2 on` and no `listen ... http2` on its address): a
+client offers `h2` on decoy connections, as Chrome does, and refuses a front that
+chooses it.
 
 ```nginx
 map $http_upgrade $upgrade { default upgrade; "" close; }

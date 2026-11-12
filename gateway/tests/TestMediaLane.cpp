@@ -11,6 +11,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -32,6 +33,8 @@ constexpr std::chrono::milliseconds kRenewalRoundTrip{1000};
 constexpr std::chrono::milliseconds kMediaWithin{3000};
 constexpr std::chrono::milliseconds kMediaProbeEvery{200};
 constexpr std::chrono::milliseconds kOversizeDropped{500};
+constexpr std::size_t kVoiceFrames = 20;
+constexpr std::size_t kHerMediaLane = 1;
 
 i2p::RouterConfig borrowedFrom(const int port, const std::string& fingerprint)
 {
@@ -95,6 +98,34 @@ bool noneOfSizeWithin(i2p::Endpoint& to, const std::size_t size, const std::chro
     return true;
 }
 
+struct Crossed {
+    std::size_t arrived = 0;
+    std::size_t bytes = 0;
+};
+
+Crossed voiceAcross(i2p::Endpoint& from, i2p::Endpoint& to, const Relay& relay,
+    const Relay::Direction direction)
+{
+    const std::string voice = "voice frame";
+    const std::size_t before = relay.carried(kHerMediaLane, direction);
+    Crossed crossed;
+    for (std::size_t i = 0; i < kVoiceFrames; ++i) {
+        from.sendRawDatagram(to.routingHost(), bazarish::viewOf(voice));
+        if (!noneOfSizeWithin(to, voice.size(), kMediaWithin)) {
+            ++crossed.arrived;
+        }
+    }
+    crossed.bytes = relay.carried(kHerMediaLane, direction) - before;
+    return crossed;
+}
+
+bool goesBare(const Crossed& crossed)
+{
+    std::printf("media: %zu datagrams in %zu bytes\n", crossed.arrived, crossed.bytes);
+    return crossed.arrived == kVoiceFrames
+        && crossed.bytes < crossed.arrived * static_cast<std::size_t>(kRecordPadFloor);
+}
+
 }  // namespace
 
 int main()
@@ -136,6 +167,8 @@ int main()
     CHECK(testutil::waitFor([&]() {
         return routedLocally(bob, his->routingHost()) && routedLocally(alice, hers->routingHost());
     }));
+    CHECK(goesBare(voiceAcross(*hers, *his, relay, Relay::Direction::eUp)));
+    CHECK(goesBare(voiceAcross(*his, *hers, relay, Relay::Direction::eDown)));
 
     CHECK_THROWS(his->connect(hers->routingHost(), std::chrono::seconds(1)));
     std::string nobody;

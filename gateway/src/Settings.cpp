@@ -7,9 +7,12 @@
 #include <bazarish/Links.hpp>
 #include <bazarish/PrivateFile.hpp>
 
+#include <algorithm>
+#include <initializer_list>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace bazarish::gateway {
 
@@ -22,6 +25,20 @@ constexpr const char* kNginxNotFound = "<html>\r\n"
                                        "<hr><center>nginx</center>\r\n"
                                        "</body>\r\n"
                                        "</html>\r\n";
+
+using KnownKeys = std::initializer_list<std::string_view>;
+
+constexpr KnownKeys kTopKeys = {"listen", "basePath", "publicAddress", "state", "reseed", "decoy",
+    "operators", "opsListen", "opsClients", "direct", "server", "i2p", "pools",
+    "sessionTtlSeconds", "logLevel", "notFound", "serverName"};
+constexpr KnownKeys kEndpointKeys = {"host", "port"};
+constexpr KnownKeys kI2pKeys = {"privacy", "logLevel"};
+constexpr KnownKeys kPoolKeys = {"stream", "call", "watch"};
+constexpr KnownKeys kDecoyKeys = {"page", "resource"};
+constexpr KnownKeys kMixtureKeys = {"maxBytes", "parts"};
+constexpr KnownKeys kPartKeys = {"weight", "medianBytes", "sigma"};
+constexpr KnownKeys kRouteKeys = {"dest", "host", "port", "pin"};
+constexpr KnownKeys kServerKeys = {"host", "port", "pin"};
 
 constexpr const char* kSecureScheme = "https://";
 constexpr const char* kPlainScheme = "http://";
@@ -38,6 +55,39 @@ std::size_t poolDepth(const ConfigView& config, const std::string& path, const s
     return static_cast<std::size_t>(depth);
 }
 
+void onlyKnownKeys(const nlohmann::json& object, const std::string& where, const KnownKeys known)
+{
+    if (!object.is_object()) {
+        throw std::runtime_error("\"" + where + "\" is an object");
+    }
+    for (const auto& item : object.items()) {
+        if (std::find(known.begin(), known.end(), item.key()) == known.end()) {
+            throw std::runtime_error("unknown config key \"" + where + "." + item.key() + "\"");
+        }
+    }
+}
+
+void onlyKnownSection(const nlohmann::json& document, const std::string& key, const KnownKeys known)
+{
+    if (document.contains(key)) {
+        onlyKnownKeys(document.at(key), key, known);
+    }
+}
+
+void onlyKnownConfig(const nlohmann::json& document)
+{
+    for (const auto& item : document.items()) {
+        if (std::find(kTopKeys.begin(), kTopKeys.end(), item.key()) == kTopKeys.end()) {
+            throw std::runtime_error("unknown config key \"" + item.key() + "\"");
+        }
+    }
+    onlyKnownSection(document, "listen", kEndpointKeys);
+    onlyKnownSection(document, "opsListen", kEndpointKeys);
+    onlyKnownSection(document, "i2p", kI2pKeys);
+    onlyKnownSection(document, "pools", kPoolKeys);
+    onlyKnownSection(document, "decoy", kDecoyKeys);
+}
+
 }  // namespace
 
 shape::LogNormalMixture defaultDecoyPage()
@@ -52,17 +102,20 @@ shape::LogNormalMixture defaultDecoyResource()
 
 shape::LogNormalMixture decoyMixtureFrom(const nlohmann::json& item, const std::string& name)
 {
+    const std::string where = "decoy." + name;
+    onlyKnownKeys(item, where, kMixtureKeys);
     shape::LogNormalMixture mixture;
     mixture.min = kDecoyMinBytes;
     mixture.max = item.at("maxBytes").get<double>();
     for (const nlohmann::json& part : item.at("parts")) {
+        onlyKnownKeys(part, where + ".parts", kPartKeys);
         mixture.parts.push_back({part.at("weight").get<double>(),
             part.at("medianBytes").get<double>(), part.at("sigma").get<double>()});
     }
     try {
         shape::validate(mixture);
     } catch (const std::invalid_argument& error) {
-        throw std::runtime_error("\"decoy." + name + "\": " + error.what());
+        throw std::runtime_error("\"" + where + "\": " + error.what());
     }
     return mixture;
 }
@@ -95,8 +148,12 @@ std::string clientLink(const Settings& settings, const std::string& fingerprint)
 
 std::vector<DirectRoute> directRoutesFrom(const nlohmann::json& list)
 {
+    if (!list.is_array()) {
+        throw std::runtime_error("\"direct\" is a list");
+    }
     std::vector<DirectRoute> routes;
     for (const nlohmann::json& item : list) {
+        onlyKnownKeys(item, "direct", kRouteKeys);
         DirectRoute route;
         route.dest = item.value("dest", std::string());
         route.host = item.value("host", std::string());
@@ -116,6 +173,7 @@ std::optional<ServerLink> serverLinkFrom(const nlohmann::json& link)
     if (link.is_null()) {
         return std::nullopt;
     }
+    onlyKnownKeys(link, "server", kServerKeys);
     ServerLink server;
     server.host = link.value("host", std::string());
     server.port = link.value("port", 0);
@@ -128,6 +186,7 @@ std::optional<ServerLink> serverLinkFrom(const nlohmann::json& link)
 
 Settings Settings::from(const ConfigView& config)
 {
+    onlyKnownConfig(config.document());
     Settings settings;
     const std::optional<ConfigView::Endpoint> listen = config.endpoint("listen");
     if (listen.has_value()) {

@@ -55,6 +55,8 @@ bazarish_server_test(TestLostFrame bazarish_gateway_lib)
 bazarish_server_test(TestLostDest bazarish_gateway_lib)
 bazarish_server_test(TestSessions bazarish_gateway_lib)
 bazarish_server_test(TestSettings bazarish_gateway_lib)
+target_compile_definitions(TestSettings
+    PRIVATE BAZARISH_GATEWAY_EXAMPLE="${CMAKE_CURRENT_SOURCE_DIR}/config.example.json")
 bazarish_server_test(TestOpsSettings bazarish_gateway_lib)
 bazarish_server_test(TestDirectRoute bazarish_gateway_lib)
 bazarish_server_test(TestStopWhileWriting bazarish_gateway_lib)

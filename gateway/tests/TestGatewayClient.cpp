@@ -79,10 +79,11 @@ int main()
     {
         http::KeptConnection decoys(dialFor(port));
         CHECK(decoys.connected());
-        const http::KeptAnswer reached = decoys.get(kPath, {});
+        const http::KeptAnswer reached = decoys.get(kPath, http::Fetch::eDocument, {});
         CHECK(reached.reached);
         CHECK(reached.status == 200);
-        const http::KeptAnswer refused = decoys.get(std::string(kPath) + "/elsewhere", {});
+        const http::KeptAnswer refused = decoys.get(
+            std::string(kPath) + "/elsewhere", http::Fetch::eImage, {});
         CHECK(refused.reached);
         CHECK(refused.status == 404);
     }

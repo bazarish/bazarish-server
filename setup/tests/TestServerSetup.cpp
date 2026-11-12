@@ -20,7 +20,7 @@ namespace {
 
 namespace fs = std::filesystem;
 
-constexpr const char* kGatewayToken = "token-the-operator-handed-out";
+constexpr const char* kGatewayPath = "/path-the-operator-handed-out";
 constexpr const char* kOtherPanelFingerprint = "another-panel-administers-this-gateway";
 constexpr const char* kOtherPanelPin = "another-panel-key";
 constexpr int kOtherOpsPort = 9439;
@@ -34,7 +34,7 @@ void writeGateway(
     const bazarish::setup::Layout& layout, nlohmann::json extra = nlohmann::json::object())
 {
     fs::create_directories(layout.configDir);
-    extra.update({{"basePath", "/secret"}, {"token", kGatewayToken},
+    extra.update({{"basePath", kGatewayPath},
         {"state", (layout.stateDir / "gateway").string()}});
     bazarish::writePrivateFile(layout.configDir / "gateway.json", extra.dump());
 }
@@ -106,7 +106,7 @@ int main()
         CHECK(operated->at("operators") == nlohmann::json::array({panelFingerprint}));
         CHECK(operated->at("opsClients") == nlohmann::json::array({panelPin}));
     }
-    CHECK(gateway.at("token") == kGatewayToken);
+    CHECK(gateway.at("basePath") == kGatewayPath);
 
     CHECK(panel.at("assets") == "/assets/panel");
     CHECK(!panel.contains("admin"));

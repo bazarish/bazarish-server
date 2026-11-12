@@ -129,6 +129,15 @@ void readLeaseSetAuth(const nlohmann::json& body, i2p::EndpointConfig& config)
     }
 }
 
+gateway::ChannelSocket& channelOf(const http::SocketPtr& socket)
+{
+    const auto channel = std::dynamic_pointer_cast<gateway::ChannelSocket>(socket);
+    if (channel == nullptr) {
+        throw std::logic_error("a session's socket is a channel");
+    }
+    return *channel;
+}
+
 }  // namespace
 
 Gateway::Gateway(Settings settings, i2p::Router& router, OpsControl control)
@@ -2058,6 +2067,9 @@ void Gateway::onAttach(const http::SocketPtr& socket, const Frame& frame)
     if (endpoint == nullptr) {
         fail(socket, frame.ref, Fault::eUnknownId, "no such destination on this session");
         return;
+    }
+    if (endpoint->raw && endpoint->realtime) {
+        channelOf(socket).carryMedia();
     }
     socket->send(encodeJson(FrameType::eOk, frame.ref, nlohmann::json::object()));
 }

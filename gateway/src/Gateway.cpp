@@ -138,6 +138,14 @@ gateway::ChannelSocket& channelOf(const http::SocketPtr& socket)
     return *channel;
 }
 
+void refuse(const http::SocketPtr& socket, const std::string& why)
+{
+    if (socket->open()) {
+        bazarish::log::warn("a client's socket is closed: {}", why);
+    }
+    socket->close();
+}
+
 }  // namespace
 
 Gateway::Gateway(Settings settings, i2p::Router& router, OpsControl control)
@@ -537,8 +545,7 @@ void Gateway::rawMessage(const http::SocketPtr& raw, const std::vector<unsigned 
     const std::optional<gateway::RecordBody> opened
         = channel->openRecord(Bytes(message.begin(), message.end()));
     if (!opened.has_value()) {
-        bazarish::log::debug("a record that does not open; the socket is closed");
-        raw->close();
+        refuse(raw, "a record that does not open");
         return;
     }
     noteFlags(raw, opened->flags);
@@ -628,7 +635,7 @@ void Gateway::handshake(const http::SocketPtr& raw, const Bytes& message)
     }
     if (!again) {
         ++refused_;
-        raw->close();
+        refuse(raw, "an opening that is neither a hello nor a join");
         return;
     }
     const Bytes refused = gateway::refusedJoin();
@@ -674,8 +681,9 @@ void Gateway::bindSession(
         retire(gone);
     }
     if (full) {
-        fail(socket, 0, Fault::eRefused, "this session holds as many sockets as it may");
-        socket->close();
+        const std::string why = "this session holds as many sockets as it may";
+        fail(socket, 0, Fault::eRefused, why);
+        refuse(socket, why);
     }
 }
 
@@ -775,7 +783,7 @@ void Gateway::socketMessage(
         onFrame(socket, decode(message));
     } catch (const ProtocolError& error) {
         fail(socket, 0, error.fault(), error.what());
-        socket->close();
+        refuse(socket, std::string("a frame that does not read: ") + error.what());
     } catch (const std::exception& error) {
         bazarish::log::warn("a frame ended badly: {}", error.what());
         fail(socket, 0, Fault::eInternal, "the gateway failed at this");
@@ -849,8 +857,9 @@ void Gateway::onFrame(const http::SocketPtr& socket, const Frame& frame)
     }
     const std::shared_ptr<Session> session = sessionFor(socket);
     if (session == nullptr) {
-        fail(socket, frame.ref, Fault::eUnknownId, "this socket belongs to no session");
-        socket->close();
+        const std::string why = "this socket belongs to no session";
+        fail(socket, frame.ref, Fault::eUnknownId, why);
+        refuse(socket, why);
         return;
     }
     if (frame.type == FrameType::eEndpointCreate || frame.type == FrameType::eStreamOpen) {
@@ -898,7 +907,9 @@ void Gateway::onHello(const http::SocketPtr& socket, const Frame& frame)
     if (version != kProtocolVersion) {
         fail(socket, frame.ref, Fault::eVersion,
             "this gateway speaks version " + std::to_string(kProtocolVersion));
-        socket->close();
+        refuse(socket,
+            "a hello in version " + std::to_string(version) + ", this gateway speaks "
+                + std::to_string(kProtocolVersion));
         return;
     }
 
@@ -911,8 +922,9 @@ void Gateway::onHello(const http::SocketPtr& socket, const Frame& frame)
             return;
         }
         if (found->second.greeted) {
-            fail(socket, frame.ref, Fault::eBadFrame, "this socket has already said hello");
-            socket->close();
+            const std::string why = "this socket has already said hello";
+            fail(socket, frame.ref, Fault::eBadFrame, why);
+            refuse(socket, why);
             return;
         }
         found->second.greeted = true;
@@ -2051,8 +2063,9 @@ void Gateway::onAttach(const http::SocketPtr& socket, const Frame& frame)
 {
     const std::shared_ptr<Session> session = sessionFor(socket);
     if (session == nullptr) {
-        fail(socket, frame.ref, Fault::eUnknownId, "this socket belongs to no session");
-        socket->close();
+        const std::string why = "this socket belongs to no session";
+        fail(socket, frame.ref, Fault::eUnknownId, why);
+        refuse(socket, why);
         return;
     }
     std::shared_ptr<EndpointEntry> endpoint;

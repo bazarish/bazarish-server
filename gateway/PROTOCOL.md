@@ -487,7 +487,8 @@ The client sends `hello` as its first frame. The gateway answers `ready`:
 
 On a fresh session `resumed` is false and both lists are empty. A version the
 gateway does not speak gets `error` with code `version` and a close; there is no
-negotiation, because there is one version.
+negotiation, because there is one version. A socket that closes before `ready`
+ends the client's hello at that moment, and the client opens another.
 
 `endpoints` and `streams` are what is still standing, and that is the whole
 statement: a destination or a stream the list does not name is gone, whether the

@@ -5,6 +5,7 @@
 #include <bazarish/Crypto.hpp>
 #include <bazarish/GatewayChannel.hpp>
 #include <bazarish/I2pAddress.hpp>
+#include <bazarish/Log.hpp>
 #include <bazarish/HttpClient.hpp>
 #include <bazarish/Tls.hpp>
 
@@ -19,11 +20,14 @@
 #include <boost/beast/http.hpp>
 #include <boost/beast/websocket.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <deque>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <set>
+#include <string_view>
 #include <thread>
 #include <string>
 #include <vector>
@@ -49,6 +53,37 @@ constexpr double kResourceMedian = 600;
 constexpr double kResourceHigh = 1500;
 constexpr double kNarrowSigma = 0.2;
 constexpr int kDecoyDraws = 24;
+constexpr const char* kClosedLine = "a client's socket is closed: ";
+constexpr std::size_t kGarbageBytes = 64;
+
+class Warnings {
+public:
+    void add(const std::string_view message)
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        lines_.emplace_back(message);
+    }
+
+    std::size_t closedFor(const std::string& why) const
+    {
+        const std::string wanted = std::string(kClosedLine) + why;
+        const std::lock_guard<std::mutex> lock(mutex_);
+        return static_cast<std::size_t>(
+            std::count_if(lines_.begin(), lines_.end(),
+                [&wanted](const std::string& line) { return line.find(wanted) == 0; }));
+    }
+
+    bool anyContains(const std::string& part) const
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        return std::any_of(lines_.begin(), lines_.end(),
+            [&part](const std::string& line) { return line.find(part) != std::string::npos; });
+    }
+
+private:
+    mutable std::mutex mutex_;
+    std::vector<std::string> lines_;
+};
 
 struct Answer {
     unsigned status = 0;
@@ -206,6 +241,14 @@ nlohmann::json greet(Dialled& dialled, const int version = kProtocolVersion)
 
 int main()
 {
+    Warnings warnings;
+    log::setTap([&warnings](const log::Level level, const std::string_view,
+                    const std::string_view message) {
+        if (level == log::Level::eWarn) {
+            warnings.add(message);
+        }
+    });
+
     const std::filesystem::path root
         = testutil::freshDir("gateway-test");
     std::filesystem::create_directories(root);
@@ -306,6 +349,8 @@ int main()
     const Frame twice = receive(first);
     CHECK(twice.type == FrameType::eError);
     CHECK(bodyJson(twice)["code"] == "bad-frame");
+    CHECK(testutil::waitFor(
+        [&warnings]() { return warnings.closedFor("this socket has already said hello") == 1; }));
 
     boost::system::error_code ignored;
     first.socket->close(websocket::close_code::normal, ignored);
@@ -336,6 +381,11 @@ int main()
     const nlohmann::json refusal = greet(ancient, kProtocolVersion + 1);
     CHECK(refusal["type"] == static_cast<int>(FrameType::eError));
     CHECK(refusal["body"]["code"] == "version");
+    CHECK(testutil::waitFor([&warnings]() {
+        return warnings.closedFor("a hello in version " + std::to_string(kProtocolVersion + 1)
+                   + ", this gateway speaks " + std::to_string(kProtocolVersion))
+            == 1;
+    }));
     ancient.socket.reset();
 
     Seat garbled;
@@ -343,10 +393,43 @@ int main()
     CHECK(nonsense.socket != nullptr);
     const Bytes garbage = {0x7F, 0x00, 0x00, 0x00, 0x01};
     send(nonsense, garbage);
+    send(nonsense, garbage);
     const Frame complaint = receive(nonsense);
     CHECK(complaint.type == FrameType::eError);
     CHECK(bodyJson(complaint)["code"] == "bad-frame");
+    CHECK(testutil::waitFor([&warnings]() {
+        return warnings.closedFor("a frame that does not read: frame type does not exist") == 1;
+    }));
     nonsense.socket.reset();
+
+    Seat unsealed;
+    Dialled forgedRecord = dial(io, port, fingerprint, unsealed, false);
+    CHECK(forgedRecord.socket != nullptr);
+    writeRaw(*forgedRecord.socket, randomBytes(kGarbageBytes));
+    writeRaw(*forgedRecord.socket, randomBytes(kGarbageBytes));
+    CHECK(testutil::waitFor(
+        [&warnings]() { return warnings.closedFor("a record that does not open") == 1; }));
+    forgedRecord.socket.reset();
+
+    {
+        tcp::socket raw(io);
+        raw.connect(tcp::endpoint(asio::ip::make_address("127.0.0.1"),
+            static_cast<unsigned short>(port)));
+        websocket::stream<tcp::socket> stranger3(std::move(raw));
+        stranger3.handshake("127.0.0.1", kPath);
+        stranger3.binary(true);
+        (void)readRaw(stranger3);
+        writeRaw(stranger3, randomBytes(kGarbageBytes));
+        (void)readRaw(stranger3);
+        writeRaw(stranger3, randomBytes(kGarbageBytes));
+        CHECK(testutil::waitFor([&warnings]() {
+            return warnings.closedFor("an opening that is neither a hello nor a join") == 1;
+        }));
+    }
+    for (const std::string& secret : {std::string(kPath), std::string("127.0.0.1"), fingerprint,
+             toBase64(seat.key), toBase64(unsealed.key)}) {
+        CHECK(!warnings.anyContains(secret));
+    }
 
     Seat twice2;
     Dialled twiceOver = dial(io, port, fingerprint, twice2, false);
@@ -464,6 +547,7 @@ int main()
     after.socket.reset();
 
     gateway.stop();
+    log::setTap({});
     std::filesystem::remove_all(root);
     std::printf("TestGateway ok\n");
     return 0;

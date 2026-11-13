@@ -117,6 +117,12 @@ The public listener has no health path: `<basePath>/healthz` is the same 404 as
 anything else, so a scan learns nothing from it. Without `opsListen` there is no
 health report; the log says when the router has its tunnels.
 
+Each client socket the gateway closes for what the client sent - a record that
+does not open, an opening that is neither a hello nor a join, a frame that does
+not read, a version it does not speak, a second hello, a socket of no session, a
+full session - is one `warn` line with the reason. The line names no address, no
+path and no key.
+
 ## Settings and restart
 
 The same socket, with the same signature, carries `GET`/`PUT /settings` and

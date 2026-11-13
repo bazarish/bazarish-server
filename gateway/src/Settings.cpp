@@ -8,8 +8,8 @@
 #include <bazarish/PrivateFile.hpp>
 
 #include <algorithm>
-#include <initializer_list>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -26,19 +26,19 @@ constexpr const char* kNginxNotFound = "<html>\r\n"
                                        "</body>\r\n"
                                        "</html>\r\n";
 
-using KnownKeys = std::initializer_list<std::string_view>;
+using KnownKeys = std::span<const std::string_view>;
 
-constexpr KnownKeys kTopKeys = {"listen", "basePath", "publicAddress", "state", "reseed", "decoy",
+constexpr std::string_view kTopKeys[] = {"listen", "basePath", "publicAddress", "state", "reseed", "decoy",
     "operators", "opsListen", "opsClients", "direct", "server", "i2p", "pools",
     "sessionTtlSeconds", "logLevel", "notFound", "serverName"};
-constexpr KnownKeys kEndpointKeys = {"host", "port"};
-constexpr KnownKeys kI2pKeys = {"privacy", "logLevel"};
-constexpr KnownKeys kPoolKeys = {"stream", "call", "watch"};
-constexpr KnownKeys kDecoyKeys = {"page", "resource"};
-constexpr KnownKeys kMixtureKeys = {"maxBytes", "parts"};
-constexpr KnownKeys kPartKeys = {"weight", "medianBytes", "sigma"};
-constexpr KnownKeys kRouteKeys = {"dest", "host", "port", "pin"};
-constexpr KnownKeys kServerKeys = {"host", "port", "pin"};
+constexpr std::string_view kEndpointKeys[] = {"host", "port"};
+constexpr std::string_view kI2pKeys[] = {"privacy", "logLevel"};
+constexpr std::string_view kPoolKeys[] = {"stream", "call", "watch"};
+constexpr std::string_view kDecoyKeys[] = {"page", "resource"};
+constexpr std::string_view kMixtureKeys[] = {"maxBytes", "parts"};
+constexpr std::string_view kPartKeys[] = {"weight", "medianBytes", "sigma"};
+constexpr std::string_view kRouteKeys[] = {"dest", "host", "port", "pin"};
+constexpr std::string_view kServerKeys[] = {"host", "port", "pin"};
 
 constexpr const char* kSecureScheme = "https://";
 constexpr const char* kPlainScheme = "http://";
@@ -77,7 +77,7 @@ void onlyKnownSection(const nlohmann::json& document, const std::string& key, co
 void onlyKnownConfig(const nlohmann::json& document)
 {
     for (const auto& item : document.items()) {
-        if (std::find(kTopKeys.begin(), kTopKeys.end(), item.key()) == kTopKeys.end()) {
+        if (std::ranges::find(kTopKeys, item.key()) == std::ranges::end(kTopKeys)) {
             throw std::runtime_error("unknown config key \"" + item.key() + "\"");
         }
     }

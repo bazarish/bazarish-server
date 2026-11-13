@@ -65,7 +65,8 @@ public:
     void ackBlob(const std::string& user, const std::string& blobId,
         const std::string& clientId);
     void forgetUser(const std::string& user);
-    void purgeExpired(std::int64_t receivedBefore);
+    // UTC seconds: seen markers from before the first, items stored before the second go.
+    void purgeExpired(std::int64_t receivedBefore, std::int64_t storedBefore);
     std::uint64_t usage(const std::string& user);
     void setUserQuota(const std::string& user, std::uint64_t quotaBytes);
     std::uint64_t userQuota(const std::string& user, std::uint64_t fallback);

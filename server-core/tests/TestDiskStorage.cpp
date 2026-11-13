@@ -3,6 +3,8 @@
 #include "TestUtil.hpp"
 
 #include <bazarish/Bytes.hpp>
+#include <bazarish/Clock.hpp>
+#include <bazarish/Limits.hpp>
 #include <bazarish/Pass.hpp>
 
 #include <chrono>
@@ -154,10 +156,28 @@ int main()
     storage.registerClient(bob, "bclient");
     CHECK(storage.putBlob(bob, "old", blob, "content", kQuota, kNow) == DiskStorage::PutResult::eStored);
     CHECK(storage.putBlob(bob, "fresh", blob, "contact", kQuota, kNow) == DiskStorage::PutResult::eStored);
-    storage.purgeExpired(kNow);
+    const std::int64_t storedAt = nowSeconds();
+    constexpr std::int64_t kRetentionSeconds = kMailRetentionDays * kSecondsPerDay;
+    storage.purgeExpired(kNow, storedAt - kRetentionSeconds);
     CHECK(storage.listPending(bob, "bclient").size() == 2);
     CHECK(storage.usage(bob) == 200);
     CHECK(storage.usage(alice) == 100);
+
+    {
+        DiskStorage aging(testutil::freshDir("storage-retention-test"));
+        const std::string carol = makeUser(0x03);
+        aging.registerClient(carol, "cclient");
+        CHECK(aging.putBlob(carol, "untaken", blob, "content", kQuota, kNow)
+            == DiskStorage::PutResult::eStored);
+        aging.purgeExpired(kNow, storedAt - kRetentionSeconds);
+        CHECK(aging.hasBlob(carol, "untaken"));
+        const std::int64_t retentionLater = nowSeconds() + kRetentionSeconds + 1;
+        aging.purgeExpired(kNow, retentionLater - kRetentionSeconds);
+        CHECK(!aging.hasBlob(carol, "untaken"));
+        CHECK(aging.listPending(carol, "cclient").empty());
+        CHECK(aging.usage(carol) == 0);
+        CHECK(aging.hasSeen(carol, "untaken"));
+    }
 
     CHECK(!storage.hasSeen(bob, "nonce-fresh"));
     CHECK(storage.putBlob(bob, "nonce-fresh", blob, "content", kQuota, kNow + 100)
@@ -166,7 +186,7 @@ int main()
         == DiskStorage::PutResult::eStored);
     CHECK(storage.hasSeen(bob, "nonce-fresh"));
     CHECK(storage.hasSeen(bob, "nonce-stale"));
-    storage.purgeExpired(kNow);
+    storage.purgeExpired(kNow, storedAt - kRetentionSeconds);
     CHECK(storage.hasSeen(bob, "nonce-fresh"));
     CHECK(!storage.hasSeen(bob, "nonce-stale"));
 

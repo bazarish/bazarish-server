@@ -427,7 +427,7 @@ void DiskStorage::forgetUser(const std::string& user)
     }
 }
 
-void DiskStorage::purgeExpired(const std::int64_t receivedBefore)
+void DiskStorage::purgeExpired(const std::int64_t receivedBefore, const std::int64_t storedBefore)
 {
     std::vector<fs::path> users;
     {
@@ -439,8 +439,17 @@ void DiskStorage::purgeExpired(const std::int64_t receivedBefore)
             users.push_back(userEntry.path());
         }
     }
+    const std::int64_t storedBeforeMs = storedBefore * kMillisPerSecond;
     for (const fs::path& userPath : users) {
         const std::lock_guard<std::mutex> lock(mutex_);
+        const std::string user = userPath.filename().string();
+        for (const std::string& blobId : listDirectoryNames(userPath / "blobs")) {
+            const fs::path metaPath = userPath / "meta" / (blobId + ".json");
+            std::error_code ec;
+            if (fs::exists(metaPath, ec) && !ec && arrivalOf(readJsonFile(metaPath)) < storedBeforeMs) {
+                removeItem(user, blobId);
+            }
+        }
         for (const std::string& deliveryId : listDirectoryNames(userPath / "seen")) {
             const fs::path marker = userPath / "seen" / deliveryId;
             std::ifstream in(marker, std::ios::binary);

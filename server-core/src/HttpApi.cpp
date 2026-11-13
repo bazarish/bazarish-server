@@ -195,7 +195,9 @@ void HttpApi::expiredSweepLoop()
     constexpr std::chrono::seconds kSweepInterval{3600};
     while (!stopGate_.waitFor(kSweepInterval)) {
         try {
-            storage_.purgeExpired(nowSeconds() - kMaxDelegationDays * kSecondsPerDay);
+            const std::int64_t now = nowSeconds();
+            storage_.purgeExpired(now - kMaxDelegationDays * kSecondsPerDay,
+                now - kMailRetentionDays * kSecondsPerDay);
         } catch (const std::exception& error) {
             bazarish::log::warn("expiry sweep failed: {}", error.what());
         }

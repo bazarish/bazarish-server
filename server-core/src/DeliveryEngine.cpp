@@ -130,7 +130,7 @@ DeliveryEngine::Outcome DeliveryEngine::deliver(
         ? std::optional<std::size_t>(kMaxPendingContactRequests)
         : std::nullopt;
     const DiskStorage::PutResult result = storage_.putBlob(mailbox, deliveryId, payload, deliveryClass,
-        storage_.userQuota(mailbox, options_.defaultQuotaBytes), now, {}, heldLimit);
+        storage_.userQuota(mailbox, options_.defaultQuotaBytes), now, heldLimit);
     if (result == DiskStorage::PutResult::eClassFull) {
         return fail(ErrorCode::eContactRateLimited, kContactsWaitingRefusal);
     }

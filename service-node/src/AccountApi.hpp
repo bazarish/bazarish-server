@@ -78,6 +78,9 @@ public:
 private:
     void revokeDestination(const std::string& user);
     void deleteAccount(const std::string& user);
+    bool revokedHere(const std::string& user, const std::string& device);
+    // The destination of the card the account published; empty before it published one.
+    std::string publishedDest(const std::string& user);
 
     NodeSettings::Values settings() const { return settings_->get(); }
 

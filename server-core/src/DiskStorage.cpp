@@ -65,6 +65,20 @@ std::vector<std::string> listDirectoryNames(const fs::path& dir)
     return names;
 }
 
+constexpr char kAddressedField[] = "for";
+
+bool addressedElsewhere(const nlohmann::json& meta, const std::string& clientId)
+{
+    return meta.contains(kAddressedField)
+        && meta.at(kAddressedField).get<std::string>() != clientId;
+}
+
+bool addressedTo(const nlohmann::json& meta, const std::string& clientId)
+{
+    return meta.contains(kAddressedField)
+        && meta.at(kAddressedField).get<std::string>() == clientId;
+}
+
 bool ackedBy(const nlohmann::json& meta, const std::string& clientId)
 {
     for (const nlohmann::json& entry : meta.at("acked")) {
@@ -121,14 +135,21 @@ fs::path DiskStorage::userDir(const std::string& user) const
     return root_ / "users" / user;
 }
 
-void DiskStorage::registerClient(const std::string& user, const std::string& clientId)
+DiskStorage::RegisterResult DiskStorage::registerClient(
+    const std::string& user, const std::string& clientId, const std::string& install)
 {
     requireFingerprint(user);
     requireSafeId(clientId);
+    requireSafeId(install);
     const std::lock_guard<std::mutex> lock(mutex_);
     const fs::path dir = userDir(user) / "clients";
+    if (fs::exists(dir / clientId)) {
+        return readFileText(dir / clientId) == install ? RegisterResult::eRegistered
+                                                       : RegisterResult::eTaken;
+    }
     createDirectoryDurably(dir);
-    writeFileAtomic(dir / clientId, std::string_view());
+    writeFileAtomic(dir / clientId, install);
+    return RegisterResult::eRegistered;
 }
 
 void DiskStorage::unregisterClient(const std::string& user, const std::string& clientId)
@@ -141,7 +162,12 @@ void DiskStorage::unregisterClient(const std::string& user, const std::string& c
     staying.erase(std::remove(staying.begin(), staying.end(), clientId), staying.end());
     for (const std::string& blobId : listDirectoryNames(userDir(user) / "blobs")) {
         const fs::path metaPath = userDir(user) / "meta" / (blobId + ".json");
-        if (fs::exists(metaPath) && ackedByAll(readJsonFile(metaPath), staying)) {
+        if (!fs::exists(metaPath)) {
+            continue;
+        }
+        const nlohmann::json meta = readJsonFile(metaPath);
+        if (addressedTo(meta, clientId)
+            || (!meta.contains(kAddressedField) && ackedByAll(meta, staying))) {
             removeItem(user, blobId);
         }
     }
@@ -234,12 +260,31 @@ std::size_t DiskStorage::revokePasses(const std::string& user, const std::vector
 
 DiskStorage::PutResult DiskStorage::putBlob(const std::string& user, const std::string& blobId,
     const Bytes& data, const std::string& deliveryClass, const std::uint64_t quotaBytes,
-    const std::int64_t receivedAt, const std::string& alreadyAcked,
-    const std::optional<std::size_t> heldLimit)
+    const std::int64_t receivedAt, const std::optional<std::size_t> heldLimit)
 {
     requireFingerprint(user);
     requireSafeId(blobId);
     const std::lock_guard<std::mutex> lock(mutex_);
+    return putLocked(user, blobId, data, deliveryClass, quotaBytes, receivedAt, heldLimit, {});
+}
+
+DiskStorage::PutResult DiskStorage::putAddressedBlob(const std::string& user,
+    const std::string& blobId, const Bytes& data, const std::string& deliveryClass,
+    const std::uint64_t quotaBytes, const std::int64_t receivedAt, const std::string& device)
+{
+    requireFingerprint(user);
+    requireSafeId(blobId);
+    requireSafeId(device);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    return putLocked(
+        user, blobId, data, deliveryClass, quotaBytes, receivedAt, std::nullopt, device);
+}
+
+DiskStorage::PutResult DiskStorage::putLocked(const std::string& user, const std::string& blobId,
+    const Bytes& data, const std::string& deliveryClass, const std::uint64_t quotaBytes,
+    const std::int64_t receivedAt, const std::optional<std::size_t> heldLimit,
+    const std::string& addressedTo)
+{
 
     const fs::path blobs = userDir(user) / "blobs";
     const fs::path meta = userDir(user) / "meta";
@@ -258,15 +303,14 @@ DiskStorage::PutResult DiskStorage::putBlob(const std::string& user, const std::
     createDirectoryDurably(meta);
     createDirectoryDurably(seen);
 
-    nlohmann::json acked = nlohmann::json::array();
-    if (!alreadyAcked.empty()) {
-        acked.push_back(alreadyAcked);
-    }
-    const nlohmann::json metaBody = {
+    nlohmann::json metaBody = {
         {"receivedAtMs", nowMillis()},
         {"class", deliveryClass},
-        {"acked", acked},
+        {"acked", nlohmann::json::array()},
     };
+    if (!addressedTo.empty()) {
+        metaBody[kAddressedField] = addressedTo;
+    }
     writeFileAtomic(meta / (blobId + ".json"), metaBody.dump());
     writeFileAtomic(blobs / blobId, data);
     writeFileAtomic(seen / blobId, std::to_string(receivedAt));
@@ -292,7 +336,8 @@ bool DiskStorage::isPendingFor(
     if (!fs::exists(userDir(user) / "blobs" / blobId) || !fs::exists(metaPath)) {
         return false;
     }
-    return !ackedBy(readJsonFile(metaPath), clientId);
+    const nlohmann::json meta = readJsonFile(metaPath);
+    return !addressedElsewhere(meta, clientId) && !ackedBy(meta, clientId);
 }
 
 bool DiskStorage::hasSeen(const std::string& user, const std::string& deliveryId)
@@ -362,7 +407,7 @@ std::vector<DiskStorage::PendingEntry> DiskStorage::listPending(const std::strin
             continue;
         }
         const nlohmann::json meta = readJsonFile(metaPath);
-        if (!ackedBy(meta, clientId)) {
+        if (!addressedElsewhere(meta, clientId) && !ackedBy(meta, clientId)) {
             waiting.push_back({arrivalOf(meta),
                 PendingEntry{blobId, meta.at("class").get<std::string>(),
                     fs::file_size(userDir(user) / "blobs" / blobId)}});
@@ -407,6 +452,12 @@ void DiskStorage::ackBlob(const std::string& user, const std::string& blobId,
         return;
     }
     nlohmann::json meta = readJsonFile(metaPath);
+    if (meta.contains(kAddressedField)) {
+        if (addressedTo(meta, clientId)) {
+            removeItem(user, blobId);
+        }
+        return;
+    }
     const bool fresh = !ackedBy(meta, clientId);
     if (fresh) {
         meta.at("acked").push_back(clientId);

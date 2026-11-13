@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #include "HttpApi.hpp"
 #include "EventGate.hpp"
+#include "DeviceTestKit.hpp"
 #include "TestUtil.hpp"
 
 #include "DiskStorage.hpp"
@@ -56,7 +57,8 @@ int main()
     options.serverCardDer = card;
     options.assignDestination
         = [](const std::string&) { return DestinationAssignment{"x.b32.i2p", "home"}; };
-    options.accountKnown = [](const std::string&) { return true; };
+    options.accountDevices
+        = [](const std::string&) { return std::optional<DeviceBook>(DeviceBook{}); };
 
     EventGate eventGate;
     HttpApi api(storage, eventGate, options);
@@ -73,14 +75,14 @@ int main()
         return http::request("127.0.0.1", port, request, {});
     };
 
-    const Identity alice = Identity::generate();
+    const devicetest::Account alice;
     const Bytes secret = randomBytes(32);
     const Key replyKey = Key::generateSealing();
     tunnel::Hello hello;
     hello.secret = secret;
     hello.replyKeyDer = replyKey.publicDer();
-    hello.signature = auth::signRequest(
-        alice, nowSeconds(), tunnel::kHelloMethod, tunnel::kHelloPath, secret);
+    hello.signature = auth::signDeviceRequest(
+        alice.device, nowSeconds(), tunnel::kHelloMethod, tunnel::kHelloPath, secret);
     const http::ClientResponse welcome
         = post(tunnel::sealHello(hello, Key::fromPublicDer(serverSealing.publicDer())));
     CHECK(welcome.status == 200);

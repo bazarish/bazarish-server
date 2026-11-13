@@ -91,22 +91,32 @@ HttpApi::HttpApi(DiskStorage& storage, EventGate& eventGate, const HttpApiOption
     , tunnel_(options_.sealingKey)
     , startedAt_(nowSeconds())
 {
-    if (!options_.accountKnown) {
+    if (!options_.accountDevices) {
         throw std::invalid_argument("the mailbox serves only the accounts its node knows");
     }
     janitorThread_ = std::thread([this]() { expiredSweepLoop(); });
 }
 
 std::optional<bazarish::http::Response> HttpApi::admitted(
-    const bazarish::http::Request& request, std::string& user)
+    const bazarish::http::Request& request, Caller& caller)
 {
-    Caller caller = tunnel_.authenticate(request);
+    caller = tunnel_.authenticate(request);
     if (caller.refused.has_value()) {
         return caller.refused;
     }
-    user = std::move(caller.user);
-    if (!options_.accountKnown(user)) {
+    const std::optional<DeviceBook> devices = options_.accountDevices(caller.user);
+    if (!devices.has_value()) {
         return errorResponse(404, ErrorCode::eAccountUnknown, "this server serves no such account");
+    }
+    for (const std::string& revoked : devices->revokedIds()) {
+        if (storage_.isClientRegistered(caller.user, revoked)) {
+            storage_.unregisterClient(caller.user, revoked);
+            bazarish::log::info("a revoked device of {} no longer has mail held",
+                bazarish::log::redact(caller.user));
+        }
+    }
+    if (devices->revoked(caller.device)) {
+        return errorResponse(403, ErrorCode::eDeviceRevoked, "this device was revoked");
     }
     return std::nullopt;
 }
@@ -392,13 +402,13 @@ void HttpApi::setupRoutes()
     const auto authenticated = [this](auto handler) {
         return [this, handler](
                    const bazarish::http::Request& request) -> bazarish::http::Response {
-            std::string user;
-            if (const std::optional<bazarish::http::Response> refused = admitted(request, user);
+            Caller caller;
+            if (const std::optional<bazarish::http::Response> refused = admitted(request, caller);
                 refused.has_value()) {
                 return *refused;
             }
             try {
-                return handler(request, user);
+                return handler(request, caller);
             } catch (const nlohmann::json::exception& error) {
                 return errorResponse(400, ErrorCode::eRequestFailed, error.what());
             } catch (const std::invalid_argument& error) {
@@ -409,13 +419,8 @@ void HttpApi::setupRoutes()
 
     DiskStorage& store = storage_;
 
-    const auto requireClient
-        = [&store](const bazarish::http::Request& request, const std::string& user) -> std::string {
-        const std::string clientId = request.header(auth::kHeaderClient);
-        if (clientId.empty() || !store.isClientRegistered(user, clientId)) {
-            return {};
-        }
-        return clientId;
+    const auto registered = [&store](const Caller& caller) {
+        return store.isClientRegistered(caller.user, caller.device);
     };
     const auto clientUnregistered = []() {
         return errorResponse(
@@ -423,18 +428,19 @@ void HttpApi::setupRoutes()
     };
 
     http_->getAsync("/v1/messaging/events",
-        [this, &store, requireClient, clientUnregistered](
+        [this, &store, registered, clientUnregistered](
             const bazarish::http::Request& request,
             bazarish::http::Responder respond) -> std::optional<bazarish::http::Response> {
-            std::string user;
-            const std::optional<bazarish::http::Response> refused = admitted(request, user);
+            Caller caller;
+            const std::optional<bazarish::http::Response> refused = admitted(request, caller);
             if (refused.has_value()) {
                 return *refused;
             }
-            const std::string clientId = requireClient(request, user);
-            if (clientId.empty()) {
+            if (!registered(caller)) {
                 return clientUnregistered();
             }
+            const std::string user = caller.user;
+            const std::string clientId = caller.device;
             const nlohmann::json waiting = pendingJson(store, user, clientId);
             if (!waiting.empty()) {
                 return jsonResponse({{"pending", waiting}});
@@ -464,41 +470,40 @@ void HttpApi::setupRoutes()
 
     http_->post("/v1/messaging/clients",
         authenticated([&store](const bazarish::http::Request& request,
-                          const std::string& user) -> bazarish::http::Response {
+                          const Caller& caller) -> bazarish::http::Response {
             const nlohmann::json body = bazarish::parseJson(request.body);
-            store.registerClient(user, body.at("clientId").get<std::string>());
+            const std::string install = body.at("install").get<std::string>();
+            if (store.registerClient(caller.user, caller.device, install)
+                == DiskStorage::RegisterResult::eTaken) {
+                return errorResponse(409, ErrorCode::eDeviceTaken,
+                    "this device is registered from another copy of its keys");
+            }
             return jsonResponse({{"ok", true}});
         }));
 
     http_->get("/v1/messaging/clients",
-        authenticated([&store](const bazarish::http::Request& request,
-                          const std::string& user) -> bazarish::http::Response {
-            const std::string caller = request.header(auth::kHeaderClient);
+        authenticated([&store](const bazarish::http::Request&,
+                          const Caller& caller) -> bazarish::http::Response {
             nlohmann::json clients = nlohmann::json::array();
-            for (const std::string& clientId : store.listClients(user)) {
-                clients.push_back({{"clientId", clientId}, {"current", clientId == caller},
-                    {"queue", store.listPending(user, clientId).size()}});
+            for (const std::string& device : store.listClients(caller.user)) {
+                clients.push_back({{"device", device}, {"current", device == caller.device},
+                    {"queue", store.listPending(caller.user, device).size()}});
             }
             return jsonResponse({{"clients", clients}});
         }));
 
-    http_->del("/v1/messaging/clients/{id}",
-        authenticated([&store](const bazarish::http::Request& request,
-                          const std::string& user) -> bazarish::http::Response {
-            store.unregisterClient(user, request.captures.at(0));
-            return jsonResponse({{"ok", true}});
-        }));
-
     http_->get("/v1/messaging/destination",
-        authenticated([this](const bazarish::http::Request&, const std::string& user)
+        authenticated([this](const bazarish::http::Request&, const Caller& caller)
                           -> bazarish::http::Response {
+            const std::string& user = caller.user;
             const DestinationAssignment assigned = options_.assignDestination(user);
             return jsonResponse({{"dest", assigned.dest}, {"state", assigned.state}});
         }));
 
     http_->get("/v1/messaging/storage-usage",
-        authenticated([this](const bazarish::http::Request&, const std::string& user)
+        authenticated([this](const bazarish::http::Request&, const Caller& caller)
                           -> bazarish::http::Response {
+            const std::string& user = caller.user;
             return jsonResponse({
                     {"usedBytes", storage_.usage(user)},
                     {"quotaBytes", storage_.userQuota(user, options_.defaultQuotaBytes)},
@@ -506,12 +511,13 @@ void HttpApi::setupRoutes()
         }));
 
     http_->post("/v1/messaging/passes",
-        authenticated([&store, requireClient, clientUnregistered](
+        authenticated([&store, registered, clientUnregistered](
                           const bazarish::http::Request& request,
-                          const std::string& user) -> bazarish::http::Response {
-            if (requireClient(request, user).empty()) {
+                          const Caller& caller) -> bazarish::http::Response {
+            if (!registered(caller)) {
                 return clientUnregistered();
             }
+            const std::string& user = caller.user;
             const std::vector<Bytes> handles
                 = passHandles(bazarish::parseJson(request.body));
             if (!store.registerPasses(user, handles, kMaxPassesPerMailbox)) {
@@ -521,12 +527,13 @@ void HttpApi::setupRoutes()
         }));
 
     http_->post("/v1/messaging/passes/revoke",
-        authenticated([&store, requireClient, clientUnregistered](
+        authenticated([&store, registered, clientUnregistered](
                           const bazarish::http::Request& request,
-                          const std::string& user) -> bazarish::http::Response {
-            if (requireClient(request, user).empty()) {
+                          const Caller& caller) -> bazarish::http::Response {
+            if (!registered(caller)) {
                 return clientUnregistered();
             }
+            const std::string& user = caller.user;
             const std::size_t dropped
                 = store.revokePasses(user, passHandles(bazarish::parseJson(request.body)));
             bazarish::log::info(
@@ -535,22 +542,25 @@ void HttpApi::setupRoutes()
         }));
 
     http_->get("/v1/messaging/pending",
-        authenticated([&store, requireClient, clientUnregistered](const bazarish::http::Request& request,
-                          const std::string& user) -> bazarish::http::Response {
-            const std::string clientId = requireClient(request, user);
-            if (clientId.empty()) {
+        authenticated([&store, registered, clientUnregistered](const bazarish::http::Request&,
+                          const Caller& caller) -> bazarish::http::Response {
+            if (!registered(caller)) {
                 return clientUnregistered();
             }
+            const std::string& user = caller.user;
+            const std::string& clientId = caller.device;
             return jsonResponse({{"pending", pendingJson(store, user, clientId)}});
         }));
 
     http_->post("/v1/messaging/fetch",
-        authenticated([&store, requireClient, clientUnregistered](const bazarish::http::Request& request,
-                          const std::string& user) -> bazarish::http::Response {
-            const std::string clientId = requireClient(request, user);
-            if (clientId.empty()) {
+        authenticated([&store, registered, clientUnregistered](
+                          const bazarish::http::Request& request,
+                          const Caller& caller) -> bazarish::http::Response {
+            if (!registered(caller)) {
                 return clientUnregistered();
             }
+            const std::string& user = caller.user;
+            const std::string& clientId = caller.device;
             const nlohmann::json asked = bazarish::parseJson(request.body).at("ids");
             if (!asked.is_array() || asked.empty()) {
                 throw std::invalid_argument("a fetch names the items it takes");
@@ -574,12 +584,14 @@ void HttpApi::setupRoutes()
         }));
 
     http_->post("/v1/messaging/ack",
-        authenticated([&store, requireClient, clientUnregistered](const bazarish::http::Request& request,
-                          const std::string& user) -> bazarish::http::Response {
-            const std::string clientId = requireClient(request, user);
-            if (clientId.empty()) {
+        authenticated([&store, registered, clientUnregistered](
+                          const bazarish::http::Request& request,
+                          const Caller& caller) -> bazarish::http::Response {
+            if (!registered(caller)) {
                 return clientUnregistered();
             }
+            const std::string& user = caller.user;
+            const std::string& clientId = caller.device;
             const nlohmann::json ids = bazarish::parseJson(request.body).at("ids");
             if (!ids.is_array() || ids.size() > bazarish::kMaxAckIdsPerRequest) {
                 throw std::invalid_argument("an ack names at most "
@@ -592,31 +604,34 @@ void HttpApi::setupRoutes()
         }));
 
     http_->post("/v1/messaging/self",
-        authenticated([this, requireClient, clientUnregistered](
+        authenticated([this, registered, clientUnregistered](
                           const bazarish::http::Request& request,
-                          const std::string& user) -> bazarish::http::Response {
-            const std::string caller = requireClient(request, user);
-            if (caller.empty()) {
+                          const Caller& caller) -> bazarish::http::Response {
+            if (!registered(caller)) {
                 return clientUnregistered();
             }
+            const std::string& user = caller.user;
             const nlohmann::json body = bazarish::parseJson(request.body);
             const std::string deliveryId = body.at("deliveryId").get<std::string>();
+            const std::string to = body.at("to").get<std::string>();
+            const std::optional<DeviceBook> devices = options_.accountDevices(user);
+            if (to == caller.device || !devices.has_value() || !devices->active(to).has_value()) {
+                return errorResponse(404, ErrorCode::eClientUnregistered,
+                    "a letter to self names another active device of the account");
+            }
             const Bytes payload = fromBase64(body.at("payload").get<std::string>());
             if (payload.size() > bazarish::kMaxMessagePayloadBytes) {
                 return errorResponse(413, ErrorCode::eMessageTooLarge,
                     "a message may carry at most "
                         + std::to_string(bazarish::kMaxMessagePayloadBytes) + " bytes");
             }
-            if (storage_.listClients(user).size() <= 1) {
-                return jsonResponse({{"ok", true}, {"stored", false}});
-            }
             if (storage_.hasSeen(user, deliveryId)) {
                 return jsonResponse({{"ok", true}, {"stored", true}});
             }
 
-            const DiskStorage::PutResult result = storage_.putBlob(user, deliveryId, payload,
-                kDeviceDeliveryClass, storage_.userQuota(user, options_.defaultQuotaBytes),
-                nowSeconds(), caller);
+            const DiskStorage::PutResult result = storage_.putAddressedBlob(user, deliveryId,
+                payload, kDeviceDeliveryClass, storage_.userQuota(user, options_.defaultQuotaBytes),
+                nowSeconds(), to);
             if (result == DiskStorage::PutResult::eQuotaExceeded) {
                 return errorResponse(507, ErrorCode::eStorageFull, "your storage is full");
             }

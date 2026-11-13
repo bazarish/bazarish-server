@@ -2,6 +2,7 @@
 #include "HttpApi.hpp"
 #include "bazarish/JsonRead.hpp"
 #include "EventGate.hpp"
+#include "DeviceTestKit.hpp"
 #include "HttpTestUtil.hpp"
 #include "TestUtil.hpp"
 
@@ -31,6 +32,8 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <mutex>
+#include <set>
 #include <memory>
 #include <string>
 #include <thread>
@@ -46,14 +49,16 @@ using testutil::call;
 
 namespace http = bazarish::http;
 
-Headers makeHeaders(const Identity& identity, const std::string& method,
-    const std::string& path, const std::string& body, const std::string& clientId)
+Headers makeHeaders(const devicetest::Device& device, const std::string& method,
+    const std::string& path, const std::string& body)
 {
-    Headers headers = testutil::signedHeaders(identity, method, path, body, clientId);
-    if (!clientId.empty()) {
-        headers.emplace("X-Bazarish-Client", clientId);
-    }
-    return headers;
+    return testutil::deviceHeaders(device.credential, method, path, body);
+}
+
+Headers operatorHeaders(const Identity& identity, const std::string& method,
+    const std::string& path, const std::string& body)
+{
+    return testutil::signedHeaders(identity, method, path, body);
 }
 
 Bytes sealEnvelope(const Key& serverSealingPublic, const std::string& mailbox,
@@ -129,8 +134,25 @@ int main()
     };
     httpOptions.forgetI2pDest = [&](const std::string& user) { forgottenUser = user; };
     const Identity stranger = Identity::generate();
-    httpOptions.accountKnown
-        = [&stranger](const std::string& user) { return user != stranger.fingerprint(); };
+    const devicetest::Device strangerDev(stranger);
+    const Identity alice = Identity::generate();
+    const Identity bob = Identity::generate();
+    const devicetest::Device aliceDev(alice);
+    const devicetest::Device alicePhone(alice, DeviceRole::eSecondary);
+    const devicetest::Device aliceStray(alice, DeviceRole::eSecondary);
+    const devicetest::Device bobDev(bob);
+    std::mutex booksMutex;
+    std::map<std::string, DeviceBook> books{
+        {alice.fingerprint(), devicetest::bookOf(alice, {&aliceDev, &alicePhone, &aliceStray})},
+        {bob.fingerprint(), devicetest::bookOf(bob, {&bobDev})}};
+    httpOptions.accountDevices = [&](const std::string& user) -> std::optional<DeviceBook> {
+        const std::lock_guard<std::mutex> lock(booksMutex);
+        const auto found = books.find(user);
+        if (found == books.end()) {
+            return std::nullopt;
+        }
+        return found->second;
+    };
     httpOptions.reseedSample = [](std::size_t) { return std::vector<Bytes>{}; };
     int restarts = 0;
     httpOptions.requestRestart = [&restarts]() { ++restarts; };
@@ -146,9 +168,6 @@ int main()
     CHECK(port > 0);
     std::thread serverThread([&api]() { api.wait(); });
 
-    const Identity alice = Identity::generate();
-    const Identity bob = Identity::generate();
-
     {
         const http::ClientResponse result
             = call(port, "POST", "/v1/messaging/clients", {}, "{}");
@@ -156,25 +175,34 @@ int main()
     }
 
     {
-        const std::string body = nlohmann::json{{"clientId", "strangerdev"}}.dump();
+        const std::string body = nlohmann::json{{"install", "install1"}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/messaging/clients",
-            makeHeaders(stranger, "POST", "/v1/messaging/clients", body, ""), body);
+            makeHeaders(strangerDev, "POST", "/v1/messaging/clients", body), body);
         CHECK(result.status == 404);
         CHECK(nlohmann::json::parse(result.body).at("error").at("code") == "ACCOUNT_UNKNOWN");
         CHECK(storage.listClients(stranger.fingerprint()).empty());
         CHECK(call(port, "GET", "/v1/messaging/events",
-                  makeHeaders(stranger, "GET", "/v1/messaging/events", "", "strangerdev"))
+                  makeHeaders(strangerDev, "GET", "/v1/messaging/events", ""))
                   .status
             == 404);
     }
 
-    for (const auto& [identity, clientId] :
-        {std::pair<const Identity&, const char*>{alice, "alicedev"},
-            std::pair<const Identity&, const char*>{bob, "bobdev"}}) {
-        const std::string body = nlohmann::json{{"clientId", clientId}}.dump();
+    for (const devicetest::Device* const device : {&aliceDev, &bobDev}) {
+        const std::string body = nlohmann::json{{"install", "install1"}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/messaging/clients",
-            makeHeaders(identity, "POST", "/v1/messaging/clients", body, ""), body);
+            makeHeaders(*device, "POST", "/v1/messaging/clients", body), body);
         CHECK(result.status == 200);
+        CHECK(call(port, "POST", "/v1/messaging/clients",
+                  makeHeaders(*device, "POST", "/v1/messaging/clients", body), body)
+                  .status
+            == 200);
+    }
+    {
+        const std::string twin = nlohmann::json{{"install", "install2"}}.dump();
+        const http::ClientResponse taken = call(port, "POST", "/v1/messaging/clients",
+            makeHeaders(bobDev, "POST", "/v1/messaging/clients", twin), twin);
+        CHECK(taken.status == 409);
+        CHECK(nlohmann::json::parse(taken.body).at("error").at("code") == "DEVICE_TAKEN");
     }
 
     {
@@ -182,11 +210,11 @@ int main()
         const std::string body
             = nlohmann::json{{"sealingKey", toBase64(nodeSealing.publicDer())}}.dump();
         CHECK(call(opsPort, "POST", "/v1/messaging/node-card",
-                  makeHeaders(alice, "POST", "/v1/messaging/node-card", body, ""), body)
+                  operatorHeaders(alice, "POST", "/v1/messaging/node-card", body), body)
                   .status
             == 403);
         const http::ClientResponse issued = call(opsPort, "POST", "/v1/messaging/node-card",
-            makeHeaders(operatorIdentity, "POST", "/v1/messaging/node-card", body, ""), body);
+            operatorHeaders(operatorIdentity, "POST", "/v1/messaging/node-card", body), body);
         CHECK(issued.status == 200);
         const Bytes der
             = fromBase64(nlohmann::json::parse(issued.body).at("card").get<std::string>());
@@ -202,7 +230,7 @@ int main()
         const std::string body
             = nlohmann::json{{"passes", {toBase64(handleForBob)}}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/messaging/passes",
-            makeHeaders(alice, "POST", "/v1/messaging/passes", body, "alicedev"), body);
+            makeHeaders(aliceDev, "POST", "/v1/messaging/passes", body), body);
         CHECK(result.status == 200);
         CHECK(nlohmann::json::parse(result.body).at("held") == 1);
     }
@@ -210,7 +238,7 @@ int main()
         const std::string body
             = nlohmann::json{{"passes", {toBase64(handleForBob)}}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/messaging/passes",
-            makeHeaders(alice, "POST", "/v1/messaging/passes", body, "alicedev"), body);
+            makeHeaders(aliceDev, "POST", "/v1/messaging/passes", body), body);
         CHECK(result.status == 200);
         CHECK(nlohmann::json::parse(result.body).at("held") == 1);
     }
@@ -220,7 +248,7 @@ int main()
     {
         const std::string body = nlohmann::json{{"passes", nlohmann::json::array()}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/messaging/passes",
-            makeHeaders(alice, "POST", "/v1/messaging/passes", body, "unknowndev"), body);
+            makeHeaders(aliceStray, "POST", "/v1/messaging/passes", body), body);
         CHECK(result.status == 403);
     }
     {
@@ -230,7 +258,7 @@ int main()
         }
         const std::string body = nlohmann::json{{"passes", many}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/messaging/passes",
-            makeHeaders(alice, "POST", "/v1/messaging/passes", body, "alicedev"), body);
+            makeHeaders(aliceDev, "POST", "/v1/messaging/passes", body), body);
         CHECK(result.status == 400);
         CHECK(storage.passCount(alice.fingerprint()) == 1);
     }
@@ -242,10 +270,10 @@ int main()
         }
         CHECK(storage.registerPasses(alice.fingerprint(), filler, kMaxPassesPerMailbox));
         CHECK(storage.passCount(alice.fingerprint()) == kMaxPassesPerMailbox);
-        const auto registerPasses = [port, &alice](const nlohmann::json& passes) {
+        const auto registerPasses = [port, &alice, &aliceDev](const nlohmann::json& passes) {
             const std::string body = nlohmann::json{{"passes", passes}}.dump();
             return call(port, "POST", "/v1/messaging/passes",
-                makeHeaders(alice, "POST", "/v1/messaging/passes", body, "alicedev"), body);
+                makeHeaders(aliceDev, "POST", "/v1/messaging/passes", body), body);
         };
         CHECK(registerPasses({toBase64(handleForBob), toBase64(filler.front())}).status == 200);
         CHECK(registerPasses({toBase64(randomBytes(kDeliveryPassSize))}).status == 400);
@@ -259,7 +287,7 @@ int main()
         const std::string body
             = nlohmann::json{{"passes", {toBase64(handleForBob)}}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/messaging/passes/revoke",
-            makeHeaders(alice, "POST", "/v1/messaging/passes/revoke", body, "alicedev"), body);
+            makeHeaders(aliceDev, "POST", "/v1/messaging/passes/revoke", body), body);
         CHECK(result.status == 200);
         CHECK(nlohmann::json::parse(result.body).at("revoked") == 1);
         CHECK(!storage.hasPass(alice.fingerprint(), handleForBob));
@@ -282,13 +310,13 @@ int main()
         const Bytes admitted = sealEnvelope(sealingPublic, alice.fingerprint(), "msg-heavy", passForBob);
         CHECK(engine.deliver(admitted, heavy, kNow, engineSealing, alice.fingerprint(), {}).delivered);
         CHECK(storage.passCount(alice.fingerprint()) == before);
-        storage.ackBlob(alice.fingerprint(), "msg-heavy", "alicedev");
+        storage.ackBlob(alice.fingerprint(), "msg-heavy", aliceDev.id());
         storage.setUserQuota(alice.fingerprint(), quotaBytes);
     }
 
     {
         const http::ClientResponse pending = call(port, "GET", "/v1/messaging/pending",
-            makeHeaders(alice, "GET", "/v1/messaging/pending", "", "alicedev"));
+            makeHeaders(aliceDev, "GET", "/v1/messaging/pending", ""));
         CHECK(pending.status == 200);
         const nlohmann::json list = nlohmann::json::parse(pending.body).at("pending");
         CHECK(list.size() == 1);
@@ -298,7 +326,7 @@ int main()
 
         const std::string fetchBody = nlohmann::json{{"ids", {"msg-1", "msg-gone"}}}.dump();
         const http::ClientResponse fetched = call(port, "POST", "/v1/messaging/fetch",
-            makeHeaders(alice, "POST", "/v1/messaging/fetch", fetchBody, "alicedev"), fetchBody);
+            makeHeaders(aliceDev, "POST", "/v1/messaging/fetch", fetchBody), fetchBody);
         CHECK(fetched.status == 200);
         const nlohmann::json items = bazarish::parseCbor(std::string_view(fetched.body)).at("items");
         CHECK(items.size() == 1);
@@ -306,13 +334,13 @@ int main()
         CHECK(Bytes(items[0].at("blob").get_binary().begin(), items[0].at("blob").get_binary().end())
             == payload);
 
-        const auto aliceQueue = [port, &alice]() {
+        const auto aliceQueue = [port, &alice, &aliceDev]() {
             const http::ClientResponse clients = call(port, "GET", "/v1/messaging/clients",
-                makeHeaders(alice, "GET", "/v1/messaging/clients", "", "alicedev"));
+                makeHeaders(aliceDev, "GET", "/v1/messaging/clients", ""));
             CHECK(clients.status == 200);
             const nlohmann::json list = nlohmann::json::parse(clients.body).at("clients");
             CHECK(list.size() == 1);
-            CHECK(list[0].at("clientId") == "alicedev");
+            CHECK(list[0].at("device") == aliceDev.id());
             return list[0].at("queue").get<std::size_t>();
         };
         CHECK(aliceQueue() == 1);
@@ -321,38 +349,38 @@ int main()
 
         {
             Headers swapped
-                = makeHeaders(alice, "POST", "/v1/messaging/ack", ackBody, "alicedev");
-            swapped["X-Bazarish-Client"] = "bobdev";
+                = makeHeaders(aliceDev, "POST", "/v1/messaging/ack", ackBody);
+            swapped[auth::kHeaderDevice] = toBase64(bobDev.certDer);
             const http::ClientResponse forged
                 = call(port, "POST", "/v1/messaging/ack", swapped, ackBody);
             CHECK(forged.status == 401);
             Headers stripped
-                = makeHeaders(alice, "POST", "/v1/messaging/ack", ackBody, "alicedev");
-            stripped.erase("X-Bazarish-Client");
+                = makeHeaders(aliceDev, "POST", "/v1/messaging/ack", ackBody);
+            stripped.erase(auth::kHeaderDevice);
             CHECK(call(port, "POST", "/v1/messaging/ack", stripped, ackBody).status == 401);
             CHECK(aliceQueue() == 1);
         }
 
         const http::ClientResponse acked = call(port, "POST", "/v1/messaging/ack",
-            makeHeaders(alice, "POST", "/v1/messaging/ack", ackBody, "alicedev"), ackBody);
+            makeHeaders(aliceDev, "POST", "/v1/messaging/ack", ackBody), ackBody);
         CHECK(acked.status == 200);
         CHECK(storage.usage(alice.fingerprint()) == 0);
         CHECK(aliceQueue() == 0);
     }
 
     {
-        storage.registerClient(alice.fingerprint(), "alicephone");
+        storage.registerClient(alice.fingerprint(), alicePhone.id(), "install1");
         CHECK(storage.putBlob(alice.fingerprint(), "seen-here", payload, "content", 1024 * 1024, kNow)
             == DiskStorage::PutResult::eStored);
-        storage.ackBlob(alice.fingerprint(), "seen-here", "alicedev");
+        storage.ackBlob(alice.fingerprint(), "seen-here", aliceDev.id());
         CHECK(storage.hasBlob(alice.fingerprint(), "seen-here"));
         const std::string body = nlohmann::json{{"ids", {"seen-here"}}}.dump();
         const http::ClientResponse again = call(port, "POST", "/v1/messaging/fetch",
-            makeHeaders(alice, "POST", "/v1/messaging/fetch", body, "alicedev"), body);
+            makeHeaders(aliceDev, "POST", "/v1/messaging/fetch", body), body);
         CHECK(again.status == 200);
         CHECK(bazarish::parseCbor(std::string_view(again.body)).at("items").empty());
-        storage.ackBlob(alice.fingerprint(), "seen-here", "alicephone");
-        storage.unregisterClient(alice.fingerprint(), "alicephone");
+        storage.ackBlob(alice.fingerprint(), "seen-here", alicePhone.id());
+        storage.unregisterClient(alice.fingerprint(), alicePhone.id());
     }
 
     {
@@ -363,10 +391,10 @@ int main()
             CHECK(storage.putBlob(alice.fingerprint(), id, half, "content", half.size() * 2, kNow)
                 == DiskStorage::PutResult::eStored);
         }
-        const auto fetch = [port, &alice](const nlohmann::json& ids) {
+        const auto fetch = [port, &alice, &aliceDev](const nlohmann::json& ids) {
             const std::string body = nlohmann::json{{"ids", ids}}.dump();
             return call(port, "POST", "/v1/messaging/fetch",
-                makeHeaders(alice, "POST", "/v1/messaging/fetch", body, "alicedev"), body);
+                makeHeaders(aliceDev, "POST", "/v1/messaging/fetch", body), body);
         };
         CHECK(fetch({"big-a", "big-b"}).status == 400);
         CHECK(fetch(nlohmann::json::array()).status == 400);
@@ -376,10 +404,10 @@ int main()
         for (std::size_t i = 0; i <= kMaxAckIdsPerRequest; ++i) {
             tooMany.push_back("big-a");
         }
-        const auto ack = [port, &alice](const nlohmann::json& ids) {
+        const auto ack = [port, &alice, &aliceDev](const nlohmann::json& ids) {
             const std::string body = nlohmann::json{{"ids", ids}}.dump();
             return call(port, "POST", "/v1/messaging/ack",
-                makeHeaders(alice, "POST", "/v1/messaging/ack", body, "alicedev"), body);
+                makeHeaders(aliceDev, "POST", "/v1/messaging/ack", body), body);
         };
         CHECK(ack(tooMany).status == 400);
         CHECK(storage.usage(alice.fingerprint()) == half.size() * 2);
@@ -394,8 +422,9 @@ int main()
         tunnel::Hello hello;
         hello.secret = secret;
         hello.replyKeyDer = replyKey.publicDer();
-        hello.signature = auth::signRequest(alice, static_cast<std::int64_t>(std::time(nullptr)),
-            tunnel::kHelloMethod, tunnel::kHelloPath, secret);
+        hello.signature = auth::signDeviceRequest(aliceDev.credential,
+            static_cast<std::int64_t>(std::time(nullptr)), tunnel::kHelloMethod, tunnel::kHelloPath,
+            secret);
         const Bytes frame = tunnel::sealHello(hello, sealingPublic);
         http::ClientRequest open;
         open.method = "POST";
@@ -411,29 +440,98 @@ int main()
         const std::string sessionId = toHex(sha256(secret)).substr(0, 32);
         const Bytes sessionKey = auth::deriveSessionKey(secret, sessionId);
         const auto maced = [&](const std::uint64_t seq, const std::string& method,
-                               const std::string& path, const std::string& body,
-                               const std::string& clientId) {
+                               const std::string& path, const std::string& body) {
             const auth::Headers headers = auth::macRequest(auth::sessionHandle(secret, seq),
                 sessionKey, seq, static_cast<std::int64_t>(std::time(nullptr)), method, path,
-                Bytes(body.begin(), body.end()), clientId);
-            Headers out(headers.begin(), headers.end());
-            out.emplace("X-Bazarish-Client", clientId);
-            return out;
+                Bytes(body.begin(), body.end()));
+            return Headers(headers.begin(), headers.end());
         };
         CHECK(call(port, "GET", "/v1/messaging/storage-usage",
-                  maced(1, "GET", "/v1/messaging/storage-usage", "", "alicedev"))
+                  maced(1, "GET", "/v1/messaging/storage-usage", ""))
                   .status
             == 200);
+        CHECK(call(port, "GET", "/v1/messaging/pending", maced(2, "GET", "/v1/messaging/pending", ""))
+                  .status
+            == 200);
+        CHECK(call(port, "GET", "/v1/messaging/storage-usage",
+                  maced(1, "GET", "/v1/messaging/storage-usage", ""))
+                  .status
+            == 401);
+    }
+
+    {
+        const std::string install = nlohmann::json{{"install", "install1"}}.dump();
+        CHECK(call(port, "POST", "/v1/messaging/clients",
+                  makeHeaders(alicePhone, "POST", "/v1/messaging/clients", install), install)
+                  .status
+            == 200);
+        const auto toSelf = [&](const devicetest::Device& from, const std::string& id,
+                                const std::string& to) {
+            const std::string body = nlohmann::json{{"deliveryId", id},
+                {"payload", toBase64(Bytes{1, 2, 3})}, {"to", to}}.dump();
+            return call(port, "POST", "/v1/messaging/self",
+                makeHeaders(from, "POST", "/v1/messaging/self", body), body);
+        };
+        const auto pendingIds = [&](const devicetest::Device& device) {
+            const http::ClientResponse listed = call(port, "GET", "/v1/messaging/pending",
+                makeHeaders(device, "GET", "/v1/messaging/pending", ""));
+            std::set<std::string> ids;
+            if (listed.status != 200) {
+                return ids;
+            }
+            const nlohmann::json answer = nlohmann::json::parse(listed.body);
+            for (const nlohmann::json& entry : answer.at("pending")) {
+                ids.insert(entry.at("id").get<std::string>());
+            }
+            return ids;
+        };
+        CHECK(toSelf(aliceDev, "to-phone", alicePhone.id()).status == 200);
+        CHECK(toSelf(aliceDev, "to-myself", aliceDev.id()).status == 404);
+        CHECK(toSelf(aliceDev, "to-nobody", "aaaaaaaaaa").status == 404);
+        CHECK(pendingIds(alicePhone).count("to-phone") == 1);
+        CHECK(pendingIds(aliceDev).count("to-phone") == 0);
         {
-            Headers swapped = maced(2, "GET", "/v1/messaging/storage-usage", "", "alicedev");
-            swapped["X-Bazarish-Client"] = "bobdev";
-            CHECK(call(port, "GET", "/v1/messaging/storage-usage", swapped).status == 401);
+            const std::string body = nlohmann::json{{"ids", {"to-phone"}}}.dump();
+            const http::ClientResponse fetched = call(port, "POST", "/v1/messaging/fetch",
+                makeHeaders(aliceDev, "POST", "/v1/messaging/fetch", body), body);
+            CHECK(bazarish::parseCbor(std::string_view(fetched.body)).at("items").empty());
+            CHECK(call(port, "POST", "/v1/messaging/ack",
+                      makeHeaders(aliceDev, "POST", "/v1/messaging/ack", body), body)
+                      .status
+                == 200);
+            CHECK(storage.hasBlob(alice.fingerprint(), "to-phone"));
+            CHECK(call(port, "POST", "/v1/messaging/ack",
+                      makeHeaders(alicePhone, "POST", "/v1/messaging/ack", body), body)
+                      .status
+                == 200);
+            CHECK(!storage.hasBlob(alice.fingerprint(), "to-phone"));
         }
+
+        {
+            const std::lock_guard<std::mutex> lock(booksMutex);
+            books[alice.fingerprint()] = devicetest::bookOf(
+                alice, {&aliceDev, &aliceStray}, kFirstRevocationNumber + 1, {alicePhone.id()});
+        }
+        const http::ClientResponse revoked = call(port, "GET", "/v1/messaging/pending",
+            makeHeaders(alicePhone, "GET", "/v1/messaging/pending", ""));
+        CHECK(revoked.status == 403);
+        CHECK(nlohmann::json::parse(revoked.body).at("error").at("code") == "DEVICE_REVOKED");
+        CHECK(!storage.isClientRegistered(alice.fingerprint(), alicePhone.id()));
+        CHECK(call(port, "POST", "/v1/messaging/clients",
+                  makeHeaders(alicePhone, "POST", "/v1/messaging/clients", install), install)
+                  .status
+            == 403);
+        CHECK(!storage.isClientRegistered(alice.fingerprint(), alicePhone.id()));
+        CHECK(toSelf(aliceDev, "to-revoked", alicePhone.id()).status == 404);
+        CHECK(call(port, "GET", "/v1/messaging/pending",
+                  makeHeaders(aliceDev, "GET", "/v1/messaging/pending", ""))
+                  .status
+            == 200);
     }
 
     {
         const http::ClientResponse result = call(port, "GET", "/v1/messaging/destination",
-            makeHeaders(bob, "GET", "/v1/messaging/destination", "", "bobdev"));
+            makeHeaders(bobDev, "GET", "/v1/messaging/destination", ""));
         CHECK(result.status == 200);
         const nlohmann::json body = nlohmann::json::parse(result.body);
         CHECK(body.at("dest").get<std::string>() == serverDest);
@@ -445,7 +543,7 @@ int main()
             {"user", "alicefp"}, {"transient", "tb64"}, {"expiresUnix", 1780001234}}
                                         .dump();
         const http::ClientResponse withoutKeys = call(opsPort, "PUT", "/v1/messaging/i2p-dest",
-            makeHeaders(operatorIdentity, "PUT", "/v1/messaging/i2p-dest", keyless, ""), keyless);
+            operatorHeaders(operatorIdentity, "PUT", "/v1/messaging/i2p-dest", keyless), keyless);
         CHECK(withoutKeys.status == 400);
         CHECK(provisionedUser.empty());
         const std::string body = nlohmann::json{{"user", "alicefp"}, {"transient", "tb64"},
@@ -456,10 +554,10 @@ int main()
             = call(opsPort, "PUT", "/v1/messaging/i2p-dest", {}, body);
         CHECK(noAuth.status == 403);
         const http::ClientResponse badAuth = call(opsPort, "PUT", "/v1/messaging/i2p-dest",
-            makeHeaders(Identity::generate(), "PUT", "/v1/messaging/i2p-dest", body, ""), body);
+            operatorHeaders(Identity::generate(), "PUT", "/v1/messaging/i2p-dest", body), body);
         CHECK(badAuth.status == 403);
         const http::ClientResponse ok = call(opsPort, "PUT", "/v1/messaging/i2p-dest",
-            makeHeaders(operatorIdentity, "PUT", "/v1/messaging/i2p-dest", body, ""), body);
+            operatorHeaders(operatorIdentity, "PUT", "/v1/messaging/i2p-dest", body), body);
         CHECK(ok.status == 200);
         CHECK(provisionedUser == "alicefp");
         CHECK(provisionedTransient == "tb64");
@@ -469,7 +567,7 @@ int main()
         CHECK(nlohmann::json::parse(ok.body).at("dest").get<std::string>() == serverDest);
         const std::string offlineBody = nlohmann::json{{"user", "alicefp"}}.dump();
         const http::ClientResponse offline = call(opsPort, "PUT", "/v1/messaging/i2p-dest",
-            makeHeaders(operatorIdentity, "PUT", "/v1/messaging/i2p-dest", offlineBody, ""),
+            operatorHeaders(operatorIdentity, "PUT", "/v1/messaging/i2p-dest", offlineBody),
             offlineBody);
         CHECK(offline.status == 200);
         CHECK(forgottenUser == "alicefp");
@@ -478,7 +576,7 @@ int main()
     {
         const std::string seeds = "/internal/i2pseeds.su3";
         CHECK(call(opsPort, "GET", seeds).status == 403);
-        CHECK(call(opsPort, "GET", seeds, makeHeaders(operatorIdentity, "GET", seeds, "", ""))
+        CHECK(call(opsPort, "GET", seeds, operatorHeaders(operatorIdentity, "GET", seeds, ""))
                   .status
             == 503);
     }
@@ -487,7 +585,7 @@ int main()
         const http::ClientResponse unauth = call(opsPort, "GET", "/healthz");
         CHECK(unauth.status == 403);
         const http::ClientResponse ok = call(opsPort, "GET",
-            "/healthz", makeHeaders(operatorIdentity, "GET", "/healthz", "", ""));
+            "/healthz", operatorHeaders(operatorIdentity, "GET", "/healthz", ""));
         CHECK(ok.status == 200);
         const nlohmann::json health = nlohmann::json::parse(ok.body);
         CHECK(health.at("service").get<std::string>() == "server-core");
@@ -506,27 +604,27 @@ int main()
 
         CHECK(call(opsPort, "DELETE", path).status == 403);
         CHECK(call(opsPort, "DELETE", path,
-                   makeHeaders(Identity::generate(), "DELETE", path, "", ""))
+                   operatorHeaders(Identity::generate(), "DELETE", path, ""))
                   .status
             == 403);
         const std::string other
             = "/v1/messaging/account?user=" + Identity::generate().fingerprint();
-        CHECK(call(opsPort, "DELETE", path, makeHeaders(operatorIdentity, "DELETE", other, "", ""))
+        CHECK(call(opsPort, "DELETE", path, operatorHeaders(operatorIdentity, "DELETE", other, ""))
                   .status
             == 403);
         CHECK(call(opsPort, "DELETE", path,
-                  makeHeaders(operatorIdentity, "DELETE", "/v1/messaging/account", "", ""))
+                  operatorHeaders(operatorIdentity, "DELETE", "/v1/messaging/account", ""))
                   .status
             == 403);
 
         const http::ClientResponse deleted = call(opsPort, "DELETE", path,
-            makeHeaders(operatorIdentity, "DELETE", path, "", ""));
+            operatorHeaders(operatorIdentity, "DELETE", path, ""));
         CHECK(deleted.status == 200);
         CHECK(forgottenUser == alice.fingerprint());
         CHECK(storage.usage(alice.fingerprint()) == 0);
         CHECK(storage.listClients(alice.fingerprint()).empty());
         CHECK(storage.passCount(alice.fingerprint()) == 0);
-        CHECK(call(opsPort, "DELETE", path, makeHeaders(operatorIdentity, "DELETE", path, "", ""))
+        CHECK(call(opsPort, "DELETE", path, operatorHeaders(operatorIdentity, "DELETE", path, ""))
                   .status
             == 200);
     }
@@ -536,7 +634,7 @@ int main()
         CHECK(call(opsPort, "GET", path).status == 403);
 
         const http::ClientResponse shown
-            = call(opsPort, "GET", path, makeHeaders(operatorIdentity, "GET", path, {}, {}));
+            = call(opsPort, "GET", path, operatorHeaders(operatorIdentity, "GET", path, {}));
         CHECK(shown.status == 200);
         const nlohmann::json values = nlohmann::json::parse(shown.body);
         CHECK(!values.contains("i2pTunnelQuantity"));
@@ -547,7 +645,7 @@ int main()
         const std::string body = nlohmann::json{{"logLevel", "debug"},
             {"i2pPrivacy", "middle"}, {"i2pLogLevel", "info"}}
                                      .dump();
-        CHECK(call(opsPort, "PUT", path, makeHeaders(operatorIdentity, "PUT", path, body, {}), body)
+        CHECK(call(opsPort, "PUT", path, operatorHeaders(operatorIdentity, "PUT", path, body), body)
                   .status
             == 200);
         CHECK(bazarish::log::level() == bazarish::log::Level::eDebug);
@@ -562,16 +660,16 @@ int main()
 
         const std::string nonsense = nlohmann::json{{"i2pPrivacy", "invisible"}}.dump();
         CHECK(call(opsPort, "PUT", path,
-                  makeHeaders(operatorIdentity, "PUT", path, nonsense, {}), nonsense)
+                  operatorHeaders(operatorIdentity, "PUT", path, nonsense), nonsense)
                   .status
             == 400);
         const std::string loud = nlohmann::json{{"i2pLogLevel", "warning"}}.dump();
-        CHECK(call(opsPort, "PUT", path, makeHeaders(operatorIdentity, "PUT", path, loud, {}), loud)
+        CHECK(call(opsPort, "PUT", path, operatorHeaders(operatorIdentity, "PUT", path, loud), loud)
                   .status
             == 400);
         CHECK(bazarish::i2p::i2pLogLevel() == bazarish::i2p::I2pLogLevel::eInfo);
         const std::string moved = nlohmann::json{{"serviceNode", "https://127.0.0.1:9421"}}.dump();
-        CHECK(call(opsPort, "PUT", path, makeHeaders(operatorIdentity, "PUT", path, moved, {}), moved)
+        CHECK(call(opsPort, "PUT", path, operatorHeaders(operatorIdentity, "PUT", path, moved), moved)
                   .status
             == 200);
         std::ifstream rewritten(configPath);
@@ -579,13 +677,13 @@ int main()
             == "https://127.0.0.1:9421");
         const std::string quiet
             = nlohmann::json{{"logLevel", "info"}, {"i2pLogLevel", "none"}}.dump();
-        CHECK(call(opsPort, "PUT", path, makeHeaders(operatorIdentity, "PUT", path, quiet, {}), quiet)
+        CHECK(call(opsPort, "PUT", path, operatorHeaders(operatorIdentity, "PUT", path, quiet), quiet)
                   .status
             == 200);
 
         const std::string restart = "/v1/messaging/restart";
         CHECK(call(opsPort, "POST", restart,
-                  makeHeaders(operatorIdentity, "POST", restart, {}, {}))
+                  operatorHeaders(operatorIdentity, "POST", restart, {}))
                   .status
             == 200);
         CHECK(restarts == 1);

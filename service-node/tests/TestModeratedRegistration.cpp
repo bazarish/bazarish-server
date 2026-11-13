@@ -1,5 +1,6 @@
 // Bazarish project (c) 2026
 #include "AccountApi.hpp"
+#include "DeviceTestKit.hpp"
 #include "HttpTestUtil.hpp"
 #include "TestUtil.hpp"
 
@@ -38,7 +39,7 @@ constexpr int kDelegationDays = 7;
 
 const std::string kCardDest = "dlkbeyqjykssca6o7qlbwgq4fr2hry7kw2ursn2sh3lt3acox6gq.b32.i2p";
 
-Bytes botCard(const Identity& owner, const std::int64_t issuedAt,
+Bytes botCard(const devicetest::Account& owner, const std::int64_t issuedAt,
     const std::string& dest = kCardDest,
     const Bytes& sealingDer = Key::generateSealing().publicDer(),
     const Bytes& servingDer = Key::generateSealing().publicDer())
@@ -48,10 +49,11 @@ Bytes botCard(const Identity& owner, const std::int64_t issuedAt,
     card.issuedAt = issuedAt;
     card.dest = dest;
     const EpochNumber current = epochAt(issuedAt);
-    card.epochs = {{current, kFirstEpochGeneration, "dev1", sealingDer},
-        {current + 1, kFirstEpochGeneration, "dev1", Key::generateSealing().publicDer()}};
+    card.epochs = {{current, kFirstEpochGeneration, owner.keys.id(), sealingDer},
+        {current + 1, kFirstEpochGeneration, owner.keys.id(), Key::generateSealing().publicDer()}};
     card.servingSealingKeyDer = servingDer;
-    return card.issue(owner);
+    card.devices = owner.book();
+    return card.issue(owner.device.signing());
 }
 
 }  // namespace
@@ -72,7 +74,7 @@ int main()
             Key::fromPublicDer(serverSealing.publicDer()), now);
 
     const Identity panel = Identity::generate();
-    const Identity alice = Identity::generate();
+    const devicetest::Account alice;
 
     constexpr std::uint64_t kQuota = 20 * 1024 * 1024;
     const std::string kHoldMessage = "write to admin@example.i2p to finish registration";
@@ -115,7 +117,7 @@ int main()
         const Bytes card = botCard(alice, now);
         const std::string body = nlohmann::json{{"card", toBase64(card)}, {"cardKey", kCardKeyText}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
-            signedHeaders(alice, "POST", "/v1/account/card", body), body);
+            testutil::deviceHeaders(alice.device, "POST", "/v1/account/card", body), body);
         CHECK(result.status == 200);
         const nlohmann::json reply = nlohmann::json::parse(result.body);
         CHECK(reply.at("approval") == "pending");
@@ -132,7 +134,7 @@ int main()
 
     {
         const http::ClientResponse result = call(port, "POST", "/v1/account/i2p-dest",
-            signedHeaders(alice, "POST", "/v1/account/i2p-dest", transientBody), transientBody);
+            testutil::deviceHeaders(alice.device, "POST", "/v1/account/i2p-dest", transientBody), transientBody);
         CHECK(result.status == 403);
         const nlohmann::json error = nlohmann::json::parse(result.body).at("error");
         CHECK(error.at("code") == "ACCOUNT_PENDING_APPROVAL");
@@ -153,7 +155,7 @@ int main()
     {
         const std::string body = nlohmann::json{{"user", alice.fingerprint()}}.dump();
         const http::ClientResponse forged = call(opsPort, "POST", "/v1/account/approve",
-            signedHeaders(alice, "POST", "/v1/account/approve", body), body);
+            signedHeaders(alice.root, "POST", "/v1/account/approve", body), body);
         CHECK(forged.status == 403);
         CHECK(grants.peekApproval(alice.fingerprint())->pending());
 
@@ -165,7 +167,7 @@ int main()
 
     {
         const http::ClientResponse result = call(port, "POST", "/v1/account/i2p-dest",
-            signedHeaders(alice, "POST", "/v1/account/i2p-dest", transientBody), transientBody);
+            testutil::deviceHeaders(alice.device, "POST", "/v1/account/i2p-dest", transientBody), transientBody);
         CHECK(result.status == 200);
         CHECK(pubCalls == 1);
 

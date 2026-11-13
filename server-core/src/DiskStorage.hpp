@@ -34,9 +34,16 @@ public:
         bool operator==(const PendingEntry&) const = default;
     };
 
+    enum class RegisterResult {
+        eRegistered,
+        // The device is registered from another copy of its keys.
+        eTaken,
+    };
+
     explicit DiskStorage(const std::filesystem::path& root);
 
-    void registerClient(const std::string& user, const std::string& clientId);
+    RegisterResult registerClient(
+        const std::string& user, const std::string& clientId, const std::string& install);
     void unregisterClient(const std::string& user, const std::string& clientId);
     std::vector<std::string> listClients(const std::string& user);
     bool isClientRegistered(const std::string& user, const std::string& clientId);
@@ -51,8 +58,11 @@ public:
     // Duplicate when held or seen before; `heldLimit` bounds what the class may hold at once.
     PutResult putBlob(const std::string& user, const std::string& blobId, const Bytes& data,
         const std::string& deliveryClass, std::uint64_t quotaBytes, std::int64_t receivedAt,
-        const std::string& alreadyAcked = {},
         std::optional<std::size_t> heldLimit = std::nullopt);
+    // Pending for that one device, and gone once it acks.
+    PutResult putAddressedBlob(const std::string& user, const std::string& blobId,
+        const Bytes& data, const std::string& deliveryClass, std::uint64_t quotaBytes,
+        std::int64_t receivedAt, const std::string& device);
     bool hasBlob(const std::string& user, const std::string& blobId);
     bool isPendingFor(const std::string& user, const std::string& blobId,
         const std::string& clientId);
@@ -82,6 +92,9 @@ private:
     std::uint64_t usageLocked(const std::string& user) const;
     std::size_t countHeldLocked(const std::string& user, const std::string& deliveryClass);
     void removeItem(const std::string& user, const std::string& blobId);
+    PutResult putLocked(const std::string& user, const std::string& blobId, const Bytes& data,
+        const std::string& deliveryClass, std::uint64_t quotaBytes, std::int64_t receivedAt,
+        std::optional<std::size_t> heldLimit, const std::string& addressedTo);
 
     std::filesystem::path root_;
     std::mutex mutex_;

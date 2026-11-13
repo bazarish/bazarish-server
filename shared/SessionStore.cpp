@@ -16,8 +16,8 @@ constexpr std::uint64_t kHandleWindow = 64;
 constexpr std::size_t kJitterBytes = 2;
 }  // namespace
 
-std::string SessionStore::open(const std::string& user, const Bytes& secret, const std::int64_t now,
-    std::int64_t& outExpiresUnix)
+std::string SessionStore::open(const auth::DeviceCaller& caller, const Bytes& secret,
+    const std::int64_t now, std::int64_t& outExpiresUnix)
 {
     const std::string id = toHex(sha256(secret)).substr(0, kSessionIdChars);
     const std::int64_t span
@@ -27,7 +27,7 @@ std::string SessionStore::open(const std::string& user, const Bytes& secret, con
         = span > 0 ? static_cast<std::int64_t>(draw[0] << CHAR_BIT | draw[1]) % span : 0;
     Session session;
     session.id = id;
-    session.user = user;
+    session.caller = caller;
     session.key = auth::deriveSessionKey(secret, id);
     session.secret = secret;
     session.expiresUnix = now + auth::kSessionMinLifetimeSeconds + jitter;
@@ -35,8 +35,9 @@ std::string SessionStore::open(const std::string& user, const Bytes& secret, con
         const std::lock_guard<std::mutex> lock(mutex_);
         const auto found = sessions_.find(id);
         if (found != sessions_.end() && found->second.expiresUnix > now) {
-            if (found->second.user != user) {
-                throw std::runtime_error("this session secret is already another account's");
+            if (found->second.caller.user != caller.user
+                || found->second.caller.device != caller.device) {
+                throw std::runtime_error("this session secret is already another device's");
             }
             outExpiresUnix = found->second.expiresUnix;
             return id;

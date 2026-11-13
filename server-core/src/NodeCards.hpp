@@ -5,6 +5,7 @@
 
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Crypto.hpp>
+#include <bazarish/Devices.hpp>
 
 #include <chrono>
 #include <cstdint>
@@ -32,13 +33,23 @@ public:
     NodeCards(NodeAddress node, std::shared_ptr<const Identity> identity);
 
     std::optional<HeldCard> card(const std::string& user);
+    // The devices the account's card lists, and its newest revocation list.
+    std::optional<DeviceBook> devices(const std::string& user);
     void forget(const std::string& user);
 
 private:
+    struct Held {
+        std::int64_t fetchedAt = 0;
+        HeldCard card;
+        DeviceBook devices;
+    };
+
+    std::optional<Held> held(const std::string& user);
+
     NodeAddress node_;
     std::shared_ptr<const Identity> identity_;
     std::mutex mutex_;
-    std::map<std::string, std::pair<std::int64_t, HeldCard>> cached_;
+    std::map<std::string, Held> cached_;
 };
 
 }  // namespace bazarish::server

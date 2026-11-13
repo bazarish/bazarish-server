@@ -7,6 +7,7 @@
 #include <bazarish/Auth.hpp>
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Clock.hpp>
+#include <bazarish/Devices.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <LogFeed.hpp>
 #include <LogRing.hpp>
@@ -47,7 +48,8 @@ struct HttpApiOptions {
         provisionI2pDest;
     std::function<void(const std::string& user)> forgetI2pDest;
     std::function<void(const std::string& user)> forgetCard;
-    std::function<bool(const std::string& user)> accountKnown;
+    // None for an account its node does not know; else the devices its card lists.
+    std::function<std::optional<DeviceBook>(const std::string& user)> accountDevices;
     AssignDestinationFn assignDestination;
 
     std::function<std::vector<Bytes>(std::size_t count)> reseedSample;
@@ -78,7 +80,7 @@ public:
 private:
     void wakeUser(const std::string& user);
     std::optional<bazarish::http::Response> admitted(
-        const bazarish::http::Request& request, std::string& user);
+        const bazarish::http::Request& request, Caller& caller);
 
     void setupRoutes();
     void setupOpsRoutes();

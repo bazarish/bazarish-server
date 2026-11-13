@@ -42,17 +42,44 @@ int main()
 
     const std::string alice = makeUser(0x01);
 
-    CHECK_THROWS(storage.registerClient("not-a-user", "client1"));
-    CHECK_THROWS(storage.registerClient(alice, "../escape"));
+    CHECK_THROWS(storage.registerClient("not-a-user", "client1", "install1"));
+    CHECK_THROWS(storage.registerClient(alice, "../escape", "install1"));
     CHECK_THROWS(storage.putBlob(alice, "bad/blob", Bytes{1}, "content", kQuota, kNow));
     CHECK_THROWS(storage.putBlob(alice, "", Bytes{1}, "content", kQuota, kNow));
 
     CHECK(!storage.isClientRegistered(alice, "client1"));
-    storage.registerClient(alice, "client1");
-    storage.registerClient(alice, "client2");
-    storage.registerClient(alice, "client1");
+    storage.registerClient(alice, "client1", "install1");
+    storage.registerClient(alice, "client2", "install1");
+    storage.registerClient(alice, "client1", "install1");
     CHECK(storage.isClientRegistered(alice, "client1"));
     CHECK(storage.listClients(alice).size() == 2);
+    CHECK(storage.registerClient(alice, "client1", "install1")
+        == DiskStorage::RegisterResult::eRegistered);
+    CHECK(storage.registerClient(alice, "client1", "install2") == DiskStorage::RegisterResult::eTaken);
+    CHECK(storage.listClients(alice).size() == 2);
+
+    {
+        DiskStorage addressed(testutil::freshDir("storage-addressed-test"));
+        const std::string owner = makeUser(0x05);
+        addressed.registerClient(owner, "phone", "install1");
+        addressed.registerClient(owner, "tablet", "install1");
+        addressed.registerClient(owner, "laptop", "install1");
+        CHECK(addressed.putAddressedBlob(owner, "to-tablet", Bytes{1, 2}, "device", kQuota, kNow, "tablet")
+            == DiskStorage::PutResult::eStored);
+        CHECK(addressed.listPending(owner, "phone").empty());
+        CHECK(addressed.listPending(owner, "laptop").empty());
+        CHECK(!addressed.isPendingFor(owner, "to-tablet", "phone"));
+        CHECK(addressed.listPending(owner, "tablet").size() == 1);
+        CHECK(addressed.isPendingFor(owner, "to-tablet", "tablet"));
+        addressed.ackBlob(owner, "to-tablet", "phone");
+        CHECK(addressed.hasBlob(owner, "to-tablet"));
+        addressed.ackBlob(owner, "to-tablet", "tablet");
+        CHECK(!addressed.hasBlob(owner, "to-tablet"));
+        CHECK(addressed.putAddressedBlob(owner, "to-laptop", Bytes{3}, "device", kQuota, kNow, "laptop")
+            == DiskStorage::PutResult::eStored);
+        addressed.unregisterClient(owner, "laptop");
+        CHECK(!addressed.hasBlob(owner, "to-laptop"));
+    }
 
     const Bytes secret = randomBytes(kDeliverySecretSize);
     const Bytes passBob = deliveryPass(secret, std::string(52, 'b'));
@@ -153,7 +180,7 @@ int main()
     CHECK(storage.usage(alice) == 100);
 
     const std::string bob = makeUser(0x02);
-    storage.registerClient(bob, "bclient");
+    storage.registerClient(bob, "bclient", "install1");
     CHECK(storage.putBlob(bob, "old", blob, "content", kQuota, kNow) == DiskStorage::PutResult::eStored);
     CHECK(storage.putBlob(bob, "fresh", blob, "contact", kQuota, kNow) == DiskStorage::PutResult::eStored);
     const std::int64_t storedAt = nowSeconds();
@@ -166,7 +193,7 @@ int main()
     {
         DiskStorage aging(testutil::freshDir("storage-retention-test"));
         const std::string carol = makeUser(0x03);
-        aging.registerClient(carol, "cclient");
+        aging.registerClient(carol, "cclient", "install1");
         CHECK(aging.putBlob(carol, "untaken", blob, "content", kQuota, kNow)
             == DiskStorage::PutResult::eStored);
         aging.purgeExpired(kNow, storedAt - kRetentionSeconds);
@@ -219,14 +246,14 @@ int main()
         for (std::size_t i = 0; i < kRacers; ++i) {
             racers.emplace_back([&storage, &erin, i]() {
                 (void)storage.putBlob(erin, "contact-" + std::to_string(i), Bytes{1}, "contact",
-                    kQuota, kNow, {}, kHeldLimit);
+                    kQuota, kNow, kHeldLimit);
             });
         }
         for (std::thread& racer : racers) {
             racer.join();
         }
         CHECK(storage.countHeld(erin, "contact") == kHeldLimit);
-        CHECK(storage.putBlob(erin, "contact-0", Bytes{1}, "contact", kQuota, kNow, {}, kHeldLimit)
+        CHECK(storage.putBlob(erin, "contact-0", Bytes{1}, "contact", kQuota, kNow, kHeldLimit)
             != DiskStorage::PutResult::eStored);
 
         racers.clear();

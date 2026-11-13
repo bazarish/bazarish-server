@@ -1,5 +1,6 @@
 // Bazarish project (c) 2026
 #include "AccountApi.hpp"
+#include "DeviceTestKit.hpp"
 #include "HttpTestUtil.hpp"
 #include "TestUtil.hpp"
 
@@ -55,7 +56,22 @@ constexpr char kCardTypeName[] = "contact-card";
 
 const std::string kCardDest = "dlkbeyqjykssca6o7qlbwgq4fr2hry7kw2ursn2sh3lt3acox6gq.b32.i2p";
 
-Bytes botCard(const Identity& owner, const std::int64_t issuedAt,
+Bytes cardWith(const devicetest::Account& owner, const DeviceBook& devices,
+    const std::int64_t issuedAt, const std::string& dest = kCardDest)
+{
+    ContactCard card;
+    card.kind = AccountKind::eBot;
+    card.issuedAt = issuedAt;
+    card.dest = dest;
+    const EpochNumber current = epochAt(issuedAt);
+    card.epochs = {{current, kFirstEpochGeneration, owner.keys.id(), Key::generateSealing().publicDer()},
+        {current + 1, kFirstEpochGeneration, owner.keys.id(), Key::generateSealing().publicDer()}};
+    card.servingSealingKeyDer = Key::generateSealing().publicDer();
+    card.devices = devices;
+    return card.issue(owner.device.signing());
+}
+
+Bytes botCard(const devicetest::Account& owner, const std::int64_t issuedAt,
     const std::string& dest = kCardDest,
     const Bytes& sealingDer = Key::generateSealing().publicDer(),
     const Bytes& servingDer = Key::generateSealing().publicDer())
@@ -65,10 +81,17 @@ Bytes botCard(const Identity& owner, const std::int64_t issuedAt,
     card.issuedAt = issuedAt;
     card.dest = dest;
     const EpochNumber current = epochAt(issuedAt);
-    card.epochs = {{current, kFirstEpochGeneration, "dev1", sealingDer},
-        {current + 1, kFirstEpochGeneration, "dev1", Key::generateSealing().publicDer()}};
+    card.epochs = {{current, kFirstEpochGeneration, owner.keys.id(), sealingDer},
+        {current + 1, kFirstEpochGeneration, owner.keys.id(), Key::generateSealing().publicDer()}};
     card.servingSealingKeyDer = servingDer;
-    return card.issue(owner);
+    card.devices = owner.book();
+    return card.issue(owner.device.signing());
+}
+
+testutil::Headers deviceSigned(const DeviceCredential& device, const std::string& method,
+    const std::string& target, const std::string& body)
+{
+    return testutil::deviceHeaders(device, method, target, body);
 }
 
 }  // namespace
@@ -148,15 +171,15 @@ int main()
     CHECK(opsPort > 0);
     std::thread serverThread([&api]() { api.wait(); });
 
-    const Identity alice = Identity::generate();
-    const Identity mallory = Identity::generate();
+    const devicetest::Account alice;
+    const devicetest::Account mallory;
 
     {
         grants.grantSubscription(alice.fingerprint(), kQuota, now);
         const Bytes card = botCard(alice, now);
         const std::string body = nlohmann::json{{"card", toBase64(card)}, {"cardKey", kCardKeyText}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
-            signedHeaders(alice, "POST", "/v1/account/card", body), body);
+            deviceSigned(alice.device, "POST", "/v1/account/card", body), body);
         CHECK(result.status == 200);
         const nlohmann::json reply = nlohmann::json::parse(result.body);
         CHECK(reply.at("quotaBytes") == kQuota);
@@ -172,10 +195,10 @@ int main()
             {"issuedAt", now + 1}, {"kind", "bot"}, {"dest", ""},
             {"sealingKey", toBase64(Key::generateSealing().publicDer())},
             {"servingKey", toBase64(Key::generateSealing().publicDer())}};
-        const Bytes card = hybrid::signJson(destless, alice);
+        const Bytes card = hybrid::signJson(destless, alice.device.signing());
         const std::string body = nlohmann::json{{"card", toBase64(card)}, {"cardKey", kCardKeyText}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
-            signedHeaders(alice, "POST", "/v1/account/card", body), body);
+            deviceSigned(alice.device, "POST", "/v1/account/card", body), body);
         CHECK(result.status == 400);
         CHECK(cardsChanged.size() == 1);
     }
@@ -183,10 +206,10 @@ int main()
     {
         const nlohmann::json forgedBody
             = {{"v", kCertificateFormatVersion}, {"user", alice.fingerprint()}};
-        const Bytes forged = hybrid::signJson(forgedBody, mallory);
+        const Bytes forged = hybrid::signJson(forgedBody, mallory.device.signing());
         const std::string body = nlohmann::json{{"card", toBase64(forged)}, {"cardKey", kCardKeyText}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
-            signedHeaders(mallory, "POST", "/v1/account/card", body), body);
+            deviceSigned(mallory.device, "POST", "/v1/account/card", body), body);
         CHECK(result.status == 400);
     }
 
@@ -194,7 +217,7 @@ int main()
         const Bytes card = botCard(mallory, now);
         const std::string body = nlohmann::json{{"card", toBase64(card)}, {"cardKey", kCardKeyText}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
-            signedHeaders(mallory, "POST", "/v1/account/card", body), body);
+            deviceSigned(mallory.device, "POST", "/v1/account/card", body), body);
         CHECK(result.status == 404);
         CHECK(nlohmann::json::parse(result.body).at("error").at("code") == "ACCOUNT_UNKNOWN");
     }
@@ -209,7 +232,7 @@ int main()
             = botCard(alice, now + 1, dest, sealing.publicDer(), servingKey);
         const std::string body = nlohmann::json{{"card", toBase64(card)}, {"cardKey", kCardKeyText}}.dump();
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
-            signedHeaders(alice, "POST", "/v1/account/card", body), body);
+            deviceSigned(alice.device, "POST", "/v1/account/card", body), body);
         CHECK(result.status == 200);
         CHECK(nlohmann::json::parse(result.body).at("quotaBytes") == kQuota);
 
@@ -230,14 +253,14 @@ int main()
                 alice, now, oldDest, sealing.publicDer(), servingKey);
             const std::string staleBody = nlohmann::json{{"card", toBase64(stale)}, {"cardKey", kCardKeyText}}.dump();
             CHECK(call(port, "POST", "/v1/account/card",
-                      signedHeaders(alice, "POST", "/v1/account/card", staleBody), staleBody)
+                      deviceSigned(alice.device, "POST", "/v1/account/card", staleBody), staleBody)
                       .status
                 == 409);
             const Bytes sameAge = botCard(
                 alice, now + 1, oldDest, sealing.publicDer(), servingKey);
             const std::string sameBody = nlohmann::json{{"card", toBase64(sameAge)}, {"cardKey", kCardKeyText}}.dump();
             CHECK(call(port, "POST", "/v1/account/card",
-                      signedHeaders(alice, "POST", "/v1/account/card", sameBody), sameBody)
+                      deviceSigned(alice.device, "POST", "/v1/account/card", sameBody), sameBody)
                       .status
                 == 409);
             const http::ClientResponse again
@@ -252,7 +275,7 @@ int main()
                 sealing.publicDer(), servingKey);
             const std::string futureBody = nlohmann::json{{"card", toBase64(future)}, {"cardKey", kCardKeyText}}.dump();
             CHECK(call(port, "POST", "/v1/account/card",
-                      signedHeaders(alice, "POST", "/v1/account/card", futureBody), futureBody)
+                      deviceSigned(alice.device, "POST", "/v1/account/card", futureBody), futureBody)
                       .status
                 == 400);
         }
@@ -275,12 +298,12 @@ int main()
             {"sealingKey", kSealingPem}, {"signingKey", kSigningPem}}
                                      .dump();
         const http::ClientResponse stranger = call(port, "POST", "/v1/account/i2p-dest",
-            signedHeaders(mallory, "POST", "/v1/account/i2p-dest", body), body);
+            deviceSigned(mallory.device, "POST", "/v1/account/i2p-dest", body), body);
         CHECK(stranger.status == 404);
         CHECK(nlohmann::json::parse(stranger.body).at("error").at("code") == "ACCOUNT_UNKNOWN");
         CHECK(pubCalls == 0);
         const http::ClientResponse withoutKeys = call(port, "POST", "/v1/account/i2p-dest",
-            signedHeaders(alice, "POST", "/v1/account/i2p-dest", keyless), keyless);
+            deviceSigned(alice.device, "POST", "/v1/account/i2p-dest", keyless), keyless);
         CHECK(withoutKeys.status == 400);
         CHECK(pubCalls == 0);
         {
@@ -293,7 +316,7 @@ int main()
                 {"expiresUnix", expires}, {"sealingKey", kSealingPem}, {"signingKey", kSigningPem}}
                                            .dump();
             CHECK(call(port, "POST", "/v1/account/i2p-dest",
-                      signedHeaders(alice, "POST", "/v1/account/i2p-dest", forged), forged)
+                      deviceSigned(alice.device, "POST", "/v1/account/i2p-dest", forged), forged)
                       .status
                 == 400);
             const std::string misdated
@@ -301,7 +324,7 @@ int main()
                     {"sealingKey", kSealingPem}, {"signingKey", kSigningPem}}
                       .dump();
             CHECK(call(port, "POST", "/v1/account/i2p-dest",
-                      signedHeaders(alice, "POST", "/v1/account/i2p-dest", misdated), misdated)
+                      deviceSigned(alice.device, "POST", "/v1/account/i2p-dest", misdated), misdated)
                       .status
                 == 400);
             CHECK(pubCalls == 0);
@@ -309,7 +332,7 @@ int main()
 
         CHECK(!grants.peekApproval(alice.fingerprint())->pending());
         const http::ClientResponse ok = call(port, "POST", "/v1/account/i2p-dest",
-            signedHeaders(alice, "POST", "/v1/account/i2p-dest", body), body);
+            deviceSigned(alice.device, "POST", "/v1/account/i2p-dest", body), body);
         CHECK(ok.status == 200);
         CHECK(pubCalls == 1);
         CHECK(pubUser == alice.fingerprint());
@@ -324,10 +347,10 @@ int main()
         {
             pubAccepts = false;
             const http::ClientResponse refused = call(port, "POST", "/v1/account/i2p-dest",
-                signedHeaders(alice, "POST", "/v1/account/i2p-dest", body), body);
+                deviceSigned(alice.device, "POST", "/v1/account/i2p-dest", body), body);
             CHECK(refused.status == 503);
             const http::ClientResponse status = call(port, "GET", "/v1/account/i2p-status",
-                signedHeaders(alice, "GET", "/v1/account/i2p-status", {}));
+                deviceSigned(alice.device, "GET", "/v1/account/i2p-status", {}));
             CHECK(status.status == 200);
             const nlohmann::json reply = nlohmann::json::parse(status.body);
             CHECK(reply.at("transientExpires") == expires);
@@ -336,7 +359,7 @@ int main()
 
         const std::string revokeBody = nlohmann::json::object().dump();
         const http::ClientResponse revoked = call(port, "POST", "/v1/account/i2p-dest",
-            signedHeaders(alice, "POST", "/v1/account/i2p-dest", revokeBody), revokeBody);
+            deviceSigned(alice.device, "POST", "/v1/account/i2p-dest", revokeBody), revokeBody);
         CHECK(revoked.status == 200);
         CHECK(pubCalls == 3);
         CHECK(pubTransient.empty());
@@ -345,8 +368,59 @@ int main()
     }
 
     {
+        const devicetest::Device tablet(alice.root, DeviceRole::eSecondary);
+        const http::ClientResponse notPrimary = call(port, "DELETE", "/v1/account/registration",
+            deviceSigned(tablet.credential, "DELETE", "/v1/account/registration", ""));
+        CHECK(notPrimary.status == 403);
+        CHECK(nlohmann::json::parse(notPrimary.body).at("error").at("code") == "DEVICE_NOT_PRIMARY");
+        CHECK(grants.peekApproval(alice.fingerprint()).has_value());
+
+        const bazarish::i2p::Keys elsewhere
+            = bazarish::i2p::Keys::generate().issueTransient(kDelegationDays);
+        const std::string moving = nlohmann::json{{"transient", toBase64(elsewhere.blob())},
+            {"expiresUnix", elsewhere.transientExpires()}, {"sealingKey", kSealingPem},
+            {"signingKey", kSigningPem}}
+                                       .dump();
+        const int callsBefore = pubCalls;
+        const http::ClientResponse newAddress = call(port, "POST", "/v1/account/i2p-dest",
+            deviceSigned(tablet.credential, "POST", "/v1/account/i2p-dest", moving), moving);
+        CHECK(newAddress.status == 403);
+        CHECK(nlohmann::json::parse(newAddress.body).at("error").at("code") == "DEVICE_NOT_PRIMARY");
+        CHECK(pubCalls == callsBefore);
+
+        const auto publish = [&](const Bytes& card) {
+            const std::string body
+                = nlohmann::json{{"card", toBase64(card)}, {"cardKey", kCardKeyText}}.dump();
+            return call(port, "POST", "/v1/account/card",
+                deviceSigned(alice.device, "POST", "/v1/account/card", body), body);
+        };
+        CHECK(publish(cardWith(alice, devicetest::bookOf(alice.root, {&alice.primary, &tablet}),
+                  now + 2))
+                  .status
+            == 200);
+        CHECK(call(port, "GET", "/v1/account/i2p-status",
+                  deviceSigned(tablet.credential, "GET", "/v1/account/i2p-status", {}))
+                  .status
+            == 200);
+        CHECK(publish(cardWith(alice,
+                          devicetest::bookOf(alice.root, {&alice.primary},
+                              kFirstRevocationNumber + 1, {tablet.id()}),
+                          now + 3))
+                  .status
+            == 200);
+        const http::ClientResponse revoked = call(port, "GET", "/v1/account/i2p-status",
+            deviceSigned(tablet.credential, "GET", "/v1/account/i2p-status", {}));
+        CHECK(revoked.status == 403);
+        CHECK(nlohmann::json::parse(revoked.body).at("error").at("code") == "DEVICE_REVOKED");
+        CHECK(publish(cardWith(alice, devicetest::bookOf(alice.root, {&alice.primary, &tablet}),
+                  now + 4))
+                  .status
+            == 409);
+    }
+
+    {
         const http::ClientResponse result = call(port, "DELETE", "/v1/account/registration",
-            signedHeaders(alice, "DELETE", "/v1/account/registration", ""));
+            deviceSigned(alice.device, "DELETE", "/v1/account/registration", ""));
         CHECK(result.status == 200);
         CHECK(pubCalls == 4);
         CHECK(pubTransient.empty());
@@ -354,13 +428,13 @@ int main()
         CHECK(forgottenMailbox == alice.fingerprint());
 
         const http::ClientResponse again = call(port, "DELETE", "/v1/account/registration",
-            signedHeaders(alice, "DELETE", "/v1/account/registration", ""));
+            deviceSigned(alice.device, "DELETE", "/v1/account/registration", ""));
         CHECK(again.status == 200);
 
         const std::string body
             = nlohmann::json{{"transient", "after-closing"}, {"expiresUnix", now + 3600}}.dump();
         const http::ClientResponse orphan = call(port, "POST", "/v1/account/i2p-dest",
-            signedHeaders(alice, "POST", "/v1/account/i2p-dest", body), body);
+            deviceSigned(alice.device, "POST", "/v1/account/i2p-dest", body), body);
         CHECK(orphan.status == 404);
         CHECK(pubCalls == 4);
     }
@@ -378,15 +452,15 @@ int main()
             request.body = std::string(frame.begin(), frame.end());
             return http::request("127.0.0.1", port, request, {});
         };
-        const Identity carol = Identity::generate();
+        const devicetest::Account carol;
         grants.recordRegistration(carol.fingerprint(), now, true);
         const Bytes secret = randomBytes(kSessionSecretBytes);
         const Key replyKey = Key::generateSealing();
         tunnel::Hello hello;
         hello.secret = secret;
         hello.replyKeyDer = replyKey.publicDer();
-        hello.signature = auth::signRequest(
-            carol, now, tunnel::kHelloMethod, tunnel::kHelloPath, secret);
+        hello.signature = auth::signDeviceRequest(
+            carol.device, now, tunnel::kHelloMethod, tunnel::kHelloPath, secret);
 
         const http::ClientResponse misaddressed
             = post(tunnel::sealHello(hello, Key::fromPublicDer(serverSealing.publicDer())));
@@ -427,7 +501,7 @@ int main()
     }
 
     {
-        const Identity ben = Identity::generate();
+        const devicetest::Account ben;
         grants.recordRegistration(ben.fingerprint(), now, true);
         const bazarish::i2p::Keys delegation
             = bazarish::i2p::Keys::generate().issueTransient(kDelegationDays);
@@ -465,7 +539,7 @@ int main()
         std::atomic<int> delegatedStatus{0};
         std::thread delegating([&]() {
             delegatedStatus = call(port, "POST", "/v1/account/i2p-dest",
-                signedHeaders(ben, "POST", "/v1/account/i2p-dest", delegated), delegated)
+                deviceSigned(ben.device, "POST", "/v1/account/i2p-dest", delegated), delegated)
                                   .status;
         });
         while (!publishing.load() && options.userLocks->holders(ben.fingerprint()) < 2) {

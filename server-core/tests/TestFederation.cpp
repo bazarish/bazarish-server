@@ -256,7 +256,7 @@ int main()
     }
 
     {
-        storage.registerClient(alice, "client01");
+        storage.registerClient(alice, "client01", "install1");
         const Bytes sealed = makeSealed(sealingPublic, "contact", alice, "freq-replay", {});
 
         CHECK(roundTrip(engine, sealed, Bytes(100, 0x44), alice).delivered);

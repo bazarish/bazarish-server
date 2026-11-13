@@ -1,6 +1,7 @@
 // Bazarish project (c) 2026
 #pragma once
 
+#include <bazarish/Auth.hpp>
 #include <bazarish/Bytes.hpp>
 
 #include <cstdint>
@@ -15,7 +16,7 @@ class SessionStore {
 public:
     struct Session {
         std::string id;
-        std::string user;
+        auth::DeviceCaller caller;
         Bytes key;
         Bytes secret;
         Bytes tunnelKey;
@@ -23,7 +24,7 @@ public:
         std::uint64_t lastSeq = 0;
     };
 
-    std::string open(const std::string& user, const Bytes& secret, std::int64_t now,
+    std::string open(const auth::DeviceCaller& caller, const Bytes& secret, std::int64_t now,
         std::int64_t& outExpiresUnix);
 
     std::optional<Session> findByHandle(const std::string& handle, std::int64_t now);

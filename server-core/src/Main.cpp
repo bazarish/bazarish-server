@@ -230,9 +230,8 @@ int main(const int argc, const char** argv)
         };
         httpOptions.forgetCard
             = [&nodeCards](const std::string& user) { nodeCards.forget(user); };
-        httpOptions.accountKnown = [&nodeCards](const std::string& user) {
-            return nodeCards.card(user).has_value();
-        };
+        httpOptions.accountDevices
+            = [&nodeCards](const std::string& user) { return nodeCards.devices(user); };
     }
     bazarish::server::ServerSettings::Values settingValues;
     settingValues.logLevel = config.text("logLevel").empty() ? "info" : config.text("logLevel");

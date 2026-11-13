@@ -324,6 +324,20 @@ void AccountApi::revokeDestination(const std::string& user)
     grants_.setI2pTransient(user, 0);
 }
 
+bool AccountApi::revokedHere(const std::string& user, const std::string& device)
+{
+    const std::optional<SubscriptionStore::Account> held = store_.getAccount(user);
+    return held.has_value() && !held->card.empty()
+        && ContactCard::verify(held->card).devices.revoked(device);
+}
+
+std::string AccountApi::publishedDest(const std::string& user)
+{
+    const std::optional<SubscriptionStore::Account> held = store_.getAccount(user);
+    return held.has_value() && !held->card.empty() ? ContactCard::verify(held->card).dest
+                                                   : std::string();
+}
+
 void AccountApi::deleteAccount(const std::string& user)
 {
     if (!grants_.peekApproval(user).has_value() && !store_.getAccount(user).has_value()) {
@@ -730,8 +744,12 @@ void AccountApi::setupRoutes()
                 return;
             }
             const UserLocks::Held locked = options_.userLocks->hold(user);
+            if (revokedHere(user, caller.device)) {
+                respondError(response, 403, ErrorCode::eDeviceRevoked, "this device was revoked");
+                return;
+            }
             try {
-                handler(request, response, user);
+                handler(request, response, caller);
             } catch (const nlohmann::json::exception& error) {
                 respondError(response, 400, ErrorCode::eRequestFailed, error.what());
             } catch (const std::invalid_argument& error) {
@@ -759,7 +777,8 @@ void AccountApi::setupRoutes()
 
     clientRoute("POST", routes::kAccountCard,
         [this](const http::Request& request, http::Response& response,
-                          const std::string& user) {
+                          const server::Caller& caller) {
+            const std::string& user = caller.user;
             const nlohmann::json body = bazarish::parseJson(request.body);
             const Bytes der = fromBase64(body.at("card").get<std::string>());
 
@@ -793,12 +812,21 @@ void AccountApi::setupRoutes()
             const std::optional<GrantStore::SubscriptionGrant> grant
                 = grants_.peekSubscription(user);
             const std::optional<SubscriptionStore::Account> held = store_.getAccount(user);
+            if (card.devices.revoked(caller.device)) {
+                respondError(response, 403, ErrorCode::eDeviceRevoked, "this device was revoked");
+                return;
+            }
             if (held.has_value() && !held->card.empty()) {
                 try {
-                    if (const ContactCard previous = ContactCard::verify(held->card);
-                        card.issuedAt <= previous.issuedAt) {
+                    const ContactCard previous = ContactCard::verify(held->card);
+                    if (card.issuedAt <= previous.issuedAt) {
                         respondError(response, 409, ErrorCode::eRequestFailed,
                             "this card is not newer than the one already published");
+                        return;
+                    }
+                    if (card.devices.revocationNumber() < previous.devices.revocationNumber()) {
+                        respondError(response, 409, ErrorCode::eRequestFailed,
+                            "this card carries an older revocation list than the one published");
                         return;
                     }
                 } catch (const std::exception& error) {
@@ -852,14 +880,21 @@ void AccountApi::setupRoutes()
 
     clientRoute("DELETE", "/v1/account/registration",
         [this](const http::Request&, http::Response& response,
-                          const std::string& user) {
+                          const server::Caller& caller) {
+            const std::string& user = caller.user;
+            if (caller.role != DeviceRole::ePrimary) {
+                respondError(response, 403, ErrorCode::eDeviceNotPrimary,
+                    "only a primary device deletes its account");
+                return;
+            }
             deleteAccount(user);
             respondJson(response, {{"ok", true}});
         });
 
     clientRoute("POST", "/v1/account/i2p-dest",
         [this](const http::Request& request, http::Response& response,
-                          const std::string& user) {
+                          const server::Caller& caller) {
+            const std::string& user = caller.user;
             if (!options_.publishI2pTransient) {
                 respondError(response, 503, ErrorCode::eRequestFailed,
                     "per-user destinations not available");
@@ -895,12 +930,19 @@ void AccountApi::setupRoutes()
                 return;
             }
             if (!transient.empty()) {
+                std::string delegatedDest;
                 try {
                     const i2p::Keys delegation = i2p::Keys::fromBlob(fromBase64(transient));
                     i2p::requireUsableDelegation(delegation, now);
                     i2p::requireDelegationEnds(delegation, expiresUnix);
+                    delegatedDest = i2p::routingHost(delegation.publicBase64());
                 } catch (const std::exception& error) {
                     respondError(response, 400, ErrorCode::eRequestFailed, error.what());
+                    return;
+                }
+                if (caller.role != DeviceRole::ePrimary && delegatedDest != publishedDest(user)) {
+                    respondError(response, 403, ErrorCode::eDeviceNotPrimary,
+                        "only a primary device moves its account to a new address");
                     return;
                 }
             }
@@ -934,7 +976,8 @@ void AccountApi::setupRoutes()
 
     clientRoute("GET", "/v1/account/i2p-status",
         [this](const http::Request&, http::Response& response,
-                          const std::string& user) {
+                          const server::Caller& caller) {
+            const std::string& user = caller.user;
             const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
             const std::optional<GrantStore::Transient> transient = grants_.peekTransient(user);
             respondJson(response,
@@ -973,7 +1016,8 @@ void AccountApi::setupRoutes()
 
     clientRoute("POST", "/v1/account/registration",
         [this](const http::Request&, http::Response& response,
-                          const std::string& user) {
+                          const server::Caller& caller) {
+            const std::string& user = caller.user;
             if (const std::optional<GrantStore::Ban> ban = grants_.peekBan(user);
                 ban.has_value()) {
                 respondError(response, 403, ErrorCode::eRequestFailed, ban->reason);

@@ -27,6 +27,13 @@ Bytes bodyBytes(const http::Request& request)
 
 using http::errorResponse;
 
+Caller refusal(http::Response response)
+{
+    Caller refused;
+    refused.refused = std::move(response);
+    return refused;
+}
+
 bool namesTunnel(const std::string& path)
 {
     return path == tunnel::kTunnelPath || path == tunnel::kNodeTunnelPath;
@@ -60,10 +67,10 @@ void TunnelFace::serve(
     if (tunnel::isHello(frame)) {
         try {
             const tunnel::Hello hello = tunnel::openHello(frame, *sealingKey_);
-            const std::string user = auth::verifyRequest(hello.signature, nowSeconds(),
-                tunnel::kHelloMethod, tunnel::kHelloPath, hello.secret, replays_);
+            const auth::DeviceCaller caller = auth::verifyDeviceRequest(hello.signature,
+                nowSeconds(), tunnel::kHelloMethod, tunnel::kHelloPath, hello.secret, replays_);
             std::int64_t expiresUnix = 0;
-            const std::string id = sessions_.open(user, hello.secret, nowSeconds(), expiresUnix);
+            const std::string id = sessions_.open(caller, hello.secret, nowSeconds(), expiresUnix);
             sessions_.setTunnelKey(id, tunnel::deriveTunnelKey(hello.secret, id));
             sealed(tunnel::sealWelcome({expiresUnix}, Key::fromPublicDer(hello.replyKeyDer)));
         } catch (const std::exception& error) {
@@ -130,33 +137,33 @@ void TunnelFace::serve(
 Caller TunnelFace::authenticate(const http::Request& request)
 {
     const auth::Headers authHeaders = http::collectAuthHeaders(request);
-    const std::string clientId = request.header(auth::kHeaderClient);
     if (auth::hasSessionHeaders(authHeaders)) {
         const std::string handle = authHeaders.at(auth::kHeaderSession);
         const std::optional<SessionStore::Session> session
             = sessions_.findByHandle(handle, nowSeconds());
         if (!session.has_value()) {
-            return Caller{
-                {}, errorResponse(401, ErrorCode::eSessionInvalid, "unknown or expired session")};
+            return refusal(
+                errorResponse(401, ErrorCode::eSessionInvalid, "unknown or expired session"));
         }
         try {
             const std::uint64_t seq = auth::verifyMac(authHeaders, session->key, nowSeconds(),
-                request.method, request.target, bodyBytes(request), clientId);
+                request.method, request.target, bodyBytes(request));
             if (!sessions_.acceptSeq(handle, seq, nowSeconds())) {
-                return Caller{
-                    {}, errorResponse(401, ErrorCode::eSessionInvalid, "sequence replayed")};
+                return refusal(
+                    errorResponse(401, ErrorCode::eSessionInvalid, "sequence replayed"));
             }
         } catch (const std::exception& error) {
-            return Caller{{}, errorResponse(401, ErrorCode::eSessionInvalid, error.what())};
+            return refusal(errorResponse(401, ErrorCode::eSessionInvalid, error.what()));
         }
-        return Caller{session->user, std::nullopt};
+        return Caller{
+            session->caller.user, session->caller.device, session->caller.role, std::nullopt};
     }
     try {
-        return Caller{auth::verifyRequest(authHeaders, nowSeconds(), request.method, request.target,
-                          bodyBytes(request), replays_, clientId),
-            std::nullopt};
+        const auth::DeviceCaller caller = auth::verifyDeviceRequest(authHeaders, nowSeconds(),
+            request.method, request.target, bodyBytes(request), replays_);
+        return Caller{caller.user, caller.device, caller.role, std::nullopt};
     } catch (const std::exception& error) {
-        return Caller{{}, errorResponse(401, ErrorCode::eRequestFailed, error.what())};
+        return refusal(errorResponse(401, ErrorCode::eRequestFailed, error.what()));
     }
 }
 

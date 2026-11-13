@@ -5,6 +5,7 @@
 
 #include <bazarish/KeyedSeal.hpp>
 #include <bazarish/Auth.hpp>
+#include <bazarish/Certificates.hpp>
 #include <bazarish/Clock.hpp>
 #include <bazarish/HttpClient.hpp>
 #include <bazarish/JsonRead.hpp>
@@ -30,12 +31,30 @@ NodeCards::NodeCards(NodeAddress node, std::shared_ptr<const Identity> identity)
 
 std::optional<HeldCard> NodeCards::card(const std::string& user)
 {
+    const std::optional<Held> found = held(user);
+    if (!found.has_value()) {
+        return std::nullopt;
+    }
+    return found->card;
+}
+
+std::optional<DeviceBook> NodeCards::devices(const std::string& user)
+{
+    const std::optional<Held> found = held(user);
+    if (!found.has_value()) {
+        return std::nullopt;
+    }
+    return found->devices;
+}
+
+std::optional<NodeCards::Held> NodeCards::held(const std::string& user)
+{
     const std::int64_t now = nowSeconds();
     {
         const std::lock_guard<std::mutex> lock(mutex_);
         const auto found = cached_.find(user);
-        if (found != cached_.end() && now - found->second.first < kCacheSeconds) {
-            return found->second.second;
+        if (found != cached_.end() && now - found->second.fetchedAt < kCacheSeconds) {
+            return found->second;
         }
     }
     http::ClientRequest lookup;
@@ -57,11 +76,14 @@ std::optional<HeldCard> NodeCards::card(const std::string& user)
             "the service node answered a card lookup with HTTP " + std::to_string(answer.status));
     }
     const nlohmann::json found = parseJson(answer.body);
-    const HeldCard card{fromBase64(found.at("card").get<std::string>()),
+    Held fetched;
+    fetched.fetchedAt = now;
+    fetched.card = HeldCard{fromBase64(found.at("card").get<std::string>()),
         linkKeyFromText(found.at("cardKey").get<std::string>())};
+    fetched.devices = ContactCard::verify(fetched.card.der).devices;
     const std::lock_guard<std::mutex> lock(mutex_);
-    cached_[user] = {now, card};
-    return card;
+    cached_[user] = fetched;
+    return fetched;
 }
 
 void NodeCards::forget(const std::string& user)

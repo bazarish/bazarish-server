@@ -17,6 +17,7 @@ constexpr std::int64_t kNow = 1780000000;
 constexpr std::uint64_t kHandleWindow = 64;
 
 const std::string kUser = std::string(52, 'a');
+const auth::DeviceCaller kCaller{kUser, "aaaaaaaaaa", DeviceRole::ePrimary};
 
 }  // namespace
 
@@ -27,7 +28,7 @@ int main()
     {
         SessionStore sessions;
         std::int64_t expires = 0;
-        const std::string id = sessions.open(kUser, secret, kNow, expires);
+        const std::string id = sessions.open(kCaller, secret, kNow, expires);
         CHECK(!id.empty());
         CHECK(sessions.size() == 1);
         CHECK(id == toHex(sha256(secret)).substr(0, 32));
@@ -38,7 +39,8 @@ int main()
             const std::optional<SessionStore::Session> found
                 = sessions.findByHandle(auth::sessionHandle(secret, seq), kNow);
             CHECK(found.has_value());
-            CHECK(found->user == kUser);
+            CHECK(found->caller.user == kUser);
+            CHECK(found->caller.device == kCaller.device);
             CHECK(found->key == auth::deriveSessionKey(secret, id));
         }
         CHECK(!sessions.findByHandle(auth::sessionHandle(secret, kHandleWindow + 1), kNow)
@@ -50,7 +52,7 @@ int main()
     {
         SessionStore sessions;
         std::int64_t expires = 0;
-        (void)sessions.open(kUser, secret, kNow, expires);
+        (void)sessions.open(kCaller, secret, kNow, expires);
 
         const std::string handle5 = auth::sessionHandle(secret, 5);
         CHECK(sessions.acceptSeq(handle5, 5, kNow));
@@ -71,7 +73,7 @@ int main()
     {
         SessionStore sessions;
         std::int64_t expires = 0;
-        (void)sessions.open(kUser, secret, kNow, expires);
+        (void)sessions.open(kCaller, secret, kNow, expires);
         const std::string handle = auth::sessionHandle(secret, 1);
         CHECK(sessions.findByHandle(handle, expires - 1).has_value());
         CHECK(!sessions.findByHandle(handle, expires).has_value());
@@ -83,13 +85,21 @@ int main()
         SessionStore sessions;
         const Bytes other = randomBytes(32);
         std::int64_t expires = 0;
-        const std::string first = sessions.open(kUser, secret, kNow, expires);
-        const std::string second = sessions.open(kUser, other, kNow, expires);
+        const std::string first = sessions.open(kCaller, secret, kNow, expires);
+        const std::string second = sessions.open(kCaller, other, kNow, expires);
         CHECK(first != second);
         CHECK(sessions.size() == 2);
         CHECK(sessions.acceptSeq(auth::sessionHandle(secret, 9), 9, kNow));
         CHECK(sessions.acceptSeq(auth::sessionHandle(other, 1), 1, kNow));
         CHECK(sessions.findByHandle(auth::sessionHandle(other, 2), kNow)->id == second);
+    }
+
+    {
+        SessionStore sessions;
+        std::int64_t expires = 0;
+        (void)sessions.open(kCaller, secret, kNow, expires);
+        const auth::DeviceCaller otherDevice{kUser, "bbbbbbbbbb", DeviceRole::eSecondary};
+        CHECK_THROWS(sessions.open(otherDevice, secret, kNow, expires));
     }
 
     std::printf("TestSessionStore passed\n");

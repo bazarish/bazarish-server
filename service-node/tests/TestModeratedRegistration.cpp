@@ -47,7 +47,9 @@ Bytes botCard(const Identity& owner, const std::int64_t issuedAt,
     card.kind = AccountKind::eBot;
     card.issuedAt = issuedAt;
     card.dest = dest;
-    card.sealingPublicKeyDer = sealingDer;
+    const EpochNumber current = epochAt(issuedAt);
+    card.epochs = {{current, kFirstEpochGeneration, "dev1", sealingDer},
+        {current + 1, kFirstEpochGeneration, "dev1", Key::generateSealing().publicDer()}};
     card.servingSealingKeyDer = servingDer;
     return card.issue(owner);
 }

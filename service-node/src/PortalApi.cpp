@@ -67,6 +67,20 @@ void clearSessionCookie(http::Response& response)
     clearCookie(response, kSessionCookie, kCookieAttributes);
 }
 
+constexpr std::size_t kFingerprintGroup = 4;
+
+std::string groupedFingerprint(const std::string& fingerprint)
+{
+    std::string grouped;
+    for (std::size_t at = 0; at < fingerprint.size(); at += kFingerprintGroup) {
+        if (at > 0) {
+            grouped += ' ';
+        }
+        grouped += fingerprint.substr(at, kFingerprintGroup);
+    }
+    return grouped;
+}
+
 constexpr std::size_t kSizeTextBytes = 32;
 
 std::string bytesHuman(const std::uint64_t bytes)
@@ -270,7 +284,7 @@ std::string PortalApi::page(const http::Request& request, const std::string& tit
             {"title", htmlEscape(messages_.translate(title, lang))},
             {"strapline",
                 htmlEscape(messages_.text(
-                    "page.strapline", lang, {options_.serverFingerprint}))},
+                    "page.strapline", lang, {groupedFingerprint(options_.serverFingerprint)}))},
             {"session", session},
             {"content", content},
             {"lang", lang},

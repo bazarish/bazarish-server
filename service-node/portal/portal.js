@@ -117,7 +117,7 @@
                 show(event.target.dataset.signinShow);
             }
         });
-        show(document.querySelector("[data-signin-pane=copy] .is-error") ? "copy" : "scan");
+        show("copy");
     }
 
     offerSignInTabs();

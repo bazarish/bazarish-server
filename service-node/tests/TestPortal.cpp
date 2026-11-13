@@ -193,6 +193,7 @@ void testWebFlow()
     const http::ClientResponse page = call(port, "GET", "/");
     CHECK(page.status == 200);
     CHECK(page.body.find("<h2 class=\"view-title\">Sign in<") != std::string::npos);
+    CHECK(page.body.find("server serv ice- node -fin gerp rint<") != std::string::npos);
 
     for (const char* const code : {"en", "ru", "es", "zh", "ar"}) {
         const http::ClientResponse drawn
@@ -246,6 +247,8 @@ void testWebFlow()
         const std::string pasted = between(shown.body, "<pre class=\"copy\">", "</pre>");
         CHECK(!readLoginCallback(pasted).has_value());
         CHECK(shown.body.find("<div data-signin-tabs hidden>") != std::string::npos);
+        CHECK(shown.body.find("class=\"tab is-on\" type=\"button\" data-signin-show=\"copy\"")
+            < shown.body.find("data-signin-show=\"scan\""));
         CHECK(shown.body.find("<div data-signin-pane=\"scan\" hidden>")
             < shown.body.find("<div data-signin-pane=\"copy\">"));
         const std::string nonce = between(shown.body, "data-sign-wait=\"/login/wait?nonce=", "\"");

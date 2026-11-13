@@ -306,6 +306,8 @@ int main()
         const std::string pasted = shown.body.substr(start, shown.body.find('"', start) - start);
         CHECK(!service::readLoginCallback(pasted).has_value());
         CHECK(shown.body.find("<div data-signin-tabs hidden>") != std::string::npos);
+        CHECK(shown.body.find("class=\"tab is-on\" type=\"button\" data-signin-show=\"copy\"")
+            < shown.body.find("data-signin-show=\"scan\""));
         const std::string challenge = [&]() {
             const std::lock_guard<std::mutex> lock(guard);
             return expected.at("challenge").get<std::string>();

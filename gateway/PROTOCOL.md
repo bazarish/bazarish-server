@@ -91,7 +91,7 @@ the seed never travels. What the operator holds is bounded by the day:
 | Server authentication | The gateway's own hybrid key. The link carries its fingerprint, and the gateway proves it in the handshake (The channel, below) |
 | Client authentication | The secret path. A client is given the gateway in one link, `https://bazari.sh/#gateway?v=1&url=<secret URL>&fp=<fingerprint>` |
 | Headers | None of this protocol's own. The client sends Chrome's upgrade request: its headers, in its order, with a User-Agent of the platform the client runs on |
-| Keepalive | The client pings once it has sent nothing or heard nothing for `kIdleKeepalive`; a ping not answered within `kPongTimeout` ends the socket. The gateway never pings: it answers pings and closes a socket it has heard nothing on for `kSilenceLimit` |
+| Keepalive | The client pings once it has sent nothing or heard nothing for a wait drawn uniformly in `kIdleKeepaliveMin`..`kIdleKeepaliveMax`, afresh each time either side sends; a ping not answered within `kPongTimeout` ends the socket. The gateway never pings: it answers pings and closes a socket it has heard nothing on for `kSilenceLimit` |
 
 ### Getting in, and not getting in
 
@@ -380,7 +380,7 @@ source of random bytes only for whoever already holds its path.
 ### Idle: one quiet socket
 
 While idle the client keeps one WebSocket and does nothing to it: no decoys, no
-replacement of the socket, a ping only after `kIdleKeepalive` of silence, and
+replacement of the socket, a ping only after a drawn wait of silence, and
 `endpoint-status` only when `ready` changes. A dead socket is found when the
 device moves to another network - the platform says so: Android's network
 callback, Qt's `QNetworkInformation` on a desktop, a change of reachability or of
@@ -1024,9 +1024,10 @@ Both sides agree, so there is nothing to refuse.
 | `kMaxStreamsPerSession` | 1024 | Streams one session holds, dialled and accepted together |
 | `kInboundQueue` | 8 | Unaccepted inbound streams per endpoint before the client resets the oldest |
 | `kDatagramQueue` | 64 | Received datagrams held per endpoint, at either end |
-| `kIdleKeepalive` | 270 s | The silence after which the client pings: under the five minutes a mobile carrier's NAT keeps a silent TCP flow |
+| `kIdleKeepaliveMin`, `kIdleKeepaliveMax` | 180 s, 260 s | The range the silence before a ping is drawn in, uniformly and afresh for each quiet spell: no two pings need be the same time apart, at most 20 pings an hour, under the five minutes a mobile carrier's NAT keeps a silent TCP flow |
 | `kPongTimeout` | 15 s | A ping unanswered this long is a dead socket |
-| `kSilenceLimit` | 285 s | `kIdleKeepalive` + `kPongTimeout`: the gateway closes a socket it has heard nothing on for this long |
+| `kSilenceMargin` | 10 s | Room for a ping drawn at `kIdleKeepaliveMax` to reach the gateway |
+| `kSilenceLimit` | 285 s | `kIdleKeepaliveMax` + `kPongTimeout` + `kSilenceMargin`: the gateway closes a socket it has heard nothing on for this long |
 | `kRecordPadFloor`, `kRecordPadCeiling` | 1536, 4096 | The range a padded record's plaintext is drawn in |
 | `kRecordPadMedian`, `kRecordPadSigma` | 1800, 0.5 | The log-normal it is drawn from |
 | `kBulkPadMedian`, `kBulkPadSigma`, `kBulkPadMax` | 256, 1.0, 4096 | The padding added to a frame longer than the ceiling |

@@ -151,10 +151,14 @@ plaintext of a record is:
 
 | Bytes | Field |
 |---|---|
-| 1 | Flags. Bit 0: the client is active (Cover); the gateway sends it zero. Bit 1: a filler (Media pacing). The other bits are zero |
+| 1 | Flags. Bit 0: the client is active (Cover). The other bits are zero, and the gateway sends zero |
 | 2 | The frame's length, big-endian |
 | that length | The frame |
+| 2 and the length they name, again | Further frames, on a media socket only (Media pacing) |
 | the rest | Zeros |
+
+A length of zero, or the end of the plaintext, ends the frames. A record with
+no frame at all is a filler.
 
 A frame that fits, with the three bytes before it, in `kRecordPadCeiling` gets a
 total length drawn from a log-normal of median `kRecordPadMedian` and sigma
@@ -179,44 +183,69 @@ other frame on that socket is padded as above.
 ### Media pacing
 
 On the socket of a realtime `raw` endpoint each end sends records in **slots**,
-not when a datagram is handed to it. The gap from one slot to the next is drawn
-uniformly in `kMediaGapMin`..`kMediaGapMax`, from the moment the slot was taken,
-and nothing queued moves a slot. A slot carries the oldest queued datagram; a
-slot with none queued carries a **filler**: flags with bit 1 set, a frame length
-of zero, and zeros. The receiver drops a filler. Which socket is paced follows
-from the endpoint the socket was attached to (`realtime` in `endpoint-create`):
-the client paces from the moment it attaches the socket, the gateway from the
-moment it reads `attach`.
+not when a datagram is handed to it. Which socket is paced follows from the
+endpoint the socket was attached to (`realtime` in `endpoint-create`): the
+client paces from the moment it attaches the socket, the gateway from the moment
+it reads `attach`.
 
-The mean gap, 15 ms, is under the 20 ms of one Opus frame, so the slots drain a
-call's datagrams faster than they come and the queue stays short; the longest
-gap, 27 ms, bounds the wait of a datagram that finds the queue empty. With one
-datagram every 20 ms one end adds 10 ms at the median and 31 ms at p99; with two
-datagrams handed over at once every 40 ms, 17 and 47 ms. A datagram crosses two
-paced sockets, the sender's and the receiver's, which together add about 25 ms
-at the median and 50 ms at p99. The record times carry no rhythm of the voice:
-their autocorrelation in 5 ms bins at 20, 40 and 60 ms is at most 0.03, where
-records sent at the voice's own times show 0.26. A media socket carries about
-27 KB/s in each direction for as long as the call lasts.
+The slots run through **regimes**. A regime lasts a time drawn uniformly in
+`kMediaRegimeLeast`..`kMediaRegimeMost` and draws, each uniformly:
+
+- the lowest gap between two slots, in `kMediaGapFloorLeast`..`kMediaGapFloorMost`;
+- the highest gap, between the lowest plus `kMediaGapWidthLeast` and
+  `kMediaGapCeiling`;
+- the share of empty slots that carry a filler, in 0..`kMediaFillerShareMost`;
+- the span of voice padding, in `kMediaPadSpanLeast`..`kMediaPadSpanMost`.
+
+Each gap is drawn uniformly between the regime's lowest and highest, from the
+moment the slot was taken, and nothing queued moves a slot. A slot carries the
+oldest queued datagrams, up to `kMediaFramesPerRecord` of them in one record.
+A slot with none queued carries a **filler**, a record with no frame, at the
+regime's share, and otherwise sends nothing. The receiver drops a filler.
+
+A datagram waits at most one gap, `kMediaGapCeiling`, as long as no more than
+`kMediaFramesPerRecord` arrive within a gap, which holds for one Opus frame every
+20 ms and for two handed over at once every 40 ms. Over a simulated ten-minute
+call one end adds, for one frame every 20 ms, 10 ms at the median, 30 ms at p99
+and 35 ms at most; for two frames every 40 ms, 10, 30 and 36 ms. A datagram
+crosses two paced sockets, the sender's and the receiver's. The record times
+carry no rhythm of the voice: their autocorrelation in 5 ms bins at 20, 40 and
+60 ms stays within 0.04 of zero, and within 0.03 for the voice records alone
+when the frames come every 20 ms, where records sent at the voice's own times
+show 0.26. When the frames come in pairs every 40 ms, the voice records alone
+show -0.10, 0.06 and -0.05: the pairs' own rhythm.
 
 A queue holds at most `kMediaQueueLimit` datagrams; one more drops the oldest,
 and the drop is counted and logged. While more than `kMediaBacklogBytes` the
-socket has been handed have not left, a slot with no datagram sends nothing:
-the link is then slower than the slots, TCP sets the timing, and a filler would
-only lengthen the queue in front of the next voice frame.
+socket has been handed have not left, an empty slot sends nothing: the link is
+then slower than the slots, TCP sets the timing, and a filler would only
+lengthen the queue in front of the next voice frame.
 
-A media record's plaintext length is drawn uniformly in
-`kMediaPadFloor`..`kMediaPadCeiling`, for a datagram and for a filler alike. The
-floor lies above the longest voice datagram, a `raw-send` with a 64-character
-host and a 150-byte Opus frame, so a voice datagram and a filler have one
-length distribution. A datagram that does not fit in the drawn length takes a
-length drawn again between its own and the ceiling; one longer than the
-ceiling is padded as any other frame.
+A `raw-send` on a paced socket to the host the `raw-send` before it on that
+socket named goes with a host length of zero and no host. The receiver puts the
+host back before it reads the frame, and closes a socket whose first `raw-send`
+names no host. The first `raw-send` names its host in full.
 
-A slot replaces the keepalive on such a socket, because the socket is never
-silent while the call lasts. The call's own keepalive, an empty datagram every
-500 ms of silence, travels end to end over I2P, tells the far end the call is
-alive, and is carried in a slot like any other datagram.
+A voice record of n frames has a plaintext length drawn uniformly from
+n x `kMediaPadPerFrame` to the regime's span above it, drawn again from its own
+length up when the frames are longer; a record that does not fit there is padded
+as any other. `kMediaPadPerFrame` lies above the longest voice frame with its
+host elided, a 150-byte Opus frame. A filler's length is, with chance
+`kFillerVoiceLike`, drawn as a voice record of one or two frames is, and
+otherwise log-uniformly in `kFillerLeast`..`kFillerMost`. Every voice length is
+then a length a filler takes, and 57% of fillers lie in a voice band; a length
+outside the bands marks a filler.
+
+Over a simulated ten-minute call, counting the TLS and WebSocket headers, a
+media socket carries for one frame every 20 ms 14.1 KB/s on average, per second
+12.1 at p5, 13.7 at p50 and 17.0 at p95; for two frames every 40 ms 15.4 KB/s,
+11.2, 15.0 and 21.3. The rate of 5-second windows varies by a factor of 1.27 and
+1.72 between p5 and p95.
+
+A slot replaces the keepalive on such a socket while the call lasts. The call's
+own keepalive, an empty datagram every 500 ms of silence, travels end to end
+over I2P, tells the far end the call is alive, and is carried in a slot like
+any other datagram.
 
 A keepalive ping carries one byte, the same flags. The gateway keeps the last
 flags a session's client sent in a record or a ping: while they say idle, it
@@ -1069,10 +1098,17 @@ Both sides agree, so there is nothing to refuse.
 | `kRecordPadMedian`, `kRecordPadSigma` | 1800, 0.5 | The log-normal it is drawn from |
 | `kBulkPadMedian`, `kBulkPadSigma`, `kBulkPadMax` | 256, 1.0, 4096 | The padding added to a frame longer than the ceiling |
 | `kMaxPaddedBytes` | 20483 | Three bytes, `kMaxFrameBytes` and `kBulkPadMax`: the longest plaintext of a record |
-| `kMediaGapMin`, `kMediaGapMax` | 3 ms, 27 ms | The range the gap between two slots of a media socket is drawn in, uniformly. The mean, 15 ms, is under the 20 ms of an Opus frame; the floor keeps two records from going out as one TCP segment |
-| `kMediaPadFloor`, `kMediaPadCeiling` | 320, 448 | The range a media record's plaintext is drawn in, uniformly. The floor lies above the longest voice datagram |
+| `kMediaRegimeLeast`, `kMediaRegimeMost` | 2 s, 10 s | How long one regime of a media socket's slots lasts: seconds, so the rate drifts over a call |
+| `kMediaGapFloorLeast`, `kMediaGapFloorMost` | 2 ms, 10 ms | The range a regime's lowest gap between slots is drawn in |
+| `kMediaGapWidthLeast`, `kMediaGapCeiling` | 22 ms, 36 ms | A regime's highest gap lies at least the width above its lowest and at most the ceiling, which bounds a datagram's wait at one end |
+| `kMediaFillerShareMost` | 0.8 | The highest share of empty slots a regime fills |
+| `kMediaFramesPerRecord` | 2 | Datagrams one slot carries, so a slot can hold the two frames of a 40 ms gap |
+| `kMediaPadPerFrame` | 192 | A voice record of n frames is at least n times this: above a 150-byte Opus frame with its host elided |
+| `kMediaPadSpanLeast`, `kMediaPadSpanMost` | 16, 64 | The range a regime's span of voice padding is drawn in |
+| `kFillerVoiceLike` | 0.5 | The chance a filler takes a voice record's length |
+| `kFillerLeast`, `kFillerMost` | 96, 1200 | The range of the other fillers' lengths, log-uniform |
 | `kMediaQueueLimit` | 8 | Datagrams a media socket holds for its slots, 160 ms of voice, beyond which the oldest is dropped |
-| `kMediaBacklogBytes` | 928 | Two records of the ceiling and their tags: while more than this waits to leave, a slot sends no filler |
+| `kMediaBacklogBytes` | 2432 | Two of the largest fillers and their tags: while more than this waits to leave, an empty slot sends nothing |
 | `kInputIdleAfter` | 120 s | Input older than this leaves the client idle |
 | `kEmbeddedAlpha`, `kEmbeddedMin`, `kEmbeddedMax` | 2.4, 1, 30 | Resources per page (SURGE, Barford and Crovella 1998) |
 | `kInBurstGapMedian`, `kInBurstGapSigma`, `kInBurstGapMax` | 80 ms, 1.0, 2 s | The gap between a burst's requests |

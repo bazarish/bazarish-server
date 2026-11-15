@@ -43,8 +43,7 @@ constexpr double kPercentile50 = 0.50;
 constexpr double kPercentile99 = 0.99;
 // Two pacers lie on the way, the sender's and the gateway's, each within 35 ms at p99.
 constexpr std::chrono::duration<double, std::milli> kTwoPacersP99{80};
-constexpr double kLaneRateLow = 0.7;
-constexpr double kLaneRateHigh = 1.3;
+constexpr double kLaneOverVoiceMost = 2.5;
 constexpr std::size_t kHerMediaLane = 1;
 
 i2p::RouterConfig borrowedFrom(const int port, const std::string& fingerprint)
@@ -180,22 +179,18 @@ Crossed voiceAcross(i2p::Endpoint& from, i2p::Endpoint& to, const Relay& relay,
     return crossed;
 }
 
-// Every slot carries a record of the media sizes, voice or not, so the lane's rate is the slots'.
+// Every voice frame costs at least kMediaPadPerFrame on the lane, and fillers come on top.
 bool goesPaced(const Crossed& crossed)
 {
-    const double slotsPerSecond
-        = 1.0 / std::chrono::duration<double>(kMediaGapMin + kMediaGapMax).count() * 2;
-    const double recordBytes
-        = static_cast<double>(kMediaPadFloor + kMediaPadCeiling) / 2 + kAeadTagBytes;
-    const double expected = slotsPerSecond * recordBytes;
+    const double voicePerSecond = 1.0 / std::chrono::duration<double>(kVoiceFrame).count();
+    const double least = voicePerSecond * static_cast<double>(kMediaPadPerFrame);
     std::printf("media: %zu of %u datagrams, in order %s, latency p50 %.1f ms p99 %.1f ms "
-                "max %.1f ms, lane %.0f B/s against %.0f B/s of slots\n",
+                "max %.1f ms, lane %.0f B/s, voice alone at least %.0f B/s\n",
         crossed.arrived, kVoiceFrames, crossed.inOrder ? "yes" : "no", crossed.p50, crossed.p99,
-        crossed.most, crossed.bytesPerSecond, expected);
+        crossed.most, crossed.bytesPerSecond, least);
     return crossed.arrived == kVoiceFrames && crossed.inOrder
-        && crossed.p99 <= kTwoPacersP99.count()
-        && crossed.bytesPerSecond > expected * kLaneRateLow
-        && crossed.bytesPerSecond < expected * kLaneRateHigh;
+        && crossed.p99 <= kTwoPacersP99.count() && crossed.bytesPerSecond > least
+        && crossed.bytesPerSecond < least * kLaneOverVoiceMost;
 }
 
 }  // namespace

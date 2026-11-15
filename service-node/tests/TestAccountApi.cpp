@@ -170,7 +170,8 @@ int main()
                 [&cardsChanged](const std::string& user) {
                     cardsChanged.push_back(user);
                     return PushOutcome::eDelivered;
-                }});
+                },
+            .takeDownAddress = [](const std::string&) { return PushOutcome::eDelivered; }});
     AccountApi api(store, grants, options);
 
     const int port = api.bind("127.0.0.1", 0);

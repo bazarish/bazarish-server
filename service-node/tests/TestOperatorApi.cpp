@@ -77,12 +77,8 @@ int main()
     std::string quotaUser;
     std::uint64_t quotaPushed = 0;
     std::string revokedUser;
-    std::string revokedTransient = "not-called";
-    options.publishI2pTransient = [&](const std::string& user, const std::string& transientB64,
-                                      const std::int64_t, const AddressKeys&)
-        -> std::optional<ServedDestination> {
-        revokedUser = user;
-        revokedTransient = transientB64;
+    options.publishI2pTransient = [](const std::string&, const std::string&, const std::int64_t,
+                                      const AddressKeys&) -> std::optional<ServedDestination> {
         return ServedDestination{};
     };
     options.pushes = std::make_shared<PushQueue>(root, store, *options.userLocks,
@@ -93,7 +89,12 @@ int main()
                     quotaPushed = quotaBytes;
                     return PushOutcome::eDelivered;
                 },
-            .card = [](const std::string&) { return PushOutcome::eDelivered; }});
+            .card = [](const std::string&) { return PushOutcome::eDelivered; },
+            .takeDownAddress =
+                [&](const std::string& user) {
+                    revokedUser = user;
+                    return PushOutcome::eDelivered;
+                }});
     options.forgetMailbox = [](const std::string&) { return true; };
     std::filesystem::create_directories(root);
     const std::filesystem::path configPath = root / "service-node.json";
@@ -222,7 +223,7 @@ int main()
             = call(opsPort, panel, "POST", "/v1/account/undelegate", body);
         CHECK(held.status == 200);
         CHECK(revokedUser == served);
-        CHECK(revokedTransient.empty());
+        CHECK(!nlohmann::json::parse(held.body).at("serverPending").get<bool>());
         const nlohmann::json record = nlohmann::json::parse(held.body);
         CHECK(record.at("approval").get<std::string>() == "pending");
         CHECK(record.at("holdMessage").get<std::string>()

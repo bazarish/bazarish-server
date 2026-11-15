@@ -192,6 +192,12 @@ PushOutcome OperatorPush::publishCardChanged(const std::string& user) const
     return exchange("PUT", routes::kMessagingCard, routes::kMessagingCard, body).outcome;
 }
 
+PushOutcome OperatorPush::takeDownAddress(const std::string& user) const
+{
+    const std::string body = nlohmann::json{{"user", user}}.dump();
+    return exchange("PUT", routes::kMessagingI2pDest, routes::kMessagingI2pDest, body).outcome;
+}
+
 std::optional<ServedDestination> OperatorPush::publish(const std::string& user,
     const std::string& transientB64, const std::int64_t expiresUnix,
     const AddressKeys& keys) const

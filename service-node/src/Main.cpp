@@ -235,6 +235,10 @@ int main(const int argc, const char** argv)
             .card =
                 [&queuePush](const std::string& user) {
                     return queuePush.publishCardChanged(user);
+                },
+            .takeDownAddress =
+                [&queuePush](const std::string& user) {
+                    return queuePush.takeDownAddress(user);
                 }});
     const bazarish::service::OperatorPush operatorPush(
         backend, nodeIdentity, [pushes]() { pushes->serverReached(); });

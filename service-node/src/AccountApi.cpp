@@ -322,9 +322,7 @@ void AccountApi::stop()
 
 void AccountApi::revokeDestination(const std::string& user)
 {
-    if (options_.publishI2pTransient) {
-        options_.publishI2pTransient(user, std::string(), 0, {});
-    }
+    options_.pushes->record(user, {.addressDown = true});
     grants_.setI2pTransient(user, 0);
 }
 
@@ -484,6 +482,7 @@ void AccountApi::setupOpsRoutes()
             const std::optional<GrantStore::Transient> transient = grants_.peekTransient(user);
             revokeDestination(user);
             grants_.hold(user, message, nowSeconds(), transient.has_value() ? transient->expires : 0);
+            options_.pushes->deliver(user);
             respondJson(response, userRecord(user, grants_.peekApproval(user)));
         })));
 
@@ -963,6 +962,7 @@ void AccountApi::setupRoutes()
                     "the messaging server did not accept the delegation");
                 return;
             }
+            options_.pushes->settled(user, {.addressDown = true});
             grants_.setI2pTransient(user, expiresUnix);
             if (const std::optional<SubscriptionStore::Account> held = store_.getAccount(user);
                 held.has_value()) {

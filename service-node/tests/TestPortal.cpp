@@ -81,7 +81,8 @@ void testLoginCallback()
     options.pushes = std::make_shared<PushQueue>(root, store, *options.userLocks,
         PushQueue::Delivery{
             .quota = [](const std::string&, std::uint64_t) { return PushOutcome::eDelivered; },
-            .card = [](const std::string&) { return PushOutcome::eDelivered; }});
+            .card = [](const std::string&) { return PushOutcome::eDelivered; },
+            .takeDownAddress = [](const std::string&) { return PushOutcome::eDelivered; }});
     options.logins = std::make_shared<LoginMailbox>();
 
     AccountApi api(store, grants, options);

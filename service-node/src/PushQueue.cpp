@@ -44,8 +44,9 @@ PushQueue::PushQueue(
     , locks_(locks)
     , delivery_(std::move(delivery))
 {
-    if (!delivery_.quota || !delivery_.card) {
-        throw std::invalid_argument("the node tells its messaging server of every quota and card");
+    if (!delivery_.quota || !delivery_.card || !delivery_.takeDownAddress) {
+        throw std::invalid_argument(
+            "the node tells its messaging server of every quota, card and address taken down");
     }
     fs::create_directories(root_);
     worker_ = std::thread([this]() { run(); });
@@ -72,7 +73,17 @@ void PushQueue::record(const std::string& user, const Unsent changed)
     Unsent merged = unsent(user);
     merged.quota = merged.quota || changed.quota;
     merged.card = merged.card || changed.card;
+    merged.addressDown = merged.addressDown || changed.addressDown;
     write(user, merged);
+}
+
+void PushQueue::settled(const std::string& user, const Unsent confirmed)
+{
+    Unsent left = unsent(user);
+    left.quota = left.quota && !confirmed.quota;
+    left.card = left.card && !confirmed.card;
+    left.addressDown = left.addressDown && !confirmed.addressDown;
+    write(user, left);
 }
 
 PushQueue::Unsent PushQueue::unsent(const std::string& user) const
@@ -82,7 +93,8 @@ PushQueue::Unsent PushQueue::unsent(const std::string& user) const
         return {};
     }
     const nlohmann::json body = readJsonFile(path);
-    return {body.at("quota").get<bool>(), body.at("card").get<bool>()};
+    return {body.at("quota").get<bool>(), body.at("card").get<bool>(),
+        body.at("addressDown").get<bool>()};
 }
 
 void PushQueue::write(const std::string& user, const Unsent left)
@@ -92,7 +104,10 @@ void PushQueue::write(const std::string& user, const Unsent left)
         fs::remove(path);
         return;
     }
-    writeFileAtomic(path, nlohmann::json{{"quota", left.quota}, {"card", left.card}}.dump());
+    writeFileAtomic(path,
+        nlohmann::json{
+            {"quota", left.quota}, {"card", left.card}, {"addressDown", left.addressDown}}
+            .dump());
 }
 
 std::vector<std::string> PushQueue::unsentUsers() const
@@ -112,13 +127,16 @@ PushQueue::Attempt PushQueue::attempt(const std::string& user)
     if (!result.left.any()) {
         return result;
     }
+    if (result.left.addressDown) {
+        settle(delivery_.takeDownAddress(user), result.left.addressDown, result.delivered,
+            result.unreachable);
+    }
     const std::optional<SubscriptionStore::Account> account = store_.getAccount(user);
     if (!account.has_value()) {
-        write(user, {});
-        result.left = {};
-        return result;
+        result.left.quota = false;
+        result.left.card = false;
     }
-    if (result.left.quota) {
+    if (result.left.quota && !result.unreachable) {
         settle(delivery_.quota(user, account->quotaBytes), result.left.quota, result.delivered,
             result.unreachable);
     }

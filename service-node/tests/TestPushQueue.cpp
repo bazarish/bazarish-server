@@ -7,6 +7,7 @@
 #include <bazarish/Certificates.hpp>
 #include <bazarish/Clock.hpp>
 #include <bazarish/Crypto.hpp>
+#include <bazarish/I2p.hpp>
 #include <bazarish/KeyedSeal.hpp>
 
 #include <nlohmann/json.hpp>
@@ -34,6 +35,7 @@ using testutil::signedHeaders;
 constexpr std::uint64_t kQuota = 10 * 1024 * 1024;
 constexpr std::uint64_t kRaised = 40 * 1024 * 1024;
 constexpr std::uint64_t kLowered = 30 * 1024 * 1024;
+constexpr int kDelegationDays = 7;
 const std::string kCardDest = "dlkbeyqjykssca6o7qlbwgq4fr2hry7kw2ursn2sh3lt3acox6gqaaaa.b32.i2p";
 
 class MessagingServer {
@@ -64,6 +66,22 @@ public:
         return PushOutcome::eDelivered;
     }
 
+    PushOutcome takeDown(const std::string& user)
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        if (!up_) {
+            return PushOutcome::eUnreachable;
+        }
+        takenDown_.push_back(user);
+        return PushOutcome::eDelivered;
+    }
+
+    std::size_t takeDownsOf(const std::string& user)
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        return static_cast<std::size_t>(std::count(takenDown_.begin(), takenDown_.end(), user));
+    }
+
     std::uint64_t quotaOf(const std::string& user)
     {
         const std::lock_guard<std::mutex> lock(mutex_);
@@ -82,6 +100,7 @@ private:
     bool up_ = false;
     std::map<std::string, std::uint64_t> quotas_;
     std::vector<std::string> cards_;
+    std::vector<std::string> takenDown_;
 };
 
 Bytes cardOf(const devicetest::Account& owner, const std::int64_t issuedAt)
@@ -151,7 +170,9 @@ int main()
                     [&messaging](const std::string& user, const std::uint64_t quotaBytes) {
                         return messaging.quota(user, quotaBytes);
                     },
-                .card = [&messaging](const std::string& user) { return messaging.card(user); }});
+                .card = [&messaging](const std::string& user) { return messaging.card(user); },
+                .takeDownAddress =
+                    [&messaging](const std::string& user) { return messaging.takeDown(user); }});
     };
 
     const devicetest::Account alice;
@@ -219,6 +240,40 @@ int main()
         CHECK(testutil::waitFor([&]() { return messaging.quotaOf(user) == kLowered; }));
         CHECK(testutil::waitFor([&]() { return !serverPending(opsPort, panel, user); }));
         CHECK(messaging.cardsOf(user) == 1);
+
+        const int port = api.bind("127.0.0.1", 0);
+        CHECK(port > 0);
+        messaging.setUp(false);
+        const std::string hold
+            = nlohmann::json{{"user", user}, {"message", "write to the operator"}}.dump();
+        const http::ClientResponse held
+            = operatorCall(opsPort, panel, "POST", "/v1/account/undelegate", hold);
+        CHECK(held.status == 200);
+        CHECK(nlohmann::json::parse(held.body).at("serverPending").get<bool>());
+        CHECK(messaging.takeDownsOf(user) == 0);
+
+        const std::string approve = nlohmann::json{{"user", user}}.dump();
+        CHECK(operatorCall(opsPort, panel, "POST", "/v1/account/approve", approve).status == 200);
+        const i2p::Keys delegation = i2p::Keys::generate().issueTransient(kDelegationDays);
+        const std::string delegate = nlohmann::json{{"transient", toBase64(delegation.blob())},
+            {"expiresUnix", delegation.transientExpires()}, {"sealingKey", "sealing-pem"},
+            {"signingKey", "signing-pem"}}
+                                         .dump();
+        CHECK(call(port, "POST", "/v1/account/i2p-dest",
+                  deviceHeaders(alice.device, "POST", "/v1/account/i2p-dest", delegate), delegate)
+                  .status
+            == 200);
+        CHECK(!serverPending(opsPort, panel, user));
+
+        CHECK(operatorCall(opsPort, panel, "POST", "/v1/account/undelegate", hold).status == 200);
+        CHECK(serverPending(opsPort, panel, user));
+
+        messaging.setUp(true);
+        const std::string lookup = "/v1/account/card?user=" + user;
+        CHECK(call(port, "GET", lookup, signedHeaders(serverIdentity, "GET", lookup, {})).status
+            == 404);
+        CHECK(testutil::waitFor([&]() { return messaging.takeDownsOf(user) == 1; }));
+        CHECK(testutil::waitFor([&]() { return !serverPending(opsPort, panel, user); }));
         api.stop();
     }
     options.pushes.reset();

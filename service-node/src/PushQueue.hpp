@@ -22,13 +22,15 @@ public:
     struct Unsent {
         bool quota = false;
         bool card = false;
+        bool addressDown = false;
 
-        bool any() const { return quota || card; }
+        bool any() const { return quota || card || addressDown; }
     };
 
     struct Delivery {
         std::function<PushOutcome(const std::string& user, std::uint64_t quotaBytes)> quota;
         std::function<PushOutcome(const std::string& user)> card;
+        std::function<PushOutcome(const std::string& user)> takeDownAddress;
     };
 
     PushQueue(const std::filesystem::path& root, SubscriptionStore& store, UserLocks& locks,
@@ -38,8 +40,9 @@ public:
     PushQueue(const PushQueue&) = delete;
     PushQueue& operator=(const PushQueue&) = delete;
 
-    // These three are called with the account's lock held.
+    // These four are called with the account's lock held.
     void record(const std::string& user, Unsent changed);
+    void settled(const std::string& user, Unsent confirmed);
     Unsent deliver(const std::string& user);
     Unsent unsent(const std::string& user) const;
 

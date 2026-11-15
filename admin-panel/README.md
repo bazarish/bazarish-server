@@ -59,8 +59,8 @@ A sidebar with two views, drawn by a small script from the panel's own JSON API:
 - **Users** - the accounts on the service node: search by fingerprint (the node
   does the searching), filter by approval state, open an account to read its
   terms, set its storage quota in megabytes, or approve it. An account whose
-  quota or card the messaging server has not yet received is tagged
-  "server not updated".
+  quota, card or address takedown the messaging server has not yet received
+  is tagged "server not updated".
 
 The settings page of server-core, the service node, each facade and each gateway
 opens with a Logs section: the service's log level and, for server-core, a facade

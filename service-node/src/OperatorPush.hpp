@@ -59,6 +59,7 @@ public:
 
     PushOutcome publishQuota(const std::string& user, std::uint64_t quotaBytes) const;
     PushOutcome publishCardChanged(const std::string& user) const;
+    PushOutcome takeDownAddress(const std::string& user) const;
 
     std::string reseedArchive() const;
 

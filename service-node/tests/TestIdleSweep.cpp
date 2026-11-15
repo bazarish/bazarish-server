@@ -50,7 +50,7 @@ int main()
     UserLocks locks;
     const fs::path root = fs::temp_directory_path() / ("bazarish-sweep-" + toHex(randomBytes(8)));
     const Identity node = Identity::generate();
-    const OperatorPush noServer(OperatorPush::Dial{}, node, OperatorPush::kPromptAttempts);
+    const OperatorPush noServer(OperatorPush::Dial{}, node);
 
     const std::string active = Identity::generate().fingerprint();
     const std::string lapsed = Identity::generate().fingerprint();

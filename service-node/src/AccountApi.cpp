@@ -257,7 +257,7 @@ AccountApi::AccountApi(
     , startedAt_(nowSeconds())
     , tunnel_(options_.sealingKey, options_.serverFingerprint)
 {
-    if (!options_.publishQuota || !options_.publishCardChanged) {
+    if (!options_.pushes) {
         throw std::invalid_argument("the node tells its messaging server of every quota and card");
     }
 }
@@ -380,6 +380,7 @@ nlohmann::json AccountApi::userRecord(
         {"requestedAt", approval.has_value() ? approval->requestedAt : 0},
         {"approvedAt", approval.has_value() ? approval->approvedAt : 0},
         {"transientExpires", transient.has_value() ? transient->expires : 0},
+        {"serverPending", options_.pushes->unsent(user).any()},
     };
 }
 
@@ -629,14 +630,15 @@ void AccountApi::setupOpsRoutes()
             if (held.has_value()) {
                 SubscriptionStore::Account updated = *held;
                 updated.quotaBytes = quotaBytes;
+                options_.pushes->record(user, {.quota = true});
                 store_.putAccount(updated);
+                options_.pushes->deliver(user);
             }
             if (const std::optional<GrantStore::SubscriptionGrant> grant
                 = grants_.peekSubscription(user);
                 grant.has_value()) {
                 grants_.grantSubscription(user, quotaBytes, grant->grantedAt);
             }
-            options_.publishQuota(user, quotaBytes);
             respondJson(response, userRecord(user, approval));
         })));
 
@@ -764,6 +766,7 @@ void AccountApi::setupRoutes()
                 respondError(response, 403, ErrorCode::eRequestFailed, error.what());
                 return;
             }
+            options_.pushes->serverReached();
             handler(request, response);
         };
     };
@@ -862,9 +865,9 @@ void AccountApi::setupRoutes()
             record.delegatedAt = held.has_value() ? held->delegatedAt : 0;
             record.card = der;
             record.cardKey = cardKey;
+            options_.pushes->record(user, {.quota = true, .card = true});
             store_.putAccount(record);
-            options_.publishQuota(user, quota);
-            options_.publishCardChanged(user);
+            options_.pushes->deliver(user);
 
             grants_.recordRegistration(user, now, !settings().requireApproval);
             const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);

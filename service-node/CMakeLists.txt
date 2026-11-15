@@ -34,6 +34,7 @@ add_library(bazarish_service_lib STATIC
     src/UserLocks.cpp
     src/NodeSettings.cpp
     src/OperatorPush.cpp
+    src/PushQueue.cpp
     src/LoginMailbox.cpp
 )
 target_include_directories(bazarish_service_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -62,3 +63,4 @@ bazarish_service_add_test(TestModeratedRegistration)
 bazarish_service_add_test(TestPortal)
 bazarish_service_add_test(TestOperatorApi)
 bazarish_service_add_test(TestLoginMailbox)
+bazarish_service_add_test(TestPushQueue)

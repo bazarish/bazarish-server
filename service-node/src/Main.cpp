@@ -13,6 +13,7 @@
 #include "NodeSettings.hpp"
 #include "OperatorPush.hpp"
 #include "PortalApi.hpp"
+#include "PushQueue.hpp"
 #include "SubscriptionStore.hpp"
 #include <CommandLine.hpp>
 
@@ -222,9 +223,21 @@ int main(const int argc, const char** argv)
         + std::to_string(nodeConfig.messaging.port);
     const bazarish::service::OperatorPush::Dial backend{messagingUrl, nodeConfig.messagingPin,
         credential.certificate.string(), credential.key.string()};
-    const bazarish::service::OperatorPush operatorPush(backend, nodeIdentity);
-    const bazarish::service::OperatorPush promptPush(backend, nodeIdentity,
-        bazarish::service::OperatorPush::kPromptAttempts);
+    const auto userLocks = std::make_shared<bazarish::service::UserLocks>();
+    const bazarish::service::OperatorPush queuePush(backend, nodeIdentity);
+    const auto pushes = std::make_shared<bazarish::service::PushQueue>(stateDir / "store", store,
+        *userLocks,
+        bazarish::service::PushQueue::Delivery{
+            .quota =
+                [&queuePush](const std::string& user, const std::uint64_t quotaBytes) {
+                    return queuePush.publishQuota(user, quotaBytes);
+                },
+            .card =
+                [&queuePush](const std::string& user) {
+                    return queuePush.publishCardChanged(user);
+                }});
+    const bazarish::service::OperatorPush operatorPush(
+        backend, nodeIdentity, [pushes]() { pushes->serverReached(); });
 
     if (nodeConfig.allowFacadeWithoutI2pForDevPurposes) {
         bazarish::setAllowFacadeWithoutI2pForDevPurposes(true);
@@ -262,29 +275,16 @@ int main(const int argc, const char** argv)
     options.tlsCertificate = credential.certificate.string();
     options.tlsKey = credential.key.string();
     options.opsClientPins = nodeConfig.opsClients;
-    const auto userLocks = std::make_shared<bazarish::service::UserLocks>();
     options.userLocks = userLocks;
-    options.publishI2pTransient = [&promptPush](const std::string& user,
+    options.pushes = pushes;
+    options.publishI2pTransient = [&operatorPush](const std::string& user,
                                       const std::string& transientB64,
                                       const std::int64_t expiresUnix,
                                       const bazarish::service::AddressKeys& keys) {
-        return promptPush.publish(user, transientB64, expiresUnix, keys);
+        return operatorPush.publish(user, transientB64, expiresUnix, keys);
     };
     options.forgetMailbox
-        = [&promptPush](const std::string& user) { return promptPush.forgetMailbox(user); };
-    options.publishQuota = [&promptPush](const std::string& user,
-                               const std::uint64_t quotaBytes) {
-        if (!promptPush.publishQuota(user, quotaBytes)) {
-            bazarish::log::warn("quota not pushed for {}: the messaging server refused it",
-                bazarish::log::redact(user));
-        }
-    };
-    options.publishCardChanged = [&promptPush](const std::string& user) {
-        if (!promptPush.publishCardChanged(user)) {
-            bazarish::log::warn("the messaging server keeps the old card of {} until it expires",
-                bazarish::log::redact(user));
-        }
-    };
+        = [&operatorPush](const std::string& user) { return operatorPush.forgetMailbox(user); };
     const auto restartHook = std::make_shared<std::function<void()>>();
     options.requestRestart = [restartHook]() { (*restartHook)(); };
 
@@ -303,12 +303,6 @@ int main(const int argc, const char** argv)
         return 1;
     }
     options.nodeCardDer = *nodeCard;
-    for (const bazarish::service::SubscriptionStore::Account& account : store.allAccounts()) {
-        if (!operatorPush.publishQuota(account.user, account.quotaBytes)) {
-            bazarish::log::warn("quota for {} not reconciled at start",
-                bazarish::log::redact(account.user));
-        }
-    }
 
     bazarish::service::AccountApi api(store, grants, options);
 

@@ -233,6 +233,9 @@
         } else {
             tags.appendChild(element("span", "tag", t("no address")));
         }
+        if (user.serverPending) {
+            tags.appendChild(element("span", "tag is-pending", t("server not updated")));
+        }
         return tags;
     }
 

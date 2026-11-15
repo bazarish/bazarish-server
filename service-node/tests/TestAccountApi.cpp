@@ -156,14 +156,21 @@ int main()
     std::string quotaUser;
     std::uint64_t quotaPushed = 0;
     int quotaCalls = 0;
-    options.publishQuota = [&](const std::string& user, const std::uint64_t quotaBytes) {
-        quotaUser = user;
-        quotaPushed = quotaBytes;
-        ++quotaCalls;
-    };
     std::vector<std::string> cardsChanged;
-    options.publishCardChanged
-        = [&cardsChanged](const std::string& user) { cardsChanged.push_back(user); };
+    options.pushes = std::make_shared<PushQueue>(root, store, *options.userLocks,
+        PushQueue::Delivery{
+            .quota =
+                [&](const std::string& user, const std::uint64_t quotaBytes) {
+                    quotaUser = user;
+                    quotaPushed = quotaBytes;
+                    ++quotaCalls;
+                    return PushOutcome::eDelivered;
+                },
+            .card =
+                [&cardsChanged](const std::string& user) {
+                    cardsChanged.push_back(user);
+                    return PushOutcome::eDelivered;
+                }});
     AccountApi api(store, grants, options);
 
     const int port = api.bind("127.0.0.1", 0);

@@ -6,6 +6,7 @@
 #include "GrantStore.hpp"
 #include "NodeSettings.hpp"
 #include "OperatorPush.hpp"
+#include "PushQueue.hpp"
 #include "SubscriptionStore.hpp"
 
 #include <nlohmann/json.hpp>
@@ -46,9 +47,7 @@ struct AccountApiOptions {
 
     std::function<bool(const std::string& user)> forgetMailbox;
 
-    std::function<void(const std::string& user, std::uint64_t quotaBytes)> publishQuota;
-    // The messaging server holds a copy of the card for a while; a new one replaces it at once.
-    std::function<void(const std::string& user)> publishCardChanged;
+    std::shared_ptr<PushQueue> pushes;
     // A private node, such as a bot's own: a signer outside this set is refused. Empty: a public node.
     std::function<bool(const std::string& user)> admitsUser;
     std::shared_ptr<UserLocks> userLocks = std::make_shared<UserLocks>();

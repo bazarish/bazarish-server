@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 
@@ -26,6 +27,12 @@ struct ServedDestination {
     std::string dest;
 };
 
+enum class PushOutcome {
+    eDelivered,
+    eRefused,
+    eUnreachable,
+};
+
 struct AddressKeys {
     std::string sealingPem;
     std::string signingPem;
@@ -33,9 +40,6 @@ struct AddressKeys {
 
 class OperatorPush {
 public:
-    static constexpr int kBackgroundAttempts = 3;
-    static constexpr int kPromptAttempts = 1;
-
     struct Dial {
         std::string url;
         std::string pin;
@@ -43,7 +47,7 @@ public:
         std::string key;
     };
 
-    OperatorPush(Dial backend, const Identity& signer, int attempts = kBackgroundAttempts);
+    OperatorPush(Dial backend, const Identity& signer, std::function<void()> answered = {});
 
     bool waitReachable(std::chrono::seconds budget) const;
 
@@ -53,8 +57,8 @@ public:
 
     bool forgetMailbox(const std::string& user) const;
 
-    bool publishQuota(const std::string& user, std::uint64_t quotaBytes) const;
-    bool publishCardChanged(const std::string& user) const;
+    PushOutcome publishQuota(const std::string& user, std::uint64_t quotaBytes) const;
+    PushOutcome publishCardChanged(const std::string& user) const;
 
     std::string reseedArchive() const;
 
@@ -63,14 +67,19 @@ public:
 private:
     bazarish::http::ClientResponse call(
         const std::string& method, const std::string& pathAndQuery, const std::string& body) const;
+    struct Answer {
+        PushOutcome outcome = PushOutcome::eUnreachable;
+        std::string body;
+    };
+    Answer exchange(const std::string& method, const std::string& path,
+        const std::string& target, const std::string& bodyText) const;
     std::optional<std::string> send(const std::string& method, const std::string& path,
         const std::string& target, const std::string& bodyText) const;
     std::optional<std::string> putBody(const std::string& path, const std::string& bodyText) const;
-    bool put(const std::string& path, const std::string& bodyText) const;
 
     Dial backend_;
     const Identity& signer_;
-    const int attempts_;
+    const std::function<void()> answered_;
 };
 
 }  // namespace bazarish::service

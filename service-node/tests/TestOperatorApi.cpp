@@ -85,11 +85,15 @@ int main()
         revokedTransient = transientB64;
         return ServedDestination{};
     };
-    options.publishCardChanged = [](const std::string&) {};
-    options.publishQuota = [&](const std::string& user, const std::uint64_t quotaBytes) {
-        quotaUser = user;
-        quotaPushed = quotaBytes;
-    };
+    options.pushes = std::make_shared<PushQueue>(root, store, *options.userLocks,
+        PushQueue::Delivery{
+            .quota =
+                [&](const std::string& user, const std::uint64_t quotaBytes) {
+                    quotaUser = user;
+                    quotaPushed = quotaBytes;
+                    return PushOutcome::eDelivered;
+                },
+            .card = [](const std::string&) { return PushOutcome::eDelivered; }});
     options.forgetMailbox = [](const std::string&) { return true; };
     std::filesystem::create_directories(root);
     const std::filesystem::path configPath = root / "service-node.json";
@@ -192,8 +196,9 @@ int main()
             = call(opsPort, panel, "PUT", "/v1/account/quota", body);
         CHECK(set.status == 200);
         CHECK(nlohmann::json::parse(set.body).at("quotaBytes").get<std::uint64_t>() == raised);
-        CHECK(quotaUser == served);
-        CHECK(quotaPushed == raised);
+        CHECK(quotaUser.empty());
+        CHECK(quotaPushed == 0);
+        CHECK(!nlohmann::json::parse(set.body).at("serverPending").get<bool>());
         CHECK(grants.peekSubscription(served)->quotaBytes == raised);
 
         const std::string missing

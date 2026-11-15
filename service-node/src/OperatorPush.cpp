@@ -26,16 +26,15 @@ namespace {
 
 constexpr int kConnectTimeoutSeconds = 5;
 constexpr int kReadTimeoutSeconds = 30;
-constexpr int kRetryDelaySeconds = 1;
 constexpr int kReadyPollSeconds = 1;
 constexpr int kFirstServerErrorStatus = 500;
 
 }  // namespace
 
-OperatorPush::OperatorPush(Dial backend, const Identity& signer, const int attempts)
+OperatorPush::OperatorPush(Dial backend, const Identity& signer, std::function<void()> answered)
     : backend_(std::move(backend))
     , signer_(signer)
-    , attempts_(attempts)
+    , answered_(std::move(answered))
 {
 }
 
@@ -105,11 +104,6 @@ std::string OperatorPush::reseedArchive() const
     return response.body;
 }
 
-bool OperatorPush::put(const std::string& path, const std::string& bodyText) const
-{
-    return putBody(path, bodyText).has_value();
-}
-
 std::optional<std::string> OperatorPush::putBody(
     const std::string& path, const std::string& bodyText) const
 {
@@ -126,39 +120,46 @@ bool OperatorPush::forgetMailbox(const std::string& user) const
 bazarish::http::ClientResponse OperatorPush::call(const std::string& method,
     const std::string& pathAndQuery, const std::string& body) const
 {
-    return server::opsCall(
+    const bazarish::http::ClientResponse response = server::opsCall(
         server::OpsTarget{backend_.url, backend_.pin, backend_.certificate, backend_.key}, signer_,
         method, pathAndQuery, body,
         server::OpsTimeouts{std::chrono::seconds(kConnectTimeoutSeconds),
             std::chrono::seconds(kReadTimeoutSeconds)});
+    if (response.status > 0 && answered_) {
+        answered_();
+    }
+    return response;
+}
+
+OperatorPush::Answer OperatorPush::exchange(const std::string& method, const std::string& path,
+    const std::string& target, const std::string& bodyText) const
+{
+    try {
+        const bazarish::http::ClientResponse response = call(method, target, bodyText);
+        if (response.status == 200) {
+            return {PushOutcome::eDelivered, response.body};
+        }
+        if (response.status > 0 && response.status < kFirstServerErrorStatus) {
+            bazarish::log::warn("operator push to {}{} refused with {}: {}", backend_.url, path,
+                response.status, response.body);
+            return {PushOutcome::eRefused, {}};
+        }
+        bazarish::log::warn("operator push to {}{} did not land: {}", backend_.url, path,
+            response.status > 0 ? std::to_string(response.status) : response.error);
+    } catch (const std::exception& error) {
+        bazarish::log::warn("operator push to {}{} failed: {}", backend_.url, path, error.what());
+    }
+    return {PushOutcome::eUnreachable, {}};
 }
 
 std::optional<std::string> OperatorPush::send(const std::string& method, const std::string& path,
     const std::string& target, const std::string& bodyText) const
 {
-    for (int attempt = 1; attempt <= attempts_; ++attempt) {
-        try {
-            const bazarish::http::ClientResponse response = call(method, target, bodyText);
-            if (response.status == 200) {
-                return response.body;
-            }
-            if (response.status > 0 && response.status < kFirstServerErrorStatus) {
-                bazarish::log::warn("operator push to {}{} refused with {}: {}", backend_.url, path,
-                    response.status, response.body);
-                return std::nullopt;
-            }
-            bazarish::log::warn("operator push to {}{} did not land (attempt {}/{}): {}", backend_.url,
-                path, attempt, attempts_,
-                response.status > 0 ? std::to_string(response.status) : response.error);
-        } catch (const std::exception& error) {
-            bazarish::log::warn("operator push to {}{} failed (attempt {}/{}): {}", backend_.url, path,
-                attempt, attempts_, error.what());
-        }
-        if (attempt < attempts_) {
-            std::this_thread::sleep_for(std::chrono::seconds(kRetryDelaySeconds));
-        }
+    Answer answer = exchange(method, path, target, bodyText);
+    if (answer.outcome != PushOutcome::eDelivered) {
+        return std::nullopt;
     }
-    return std::nullopt;
+    return std::move(answer.body);
 }
 
 std::optional<Bytes> OperatorPush::nodeCard(const Bytes& sealingPublicKeyDer) const
@@ -178,15 +179,17 @@ std::optional<Bytes> OperatorPush::nodeCard(const Bytes& sealingPublicKeyDer) co
     }
 }
 
-bool OperatorPush::publishQuota(const std::string& user, const std::uint64_t quotaBytes) const
+PushOutcome OperatorPush::publishQuota(
+    const std::string& user, const std::uint64_t quotaBytes) const
 {
     const nlohmann::json body = {{"user", user}, {"quotaBytes", quotaBytes}};
-    return put(routes::kMessagingQuota, body.dump());
+    return exchange("PUT", routes::kMessagingQuota, routes::kMessagingQuota, body.dump()).outcome;
 }
 
-bool OperatorPush::publishCardChanged(const std::string& user) const
+PushOutcome OperatorPush::publishCardChanged(const std::string& user) const
 {
-    return put(routes::kMessagingCard, nlohmann::json{{"user", user}}.dump());
+    const std::string body = nlohmann::json{{"user", user}}.dump();
+    return exchange("PUT", routes::kMessagingCard, routes::kMessagingCard, body).outcome;
 }
 
 std::optional<ServedDestination> OperatorPush::publish(const std::string& user,

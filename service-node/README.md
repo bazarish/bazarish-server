@@ -33,6 +33,15 @@ An alias belongs to `alias-resolver`, which is a service of its own.
   way in: the address itself is the secret.
 - **Quota.** This node grants it, stores it and pushes it to the messaging
   server, which would otherwise keep serving its own default.
+- **What the messaging server has not confirmed.** A changed quota or a new
+  card is first marked unsent in `state/store/unsent/<user>.json`, then pushed.
+  The mark names what is due, not a value: a push always carries what the
+  account record holds at that moment. A push that fails leaves the mark, and
+  the change still answers 200, because it is made on this node; the account
+  then reads `serverPending: true` on the operator's face. Marks are pushed
+  again when the messaging server is known to answer: any answer to a call this
+  node makes to it, including the health check at start, and any signed request
+  the messaging server sends here. There is no timer and no repeat on failure.
 - **The operator's face**: on a socket of its own (`opsListen`, TLS, answering
   only the keys in `opsClients`): listing and searching accounts, ban/unban,
   approve, live settings, a restart request and the log

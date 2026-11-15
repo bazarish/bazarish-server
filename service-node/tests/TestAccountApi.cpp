@@ -54,7 +54,7 @@ namespace http = bazarish::http;
 
 constexpr char kCardTypeName[] = "contact-card";
 
-const std::string kCardDest = "dlkbeyqjykssca6o7qlbwgq4fr2hry7kw2ursn2sh3lt3acox6gq.b32.i2p";
+const std::string kCardDest = "dlkbeyqjykssca6o7qlbwgq4fr2hry7kw2ursn2sh3lt3acox6gqaaaa.b32.i2p";
 
 Bytes cardWith(const devicetest::Account& owner, const DeviceBook& devices,
     const std::int64_t issuedAt, const std::string& dest = kCardDest)
@@ -226,7 +226,7 @@ int main()
     {
         const Key sealing = Key::generateSealing();
         const std::string dest
-            = "dlkbeyqjykssca6o7qlbwgq4fr2hry7kw2ursn2sh3lt3acox6gq.b32.i2p";
+            = "dlkbeyqjykssca6o7qlbwgq4fr2hry7kw2ursn2sh3lt3acox6gqaaaa.b32.i2p";
         const Bytes servingKey = Key::generateSealing().publicDer();
         CHECK(!grants.peekSubscription(alice.fingerprint()).has_value());
         const Bytes card
@@ -249,7 +249,7 @@ int main()
 
         {
             const std::string oldDest
-                = "elkbeyqjykssca6o7qlbwgq4fr2hry7kw2ursn2sh3lt3acox6gq.b32.i2p";
+                = "elkbeyqjykssca6o7qlbwgq4fr2hry7kw2ursn2sh3lt3acox6gqaaaa.b32.i2p";
             const Bytes stale = botCard(
                 alice, now, oldDest, sealing.publicDer(), servingKey);
             const std::string staleBody = nlohmann::json{{"card", toBase64(stale)}, {"cardKey", kCardKeyText}}.dump();

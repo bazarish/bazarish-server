@@ -37,7 +37,7 @@ namespace http = bazarish::http;
 
 constexpr int kDelegationDays = 7;
 
-const std::string kCardDest = "dlkbeyqjykssca6o7qlbwgq4fr2hry7kw2ursn2sh3lt3acox6gq.b32.i2p";
+const std::string kCardDest = "dlkbeyqjykssca6o7qlbwgq4fr2hry7kw2ursn2sh3lt3acox6gqaaaa.b32.i2p";
 
 Bytes botCard(const devicetest::Account& owner, const std::int64_t issuedAt,
     const std::string& dest = kCardDest,

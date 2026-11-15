@@ -82,7 +82,7 @@ int main()
     const Identity serverIdentity = Identity::generate();
     const Key serverSealing = Key::generateSealing();
     const std::string serverFp = serverIdentity.fingerprint();
-    const std::string serverDest = "dlkbeyqjykssca6o7qlbwgq4fr2hry7kw2ursn2sh3lt3acox6gq.b32.i2p";
+    const std::string serverDest = "dlkbeyqjykssca6o7qlbwgq4fr2hry7kw2ursn2sh3lt3acox6gqaaaa.b32.i2p";
     const Key sealingPublic = Key::fromPublicDer(serverSealing.publicDer());
 
     DeliveryEngineOptions engineOptions;

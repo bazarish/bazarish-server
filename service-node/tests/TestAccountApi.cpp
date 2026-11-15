@@ -402,6 +402,22 @@ int main()
                   deviceSigned(tablet.credential, "GET", "/v1/account/i2p-status", {}))
                   .status
             == 200);
+        {
+            const std::string offline = nlohmann::json::object().dump();
+            const http::ClientResponse takenOffline = call(port, "POST", "/v1/account/i2p-dest",
+                deviceSigned(tablet.credential, "POST", "/v1/account/i2p-dest", offline), offline);
+            CHECK(takenOffline.status == 403);
+            CHECK(nlohmann::json::parse(takenOffline.body).at("error").at("code")
+                == "DEVICE_NOT_PRIMARY");
+            const std::string body = nlohmann::json{{"card",
+                toBase64(cardWith(alice, devicetest::bookOf(alice.root, {&alice.primary, &tablet}),
+                    now + 2))},
+                {"cardKey", kCardKeyText}}.dump();
+            const http::ClientResponse bySecondary = call(port, "POST", "/v1/account/card",
+                deviceSigned(tablet.credential, "POST", "/v1/account/card", body), body);
+            CHECK(bySecondary.status == 403);
+            CHECK(pubCalls == callsBefore);
+        }
         CHECK(publish(cardWith(alice,
                           devicetest::bookOf(alice.root, {&alice.primary},
                               kFirstRevocationNumber + 1, {tablet.id()}),

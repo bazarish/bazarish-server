@@ -331,13 +331,6 @@ bool AccountApi::revokedHere(const std::string& user, const std::string& device)
         && ContactCard::verify(held->card).devices.revoked(device);
 }
 
-std::string AccountApi::publishedDest(const std::string& user)
-{
-    const std::optional<SubscriptionStore::Account> held = store_.getAccount(user);
-    return held.has_value() && !held->card.empty() ? ContactCard::verify(held->card).dest
-                                                   : std::string();
-}
-
 void AccountApi::deleteAccount(const std::string& user)
 {
     if (!grants_.peekApproval(user).has_value() && !store_.getAccount(user).has_value()) {
@@ -779,6 +772,11 @@ void AccountApi::setupRoutes()
         [this](const http::Request& request, http::Response& response,
                           const server::Caller& caller) {
             const std::string& user = caller.user;
+            if (caller.role != DeviceRole::ePrimary) {
+                respondError(response, 403, ErrorCode::eDeviceNotPrimary,
+                    "only a primary device publishes the card");
+                return;
+            }
             const nlohmann::json body = bazarish::parseJson(request.body);
             const Bytes der = fromBase64(body.at("card").get<std::string>());
 
@@ -914,6 +912,11 @@ void AccountApi::setupRoutes()
                         : settings().registrationMessage);
                 return;
             }
+            if (caller.role != DeviceRole::ePrimary) {
+                respondError(response, 403, ErrorCode::eDeviceNotPrimary,
+                    "only a primary device delegates the address or takes it offline");
+                return;
+            }
             const nlohmann::json body = bazarish::parseJson(request.body);
             const std::string transient = body.value("transient", std::string());
             const std::int64_t expiresUnix
@@ -930,19 +933,12 @@ void AccountApi::setupRoutes()
                 return;
             }
             if (!transient.empty()) {
-                std::string delegatedDest;
                 try {
                     const i2p::Keys delegation = i2p::Keys::fromBlob(fromBase64(transient));
                     i2p::requireUsableDelegation(delegation, now);
                     i2p::requireDelegationEnds(delegation, expiresUnix);
-                    delegatedDest = i2p::routingHost(delegation.publicBase64());
                 } catch (const std::exception& error) {
                     respondError(response, 400, ErrorCode::eRequestFailed, error.what());
-                    return;
-                }
-                if (caller.role != DeviceRole::ePrimary && delegatedDest != publishedDest(user)) {
-                    respondError(response, 403, ErrorCode::eDeviceNotPrimary,
-                        "only a primary device moves its account to a new address");
                     return;
                 }
             }

@@ -48,7 +48,7 @@ section, stops it at start with an error that names the key.
 | `server` | The server-core this gateway is linked to: the `host` and `port` of its `gatewayListen` and the `pin` it presents. Every destination it serves is then reached without I2P. Written by the admin panel; left out, there is no link |
 | `direct` | The facades reached without I2P: `dest`, the `host` and `port` of the facade's `directListen`, and the `pin` it presents. Written by the admin panel |
 | `opsListen` | A TLS socket for the admin panel, answering only the keys in `opsClients`: health, settings and restart. Left out, there is no such socket, and the file is edited by hand |
-| `opsClients` | The keys allowed to open that socket: the panel prints its own |
+| `opsClients` | The keys allowed to open that socket: the panel prints its own. With `opsListen` set and this list empty, the gateway refuses to start |
 | `operators` | Fingerprints allowed to use that socket |
 | `logLevel`, `i2p.logLevel` | The daemon's log level (`error`, `warn`, `info` or `debug`; `info` unless given) and the router's (`none`, `error`, `warn`, `info` or `debug`; `none` unless given) |
 | `serverName` | The `Server` header on the 404 |

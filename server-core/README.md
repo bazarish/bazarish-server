@@ -63,9 +63,12 @@ card, which the facade forwards to. `opsListen` carries everything that is the
 operator's - health, settings, restart, quotas, destinations, the service node's
 card signed with this server's root, the reseed archive the portal serves - and
 admits only a certificate listed in `opsClients`: the
-admin panel's and the service node's. The node beside it is named the same way,
-`"serviceNode": {"url": "https://...", "pin": "..."}`, and the pin is
-required: without one the dial is refused.
+admin panel's and the service node's. With `opsClients` empty the server refuses
+to start. The node beside it is named the same way,
+`"serviceNode": {"url": "https://...", "pin": "..."}`: the URL must be
+`https://` and the pin is required: the server refuses to start without
+either, and a settings change naming a URL that is not `https://` is refused. A card the
+node answers is taken only when it is the card of the account asked for.
 
 `GET /v1/messaging/logs?after=N` on `opsListen` answers the log lines this
 process wrote after line N, out of the last 2000 it keeps, as

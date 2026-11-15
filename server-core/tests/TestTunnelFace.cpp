@@ -54,6 +54,7 @@ int main()
         Key::fromPublicDer(serverSealing.publicDer()), nowSeconds());
 
     HttpApiOptions options;
+    options.fingerprint = serverIdentity.fingerprint();
     options.sealingKey = std::make_shared<Key>(Key::fromPrivatePem(serverSealing.privatePem()));
     options.serverCardDer = card;
     options.assignDestination
@@ -82,8 +83,18 @@ int main()
     tunnel::Hello hello;
     hello.secret = secret;
     hello.replyKeyDer = replyKey.publicDer();
-    hello.signature = auth::signDeviceRequest(
-        alice.device, nowSeconds(), tunnel::kHelloMethod, tunnel::kHelloPath, secret);
+    {
+        tunnel::Hello forAnother = hello;
+        forAnother.signature = auth::signDeviceRequest(alice.device, nowSeconds(),
+            tunnel::kHelloMethod, tunnel::kHelloPath,
+            tunnel::helloSigned(secret, Identity::generate().fingerprint()));
+        const http::ClientResponse refused
+            = post(tunnel::sealHello(forAnother, Key::fromPublicDer(serverSealing.publicDer())));
+        CHECK(refused.status == 200);
+        CHECK_THROWS(tunnel::openWelcome(Bytes(refused.body.begin(), refused.body.end()), replyKey));
+    }
+    hello.signature = auth::signDeviceRequest(alice.device, nowSeconds(), tunnel::kHelloMethod,
+        tunnel::kHelloPath, tunnel::helloSigned(secret, serverIdentity.fingerprint()));
     const http::ClientResponse welcome
         = post(tunnel::sealHello(hello, Key::fromPublicDer(serverSealing.publicDer())));
     CHECK(welcome.status == 200);

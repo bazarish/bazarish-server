@@ -23,7 +23,7 @@ struct Caller {
 
 class TunnelFace {
 public:
-    explicit TunnelFace(std::shared_ptr<Key> sealingKey);
+    TunnelFace(std::shared_ptr<Key> sealingKey, std::string serverFingerprint);
 
     void serve(const http::Request& request, http::Server& routes, http::Responder respond);
 
@@ -31,6 +31,7 @@ public:
 
 private:
     const std::shared_ptr<Key> sealingKey_;
+    const std::string serverFingerprint_;
     SessionStore sessions_;
     auth::ReplayCache replays_;
 };

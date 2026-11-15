@@ -460,7 +460,7 @@ int main()
         hello.secret = secret;
         hello.replyKeyDer = replyKey.publicDer();
         hello.signature = auth::signDeviceRequest(
-            carol.device, now, tunnel::kHelloMethod, tunnel::kHelloPath, secret);
+            carol.device, now, tunnel::kHelloMethod, tunnel::kHelloPath, tunnel::helloSigned(secret, serverFp));
 
         const http::ClientResponse misaddressed
             = post(tunnel::sealHello(hello, Key::fromPublicDer(serverSealing.publicDer())));

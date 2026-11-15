@@ -424,7 +424,7 @@ int main()
         hello.replyKeyDer = replyKey.publicDer();
         hello.signature = auth::signDeviceRequest(aliceDev.credential,
             static_cast<std::int64_t>(std::time(nullptr)), tunnel::kHelloMethod, tunnel::kHelloPath,
-            secret);
+            tunnel::helloSigned(secret, httpOptions.fingerprint));
         const Bytes frame = tunnel::sealHello(hello, sealingPublic);
         http::ClientRequest open;
         open.method = "POST";

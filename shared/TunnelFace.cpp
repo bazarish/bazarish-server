@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <stdexcept>
 #include <utility>
 
 namespace bazarish::server {
@@ -41,9 +42,13 @@ bool namesTunnel(const std::string& path)
 
 }  // namespace
 
-TunnelFace::TunnelFace(std::shared_ptr<Key> sealingKey)
+TunnelFace::TunnelFace(std::shared_ptr<Key> sealingKey, std::string serverFingerprint)
     : sealingKey_(std::move(sealingKey))
+    , serverFingerprint_(std::move(serverFingerprint))
 {
+    if (serverFingerprint_.empty()) {
+        throw std::invalid_argument("a tunnel answers for a server named by its fingerprint");
+    }
 }
 
 void TunnelFace::serve(
@@ -68,7 +73,8 @@ void TunnelFace::serve(
         try {
             const tunnel::Hello hello = tunnel::openHello(frame, *sealingKey_);
             const auth::DeviceCaller caller = auth::verifyDeviceRequest(hello.signature,
-                nowSeconds(), tunnel::kHelloMethod, tunnel::kHelloPath, hello.secret, replays_);
+                nowSeconds(), tunnel::kHelloMethod, tunnel::kHelloPath,
+                tunnel::helloSigned(hello.secret, serverFingerprint_), replays_);
             std::int64_t expiresUnix = 0;
             const std::string id = sessions_.open(caller, hello.secret, nowSeconds(), expiresUnix);
             sessions_.setTunnelKey(id, tunnel::deriveTunnelKey(hello.secret, id));

@@ -255,7 +255,7 @@ AccountApi::AccountApi(
     , grants_(grants)
     , options_(options)
     , startedAt_(nowSeconds())
-    , tunnel_(options_.sealingKey)
+    , tunnel_(options_.sealingKey, options_.serverFingerprint)
 {
     if (!options_.publishQuota || !options_.publishCardChanged) {
         throw std::invalid_argument("the node tells its messaging server of every quota and card");

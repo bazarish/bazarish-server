@@ -74,6 +74,7 @@ int main()
     HttpApiOptions options;
     options.settings = std::make_shared<ServerSettings>(configPath, values);
     options.identity = std::make_shared<const Identity>(Identity::generate());
+    options.fingerprint = options.identity->fingerprint();
     options.sealingKey = std::make_shared<Key>(Key::generateSealing());
     const Identity alice = Identity::generate();
     const devicetest::Device phone(alice);

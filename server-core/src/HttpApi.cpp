@@ -88,7 +88,7 @@ HttpApi::HttpApi(DiskStorage& storage, EventGate& eventGate, const HttpApiOption
     : storage_(storage)
     , eventGate_(eventGate)
     , options_(options)
-    , tunnel_(options_.sealingKey)
+    , tunnel_(options_.sealingKey, options_.fingerprint)
     , startedAt_(nowSeconds())
 {
     if (!options_.accountDevices) {

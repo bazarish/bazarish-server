@@ -150,6 +150,10 @@ int main(const int argc, const char** argv)
     std::fflush(stdout);
 
     const bazarish::http::Url serviceNode = bazarish::http::parseUrl(serviceNodeUrl);
+    if (!serviceNode.tls) {
+        std::fprintf(stderr, "config: serviceNode.url is an https:// URL\n");
+        return 1;
+    }
     bazarish::server::NodeCards nodeCards(
         {serviceNode.host, serviceNode.port, serviceNode.tls, serviceNodePin}, identity);
 

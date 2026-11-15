@@ -14,6 +14,7 @@
 #include <bazarish/ConfigFile.hpp>
 #include <bazarish/Crypto.hpp>
 #include <bazarish/Errors.hpp>
+#include <bazarish/HttpClient.hpp>
 #include <bazarish/HttpResponses.hpp>
 #include <bazarish/HttpServer.hpp>
 #include <bazarish/I2p.hpp>
@@ -290,6 +291,10 @@ void HttpApi::setupOpsRoutes()
                 readEndpointInto(body, "listen", values.listenHost, values.listenPort);
                 if (body.contains("serviceNode")) {
                     values.serviceNodeUrl = body.at("serviceNode").get<std::string>();
+                    if (!bazarish::http::parseUrl(values.serviceNodeUrl).tls) {
+                        return errorResponse(400, ErrorCode::eRequestFailed,
+                            "the service node is reached at an https:// URL");
+                    }
                 }
                 readEndpointInto(
                     body, "gatewayListen", values.gatewayListenHost, values.gatewayListenPort);

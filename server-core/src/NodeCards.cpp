@@ -27,6 +27,9 @@ NodeCards::NodeCards(NodeAddress node, std::shared_ptr<const Identity> identity)
     : node_(std::move(node))
     , identity_(std::move(identity))
 {
+    if (!node_.tls || node_.pin.empty()) {
+        throw std::invalid_argument("the service node is reached over TLS with its key pinned");
+    }
 }
 
 std::optional<HeldCard> NodeCards::card(const std::string& user)
@@ -80,7 +83,11 @@ std::optional<NodeCards::Held> NodeCards::held(const std::string& user)
     fetched.fetchedAt = now;
     fetched.card = HeldCard{fromBase64(found.at("card").get<std::string>()),
         linkKeyFromText(found.at("cardKey").get<std::string>())};
-    fetched.devices = ContactCard::verify(fetched.card.der).devices;
+    const ContactCard verified = ContactCard::verify(fetched.card.der);
+    if (found.at("user").get<std::string>() != user || verified.fingerprint() != user) {
+        throw std::runtime_error("the service node answered a card lookup with another account's card");
+    }
+    fetched.devices = verified.devices;
     const std::lock_guard<std::mutex> lock(mutex_);
     cached_[user] = fetched;
     return fetched;

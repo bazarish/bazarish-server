@@ -48,3 +48,4 @@ bazarish_server_test(TestSessionStore bazarish_server_shared TestSessionStore.cp
 bazarish_server_test(TestQrSvg bazarish_server_qr TestQrSvg.cpp)
 bazarish_server_test(TestLogRing bazarish_server_shared TestLogRing.cpp)
 bazarish_server_test(TestLogFeed bazarish_server_shared TestLogFeed.cpp)
+bazarish_server_test(TestStateIdentity bazarish_server_shared TestStateIdentity.cpp)

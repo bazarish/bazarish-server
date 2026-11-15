@@ -289,6 +289,10 @@ int AccountApi::bindOps(const std::string& host, const int port)
     options.threads = 1;
     options.certificate = options_.tlsCertificate;
     options.key = options_.tlsKey;
+    if (options_.opsClientPins.empty()) {
+        bazarish::log::error("the ops socket on {}:{} names no client pins (opsClients): refused", host, port);
+        return 0;
+    }
     options.clientPins = options_.opsClientPins;
     ops_ = std::make_unique<http::Server>(options);
     setupOpsRoutes();

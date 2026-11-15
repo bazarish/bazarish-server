@@ -83,6 +83,7 @@ int main()
     values.requireApproval = true;
     values.registrationMessage = kHoldMessage;
     AccountApiOptions options;
+    options.opsClientPins = {"a pin a plain test socket never checks"};
     options.serverFingerprint = serverFp;
     options.serverCardDer = cardDer;
     options.operatorFingerprints = {panel.fingerprint()};

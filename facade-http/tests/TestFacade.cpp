@@ -171,11 +171,26 @@ int main()
     const bazarish::tls::Credential facadeCredential = bazarish::tls::selfSigned(facadeState);
     options.tlsCertificate = facadeCredential.certificate.string();
     options.tlsKey = facadeCredential.key.string();
+    {
+        bazarish::facade::Facade unpinned(options);
+        CHECK(unpinned.bindOps("127.0.0.1", 0) == 0);
+    }
+    const bazarish::tls::Credential opsCaller = bazarish::tls::selfSigned(facadeState / "ops-caller");
+    options.opsClientPins = {opsCaller.pin};
     bazarish::facade::Facade facade(options);
     const int facadePort = facade.bind("127.0.0.1", 0);
     CHECK(facadePort > 0);
     const int opsPort = facade.bindOps("127.0.0.1", 0);
     CHECK(opsPort > 0);
+    const auto opsCall = [&](const std::string& method, const std::string& target,
+                             const testutil::Headers& headers = {}, const std::string& body = {}) {
+        http::ClientOptions asCaller;
+        asCaller.tls = true;
+        asCaller.pin = facadeCredential.pin;
+        asCaller.certificate = opsCaller.certificate.string();
+        asCaller.key = opsCaller.key.string();
+        return testutil::call(opsPort, method, target, headers, body, asCaller);
+    };
     const int directPort = facade.bindDirect("127.0.0.1", 0);
     CHECK(directPort > 0);
 
@@ -256,18 +271,19 @@ int main()
     }
 
     {
-        const http::ClientResponse unauthenticated = callTls(opsPort, facadeCredential.pin, "GET", "/healthz");
+        CHECK(callTls(opsPort, facadeCredential.pin, "GET", "/healthz").status == 0);
+        const http::ClientResponse unauthenticated = opsCall("GET", "/healthz");
         CHECK(unauthenticated.status == 403);
-        const http::ClientResponse proxied = callTls(opsPort, facadeCredential.pin, "GET", "/v1/messaging/self");
+        const http::ClientResponse proxied = opsCall("GET", "/v1/messaging/self");
         CHECK(proxied.status == 404);
     }
 
     {
         const std::string path = "/settings";
-        CHECK(callTls(opsPort, facadeCredential.pin, "GET", path).status == 403);
+        CHECK(opsCall("GET", path).status == 403);
 
         const http::ClientResponse shown
-            = callTls(opsPort, facadeCredential.pin, "GET", path, signedHeaders(operatorIdentity, "GET", path, {}));
+            = opsCall("GET", path, signedHeaders(operatorIdentity, "GET", path, {}));
         CHECK(shown.status == 200);
         const nlohmann::json values = nlohmann::json::parse(shown.body);
         CHECK(values.at("address").get<std::string>() == options.address);
@@ -281,7 +297,7 @@ int main()
             {"directListen", {{"host", "127.0.0.1"}, {"port", kMovedDirectPort}}},
             {"serviceNode", {{"host", "127.0.0.1"}, {"port", kMovedNodePort}}}};
         const std::string body = wanted.dump();
-        CHECK(callTls(opsPort, facadeCredential.pin, "PUT", path, signedHeaders(operatorIdentity, "PUT", path, body), body)
+        CHECK(opsCall("PUT", path, signedHeaders(operatorIdentity, "PUT", path, body), body)
                   .status
             == 200);
         CHECK(facadeSettings->get().directPort == kMovedDirectPort);
@@ -295,25 +311,25 @@ int main()
         CHECK(onDisk.at("serviceNode").at("port").get<int>() == kMovedNodePort);
 
         const std::string bad = nlohmann::json{{"i2pTunnelQuantity", 0}}.dump();
-        CHECK(callTls(opsPort, facadeCredential.pin, "PUT", path, signedHeaders(operatorIdentity, "PUT", path, bad), bad)
+        CHECK(opsCall("PUT", path, signedHeaders(operatorIdentity, "PUT", path, bad), bad)
                   .status
             == 400);
         CHECK(facadeSettings->get().i2pTunnelQuantity == 8);
         const std::string loud = nlohmann::json{{"i2pLogLevel", "verbose"}}.dump();
-        CHECK(callTls(opsPort, facadeCredential.pin, "PUT", path, signedHeaders(operatorIdentity, "PUT", path, loud), loud)
+        CHECK(opsCall("PUT", path, signedHeaders(operatorIdentity, "PUT", path, loud), loud)
                   .status
             == 400);
         CHECK(facadeSettings->get().i2pLogLevel == "debug");
         const std::string quiet = nlohmann::json{{"i2pLogLevel", "none"}}.dump();
-        CHECK(callTls(opsPort, facadeCredential.pin, "PUT", path, signedHeaders(operatorIdentity, "PUT", path, quiet), quiet)
+        CHECK(opsCall("PUT", path, signedHeaders(operatorIdentity, "PUT", path, quiet), quiet)
                   .status
             == 200);
         CHECK(bazarish::i2p::i2pLogLevel() == bazarish::i2p::I2pLogLevel::eNone);
 
         const std::string restart = "/restart";
-        CHECK(callTls(opsPort, facadeCredential.pin, "POST", restart).status == 403);
+        CHECK(opsCall("POST", restart).status == 403);
         CHECK(restarts == 0);
-        CHECK(callTls(opsPort, facadeCredential.pin, "POST", restart,
+        CHECK(opsCall("POST", restart,
                   signedHeaders(operatorIdentity, "POST", restart, {}))
                   .status
             == 200);
@@ -322,8 +338,8 @@ int main()
 
     {
         const std::string path = "/new-address";
-        CHECK(callTls(opsPort, facadeCredential.pin, "POST", path).status == 403);
-        const http::ClientResponse renewed = callTls(opsPort, facadeCredential.pin, "POST", path,
+        CHECK(opsCall("POST", path).status == 403);
+        const http::ClientResponse renewed = opsCall("POST", path,
             signedHeaders(operatorIdentity, "POST", path, {}));
         CHECK(renewed.status == 200);
         const nlohmann::json reply = nlohmann::json::parse(renewed.body);

@@ -69,6 +69,8 @@ bool routedLocally(const i2p::Router& router, const std::string& host)
     return false;
 }
 
+std::filesystem::path g_callerDir;
+
 http::ClientResponse askOps(const int port, const std::string& pin, const std::string& method,
     const std::string& path, const Identity* signer, const std::string& body = {})
 {
@@ -83,9 +85,12 @@ http::ClientResponse askOps(const int port, const std::string& pin, const std::s
         out.headers = auth::signRequest(
             *signer, nowSeconds(), method, path, Bytes(body.begin(), body.end()));
     }
+    const tls::Credential caller = tls::selfSigned(g_callerDir);
     http::ClientOptions options;
     options.tls = true;
     options.pin = pin;
+    options.certificate = caller.certificate.string();
+    options.key = caller.key.string();
     return http::request("127.0.0.1", port, out, options);
 }
 
@@ -118,6 +123,14 @@ int main()
     settings.operators.push_back(operatorIdentity.fingerprint());
     settings.opsHost = "127.0.0.1";
     settings.opsPort = unusedPort();
+    {
+        Settings unpinned = settings;
+        i2p::Router idle(i2p::offlineRouter(root / "i2p-unpinned"));
+        Gateway refused(unpinned, idle, OpsControl{configPath, []() {}, std::make_shared<server::LogRing>()});
+        CHECK_THROWS(refused.start());
+    }
+    g_callerDir = root / "ops-caller";
+    settings.opsClients = {tls::selfSigned(g_callerDir).pin};
 
     const tls::Credential server = tls::selfSigned(root / "server");
     http::Server::Options serverOptions;

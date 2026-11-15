@@ -89,6 +89,7 @@ int main()
     engineOptions.defaultQuotaBytes = 1024;
     DeliveryEngine engine(storage, engineOptions);
     HttpApiOptions httpOptions;
+    httpOptions.opsClientPins = {"a pin a plain test socket never checks"};
     const auto serverServingKey
         = std::make_shared<Key>(Key::fromPrivatePem(serverSealing.privatePem()));
     httpOptions.sealingKey = serverServingKey;

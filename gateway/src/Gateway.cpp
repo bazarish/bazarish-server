@@ -424,6 +424,9 @@ void Gateway::bindOps()
     options.threads = 1;
     options.certificate = credential.certificate.string();
     options.key = credential.key.string();
+    if (settings_.opsClients.empty()) {
+        throw std::runtime_error("the ops socket names no client pins (opsClients)");
+    }
     options.clientPins = settings_.opsClients;
     ops_ = std::make_unique<http::Server>(options);
     ops_->get("/healthz", [this](const http::Request& request) { return health(request); });

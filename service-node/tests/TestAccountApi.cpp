@@ -117,6 +117,7 @@ int main()
     NodeSettings::Values values;
     values.defaultQuotaBytes = kQuota;
     AccountApiOptions options;
+    options.opsClientPins = {"a pin a plain test socket never checks"};
     options.serverFingerprint = serverFp;
     options.serverCardDer = cardDer;
     options.sealingKey = std::make_shared<Key>(Key::fromPrivatePem(nodeSealing.privatePem()));

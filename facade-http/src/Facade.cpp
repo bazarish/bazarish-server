@@ -140,6 +140,10 @@ int Facade::bindOps(const std::string& host, const int port)
     options.threads = 1;
     options.certificate = options_.tlsCertificate;
     options.key = options_.tlsKey;
+    if (options_.opsClientPins.empty()) {
+        bazarish::log::error("the ops socket on {}:{} names no client pins (opsClients): refused", host, port);
+        return 0;
+    }
     options.clientPins = options_.opsClientPins;
     ops_ = std::make_unique<bazarish::http::Server>(options);
     setupOpsRoutes();

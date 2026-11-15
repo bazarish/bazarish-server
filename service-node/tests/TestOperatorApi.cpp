@@ -71,6 +71,7 @@ int main()
 
     constexpr std::uint64_t kQuota = 20 * 1024 * 1024;
     AccountApiOptions options;
+    options.opsClientPins = {"a pin a plain test socket never checks"};
     options.serverFingerprint = "server-fp";
     options.operatorFingerprints = {panel.fingerprint()};
     std::string quotaUser;

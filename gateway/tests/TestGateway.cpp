@@ -124,6 +124,8 @@ int unusedPort()
     return door.local_endpoint().port();
 }
 
+std::filesystem::path g_opsCallerDir;
+
 http::ClientResponse askOps(const int port, const std::string& pin,
     const auth::Headers& signed_ = {})
 {
@@ -131,9 +133,12 @@ http::ClientResponse askOps(const int port, const std::string& pin,
     out.method = "GET";
     out.target = kHealthPath;
     out.headers = signed_;
+    const tls::Credential caller = tls::selfSigned(g_opsCallerDir);
     http::ClientOptions options;
     options.tls = true;
     options.pin = pin;
+    options.certificate = caller.certificate.string();
+    options.key = caller.key.string();
     return http::request("127.0.0.1", port, out, options);
 }
 
@@ -266,6 +271,8 @@ int main()
     settings.operators.push_back(operatorIdentity.fingerprint());
     settings.opsHost = "127.0.0.1";
     settings.opsPort = unusedPort();
+    g_opsCallerDir = root / "ops-caller";
+    settings.opsClients = {tls::selfSigned(g_opsCallerDir).pin};
 
     i2p::Router router(i2p::offlineRouter(root / "i2p"));
 

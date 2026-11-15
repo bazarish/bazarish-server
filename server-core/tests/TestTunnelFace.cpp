@@ -28,7 +28,7 @@ namespace {
 
 namespace http = bazarish::http;
 
-bool opensAsAnswer(const std::string& body, const Bytes& tunnelKey, const std::string& handle)
+bool opensAsAnswer(const std::string& body, const SecretBytes& tunnelKey, const std::string& handle)
 {
     try {
         (void)tunnel::decodeResponse(tunnel::open(
@@ -78,7 +78,7 @@ int main()
     };
 
     const devicetest::Account alice;
-    const Bytes secret = randomBytes(32);
+    const SecretBytes secret(randomBytes(32));
     const Key replyKey = Key::generateSealing();
     tunnel::Hello hello;
     hello.secret = secret;
@@ -87,14 +87,14 @@ int main()
         tunnel::Hello forAnother = hello;
         forAnother.signature = auth::signDeviceRequest(alice.device, nowSeconds(),
             tunnel::kHelloMethod, tunnel::kHelloPath,
-            tunnel::helloSigned(secret, Identity::generate().fingerprint()));
+            tunnel::helloSigned(secret, Identity::generate().fingerprint()).bytes());
         const http::ClientResponse refused
             = post(tunnel::sealHello(forAnother, Key::fromPublicDer(serverSealing.publicDer())));
         CHECK(refused.status == 200);
         CHECK_THROWS(tunnel::openWelcome(Bytes(refused.body.begin(), refused.body.end()), replyKey));
     }
     hello.signature = auth::signDeviceRequest(alice.device, nowSeconds(), tunnel::kHelloMethod,
-        tunnel::kHelloPath, tunnel::helloSigned(secret, serverIdentity.fingerprint()));
+        tunnel::kHelloPath, tunnel::helloSigned(secret, serverIdentity.fingerprint()).bytes());
     const http::ClientResponse welcome
         = post(tunnel::sealHello(hello, Key::fromPublicDer(serverSealing.publicDer())));
     CHECK(welcome.status == 200);
@@ -102,8 +102,8 @@ int main()
         = tunnel::openWelcome(Bytes(welcome.body.begin(), welcome.body.end()), replyKey);
     CHECK(opened.expiresUnix > nowSeconds());
 
-    const std::string id = toHex(sha256(secret)).substr(0, 32);
-    const Bytes tunnelKey = tunnel::deriveTunnelKey(secret, id);
+    const std::string id = toHex(sha256(secret.bytes())).substr(0, 32);
+    const SecretBytes tunnelKey = tunnel::deriveTunnelKey(secret, id);
 
     std::uint64_t seq = 0;
     std::string handle;
@@ -154,9 +154,9 @@ int main()
     }
 
     {
-        const std::string strangers = auth::sessionHandle(randomBytes(32), 1);
+        const std::string strangers = auth::sessionHandle(SecretBytes(randomBytes(32)), 1);
         const http::ClientResponse answered
-            = post(tunnel::carry(strangers, tunnelKey, tunnel::Direction::eRequest, Bytes{'x'}));
+            = post(tunnel::carry(strangers, tunnelKey, tunnel::Direction::eRequest, SecretBytes(Bytes{'x'})));
         CHECK(answered.status == 200);
         CHECK(!opensAsAnswer(answered.body, tunnelKey, strangers));
     }

@@ -74,7 +74,7 @@ void TunnelFace::serve(
             const tunnel::Hello hello = tunnel::openHello(frame, *sealingKey_);
             const auth::DeviceCaller caller = auth::verifyDeviceRequest(hello.signature,
                 nowSeconds(), tunnel::kHelloMethod, tunnel::kHelloPath,
-                tunnel::helloSigned(hello.secret, serverFingerprint_), replays_);
+                tunnel::helloSigned(hello.secret, serverFingerprint_).bytes(), replays_);
             std::int64_t expiresUnix = 0;
             const std::string id = sessions_.open(caller, hello.secret, nowSeconds(), expiresUnix);
             sessions_.setTunnelKey(id, tunnel::deriveTunnelKey(hello.secret, id));
@@ -126,7 +126,7 @@ void TunnelFace::serve(
         refuse();
         return;
     }
-    const Bytes tunnelKey = session->tunnelKey;
+    const SecretBytes tunnelKey = session->tunnelKey;
     routes.dispatch(carried,
         [respond = std::move(respond), handle, tunnelKey](http::Response answer) {
             tunnel::Response inner;

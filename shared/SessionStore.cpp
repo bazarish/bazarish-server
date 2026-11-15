@@ -16,10 +16,10 @@ constexpr std::uint64_t kHandleWindow = 64;
 constexpr std::size_t kJitterBytes = 2;
 }  // namespace
 
-std::string SessionStore::open(const auth::DeviceCaller& caller, const Bytes& secret,
+std::string SessionStore::open(const auth::DeviceCaller& caller, const SecretBytes& secret,
     const std::int64_t now, std::int64_t& outExpiresUnix)
 {
-    const std::string id = toHex(sha256(secret)).substr(0, kSessionIdChars);
+    const std::string id = toHex(sha256(secret.bytes())).substr(0, kSessionIdChars);
     const std::int64_t span
         = auth::kSessionMaxLifetimeSeconds - auth::kSessionMinLifetimeSeconds;
     const Bytes draw = randomBytes(kJitterBytes);
@@ -119,7 +119,7 @@ bool SessionStore::acceptSeq(
     return true;
 }
 
-void SessionStore::setTunnelKey(const std::string& id, const Bytes& tunnelKey)
+void SessionStore::setTunnelKey(const std::string& id, const SecretBytes& tunnelKey)
 {
     const std::lock_guard<std::mutex> lock(mutex_);
     const auto found = sessions_.find(id);

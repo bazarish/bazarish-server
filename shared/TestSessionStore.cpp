@@ -23,7 +23,7 @@ const auth::DeviceCaller kCaller{kUser, "aaaaaaaaaa", DeviceRole::ePrimary};
 
 int main()
 {
-    const Bytes secret = randomBytes(32);
+    const SecretBytes secret(randomBytes(32));
 
     {
         SessionStore sessions;
@@ -31,7 +31,7 @@ int main()
         const std::string id = sessions.open(kCaller, secret, kNow, expires);
         CHECK(!id.empty());
         CHECK(sessions.size() == 1);
-        CHECK(id == toHex(sha256(secret)).substr(0, 32));
+        CHECK(id == toHex(sha256(secret.bytes())).substr(0, 32));
         CHECK(expires >= kNow + auth::kSessionMinLifetimeSeconds);
         CHECK(expires <= kNow + auth::kSessionMaxLifetimeSeconds);
 
@@ -45,7 +45,7 @@ int main()
         }
         CHECK(!sessions.findByHandle(auth::sessionHandle(secret, kHandleWindow + 1), kNow)
                    .has_value());
-        CHECK(!sessions.findByHandle(auth::sessionHandle(randomBytes(32), 1), kNow).has_value());
+        CHECK(!sessions.findByHandle(auth::sessionHandle(SecretBytes(randomBytes(32)), 1), kNow).has_value());
         CHECK(!sessions.findByHandle("not-a-handle", kNow).has_value());
     }
 
@@ -83,7 +83,7 @@ int main()
 
     {
         SessionStore sessions;
-        const Bytes other = randomBytes(32);
+        const SecretBytes other(randomBytes(32));
         std::int64_t expires = 0;
         const std::string first = sessions.open(kCaller, secret, kNow, expires);
         const std::string second = sessions.open(kCaller, other, kNow, expires);

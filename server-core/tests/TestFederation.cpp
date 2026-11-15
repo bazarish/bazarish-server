@@ -152,9 +152,9 @@ FederationFetchResult roundTripCard(DeliveryEngine& engine, const CardFetchQuery
         = federationSendFetch(clientStream, "card", sealedCardQuery(query, cardKey));
     serverThread.join();
     if (result.ok) {
-        const std::optional<Bytes> opened = KeyedSeal(cardKey, kCardReplyLabel).open(result.sealed);
+        const std::optional<SecretBytes> opened = KeyedSeal(cardKey, kCardReplyLabel).open(result.sealed);
         CHECK(opened.has_value());
-        result.sealed = *opened;
+        result.sealed = opened->bytes();
     }
     return result;
 }

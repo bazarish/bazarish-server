@@ -471,13 +471,13 @@ int main()
         };
         const devicetest::Account carol;
         grants.recordRegistration(carol.fingerprint(), now, true);
-        const Bytes secret = randomBytes(kSessionSecretBytes);
+        const SecretBytes secret(randomBytes(kSessionSecretBytes));
         const Key replyKey = Key::generateSealing();
         tunnel::Hello hello;
         hello.secret = secret;
         hello.replyKeyDer = replyKey.publicDer();
         hello.signature = auth::signDeviceRequest(
-            carol.device, now, tunnel::kHelloMethod, tunnel::kHelloPath, tunnel::helloSigned(secret, serverFp));
+            carol.device, now, tunnel::kHelloMethod, tunnel::kHelloPath, tunnel::helloSigned(secret, serverFp).bytes());
 
         const http::ClientResponse misaddressed
             = post(tunnel::sealHello(hello, Key::fromPublicDer(serverSealing.publicDer())));
@@ -498,8 +498,8 @@ int main()
                   .expiresUnix
             > now);
 
-        const std::string id = toHex(sha256(secret)).substr(0, kSessionIdChars);
-        const Bytes tunnelKey = tunnel::deriveTunnelKey(secret, id);
+        const std::string id = toHex(sha256(secret.bytes())).substr(0, kSessionIdChars);
+        const SecretBytes tunnelKey = tunnel::deriveTunnelKey(secret, id);
         const std::uint64_t seq = 1;
         const std::string handle = auth::sessionHandle(secret, seq);
         tunnel::Request inner;

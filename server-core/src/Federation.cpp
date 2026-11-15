@@ -51,10 +51,10 @@ void federationServeFrame(const std::string& headerLine,
     if (op == "card") {
         const std::optional<HeldCard> held = getCard ? getCard(owner) : std::nullopt;
         if (held.has_value()) {
-            const std::optional<Bytes> queryBytes = KeyedSeal(held->key, kCardRequestLabel)
+            const std::optional<SecretBytes> queryBytes = KeyedSeal(held->key, kCardRequestLabel)
                 .open(fromBase64(header.at("sealed").get<std::string>()));
             if (queryBytes.has_value()
-                && cardFetchQueryFromJson(bazarish::parseJson(*queryBytes)).fingerprint == owner) {
+                && cardFetchQueryFromJson(bazarish::parseJson(queryBytes->bytes())).fingerprint == owner) {
                 const Bytes sealed = KeyedSeal(held->key, kCardReplyLabel).seal(held->der);
                 writeReply(nlohmann::json({{"ok", true}, {"sealed", toBase64(sealed)}}).dump());
                 return;

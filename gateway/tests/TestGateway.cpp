@@ -177,11 +177,11 @@ Dialled dial(asio::io_context& io, const int port, const std::string& fingerprin
     stream->binary(true);
     Dialled out;
     const Cover cover(fingerprint);
-    const std::optional<Bytes> card = cover.open(readRaw(*stream));
+    const std::optional<SecretBytes> card = cover.open(readRaw(*stream));
     if (!card.has_value()) {
         return out;
     }
-    const Key sealing = cardSealingKey(unpadded(*card), fingerprint);
+    const Key sealing = cardSealingKey(unpadded(card->bytes()), fingerprint);
     if (join && !seat.tickets.empty()) {
         const Bytes ticket = seat.tickets.front();
         seat.tickets.pop_front();

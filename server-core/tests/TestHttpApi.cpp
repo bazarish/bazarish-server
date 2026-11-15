@@ -418,14 +418,14 @@ int main()
     }
 
     {
-        const Bytes secret = randomBytes(32);
+        const SecretBytes secret(randomBytes(32));
         const Key replyKey = Key::generateSealing();
         tunnel::Hello hello;
         hello.secret = secret;
         hello.replyKeyDer = replyKey.publicDer();
         hello.signature = auth::signDeviceRequest(aliceDev.credential,
             static_cast<std::int64_t>(std::time(nullptr)), tunnel::kHelloMethod, tunnel::kHelloPath,
-            tunnel::helloSigned(secret, httpOptions.fingerprint));
+            tunnel::helloSigned(secret, httpOptions.fingerprint).bytes());
         const Bytes frame = tunnel::sealHello(hello, sealingPublic);
         http::ClientRequest open;
         open.method = "POST";
@@ -438,8 +438,8 @@ int main()
                   .expiresUnix
             > 0);
 
-        const std::string sessionId = toHex(sha256(secret)).substr(0, 32);
-        const Bytes sessionKey = auth::deriveSessionKey(secret, sessionId);
+        const std::string sessionId = toHex(sha256(secret.bytes())).substr(0, 32);
+        const SecretBytes sessionKey = auth::deriveSessionKey(secret, sessionId);
         const auto maced = [&](const std::uint64_t seq, const std::string& method,
                                const std::string& path, const std::string& body) {
             const auth::Headers headers = auth::macRequest(auth::sessionHandle(secret, seq),

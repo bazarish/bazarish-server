@@ -112,7 +112,7 @@ int main()
         tunnel::Request inner;
         inner.method = method;
         inner.path = path;
-        inner.body = body;
+        inner.body = SecretBytes(body);
         if (!body.empty()) {
             inner.contentType = "application/octet-stream";
         }

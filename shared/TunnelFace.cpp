@@ -109,7 +109,7 @@ void TunnelFace::serve(
         carried.method = inner.method;
         carried.path = inner.path;
         carried.target = inner.query.empty() ? inner.path : inner.path + "?" + inner.query;
-        carried.body = std::string(inner.body.begin(), inner.body.end());
+        carried.body = std::string(inner.body.bytes().begin(), inner.body.bytes().end());
         for (const auto& [name, value] : inner.headers) {
             carried.headers[asciiLower(name)] = value;
         }

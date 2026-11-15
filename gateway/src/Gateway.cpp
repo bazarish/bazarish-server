@@ -619,7 +619,7 @@ void Gateway::handshake(const http::SocketPtr& raw, const Bytes& message)
     }
     if (const std::optional<Key> client = gateway::openHello(cover_, message, sealing_)) {
         gateway::Welcome welcome;
-        welcome.sessionKey = randomBytes(gateway::kSessionKeyBytes);
+        welcome.sessionKey = SecretBytes(randomBytes(gateway::kSessionKeyBytes));
         welcome.salt = randomBytes(gateway::kTicketBytes);
         std::shared_ptr<Session> fresh;
         {

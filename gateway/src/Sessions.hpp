@@ -6,6 +6,7 @@
 #include <bazarish/GatewayProtocol.hpp>
 
 #include <bazarish/Bytes.hpp>
+#include <bazarish/SecretBytes.hpp>
 
 #include <chrono>
 #include <cstdint>
@@ -46,7 +47,7 @@ public:
     bool retired = false;
     // As the client's records and pings last said; an idle client hears only readiness change.
     bool clientActive = false;
-    Bytes key;
+    SecretBytes key;
     std::set<std::string> tickets;
 
     std::vector<Bytes> issueTickets(std::size_t count);

@@ -143,7 +143,7 @@ http::ClientResponse askOps(const int port, const std::string& pin,
 }
 
 struct Seat {
-    Bytes key;
+    SecretBytes key;
     std::deque<Bytes> tickets;
 };
 
@@ -363,7 +363,7 @@ int main()
     first.socket->close(websocket::close_code::normal, ignored);
     first.socket.reset();
 
-    const Bytes sessionKey = seat.key;
+    const SecretBytes sessionKey = seat.key;
     Dialled again = dial(io, port, fingerprint, seat, true);
     CHECK(again.socket != nullptr);
     CHECK(seat.key == sessionKey);
@@ -373,7 +373,7 @@ int main()
     again.socket->close(websocket::close_code::normal, ignored);
     again.socket.reset();
 
-    Seat forged{randomBytes(kSessionKeyBytes), {randomBytes(kTicketBytes)}};
+    Seat forged{SecretBytes(randomBytes(kSessionKeyBytes)), {randomBytes(kTicketBytes)}};
     Dialled stale = dial(io, port, fingerprint, forged, true);
     CHECK(stale.socket != nullptr);
     CHECK(forged.key != sessionKey);
@@ -434,7 +434,7 @@ int main()
         }));
     }
     for (const std::string& secret : {std::string(kPath), std::string("127.0.0.1"), fingerprint,
-             toBase64(seat.key), toBase64(unsealed.key)}) {
+             toBase64(seat.key.bytes()), toBase64(unsealed.key.bytes())}) {
         CHECK(!warnings.anyContains(secret));
     }
 
@@ -543,7 +543,7 @@ int main()
     }
     CHECK(router.localDestinations().size() == gateway.pooled());
 
-    const Bytes doomedKey = doomed.key;
+    const SecretBytes doomedKey = doomed.key;
     Dialled after = dial(io, port, fingerprint, doomed, true);
     CHECK(after.socket != nullptr);
     CHECK(doomed.key != doomedKey);

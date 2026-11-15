@@ -7,6 +7,7 @@
 #include <bazarish/Clock.hpp>
 #include <bazarish/Crypto.hpp>
 #include <bazarish/FederationFrame.hpp>
+#include <bazarish/Hybrid.hpp>
 #include <bazarish/JsonRead.hpp>
 #include <bazarish/Log.hpp>
 #include <bazarish/PrivateFile.hpp>
@@ -69,7 +70,7 @@ Key accountKey(const std::string& pem, const char* const what)
 
 void requireServingKeys(const Key& sealing, const Key& signing)
 {
-    if (!sealing.hasPrivate() || !sealing.hasKem()) {
+    if (!sealing.hasPrivate() || !hybrid::isSealingKey(sealing)) {
         throw std::invalid_argument("a serving key is a hybrid sealing key with its private half");
     }
     if (!signing.hasPrivate() || !signing.isA(kClassicalSigningAlgorithm)) {

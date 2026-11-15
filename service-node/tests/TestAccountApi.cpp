@@ -492,10 +492,11 @@ int main()
             seq, now, inner.method, inner.path, {});
         inner.headers = std::map<std::string, std::string>(mac.begin(), mac.end());
         const http::ClientResponse carried
-            = post(tunnel::carry(handle, tunnelKey, tunnel::encodeRequest(inner)));
+            = post(tunnel::carry(handle, tunnelKey, tunnel::Direction::eRequest, tunnel::encodeRequest(inner)));
         CHECK(carried.status == 200);
         const tunnel::Response answer = tunnel::decodeResponse(
-            tunnel::open(Bytes(carried.body.begin(), carried.body.end()), tunnelKey));
+            tunnel::open(Bytes(carried.body.begin(), carried.body.end()), tunnelKey,
+                tunnel::Direction::eAnswer, handle));
         CHECK(answer.status == 200);
         CHECK(nlohmann::json::parse(answer.body).at("approval") == "approved");
     }

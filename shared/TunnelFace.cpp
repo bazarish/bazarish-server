@@ -98,7 +98,8 @@ void TunnelFace::serve(
     http::Request carried;
     try {
         const tunnel::Request inner
-            = tunnel::decodeRequest(tunnel::open(frame, session->tunnelKey));
+            = tunnel::decodeRequest(
+                tunnel::open(frame, session->tunnelKey, tunnel::Direction::eRequest, handle));
         carried.method = inner.method;
         carried.path = inner.path;
         carried.target = inner.query.empty() ? inner.path : inner.path + "?" + inner.query;
@@ -126,7 +127,8 @@ void TunnelFace::serve(
             inner.status = answer.status;
             inner.contentType = answer.contentType;
             inner.body = Bytes(answer.body.begin(), answer.body.end());
-            const Bytes body = tunnel::carry(handle, tunnelKey, tunnel::encodeResponse(inner));
+            const Bytes body = tunnel::carry(
+                handle, tunnelKey, tunnel::Direction::eAnswer, tunnel::encodeResponse(inner));
             http::Response outer;
             outer.contentType = "application/octet-stream";
             outer.body = std::string(body.begin(), body.end());

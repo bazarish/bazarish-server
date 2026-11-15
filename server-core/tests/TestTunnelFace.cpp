@@ -28,10 +28,11 @@ namespace {
 
 namespace http = bazarish::http;
 
-bool opensAsAnswer(const std::string& body, const Bytes& tunnelKey)
+bool opensAsAnswer(const std::string& body, const Bytes& tunnelKey, const std::string& handle)
 {
     try {
-        (void)tunnel::decodeResponse(tunnel::open(Bytes(body.begin(), body.end()), tunnelKey));
+        (void)tunnel::decodeResponse(tunnel::open(
+            Bytes(body.begin(), body.end()), tunnelKey, tunnel::Direction::eAnswer, handle));
         return true;
     } catch (const std::exception&) {
         return false;
@@ -94,6 +95,7 @@ int main()
     const Bytes tunnelKey = tunnel::deriveTunnelKey(secret, id);
 
     std::uint64_t seq = 0;
+    std::string handle;
     const auto carry = [&](const std::string& method, const std::string& path,
                            const Bytes& body = {}) {
         tunnel::Request inner;
@@ -103,15 +105,17 @@ int main()
         if (!body.empty()) {
             inner.contentType = "application/octet-stream";
         }
+        handle = auth::sessionHandle(secret, ++seq);
         return post(tunnel::carry(
-            auth::sessionHandle(secret, ++seq), tunnelKey, tunnel::encodeRequest(inner)));
+            handle, tunnelKey, tunnel::Direction::eRequest, tunnel::encodeRequest(inner)));
     };
 
     {
         const http::ClientResponse answered = carry("GET", tunnel::kServerCardPath);
         CHECK(answered.status == 200);
         const tunnel::Response inner = tunnel::decodeResponse(
-            tunnel::open(Bytes(answered.body.begin(), answered.body.end()), tunnelKey));
+            tunnel::open(Bytes(answered.body.begin(), answered.body.end()), tunnelKey,
+                tunnel::Direction::eAnswer, handle));
         CHECK(inner.status == 200);
         CHECK(inner.body == card);
     }
@@ -120,7 +124,8 @@ int main()
         const http::ClientResponse answered = carry("GET", "/no/such/route");
         CHECK(answered.status == 200);
         const tunnel::Response inner = tunnel::decodeResponse(
-            tunnel::open(Bytes(answered.body.begin(), answered.body.end()), tunnelKey));
+            tunnel::open(Bytes(answered.body.begin(), answered.body.end()), tunnelKey,
+                tunnel::Direction::eAnswer, handle));
         CHECK(inner.status == 404);
     }
 
@@ -128,20 +133,21 @@ int main()
         tunnel::Request innermost;
         innermost.method = "GET";
         innermost.path = tunnel::kServerCardPath;
-        const Bytes nested = tunnel::carry(
-            auth::sessionHandle(secret, 1000), tunnelKey, tunnel::encodeRequest(innermost));
+        const Bytes nested = tunnel::carry(auth::sessionHandle(secret, 1000), tunnelKey,
+            tunnel::Direction::eRequest, tunnel::encodeRequest(innermost));
         for (const char* const path : {tunnel::kTunnelPath, tunnel::kNodeTunnelPath}) {
             const http::ClientResponse answered = carry("POST", path, nested);
             CHECK(answered.status == 200);
-            CHECK(!opensAsAnswer(answered.body, tunnelKey));
+            CHECK(!opensAsAnswer(answered.body, tunnelKey, handle));
         }
     }
 
     {
-        const http::ClientResponse answered = post(tunnel::carry(
-            auth::sessionHandle(randomBytes(32), 1), tunnelKey, Bytes{'x'}));
+        const std::string strangers = auth::sessionHandle(randomBytes(32), 1);
+        const http::ClientResponse answered
+            = post(tunnel::carry(strangers, tunnelKey, tunnel::Direction::eRequest, Bytes{'x'}));
         CHECK(answered.status == 200);
-        CHECK(!opensAsAnswer(answered.body, tunnelKey));
+        CHECK(!opensAsAnswer(answered.body, tunnelKey, strangers));
     }
 
     api.stop();

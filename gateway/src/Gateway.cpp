@@ -552,6 +552,9 @@ void Gateway::rawMessage(const http::SocketPtr& raw, const std::vector<unsigned 
         return;
     }
     noteFlags(raw, opened->flags);
+    if (gateway::isFiller(*opened)) {
+        return;
+    }
     socketMessage(channel, std::vector<unsigned char>(opened->frame.begin(), opened->frame.end()));
 }
 

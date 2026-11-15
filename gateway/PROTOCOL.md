@@ -146,17 +146,15 @@ than `kMaxPaddedBytes` + 16, the three messages of the handshake included.
 
 ### Padding
 
-Both ends pad every record, on the control socket and on every flow socket, but
-one kind: a datagram (`raw-send`, `raw-recv`) on the socket of a realtime `raw`
-endpoint, which is a call's media, goes with no zeros at all. The plaintext of a
-record is:
+Both ends pad every record, on the control socket and on every flow socket. The
+plaintext of a record is:
 
 | Bytes | Field |
 |---|---|
-| 1 | Flags. Bit 0: the client is active (Cover). The other bits are zero, and the gateway sends zero |
+| 1 | Flags. Bit 0: the client is active (Cover); the gateway sends it zero. Bit 1: a filler (Media pacing). The other bits are zero |
 | 2 | The frame's length, big-endian |
 | that length | The frame |
-| the rest | Zeros; none in a call's media |
+| the rest | Zeros |
 
 A frame that fits, with the three bytes before it, in `kRecordPadCeiling` gets a
 total length drawn from a log-normal of median `kRecordPadMedian` and sigma
@@ -174,12 +172,51 @@ frame is at least that long. The spread, 1.5 to 4 KB, is the size of a
 browser's requests and of small objects on one host; the values are starting
 points from published web traffic models, not fitted to a capture.
 
-A call's media is not padded: a voice frame is a couple of hundred bytes,
-several dozen a second, on a socket of its own, and padding would multiply it
-by ten and hide nothing that the rhythm of those records does not show anyway.
-Which records are bare follows from the endpoint the socket was attached to
-(`realtime` in `endpoint-create`); the receiver reads the length either way and
-needs nothing more. Every other frame on that socket is padded.
+A datagram (`raw-send`, `raw-recv`) on the socket of a realtime `raw` endpoint,
+which is a call's media, is padded and timed differently (Media pacing). Every
+other frame on that socket is padded as above.
+
+### Media pacing
+
+On the socket of a realtime `raw` endpoint each end sends records in **slots**,
+not when a datagram is handed to it. The gap from one slot to the next is drawn
+uniformly in `kMediaGapMin`..`kMediaGapMax`, from the moment the slot was taken,
+and nothing queued moves a slot. A slot carries the oldest queued datagram; a
+slot with none queued carries a **filler**: flags with bit 1 set, a frame length
+of zero, and zeros. The receiver drops a filler. Which socket is paced follows
+from the endpoint the socket was attached to (`realtime` in `endpoint-create`):
+the client paces from the moment it attaches the socket, the gateway from the
+moment it reads `attach`.
+
+The mean gap, 15 ms, is under the 20 ms of one Opus frame, so the slots drain a
+call's datagrams faster than they come and the queue stays short; the longest
+gap, 27 ms, bounds the wait of a datagram that finds the queue empty. With one
+datagram every 20 ms one end adds 10 ms at the median and 31 ms at p99; with two
+datagrams handed over at once every 40 ms, 17 and 47 ms. A datagram crosses two
+paced sockets, the sender's and the receiver's, which together add about 25 ms
+at the median and 50 ms at p99. The record times carry no rhythm of the voice:
+their autocorrelation in 5 ms bins at 20, 40 and 60 ms is at most 0.03, where
+records sent at the voice's own times show 0.26. A media socket carries about
+27 KB/s in each direction for as long as the call lasts.
+
+A queue holds at most `kMediaQueueLimit` datagrams; one more drops the oldest,
+and the drop is counted and logged. While more than `kMediaBacklogBytes` the
+socket has been handed have not left, a slot with no datagram sends nothing:
+the link is then slower than the slots, TCP sets the timing, and a filler would
+only lengthen the queue in front of the next voice frame.
+
+A media record's plaintext length is drawn uniformly in
+`kMediaPadFloor`..`kMediaPadCeiling`, for a datagram and for a filler alike. The
+floor lies above the longest voice datagram, a `raw-send` with a 64-character
+host and a 150-byte Opus frame, so a voice datagram and a filler have one
+length distribution. A datagram that does not fit in the drawn length takes a
+length drawn again between its own and the ceiling; one longer than the
+ceiling is padded as any other frame.
+
+A slot replaces the keepalive on such a socket, because the socket is never
+silent while the call lasts. The call's own keepalive, an empty datagram every
+500 ms of silence, travels end to end over I2P, tells the far end the call is
+alive, and is carried in a slot like any other datagram.
 
 A keepalive ping carries one byte, the same flags. The gateway keeps the last
 flags a session's client sent in a record or a ping: while they say idle, it
@@ -1032,6 +1069,10 @@ Both sides agree, so there is nothing to refuse.
 | `kRecordPadMedian`, `kRecordPadSigma` | 1800, 0.5 | The log-normal it is drawn from |
 | `kBulkPadMedian`, `kBulkPadSigma`, `kBulkPadMax` | 256, 1.0, 4096 | The padding added to a frame longer than the ceiling |
 | `kMaxPaddedBytes` | 20483 | Three bytes, `kMaxFrameBytes` and `kBulkPadMax`: the longest plaintext of a record |
+| `kMediaGapMin`, `kMediaGapMax` | 3 ms, 27 ms | The range the gap between two slots of a media socket is drawn in, uniformly. The mean, 15 ms, is under the 20 ms of an Opus frame; the floor keeps two records from going out as one TCP segment |
+| `kMediaPadFloor`, `kMediaPadCeiling` | 320, 448 | The range a media record's plaintext is drawn in, uniformly. The floor lies above the longest voice datagram |
+| `kMediaQueueLimit` | 8 | Datagrams a media socket holds for its slots, 160 ms of voice, beyond which the oldest is dropped |
+| `kMediaBacklogBytes` | 928 | Two records of the ceiling and their tags: while more than this waits to leave, a slot sends no filler |
 | `kInputIdleAfter` | 120 s | Input older than this leaves the client idle |
 | `kEmbeddedAlpha`, `kEmbeddedMin`, `kEmbeddedMax` | 2.4, 1, 30 | Resources per page (SURGE, Barford and Crovella 1998) |
 | `kInBurstGapMedian`, `kInBurstGapSigma`, `kInBurstGapMax` | 80 ms, 1.0, 2 s | The gap between a burst's requests |
@@ -1061,8 +1102,8 @@ Both sides agree, so there is nothing to refuse.
 5. The client asks `capabilities().proxy` before it calls `setSocksProxy` when
    it builds its router.
 6. Activity, bursts, a control socket replaced at a burst's start, pings only
-   after silence: the client's own business, the gateway only answers. Padding is
-   done by both ends.
+   after silence: the client's own business, the gateway only answers. Padding
+   and media pacing are done by both ends.
 7. The status view distinguishes three backends: under a gateway it names the
    gateway's host and shows this session's destinations, and shows none of the
    gateway's own state (The status panel).

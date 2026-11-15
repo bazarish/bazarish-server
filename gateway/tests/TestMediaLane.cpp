@@ -8,6 +8,7 @@
 #include <bazarish/Crypto.hpp>
 #include <bazarish/I2p.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -33,7 +34,17 @@ constexpr std::chrono::milliseconds kRenewalRoundTrip{1000};
 constexpr std::chrono::milliseconds kMediaWithin{3000};
 constexpr std::chrono::milliseconds kMediaProbeEvery{200};
 constexpr std::chrono::milliseconds kOversizeDropped{500};
-constexpr std::size_t kVoiceFrames = 20;
+constexpr std::uint32_t kVoiceFrames = 250;
+constexpr std::chrono::milliseconds kVoiceFrame{20};
+constexpr std::size_t kVoiceBytes = 120;
+constexpr std::size_t kSequenceBytes = 4;
+constexpr std::size_t kSentAtBytes = 8;
+constexpr double kPercentile50 = 0.50;
+constexpr double kPercentile99 = 0.99;
+// Two pacers lie on the way, the sender's and the gateway's, each within 35 ms at p99.
+constexpr std::chrono::duration<double, std::milli> kTwoPacersP99{80};
+constexpr double kLaneRateLow = 0.7;
+constexpr double kLaneRateHigh = 1.3;
 constexpr std::size_t kHerMediaLane = 1;
 
 i2p::RouterConfig borrowedFrom(const int port, const std::string& fingerprint)
@@ -100,30 +111,91 @@ bool noneOfSizeWithin(i2p::Endpoint& to, const std::size_t size, const std::chro
 
 struct Crossed {
     std::size_t arrived = 0;
-    std::size_t bytes = 0;
+    bool inOrder = true;
+    double p50 = 0;
+    double p99 = 0;
+    double most = 0;
+    double bytesPerSecond = 0;
 };
 
+Bytes voiceCarrying(const std::uint32_t sequence)
+{
+    Bytes payload(kVoiceBytes, 0);
+    const std::int64_t sentAt = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    putBigEndian(ByteBuffer(payload).first(kSequenceBytes), sequence);
+    putBigEndian(ByteBuffer(payload).subspan(kSequenceBytes, kSentAtBytes),
+        static_cast<std::uint64_t>(sentAt));
+    return payload;
+}
+
+double percentileOf(std::vector<double> values, const double share)
+{
+    std::sort(values.begin(), values.end());
+    return values[static_cast<std::size_t>(share * static_cast<double>(values.size() - 1))];
+}
+
+// One process holds both ends, so the steady clock a frame carries is the receiver's own.
 Crossed voiceAcross(i2p::Endpoint& from, i2p::Endpoint& to, const Relay& relay,
     const Relay::Direction direction)
 {
-    const std::string voice = "voice frame";
-    const std::size_t before = relay.carried(kHerMediaLane, direction);
     Crossed crossed;
-    for (std::size_t i = 0; i < kVoiceFrames; ++i) {
-        from.sendRawDatagram(to.routingHost(), bazarish::viewOf(voice));
-        if (!noneOfSizeWithin(to, voice.size(), kMediaWithin)) {
-            ++crossed.arrived;
+    std::vector<double> latencies;
+    std::uint32_t expected = 0;
+    std::thread listening([&]() {
+        const auto until = std::chrono::steady_clock::now() + kVoiceFrame * kVoiceFrames + kMediaWithin;
+        while (latencies.size() < kVoiceFrames && std::chrono::steady_clock::now() < until) {
+            const std::vector<std::uint8_t> got = to.receiveRawDatagram(kMediaProbeEvery);
+            if (got.size() != kVoiceBytes) {
+                continue;
+            }
+            const auto now = std::chrono::steady_clock::now().time_since_epoch();
+            const std::uint32_t sequence = static_cast<std::uint32_t>(
+                getBigEndian(ByteView(got).first(kSequenceBytes)));
+            const std::int64_t sentAt = static_cast<std::int64_t>(
+                getBigEndian(ByteView(got).subspan(kSequenceBytes, kSentAtBytes)));
+            crossed.inOrder = crossed.inOrder && sequence == expected;
+            expected = sequence + 1;
+            latencies.push_back(std::chrono::duration<double, std::milli>(
+                now - std::chrono::nanoseconds(sentAt)).count());
         }
+    });
+    const std::size_t before = relay.carried(kHerMediaLane, direction);
+    const auto start = std::chrono::steady_clock::now();
+    for (std::uint32_t i = 0; i < kVoiceFrames; ++i) {
+        std::this_thread::sleep_until(start + kVoiceFrame * i);
+        const Bytes voice = voiceCarrying(i);
+        from.sendRawDatagram(to.routingHost(), voice);
     }
-    crossed.bytes = relay.carried(kHerMediaLane, direction) - before;
+    const std::chrono::duration<double> spent = std::chrono::steady_clock::now() - start;
+    crossed.bytesPerSecond
+        = static_cast<double>(relay.carried(kHerMediaLane, direction) - before) / spent.count();
+    listening.join();
+    crossed.arrived = latencies.size();
+    if (!latencies.empty()) {
+        crossed.p50 = percentileOf(latencies, kPercentile50);
+        crossed.p99 = percentileOf(latencies, kPercentile99);
+        crossed.most = percentileOf(latencies, 1);
+    }
     return crossed;
 }
 
-bool goesBare(const Crossed& crossed)
+// Every slot carries a record of the media sizes, voice or not, so the lane's rate is the slots'.
+bool goesPaced(const Crossed& crossed)
 {
-    std::printf("media: %zu datagrams in %zu bytes\n", crossed.arrived, crossed.bytes);
-    return crossed.arrived == kVoiceFrames
-        && crossed.bytes < crossed.arrived * static_cast<std::size_t>(kRecordPadFloor);
+    const double slotsPerSecond
+        = 1.0 / std::chrono::duration<double>(kMediaGapMin + kMediaGapMax).count() * 2;
+    const double recordBytes
+        = static_cast<double>(kMediaPadFloor + kMediaPadCeiling) / 2 + kAeadTagBytes;
+    const double expected = slotsPerSecond * recordBytes;
+    std::printf("media: %zu of %u datagrams, in order %s, latency p50 %.1f ms p99 %.1f ms "
+                "max %.1f ms, lane %.0f B/s against %.0f B/s of slots\n",
+        crossed.arrived, kVoiceFrames, crossed.inOrder ? "yes" : "no", crossed.p50, crossed.p99,
+        crossed.most, crossed.bytesPerSecond, expected);
+    return crossed.arrived == kVoiceFrames && crossed.inOrder
+        && crossed.p99 <= kTwoPacersP99.count()
+        && crossed.bytesPerSecond > expected * kLaneRateLow
+        && crossed.bytesPerSecond < expected * kLaneRateHigh;
 }
 
 }  // namespace
@@ -167,8 +239,8 @@ int main()
     CHECK(testutil::waitFor([&]() {
         return routedLocally(bob, his->routingHost()) && routedLocally(alice, hers->routingHost());
     }));
-    CHECK(goesBare(voiceAcross(*hers, *his, relay, Relay::Direction::eUp)));
-    CHECK(goesBare(voiceAcross(*his, *hers, relay, Relay::Direction::eDown)));
+    CHECK(goesPaced(voiceAcross(*hers, *his, relay, Relay::Direction::eUp)));
+    CHECK(goesPaced(voiceAcross(*his, *hers, relay, Relay::Direction::eDown)));
 
     CHECK_THROWS(his->connect(hers->routingHost(), std::chrono::seconds(1)));
     std::string nobody;

@@ -23,7 +23,9 @@ An alias belongs to `alias-resolver`, which is a service of its own.
   transient that lets the messaging server operate the address and answers with
   the `{dest, servingKey}` that destination now serves under, so the client can
   issue its card from that one answer; `i2p-status`
-  says how long the current one lasts so any device knows when to issue the next;
+  says how long the current one lasts so any device knows when to issue the next,
+  and with `hold=1&since=<approval>` holds the request until the account is
+  approved, declined or banned (`docs-main/api/ClientApi.md`);
   `undelegate` takes an account out of service without deleting it. A transient
   over a different address replaces the destination outright - the old one is
   stopped and dropped in the same call, with no grace period.

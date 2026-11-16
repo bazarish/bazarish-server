@@ -285,6 +285,9 @@ written for is a phone's.
   session key and its tickets: the term a session gets is for a connection that
   broke, not for somebody who has just turned I2P off and would not expect his
   addresses to stay published and reachable for five minutes more.
+  The main socket closes once the `endpoint-stop` frames queued on it are
+  written, and the client waits for that at most 200 ms: a stop does not hang
+  on a link that has stalled.
 
 ## Sockets
 
@@ -356,7 +359,11 @@ answers `refused` - and the destination that was refused a lane keeps asking for
 one, so it gets its own queue as soon as there is room. It keeps two of them back
 for control: the socket it has, and the one that replaces it before the gateway
 has noticed the first go. A session filled to the limit could not be handed a new
-control socket at all. A data frame for a flow that is not attached to the socket it
+control socket at all. The client asks for a refused lane again when something can
+let it: a socket of the session drops, a `tickets` frame arrives, a new main
+socket is ready, or the link comes back. A flow socket that the gateway answers
+with a new session instead of a join finds the session gone, and its destination
+is lost. A data frame for a flow that is not attached to the socket it
 arrived on is refused with `wrong-lane`: a lane that
 works by accident is one that stops working under load, which is exactly when it
 was supposed to matter.

@@ -28,7 +28,13 @@ sealed to the server's sealing key.
   tunnel every client request travels inside, carrying `/v1/messaging/*` (client
   registry, passes and their revocation, pending fetch/ack, the write a device
   makes into its own account's mailbox). A client delivers its own outgoing
-  mail, so this server is never told whom its users write to.
+  mail, so this server is never told whom its users write to. Two requests are
+  held open with no time limit: the mail wait, `events?hold=1`, until an entry is
+  pending that the device did not name in `deferred` (at most 32), and the
+  account overview, `overview?hold=1&since=<version>`, until anything on it
+  changes (`docs-main/api/ClientApi.md`). Each is answered by the same device's
+  next request of the same kind, and both carry the mailbox's used and granted
+  bytes.
 - **Federation** - serves **each user's own destination** over I2P; there is no
   destination for the server as a whole. It admits what arrives and signs its
   confirmation with that destination's own key.
@@ -55,6 +61,10 @@ operators who may call its operator endpoints, the service node beside it, and
 the I2P settings. Keys are generated in the state directory on first start and
 the server card is written there as `server-card.der` (its sealing key and
 transport endpoints).
+
+Under systemd the packaged unit is `Type=notify`: the server tells systemd it is
+ready once all its sockets listen, and a service node ordered after it finds it
+answering.
 
 Both sockets speak TLS, with a certificate this server makes in its state
 directory on first start; the hash of its key is printed at startup and is what

@@ -31,7 +31,6 @@ namespace bazarish::gateway {
 
 namespace {
 
-constexpr std::chrono::seconds kReplayGrace{5};
 // A closed address's lease set is still found this long: i2pd's TUNNEL_EXPIRATION_TIMEOUT.
 constexpr std::chrono::seconds kGoneHereMemory{660};
 
@@ -445,10 +444,6 @@ void Gateway::bindOps()
 void Gateway::stop()
 {
     const bool wasRunning = running_.exchange(false);
-    {
-        const std::lock_guard<std::mutex> lock(dialMutex_);
-    }
-    dialDone_.notify_all();
     if (wasRunning && status_.joinable()) {
         status_.join();
     }
@@ -470,6 +465,7 @@ void Gateway::stop()
     for (const std::shared_ptr<Session>& session : held) {
         retire(session);
     }
+    reapStreams(true);
     reapDials(true);
     if (streamPool_) {
         streamPool_->stop();
@@ -750,6 +746,9 @@ void Gateway::retire(const std::shared_ptr<Session>& session)
         }
         joinTaken(endpoint->worker);
     }
+    for (const std::shared_ptr<StreamEntry>& stream : streams) {
+        joinTaken(stream->writer);
+    }
     if (publishedGone) {
         dropUnrouted();
     }
@@ -807,16 +806,22 @@ std::shared_ptr<Session> Gateway::sessionFor(const http::SocketPtr& socket) cons
     return found == connections_.end() ? nullptr : found->second.session;
 }
 
-http::SocketPtr Gateway::outletFor(const Session& session, const StreamEntry& stream)
+http::SocketPtr Gateway::laneOf(const Session& session, const StreamEntry& stream)
 {
     const auto found = session.endpoints.find(stream.endpoint);
     if (found != session.endpoints.end() && found->second->socket) {
         return found->second->socket;
     }
-    if (session.replayDue > std::chrono::steady_clock::now()) {
+    return session.control;
+}
+
+http::SocketPtr Gateway::outletFor(const Session& session, const StreamEntry& stream)
+{
+    const http::SocketPtr lane = laneOf(session, stream);
+    if (session.replayHeld && lane == session.control) {
         return nullptr;
     }
-    return session.control;
+    return lane;
 }
 
 http::SocketPtr Gateway::answerOn(const Session& session, const http::SocketPtr& asked)
@@ -831,10 +836,10 @@ void Gateway::replayDone(const std::shared_ptr<Session>& session)
 {
     {
         const std::lock_guard<std::mutex> lock(mutex_);
-        if (session->replayDue == std::chrono::steady_clock::time_point{}) {
+        if (!session->replayHeld) {
             return;
         }
-        session->replayDue = {};
+        session->replayHeld = false;
     }
     afterReplay(session);
 }
@@ -941,9 +946,7 @@ void Gateway::onHello(const http::SocketPtr& socket, const Frame& frame)
         replaced = connection.session->control;
         connection.session->control = socket;
         flowChanged_.notify_all();
-        connection.session->replayDue = connection.session->streams.empty()
-            ? std::chrono::steady_clock::time_point{}
-            : std::chrono::steady_clock::now() + kReplayGrace;
+        connection.session->replayHeld = !connection.session->streams.empty();
     }
 
     nlohmann::json endpoints = nlohmann::json::array();
@@ -1368,6 +1371,7 @@ std::shared_ptr<EndpointEntry> Gateway::stopEndpoint(
             stranded->stream->close();
         }
         joinTaken(stranded->reader);
+        joinTaken(stranded->writer);
     }
     joinTaken(entry->worker);
     return entry;
@@ -1530,6 +1534,7 @@ void Gateway::onStreamOpen(const std::shared_ptr<Session>& session,
     }
 
     reapDials(false);
+    reapStreams(false);
     try {
         const std::shared_ptr<std::atomic<bool>> done = std::make_shared<std::atomic<bool>>(false);
         std::thread dialling([this, session, from, ref = frame.ref, host, deadline, socket, done]() {
@@ -1584,39 +1589,41 @@ void Gateway::dial(const std::shared_ptr<Session>& session,
     const std::shared_ptr<EndpointEntry>& from, const std::uint32_t stream, std::string host,
     const std::chrono::seconds deadline, const http::SocketPtr& answerTo)
 {
-    const auto until = std::chrono::steady_clock::now() + deadline;
     const std::optional<DirectRoute> route = directFor(host);
     const std::optional<std::pair<ServerLink, tls::Credential>> server
         = route.has_value() ? std::nullopt : serverFor(host);
     const bool bypass = route.has_value() || server.has_value();
     std::unique_ptr<Conduit> opened;
-    while (std::chrono::steady_clock::now() < until && from->running.load() && running_.load()
-        && (bypass || from->endpoint != nullptr)) {
-        const auto left = std::max(std::chrono::duration_cast<std::chrono::seconds>(
-                                       until - std::chrono::steady_clock::now()),
-            std::chrono::seconds(1));
+    std::string why;
+    if (!from->running.load() || !running_.load() || (!bypass && from->endpoint == nullptr)) {
+        why = "the dialling destination stopped";
+    } else {
         try {
             if (route.has_value()) {
-                opened = overTls(*route, left);
+                opened = overTls(*route, deadline);
             } else if (server.has_value()) {
-                opened
-                    = overServer(server->first, server->second, host, from->publicBase64, left);
+                opened = overServer(
+                    server->first, server->second, host, from->publicBase64, deadline);
             } else {
-                opened = overI2p(from->endpoint->connect(host, left));
+                const auto until = std::chrono::steady_clock::now() + deadline;
+                for (auto left = deadline; opened == nullptr && left.count() > 0
+                     && from->running.load() && running_.load();
+                     left = std::chrono::duration_cast<std::chrono::seconds>(
+                         until - std::chrono::steady_clock::now())) {
+                    opened = overI2p(from->endpoint->connect(host, left));
+                }
+                if (opened == nullptr) {
+                    why = "the host's lease set was not found within the deadline";
+                }
             }
         } catch (const std::exception& error) {
-            bazarish::log::debug("a dial did not open: {}", error.what());
-            opened.reset();
+            why = error.what();
         }
-        if (opened != nullptr) {
-            break;
-        }
-        std::unique_lock<std::mutex> lock(dialMutex_);
-        dialDone_.wait_for(lock, kDialRetryDelay, [this]() { return !running_.load(); });
     }
     if (opened == nullptr) {
-        const Bytes answer = encodeJson(
-            FrameType::eStreamReset, stream, {{"code", faultName(Fault::eUnreachable)}});
+        bazarish::log::debug("a dial did not open: {}", why);
+        const Bytes answer = encodeJson(FrameType::eStreamReset, stream,
+            {{"code", faultName(Fault::eUnreachable)}, {"message", why}});
         http::SocketPtr out;
         {
             const std::lock_guard<std::mutex> lock(mutex_);
@@ -1652,30 +1659,39 @@ void Gateway::dial(const std::shared_ptr<Session>& session,
             out->send(answer);
         }
     }
-    bool reading = false;
+    bool working = false;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
-        reading = !entry->running.load() || startReaderLocked(session, entry);
+        working = !entry->running.load() || startWorkersLocked(session, entry);
     }
-    if (!reading) {
-        endWithoutReader(session, entry, answerTo);
+    if (!working) {
+        endWithoutWorkers(session, entry, answerTo);
     }
 }
 
-bool Gateway::startReaderLocked(
+bool Gateway::startWorkersLocked(
     const std::shared_ptr<Session>& session, const std::shared_ptr<StreamEntry>& entry)
 {
     try {
         entry->reader = std::thread([this, session, entry]() { readLoop(session, entry); });
-        return true;
     } catch (const std::system_error& error) {
         bazarish::log::warn("no thread for a stream: {}", error.what());
         session->streams.erase(entry->id);
         return false;
     }
+    try {
+        entry->writer = std::thread([this, session, entry]() { writeLoop(session, entry); });
+        return true;
+    } catch (const std::system_error& error) {
+        bazarish::log::warn("no thread for a stream: {}", error.what());
+        session->streams.erase(entry->id);
+        entry->writerDone.store(true);
+        ended_.push_back(entry);
+        return false;
+    }
 }
 
-void Gateway::endWithoutReader(const std::shared_ptr<Session>& session,
+void Gateway::endWithoutWorkers(const std::shared_ptr<Session>& session,
     const std::shared_ptr<StreamEntry>& entry, const http::SocketPtr& answerTo)
 {
     entry->running.store(false);
@@ -1830,13 +1846,13 @@ void Gateway::acceptLoop(
         }
         control->send(encodeJson(FrameType::eStreamInbound, inbound->id,
             {{"endpoint", entry->id}, {"peer", peer}}));
-        bool reading = false;
+        bool working = false;
         {
             const std::lock_guard<std::mutex> lock(mutex_);
-            reading = !inbound->running.load() || startReaderLocked(session, inbound);
+            working = !inbound->running.load() || startWorkersLocked(session, inbound);
         }
-        if (!reading) {
-            endWithoutReader(session, inbound, control);
+        if (!working) {
+            endWithoutWorkers(session, inbound, control);
         }
     }
 }
@@ -1886,6 +1902,56 @@ void Gateway::readLoop(
         }
         pump(session, entry);
     }
+    entry->readerDone.store(true);
+}
+
+void Gateway::writeLoop(
+    const std::shared_ptr<Session>& session, const std::shared_ptr<StreamEntry>& entry)
+{
+    for (;;) {
+        Bytes taken;
+        {
+            std::unique_lock<std::mutex> lock(mutex_);
+            flowChanged_.wait(lock, [&]() {
+                return !entry->running.load() || !entry->outgoing.empty() || entry->endAfterWrite;
+            });
+            if (!entry->running.load()) {
+                break;
+            }
+            if (entry->outgoing.empty()) {
+                entry->running.store(false);
+                lock.unlock();
+                wakeFlows();
+                entry->stream->close();
+                break;
+            }
+            taken.swap(entry->outgoing);
+        }
+        try {
+            entry->stream->writeAll(taken);
+        } catch (const std::exception& error) {
+            bazarish::log::debug("a stream stopped writing: {}", error.what());
+            const Bytes reset = encodeJson(FrameType::eStreamReset, entry->id,
+                {{"code", faultName(Fault::eClosed)}, {"message", error.what()}});
+            {
+                const std::lock_guard<std::mutex> lock(mutex_);
+                entry->outgoing.clear();
+                const http::SocketPtr out = outletFor(*session, *entry);
+                if (entry->running.exchange(false) && out) {
+                    out->send(reset);
+                }
+            }
+            wakeFlows();
+            entry->stream->close();
+            break;
+        }
+        entry->book.consumed(taken.size());
+        const std::lock_guard<std::mutex> lock(mutex_);
+        if (const http::SocketPtr out = outletFor(*session, *entry)) {
+            out->send(encodeCredit(entry->id, entry->book.consumedTotal()));
+        }
+    }
+    entry->writerDone.store(true);
 }
 
 void Gateway::onStreamData(const std::shared_ptr<Session>& session,
@@ -1921,16 +1987,14 @@ void Gateway::onStreamData(const std::shared_ptr<Session>& session,
         fail(socket, frame.ref, Fault::eClosed, "that stream's far side has gone");
         return;
     }
-    entry->stream->writeAll(frame.body);
-    entry->book.consumed(frame.body.size());
-    http::SocketPtr out;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
-        out = outletFor(*session, *entry);
+        if (!entry->running.load()) {
+            return;
+        }
+        entry->outgoing.insert(entry->outgoing.end(), frame.body.begin(), frame.body.end());
     }
-    if (out) {
-        out->send(encodeCredit(entry->id, entry->book.consumedTotal()));
-    }
+    flowChanged_.notify_all();
 }
 
 void Gateway::onStreamCredit(const std::shared_ptr<Session>& session,
@@ -1983,7 +2047,7 @@ void Gateway::onStreamEnd(const std::shared_ptr<Session>& session, const Frame& 
         pump(theirs, peer);
         return;
     }
-    teardown(entry);
+    endStream(entry, frame.type == FrameType::eStreamReset);
 }
 
 void Gateway::joinTaken(std::thread& slot)
@@ -2024,14 +2088,59 @@ void Gateway::wakeFlows()
     flowChanged_.notify_all();
 }
 
-void Gateway::teardown(const std::shared_ptr<StreamEntry>& entry)
+void Gateway::endStream(const std::shared_ptr<StreamEntry>& entry, const bool reset)
 {
-    entry->running.store(false);
-    wakeFlows();
-    if (entry->stream) {
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        if (!entry->stream) {
+            entry->readerDone.store(true);
+            entry->writerDone.store(true);
+        }
+        if (reset) {
+            entry->running.store(false);
+            entry->outgoing.clear();
+        } else {
+            entry->endAfterWrite = true;
+        }
+        ended_.push_back(entry);
+    }
+    flowChanged_.notify_all();
+    if (reset && entry->stream) {
         entry->stream->close();
     }
-    joinTaken(entry->reader);
+    reapStreams(false);
+}
+
+void Gateway::reapStreams(const bool all)
+{
+    std::list<std::shared_ptr<StreamEntry>> finished;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        for (auto it = ended_.begin(); it != ended_.end();) {
+            if (all || ((*it)->readerDone.load() && (*it)->writerDone.load())) {
+                finished.splice(finished.end(), ended_, it++);
+            } else {
+                ++it;
+            }
+        }
+        if (all) {
+            for (const std::shared_ptr<StreamEntry>& entry : finished) {
+                entry->running.store(false);
+            }
+        }
+    }
+    flowChanged_.notify_all();
+    for (const std::shared_ptr<StreamEntry>& entry : finished) {
+        if (all && entry->stream) {
+            entry->stream->close();
+        }
+        if (entry->reader.joinable()) {
+            entry->reader.join();
+        }
+        if (entry->writer.joinable()) {
+            entry->writer.join();
+        }
+    }
 }
 
 void Gateway::onResume(const std::shared_ptr<Session>& session,
@@ -2045,25 +2154,18 @@ void Gateway::onResume(const std::shared_ptr<Session>& session,
     }
     {
         const std::lock_guard<std::mutex> lock(mutex_);
-        session->replayDue = {};
-    }
-    for (const nlohmann::json& said : *found) {
-        const std::uint32_t id = said.value("id", 0U);
-        std::shared_ptr<StreamEntry> entry;
-        {
-            const std::lock_guard<std::mutex> lock(mutex_);
-            entry = streamOf(*session, id);
+        for (const nlohmann::json& said : *found) {
+            const std::uint32_t id = said.value("id", 0U);
+            const std::shared_ptr<StreamEntry> entry = streamOf(*session, id);
+            if (entry == nullptr) {
+                continue;
+            }
+            const Bytes again = entry->book.replay(said.value("received", std::uint64_t{0}));
+            if (const http::SocketPtr out = laneOf(*session, *entry)) {
+                sendInPieces(*out, id, again);
+            }
         }
-        if (entry == nullptr) {
-            continue;
-        }
-        const Bytes again = entry->book.replay(said.value("received", std::uint64_t{0}));
-        const std::lock_guard<std::mutex> lock(mutex_);
-        const http::SocketPtr out = outletFor(*session, *entry);
-        if (!out) {
-            continue;
-        }
-        sendInPieces(*out, id, again);
+        session->replayHeld = false;
     }
     afterReplay(session);
 }

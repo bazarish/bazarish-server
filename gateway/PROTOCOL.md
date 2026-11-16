@@ -525,7 +525,7 @@ endpoint's identifier is the `ref` of its `endpoint-create`.
 | 0x23 | `stream-data` | both | stream | the bytes |
 | 0x24 | `stream-credit` | both | stream | u64 BE, the total consumed so far |
 | 0x25 | `stream-close` | both | stream | empty |
-| 0x26 | `stream-reset` | both | stream | `{"code": "..."}` |
+| 0x26 | `stream-reset` | both | stream | `{"code": "..."}`, and from the gateway `"message"` with the cause |
 | 0x30 | `raw-send` | client | endpoint | u16 BE host length, host, payload |
 | 0x31 | `raw-recv` | gateway | endpoint | payload |
 
@@ -565,6 +565,9 @@ answers `resume` with the same count for its own direction, and then both sides:
 
 - drop from their retained buffer everything the peer has confirmed,
 - resend what is beyond it, in order, before any new data on that stream,
+  which is why the gateway sends nothing on a stream riding the control socket
+  from `ready` until the client's `resume`, or its first other frame, which
+  means no `resume` is coming,
 - recompute the credit window from the confirmed count,
 - say again, for every live stream, how much they have consumed of it.
 
@@ -801,9 +804,11 @@ about to be wrong about something.
 and no longer than `kMaxDialDeadline`; a longer one is a `bad-frame`. A session
 holds at most `kMaxDialsPerSession` dials at once, `kMaxEndpointsPerSession`
 destinations and `kMaxStreamsPerSession` streams; one more is `refused`.
-The gateway re-issues the dial every `kDialRetryDelay` until that deadline, and
-only a failure that is not "unreachable" is terminal: a LeaseSet that is
-not in the netDb yet is a reason to try again.
+A LeaseSet that is not in the netDb yet is the one reason to dial again: the
+gateway asks again as soon as a lookup comes back empty, until the deadline.
+Any other failure - a refused or broken connection, a pin that does not
+match, a server that does not serve the host - ends the dial at once, and the
+`stream-reset` names its cause in `message`.
 
 A host the server link covers skips the router: the gateway opens a pinned TLS
 socket to the service that serves it - a facade's `directListen`, or
@@ -833,6 +838,13 @@ and retains them until they are credited, which is also what makes a reconnect
 lossless. A receiver sends `stream-credit` as bytes leave its hands: for the
 gateway, as the I2P stream takes them; for the client, as the application reads
 them. Overrunning the window closes the socket.
+
+The gateway hands what a client sends on a stream to a writer of that stream's
+own, so a far side that takes its bytes slowly holds back only its own window:
+the socket's other frames and the gateway's threads go on. A `stream-close`
+from the client ends the stream once the writer has handed over everything
+before it; a `stream-reset` ends it at once. A write that fails resets the
+stream with `closed`.
 
 A credit is **cumulative** - the total consumed so far, not an increment - which
 is what makes it the same number the resume exchange asks for and what makes a
@@ -1083,7 +1095,7 @@ Both sides agree, so there is nothing to refuse.
 | `kMaxFrameBytes` | 16384 | A WebSocket message cannot be interleaved with another, so this is the longest anything can be held by one already going out. It matters most on the main socket, where a stream with no socket of its own shares with control |
 | `kMaxSocketsPerSession` | 16 | The main one, a call, and enough transfers that the link is the limit rather than the protocol |
 | `kStreamWindowBytes` | 262144 | The in-flight allowance per stream per direction. It is also the retained buffer a reconnect replays from, and the most an unaccepted inbound stream can cost the gateway |
-| `kDialRetryDelay` | 2 s | How often a dial is re-issued while the deadline holds, matching the SAM backend |
+| `kDialRetryDelay` | 2 s | How long the gateway waits before it watches the server link again after the watch dropped |
 | `kMaxDialDeadline` | 90 s | The longest dial a client makes, a file or a pairing. A dial is a thread at the gateway, so its life is bounded |
 | `kMaxDialsPerSession` | 64 | Dials one session has under way at once |
 | `kMaxEndpointsPerSession` | 256 | Destinations one session holds: each is tunnels at the gateway |

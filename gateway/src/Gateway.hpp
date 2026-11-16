@@ -118,6 +118,7 @@ private:
     };
 
     std::shared_ptr<Session> sessionFor(const http::SocketPtr& socket) const;
+    static http::SocketPtr laneOf(const Session& session, const StreamEntry& stream);
     static http::SocketPtr outletFor(const Session& session, const StreamEntry& stream);
     static http::SocketPtr answerOn(const Session& session, const http::SocketPtr& asked);
     void replayDone(const std::shared_ptr<Session>& session);
@@ -125,14 +126,17 @@ private:
     http::SocketPtr laneFor(const Session& session, const Frame& frame) const;
 
     void reapDials(bool all);
-    bool startReaderLocked(
+    bool startWorkersLocked(
         const std::shared_ptr<Session>& session, const std::shared_ptr<StreamEntry>& entry);
-    void endWithoutReader(const std::shared_ptr<Session>& session,
+    void endWithoutWorkers(const std::shared_ptr<Session>& session,
         const std::shared_ptr<StreamEntry>& entry, const http::SocketPtr& answerTo);
+    void reapStreams(bool all);
     void acceptLoop(const std::shared_ptr<Session>& session,
         const std::shared_ptr<EndpointEntry>& entry);
     void datagramLoop(const std::shared_ptr<EndpointEntry>& entry);
     void readLoop(const std::shared_ptr<Session>& session,
+        const std::shared_ptr<StreamEntry>& entry);
+    void writeLoop(const std::shared_ptr<Session>& session,
         const std::shared_ptr<StreamEntry>& entry);
     void dial(const std::shared_ptr<Session>& session,
         const std::shared_ptr<EndpointEntry>& from, std::uint32_t stream, std::string host,
@@ -147,7 +151,7 @@ private:
     static void sendInPieces(http::Socket& socket, std::uint32_t id, const Bytes& data);
     std::shared_ptr<EndpointEntry> stopEndpoint(
         const std::shared_ptr<Session>& session, std::uint32_t id);
-    void teardown(const std::shared_ptr<StreamEntry>& entry);
+    void endStream(const std::shared_ptr<StreamEntry>& entry, bool reset);
     void joinTaken(std::thread& slot);
     void orphan(const std::shared_ptr<StreamEntry>& entry);
     void retire(const std::shared_ptr<Session>& session);
@@ -210,12 +214,13 @@ private:
     std::atomic<std::size_t> dials_{0};
     mutable std::atomic<std::size_t> decoys_{0};
     std::mutex dialMutex_;
-    std::condition_variable dialDone_;
     struct DialThread {
         std::thread thread;
         std::shared_ptr<std::atomic<bool>> done;
     };
     std::list<DialThread> dialThreads_;
+    // Ended by the client, under mutex_: joined once both of their threads are done.
+    std::list<std::shared_ptr<StreamEntry>> ended_;
     std::int64_t startedAt_ = 0;
     std::atomic<bool> running_{false};
 };

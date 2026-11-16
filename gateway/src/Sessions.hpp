@@ -38,7 +38,8 @@ public:
     std::optional<Bytes> answered(std::uint32_t ref) const;
 
     http::SocketPtr control;
-    std::chrono::steady_clock::time_point replayDue{};
+    // From ready on a rejoined control socket until the client resumes or sends anything else.
+    bool replayHeld = false;
     std::map<std::uint32_t, std::shared_ptr<EndpointEntry>> endpoints;
     std::map<std::uint32_t, std::shared_ptr<StreamEntry>> streams;
     std::set<std::uint32_t> dialling;

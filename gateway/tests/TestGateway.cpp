@@ -9,6 +9,7 @@
 #include <bazarish/HttpClient.hpp>
 #include <bazarish/Tls.hpp>
 
+#include "RawClient.hpp"
 #include "TestRouter.hpp"
 #include "TestUtil.hpp"
 
@@ -39,6 +40,7 @@ namespace websocket = boost::beast::websocket;
 using asio::ip::tcp;
 using namespace bazarish;
 using namespace bazarish::gateway;
+using namespace bazarish::gateway::raw;
 
 namespace {
 
@@ -46,6 +48,8 @@ constexpr const char* kPath = "/f3a9c2e1b7d4";
 constexpr const char* kHealthPath = "/healthz";
 constexpr int kSweepGraceSeconds = 5;
 constexpr int kDialDeadlineSeconds = 4;
+// Well formed and in no netDb: the dial runs out its deadline.
+constexpr const char* kNowhere = "fkc4nkqn6k2bwrqsgbabnkyx4g5s2cp3nvnrdnkqxz4bzcbzrfaa.b32.i2p";
 constexpr double kPageMedian = 6000;
 constexpr double kPageLow = 4000;
 constexpr double kPageHigh = 9000;
@@ -140,98 +144,6 @@ http::ClientResponse askOps(const int port, const std::string& pin,
     options.certificate = caller.certificate.string();
     options.key = caller.key.string();
     return http::request("127.0.0.1", port, out, options);
-}
-
-struct Seat {
-    SecretBytes key;
-    std::deque<Bytes> tickets;
-};
-
-struct Dialled {
-    std::unique_ptr<websocket::stream<tcp::socket>> socket;
-    std::shared_ptr<Records> records;
-    Seat* seat = nullptr;
-};
-
-Bytes readRaw(websocket::stream<tcp::socket>& socket)
-{
-    beast::flat_buffer buffer;
-    socket.read(buffer);
-    const auto* const begin = static_cast<const unsigned char*>(buffer.data().data());
-    return Bytes(begin, begin + buffer.size());
-}
-
-void writeRaw(websocket::stream<tcp::socket>& socket, const Bytes& message)
-{
-    socket.write(asio::buffer(message.data(), message.size()));
-}
-
-Dialled dial(asio::io_context& io, const int port, const std::string& fingerprint, Seat& seat,
-    const bool join)
-{
-    tcp::socket raw(io);
-    raw.connect(tcp::endpoint(asio::ip::make_address("127.0.0.1"),
-        static_cast<unsigned short>(port)));
-    auto stream = std::make_unique<websocket::stream<tcp::socket>>(std::move(raw));
-    stream->handshake("127.0.0.1", kPath);
-    stream->binary(true);
-    Dialled out;
-    const Cover cover(fingerprint);
-    const std::optional<SecretBytes> card = cover.open(readRaw(*stream));
-    if (!card.has_value()) {
-        return out;
-    }
-    const Key sealing = cardSealingKey(unpadded(card->bytes()), fingerprint);
-    if (join && !seat.tickets.empty()) {
-        const Bytes ticket = seat.tickets.front();
-        seat.tickets.pop_front();
-        const std::shared_ptr<Records> joining
-            = std::make_shared<Records>(seat.key, ticket, Side::eClient);
-        writeRaw(*stream, makeJoin(ticket, *joining));
-        const std::optional<Bytes> answer = joining->open(readRaw(*stream));
-        if (answer.has_value() && isJoined(*answer)) {
-            out.records = joining;
-        }
-    }
-    if (out.records == nullptr) {
-        const Hello hello = makeHello(cover, sealing);
-        writeRaw(*stream, hello.message);
-        const std::optional<Welcome> welcome
-            = openWelcome(cover, readRaw(*stream), hello.ephemeral, fingerprint);
-        CHECK(welcome.has_value());
-        seat.key = welcome->sessionKey;
-        seat.tickets.assign(welcome->tickets.begin(), welcome->tickets.end());
-        out.records = std::make_shared<Records>(welcome->sessionKey, welcome->salt, Side::eClient);
-    }
-    out.socket = std::move(stream);
-    out.seat = &seat;
-    return out;
-}
-
-void send(Dialled& dialled, const Bytes& frame)
-{
-    shape::SystemRandom random;
-    writeRaw(*dialled.socket, dialled.records->seal(padRecord(frame, 0, random)));
-}
-
-Frame receive(Dialled& dialled)
-{
-    while (true) {
-        const Bytes record = readRaw(*dialled.socket);
-        CHECK(record.size() >= static_cast<std::size_t>(kRecordPadFloor) + kAeadTagBytes);
-        const std::optional<Bytes> opened = dialled.records->open(record);
-        CHECK(opened.has_value());
-        const std::optional<RecordBody> carried = unpadRecord(*opened);
-        CHECK(carried.has_value());
-        const Frame frame = decode(carried->frame);
-        if (frame.type != FrameType::eTickets) {
-            return frame;
-        }
-        const nlohmann::json body = bodyJson(frame);
-        for (const nlohmann::json& ticket : body.at("tickets")) {
-            dialled.seat->tickets.push_back(fromBase64(ticket.get<std::string>()));
-        }
-    }
 }
 
 nlohmann::json greet(Dialled& dialled, const int version = kProtocolVersion)
@@ -334,12 +246,12 @@ int main()
     asio::io_context io;
 
     Seat nobody;
-    const Dialled refused = dial(io, port, Identity::generate().fingerprint(), nobody, false);
+    const Dialled refused = dial(io, port, kPath, Identity::generate().fingerprint(), nobody, false);
     CHECK(refused.socket == nullptr);
 
     const std::string fingerprint = gateway.fingerprint();
     Seat seat;
-    Dialled first = dial(io, port, fingerprint, seat, false);
+    Dialled first = dial(io, port, kPath, fingerprint, seat, false);
     CHECK(first.socket != nullptr);
     CHECK(seat.tickets.size() == kTicketsHeld);
     const nlohmann::json ready = greet(first);
@@ -364,7 +276,7 @@ int main()
     first.socket.reset();
 
     const SecretBytes sessionKey = seat.key;
-    Dialled again = dial(io, port, fingerprint, seat, true);
+    Dialled again = dial(io, port, kPath, fingerprint, seat, true);
     CHECK(again.socket != nullptr);
     CHECK(seat.key == sessionKey);
     const nlohmann::json resumed = greet(again);
@@ -374,7 +286,7 @@ int main()
     again.socket.reset();
 
     Seat forged{SecretBytes(randomBytes(kSessionKeyBytes)), {randomBytes(kTicketBytes)}};
-    Dialled stale = dial(io, port, fingerprint, forged, true);
+    Dialled stale = dial(io, port, kPath, fingerprint, forged, true);
     CHECK(stale.socket != nullptr);
     CHECK(forged.key != sessionKey);
     const nlohmann::json fresh = greet(stale);
@@ -383,7 +295,7 @@ int main()
     stale.socket.reset();
 
     Seat older;
-    Dialled ancient = dial(io, port, fingerprint, older, false);
+    Dialled ancient = dial(io, port, kPath, fingerprint, older, false);
     CHECK(ancient.socket != nullptr);
     const nlohmann::json refusal = greet(ancient, kProtocolVersion + 1);
     CHECK(refusal["type"] == static_cast<int>(FrameType::eError));
@@ -396,7 +308,7 @@ int main()
     ancient.socket.reset();
 
     Seat garbled;
-    Dialled nonsense = dial(io, port, fingerprint, garbled, false);
+    Dialled nonsense = dial(io, port, kPath, fingerprint, garbled, false);
     CHECK(nonsense.socket != nullptr);
     const Bytes garbage = {0x7F, 0x00, 0x00, 0x00, 0x01};
     send(nonsense, garbage);
@@ -410,7 +322,7 @@ int main()
     nonsense.socket.reset();
 
     Seat unsealed;
-    Dialled forgedRecord = dial(io, port, fingerprint, unsealed, false);
+    Dialled forgedRecord = dial(io, port, kPath, fingerprint, unsealed, false);
     CHECK(forgedRecord.socket != nullptr);
     writeRaw(*forgedRecord.socket, randomBytes(kGarbageBytes));
     writeRaw(*forgedRecord.socket, randomBytes(kGarbageBytes));
@@ -439,7 +351,7 @@ int main()
     }
 
     Seat twice2;
-    Dialled twiceOver = dial(io, port, fingerprint, twice2, false);
+    Dialled twiceOver = dial(io, port, kPath, fingerprint, twice2, false);
     CHECK(twiceOver.socket != nullptr);
     (void)greet(twiceOver);
 
@@ -472,7 +384,7 @@ int main()
 
     const std::size_t refusedBefore = gateway.refusals();
     Seat askingSeat;
-    Dialled asking = dial(io, port, fingerprint, askingSeat, false);
+    Dialled asking = dial(io, port, kPath, fingerprint, askingSeat, false);
     CHECK(asking.socket != nullptr);
     (void)greet(asking);
     send(asking,
@@ -480,8 +392,8 @@ int main()
             {{"kind", "stream"},
                 {"published", false}, {"realtime", false}}));
     CHECK(receive(asking).type == FrameType::eOk);
-    const nlohmann::json dialAsk = {{"endpoint", 8},
-        {"host", "anything.b32.i2p"}, {"deadline", kDialDeadlineSeconds}};
+    const nlohmann::json dialAsk = {{"endpoint", 8}, {"host", kNowhere},
+        {"deadline", kDialDeadlineSeconds}};
     send(asking, encodeJson(FrameType::eStreamOpen, 10, dialAsk));
     send(asking, encodeJson(FrameType::eStreamOpen, 10, dialAsk));
     const Frame dialled = receive(asking);
@@ -521,7 +433,7 @@ int main()
     asking.socket.reset();
 
     Seat heldSeat;
-    Dialled held = dial(io, port, fingerprint, heldSeat, false);
+    Dialled held = dial(io, port, kPath, fingerprint, heldSeat, false);
     CHECK(held.socket != nullptr);
     (void)greet(held);
     Seat doomed = heldSeat;
@@ -544,7 +456,7 @@ int main()
     CHECK(router.localDestinations().size() == gateway.pooled());
 
     const SecretBytes doomedKey = doomed.key;
-    Dialled after = dial(io, port, fingerprint, doomed, true);
+    Dialled after = dial(io, port, kPath, fingerprint, doomed, true);
     CHECK(after.socket != nullptr);
     CHECK(doomed.key != doomedKey);
     const nlohmann::json born = greet(after);

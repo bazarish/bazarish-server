@@ -55,9 +55,15 @@ struct StreamEntry {
     std::weak_ptr<Session> peerSession;
     Bytes waiting;
     bool endAfterDrain = false;
+    // From the client, not yet taken by the far side; the stream's window bounds it.
+    Bytes outgoing;
+    bool endAfterWrite = false;
     StreamBook book;
     std::thread reader;
+    std::thread writer;
     std::atomic<bool> running{true};
+    std::atomic<bool> readerDone{false};
+    std::atomic<bool> writerDone{false};
 };
 
 }  // namespace bazarish::gateway

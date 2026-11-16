@@ -10,8 +10,10 @@
 #include <bazarish/WebSocket.hpp>
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -20,9 +22,18 @@ namespace bazarish::gateway {
 
 class Session;
 
+struct StatusBell {
+    void ring();
+
+    std::mutex mutex;
+    std::condition_variable rung;
+    bool asked = false;
+};
+
 struct EndpointEntry {
     std::uint32_t id = 0;
     std::shared_ptr<i2p::Endpoint> endpoint;
+    std::unique_ptr<i2p::EndpointWatch> watch;
     bool made = false;
     std::string target;
     std::string publicBase64;

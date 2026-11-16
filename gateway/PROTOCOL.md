@@ -1133,7 +1133,7 @@ Both sides agree, so there is nothing to refuse.
 | `kDelegationAskEvery` | 60 s | How often the ask is repeated while no new delegation has come |
 | `kDelegationLapseLead` | 60 s | How long before its delegation ends a presence address is stopped, as server-core does with its own delegated destinations |
 | `kMaxLeaseSetReaders` | 100 | Readers one presence address names: 100 contacts, the oldest dialogs dropped first |
-| `kStatusPeriod` | 250 ms | How often a destination's status is looked at, and pushed when it changed. A fraction of a second because a caller waits for a destination to be ready before it dials, so this is added to every destination that is created |
+| `kStatusPeriod` | 250 ms | How often a destination's tunnel and LeaseSet counts are looked at, and pushed when they changed. A destination is looked at at once when it is made and whenever the router says its readiness may have changed, so `ready` reaches the client without waiting for the period |
 
 ## What this asks of the client
 

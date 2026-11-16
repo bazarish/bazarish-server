@@ -444,6 +444,7 @@ void Gateway::bindOps()
 void Gateway::stop()
 {
     const bool wasRunning = running_.exchange(false);
+    statusBell_->ring();
     if (wasRunning && status_.joinable()) {
         status_.join();
     }
@@ -1153,6 +1154,10 @@ void Gateway::onEndpointCreate(const std::shared_ptr<Session>& session,
             entry->localRoute.store(true);
         }
         entry->made = true;
+        if (endpoint) {
+            entry->watch = std::make_unique<i2p::EndpointWatch>(
+                *endpoint, [bell = statusBell_]() { bell->ring(); });
+        }
         if (entry->published) {
             published_[entry->host] = Local{session, entry};
         }
@@ -1163,6 +1168,7 @@ void Gateway::onEndpointCreate(const std::shared_ptr<Session>& session,
             out->send(answer);
         }
     }
+    statusBell_->ring();
 
     {
         const std::lock_guard<std::mutex> lock(mutex_);
@@ -2083,6 +2089,15 @@ void Gateway::orphan(const std::shared_ptr<StreamEntry>& entry)
     pump(theirs, peer);
 }
 
+void StatusBell::ring()
+{
+    {
+        const std::lock_guard<std::mutex> lock(mutex);
+        asked = true;
+    }
+    rung.notify_all();
+}
+
 // For a change made outside mutex_: taking it orders the change before any waiter's check.
 void Gateway::wakeFlows()
 {
@@ -2205,7 +2220,12 @@ void Gateway::onAttach(const http::SocketPtr& socket, const Frame& frame)
 void Gateway::statusLoop()
 {
     while (running_.load()) {
-        std::this_thread::sleep_for(kStatusPeriod);
+        {
+            std::unique_lock<std::mutex> lock(statusBell_->mutex);
+            statusBell_->rung.wait_for(lock, kStatusPeriod,
+                [this]() { return statusBell_->asked || !running_.load(); });
+            statusBell_->asked = false;
+        }
         if (!running_.load()) {
             break;
         }

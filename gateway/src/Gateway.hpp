@@ -193,6 +193,7 @@ private:
     mutable std::mutex mutex_;
     // A window, a control socket or a stop that a reader or an acceptor waits for, under mutex_.
     std::condition_variable flowChanged_;
+    const std::shared_ptr<StatusBell> statusBell_ = std::make_shared<StatusBell>();
     mutable auth::ReplayCache operatorReplays_;
     std::map<http::SocketPtr, Connection> connections_;
     // A raw socket that has not yet joined a session or made one, and how often it missed.

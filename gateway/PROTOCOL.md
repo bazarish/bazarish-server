@@ -805,7 +805,9 @@ and no longer than `kMaxDialDeadline`; a longer one is a `bad-frame`. A session
 holds at most `kMaxDialsPerSession` dials at once, `kMaxEndpointsPerSession`
 destinations and `kMaxStreamsPerSession` streams; one more is `refused`.
 A LeaseSet that is not in the netDb yet is the one reason to dial again: the
-gateway asks again as soon as a lookup comes back empty, until the deadline.
+gateway asks again as soon as a lookup comes back empty, until the deadline. A
+router that knows no floodfill has nobody to ask, and the dial ends at once
+with that cause.
 Any other failure - a refused or broken connection, a pin that does not
 match, a server that does not serve the host - ends the dial at once, and the
 `stream-reset` names its cause in `message`.

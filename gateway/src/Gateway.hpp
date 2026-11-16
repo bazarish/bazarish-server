@@ -55,6 +55,7 @@ public:
     std::size_t rejoins() const { return rejoins_.load(); }
     std::size_t refusals() const { return refused_.load(); }
     std::size_t dials() const { return dials_.load(); }
+    std::size_t lookups() const { return lookups_.load(); }
     std::size_t decoys() const { return decoys_.load(); }
     std::string fingerprint() const { return identity_.fingerprint(); }
     std::size_t pooled() const;
@@ -212,6 +213,7 @@ private:
     std::atomic<std::size_t> rejoins_{0};
     std::atomic<std::size_t> refused_{0};
     std::atomic<std::size_t> dials_{0};
+    std::atomic<std::size_t> lookups_{0};
     mutable std::atomic<std::size_t> decoys_{0};
     std::mutex dialMutex_;
     struct DialThread {

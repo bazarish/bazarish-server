@@ -1606,14 +1606,18 @@ void Gateway::dial(const std::shared_ptr<Session>& session,
                     server->first, server->second, host, from->publicBase64, deadline);
             } else {
                 const auto until = std::chrono::steady_clock::now() + deadline;
+                why = "the host's lease set was not found within the deadline";
                 for (auto left = deadline; opened == nullptr && left.count() > 0
                      && from->running.load() && running_.load();
                      left = std::chrono::duration_cast<std::chrono::seconds>(
                          until - std::chrono::steady_clock::now())) {
+                    // A lookup with no floodfill to ask comes back empty at once, and again.
+                    if (router_.floodfills() == 0) {
+                        why = "the router knows no floodfill to look the host's lease set up with";
+                        break;
+                    }
+                    ++lookups_;
                     opened = overI2p(from->endpoint->connect(host, left));
-                }
-                if (opened == nullptr) {
-                    why = "the host's lease set was not found within the deadline";
                 }
             }
         } catch (const std::exception& error) {

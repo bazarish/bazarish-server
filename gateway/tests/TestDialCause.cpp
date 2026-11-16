@@ -31,6 +31,8 @@ constexpr int kDialDeadlineSeconds = 30;
 constexpr std::uint32_t kHelloRef = 2;
 constexpr std::uint32_t kEndpointRef = 4;
 constexpr std::uint32_t kStreamRef = 6;
+constexpr std::uint32_t kLookupRef = 8;
+constexpr const char* kUnknownDest = "dlkbeyqjykssca6o7qlbwgq4fr2hry7kw2ursn2sh3lt3acox6gqaaaa.b32.i2p";
 // Far inside the deadline: a refused connection is not retried until the deadline runs out.
 constexpr std::chrono::seconds kRefusedWithin{5};
 
@@ -95,6 +97,19 @@ int main()
     const nlohmann::json body = bodyJson(answer);
     CHECK(body.value("code", std::string()) == faultName(Fault::eUnreachable));
     CHECK(body.value("message", std::string()).find("refused") != std::string::npos);
+    CHECK(gateway.lookups() == 0);
+
+    const auto lookedUp = std::chrono::steady_clock::now();
+    send(client,
+        encodeJson(FrameType::eStreamOpen, kLookupRef,
+            {{"endpoint", kEndpointRef}, {"host", kUnknownDest},
+                {"deadline", kDialDeadlineSeconds}}));
+    const Frame unfound = about(client, kLookupRef);
+    CHECK(unfound.type == FrameType::eStreamReset);
+    CHECK(std::chrono::steady_clock::now() - lookedUp < kRefusedWithin);
+    CHECK(bodyJson(unfound).value("message", std::string()).find("floodfill")
+        != std::string::npos);
+    CHECK(gateway.lookups() == 0);
 
     boost::system::error_code ignored;
     client.socket->next_layer().close(ignored);

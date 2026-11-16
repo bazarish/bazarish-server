@@ -48,8 +48,9 @@ constexpr const char* kPath = "/f3a9c2e1b7d4";
 constexpr const char* kHealthPath = "/healthz";
 constexpr int kSweepGraceSeconds = 5;
 constexpr int kDialDeadlineSeconds = 4;
-// Well formed and in no netDb: the dial runs out its deadline.
+// Routed to a socket that never answers the handshake: the dial runs out its deadline.
 constexpr const char* kNowhere = "fkc4nkqn6k2bwrqsgbabnkyx4g5s2cp3nvnrdnkqxz4bzcbzrfaa.b32.i2p";
+constexpr const char* kUncheckedPin = "a pin no handshake gets far enough to check";
 constexpr double kPageMedian = 6000;
 constexpr double kPageLow = 4000;
 constexpr double kPageHigh = 9000;
@@ -185,6 +186,10 @@ int main()
     settings.opsPort = unusedPort();
     g_opsCallerDir = root / "ops-caller";
     settings.opsClients = {tls::selfSigned(g_opsCallerDir).pin};
+    asio::io_context silentIo;
+    const tcp::acceptor silent(silentIo, tcp::endpoint(asio::ip::make_address("127.0.0.1"), 0));
+    settings.direct = {DirectRoute{kNowhere, "127.0.0.1", silent.local_endpoint().port(),
+        kUncheckedPin}};
 
     i2p::Router router(i2p::offlineRouter(root / "i2p"));
 

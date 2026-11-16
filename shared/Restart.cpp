@@ -13,12 +13,6 @@
 
 namespace bazarish {
 
-namespace {
-
-constexpr std::chrono::milliseconds kResponseGrace{300};
-
-}  // namespace
-
 void StopGate::wait()
 {
     std::unique_lock<std::mutex> lock(mutex_);
@@ -93,7 +87,6 @@ RestartSwitch::RestartSwitch(std::function<void()> stop)
                 return;
             }
         }
-        std::this_thread::sleep_for(kResponseGrace);
         stop_();
     });
 }

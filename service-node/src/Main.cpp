@@ -225,25 +225,31 @@ int main(const int argc, const char** argv)
         credential.certificate.string(), credential.key.string()};
     const auto userLocks = std::make_shared<bazarish::service::UserLocks>();
     const bazarish::service::OperatorPush queuePush(backend, nodeIdentity);
-    const auto pushes = std::make_shared<bazarish::service::PushQueue>(stateDir / "store", store,
-        *userLocks,
-        bazarish::service::PushQueue::Delivery{
-            .quota =
-                [&queuePush](const std::string& user, const std::uint64_t quotaBytes) {
-                    return queuePush.publishQuota(user, quotaBytes);
-                },
-            .card =
-                [&queuePush](const std::string& user) {
-                    return queuePush.publishCardChanged(user);
-                },
-            .takeDownAddress =
-                [&queuePush](const std::string& user) {
-                    return queuePush.takeDownAddress(user);
-                },
-            .forget =
-                [&queuePush](const std::string& user) {
-                    return queuePush.forgetAccount(user);
-                }});
+    std::shared_ptr<bazarish::service::PushQueue> pushes;
+    try {
+        pushes = std::make_shared<bazarish::service::PushQueue>(stateDir / "store", store,
+            *userLocks,
+            bazarish::service::PushQueue::Delivery{
+                .quota =
+                    [&queuePush](const std::string& user, const std::uint64_t quotaBytes) {
+                        return queuePush.publishQuota(user, quotaBytes);
+                    },
+                .card =
+                    [&queuePush](const std::string& user) {
+                        return queuePush.publishCardChanged(user);
+                    },
+                .takeDownAddress =
+                    [&queuePush](const std::string& user) {
+                        return queuePush.takeDownAddress(user);
+                    },
+                .forget =
+                    [&queuePush](const std::string& user) {
+                        return queuePush.forgetAccount(user);
+                    }});
+    } catch (const std::exception& error) {
+        bazarish::log::error("the unsent marks cannot be read: {}", error.what());
+        return 1;
+    }
     const bazarish::service::OperatorPush operatorPush(
         backend, nodeIdentity, [pushes]() { pushes->serverReached(); });
 

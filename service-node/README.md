@@ -40,7 +40,8 @@ An alias belongs to `alias-resolver`, which is a service of its own.
   messaging server accepts afterwards replaces a takedown still marked. A
   deleted account's mark has the messaging server drop its mailbox and its
   address, and goes before anything else marked for that user; a delegation is
-  refused with 503 while it is still marked.
+  refused with 503 while it is still marked. The node reads every mark at
+  start and refuses to start, naming the file, when one does not name all four.
   The mark names what is due, not a value: a push always carries what the
   account record holds at that moment. A push that fails leaves the mark, and
   the change still answers 200, because it is made on this node; the account

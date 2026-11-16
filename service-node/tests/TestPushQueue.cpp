@@ -9,6 +9,7 @@
 #include <bazarish/Crypto.hpp>
 #include <bazarish/I2p.hpp>
 #include <bazarish/KeyedSeal.hpp>
+#include <bazarish/PrivateFile.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -318,6 +319,19 @@ int main()
         CHECK(testutil::waitFor([&]() { return !options.pushes->unsent(user).any(); }));
     }
     options.pushes.reset();
+
+    {
+        const std::filesystem::path older = root / "unsent" / (user + ".json");
+        writeFileAtomic(older, R"({"quota":true,"card":false,"addressDown":false})");
+        bool refused = false;
+        try {
+            options.pushes = queue();
+        } catch (const std::runtime_error& error) {
+            refused = std::string(error.what()).find(older.string()) != std::string::npos;
+        }
+        CHECK(refused);
+        std::filesystem::remove(older);
+    }
 
     std::filesystem::remove_all(root);
     std::printf("TestPushQueue OK\n");

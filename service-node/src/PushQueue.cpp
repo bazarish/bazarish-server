@@ -7,6 +7,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <array>
 #include <optional>
 #include <stdexcept>
 #include <utility>
@@ -19,6 +20,7 @@ namespace {
 
 constexpr char kUnsentDirectory[] = "unsent";
 constexpr char kRecordSuffix[] = ".json";
+constexpr std::array<const char*, 4> kMarks = {"quota", "card", "addressDown", "forget"};
 
 void settle(const PushOutcome outcome, bool& unsent, bool& delivered, bool& unreachable)
 {
@@ -49,6 +51,9 @@ PushQueue::PushQueue(
                                     " address taken down and account deleted");
     }
     fs::create_directories(root_);
+    for (const std::string& user : unsentUsers()) {
+        (void)unsent(user);
+    }
     worker_ = std::thread([this]() { run(); });
 }
 
@@ -95,6 +100,13 @@ PushQueue::Unsent PushQueue::unsent(const std::string& user) const
         return {};
     }
     const nlohmann::json body = readJsonFile(path);
+    for (const char* const mark : kMarks) {
+        if (!body.is_object() || !body.contains(mark) || !body.at(mark).is_boolean()) {
+            throw std::runtime_error(path.string()
+                + " is not an unsent mark this node reads: it names quota, card, addressDown"
+                  " and forget as true or false");
+        }
+    }
     return {body.at("quota").get<bool>(), body.at("card").get<bool>(),
         body.at("addressDown").get<bool>(), body.at("forget").get<bool>()};
 }

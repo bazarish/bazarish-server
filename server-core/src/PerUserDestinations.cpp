@@ -27,13 +27,12 @@
 namespace bazarish::server {
 
 namespace {
-constexpr int kPublishWaitSeconds = 180;
-constexpr int kPublishPollSeconds = 1;
+// Endpoint::waitReady takes a bound; the wait for a lease set has none.
+constexpr std::chrono::seconds kReadyWaitSlice{60};
 constexpr int kAcceptTimeoutSeconds = 2;
 constexpr std::size_t kServeWorkers = 3;
 constexpr int kServeDeadlineSeconds = 45;
 constexpr int kWatchdogTickSeconds = 2;
-constexpr int kEndpointPollMillis = 200;
 constexpr std::chrono::minutes kExpirySweepInterval{10};
 
 nlohmann::json readRecord(const std::filesystem::path& path)
@@ -86,6 +85,16 @@ void removeRecord(const std::filesystem::path& path, const std::string& userFp)
         throw std::runtime_error("the destination record of " + bazarish::log::redact(userFp)
             + " cannot be removed: " + ec.message());
     }
+}
+
+bool readyOrLost(bazarish::i2p::Endpoint& endpoint)
+{
+    while (!endpoint.waitReady(kReadyWaitSlice)) {
+        if (endpoint.lost()) {
+            return false;
+        }
+    }
+    return true;
 }
 
 SignAckFn signAckWith(std::shared_ptr<Key> signingKey)
@@ -225,75 +234,36 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
     dest->dest = addressOfTransient(transientB64);
     sweepDue_.notify_all();
     if (router_.has_value()) {
+        dest->endpoint = router_->get().createEndpoint(bazarish::i2p::EndpointConfig{
+            bazarish::i2p::Keys::fromBlob(fromBase64(transientB64)), privacy_,
+            bazarish::i2p::kServerTunnelQuantity, true});
+        dest->workers.emplace_back([this, dest, userFp]() {
+            if (!readyOrLost(*dest->endpoint)) {
+                return;
+            }
+            bazarish::log::info(
+                "per-user i2p destination up for {}", bazarish::log::redact(userFp));
+            serveLoop(*dest, userFp);
+        });
         for (std::size_t i = 1; i < kServeWorkers; ++i) {
             dest->workers.emplace_back([this, dest, userFp]() { serveLoop(*dest, userFp); });
         }
-        dest->workers.emplace_back([this, dest, transientB64, userFp]() {
-            try {
-                const bazarish::i2p::Keys keys
-                    = bazarish::i2p::Keys::fromBlob(fromBase64(transientB64));
-                auto endpoint = router_->get().createEndpoint(bazarish::i2p::EndpointConfig{
-                    keys, privacy_, bazarish::i2p::kServerTunnelQuantity, true});
-                {
-                    const std::lock_guard<std::mutex> lock(mutex_);
-                    dest->endpoint = endpoint;
-                }
-                bool up = false;
-                for (int waited = 0; waited < kPublishWaitSeconds && dest->running.load();
-                     waited += kPublishPollSeconds) {
-                    up = endpoint->waitReady(std::chrono::seconds(kPublishPollSeconds));
-                    if (up) {
-                        break;
-                    }
-                }
-                if (!dest->running.load()) {
-                    endpoint->stop();
-                    return;
-                }
-                if (up) {
-                    bazarish::log::info("per-user i2p destination up for {}",
-                        bazarish::log::redact(userFp));
-                } else {
-                    bazarish::log::warn(
-                        "per-user i2p destination for {} has no LeaseSet after {} s; the router "
-                        "keeps building, the account is unreachable until it has one",
-                        bazarish::log::redact(userFp), kPublishWaitSeconds);
-                }
-                serveLoop(*dest, userFp);
-            } catch (const std::exception& error) {
-                bazarish::log::warn("destination for {} is down: {}",
-                    bazarish::log::redact(userFp), error.what());
-            }
-        });
     }
     dests_[userFp] = dest;
 }
 
 void PerUserDestinations::serveLoop(Destination& destination, const std::string& userFp)
 {
-    std::shared_ptr<bazarish::i2p::Endpoint> endpoint;
-    while (destination.running.load() && !endpoint) {
-        {
-            const std::lock_guard<std::mutex> lock(mutex_);
-            endpoint = destination.endpoint;
-        }
-        if (!endpoint) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(kEndpointPollMillis));
-        }
-    }
-    if (!endpoint) {
-        return;
-    }
+    bazarish::i2p::Endpoint& endpoint = *destination.endpoint;
     while (destination.running.load()) {
         std::string peer;
         std::shared_ptr<bazarish::i2p::Stream> stream;
         try {
-            stream = endpoint->accept(peer, std::chrono::seconds(kAcceptTimeoutSeconds));
+            stream = endpoint.accept(peer, std::chrono::seconds(kAcceptTimeoutSeconds));
         } catch (const std::exception& error) {
-            // Over SAM the router refuses while another session still holds the address.
-            bazarish::log::warn("a user's destination takes no streams yet: {}", error.what());
-            std::this_thread::sleep_for(std::chrono::seconds(kAcceptTimeoutSeconds));
-            continue;
+            bazarish::log::error("the destination of {} takes no more streams: {}",
+                bazarish::log::redact(userFp), error.what());
+            return;
         }
         if (!stream) {
             continue;

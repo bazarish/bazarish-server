@@ -23,8 +23,8 @@ namespace bazarish::facade {
 namespace {
 
 constexpr int kAcceptTimeoutSeconds = 30;
-constexpr int kReadyWaitSeconds = 300;
-constexpr int kReadyPollSeconds = 1;
+// Endpoint::waitReady takes a bound; the wait for a lease set has none.
+constexpr std::chrono::seconds kReadyWaitSlice{60};
 constexpr std::size_t kMaxRelaysInFlight = 256;
 
 int connectLocal(const std::string& host, const int port)
@@ -69,16 +69,12 @@ void I2pFront::start()
         bazarish::i2p::EndpointConfig{keys_, options_.privacy, options_.tunnelQuantity, true});
     const std::string host = endpoint_->routingHost();
     readyThread_ = std::thread([this, host]() {
-        for (int waited = 0; waited < kReadyWaitSeconds; waited += kReadyPollSeconds) {
-            if (endpoint_->waitReady(std::chrono::seconds(kReadyPollSeconds))) {
-                bazarish::log::info("i2p facade ready: {}", host);
-                return;
-            }
-            if (!running_) {
+        while (!endpoint_->waitReady(kReadyWaitSlice)) {
+            if (endpoint_->lost()) {
                 return;
             }
         }
-        bazarish::log::warn("i2p facade not ready after {}s: {}", kReadyWaitSeconds, host);
+        bazarish::log::info("i2p facade ready: {}", host);
     });
     acceptThread_ = std::thread([this]() { acceptLoop(); });
 }
@@ -86,6 +82,9 @@ void I2pFront::start()
 void I2pFront::stop()
 {
     running_ = false;
+    if (endpoint_) {
+        endpoint_->stop();
+    }
     if (acceptThread_.joinable()) {
         acceptThread_.join();
     }
@@ -133,8 +132,8 @@ void I2pFront::acceptLoop()
         try {
             stream = endpoint_->accept(peer, std::chrono::seconds(kAcceptTimeoutSeconds));
         } catch (const std::exception& error) {
-            bazarish::log::warn("i2p accept failed: {}", error.what());
-            continue;
+            bazarish::log::error("i2p facade takes no more streams: {}", error.what());
+            return;
         }
         if (!stream) {
             continue;

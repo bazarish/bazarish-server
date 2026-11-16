@@ -22,7 +22,10 @@ constexpr std::size_t kLongestBackPath = 512;
 
 std::string valueSlot(const std::size_t index)
 {
-    return "{" + std::to_string(index) + "}";
+    std::string slot("{");
+    slot += std::to_string(index);
+    slot += '}';
+    return slot;
 }
 
 }  // namespace

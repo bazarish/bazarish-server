@@ -39,8 +39,15 @@ std::string svg(const std::string& text)
                 ++x;
             }
             const std::string run = std::to_string(x - from);
-            path += "M" + std::to_string(from + kQrQuietModules) + " "
-                + std::to_string(y + kQrQuietModules) + "h" + run + "v1h-" + run + "z";
+            path += 'M';
+            path += std::to_string(from + kQrQuietModules);
+            path += ' ';
+            path += std::to_string(y + kQrQuietModules);
+            path += 'h';
+            path += run;
+            path += "v1h-";
+            path += run;
+            path += 'z';
         }
     }
     const std::string side = std::to_string(width + 2 * kQrQuietModules);

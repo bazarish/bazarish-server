@@ -53,8 +53,9 @@ std::chrono::steady_clock::duration untilReady(Dialled& client, const std::uint3
 }  // namespace
 
 int main()
-{
-    const std::filesystem::path root = testutil::freshDir("gateway-status-at-once-test");
+try {
+    const testutil::ScratchDir scratch("gateway-status-at-once-test");
+    const std::filesystem::path& root = scratch.path();
     std::filesystem::create_directories(root);
     const tls::Credential facade = tls::selfSigned(root / "facade");
 
@@ -88,7 +89,8 @@ int main()
     boost::system::error_code ignored;
     client.socket->next_layer().close(ignored);
     gateway.stop();
-    std::filesystem::remove_all(root);
     std::printf("TestStatusAtOnce ok\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

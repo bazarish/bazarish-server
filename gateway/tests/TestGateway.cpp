@@ -158,7 +158,7 @@ nlohmann::json greet(Dialled& dialled, const int version = kProtocolVersion)
 }  // namespace
 
 int main()
-{
+try {
     Warnings warnings;
     log::setTap([&warnings](const log::Level level, const std::string_view,
                     const std::string_view message) {
@@ -167,8 +167,8 @@ int main()
         }
     });
 
-    const std::filesystem::path root
-        = testutil::freshDir("gateway-test");
+    const testutil::ScratchDir scratch("gateway-test");
+    const std::filesystem::path& root = scratch.path();
     std::filesystem::create_directories(root);
 
     Settings settings;
@@ -472,7 +472,8 @@ int main()
 
     gateway.stop();
     log::setTap({});
-    std::filesystem::remove_all(root);
     std::printf("TestGateway ok\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

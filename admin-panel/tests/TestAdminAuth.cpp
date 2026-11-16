@@ -53,7 +53,7 @@ std::shared_ptr<PanelSettings> panelWith(std::vector<std::string> admins)
 }  // namespace
 
 int main()
-{
+try {
     const Identity admin = Identity::generate();
 
     {
@@ -115,4 +115,6 @@ int main()
 
     std::printf("TestAdminAuth: all checks passed\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

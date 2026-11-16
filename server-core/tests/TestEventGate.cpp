@@ -27,7 +27,7 @@ void runFor(boost::asio::io_context& io, const std::chrono::milliseconds span)
 }  // namespace
 
 int main()
-{
+try {
     using namespace bazarish::server;
     boost::asio::io_context io;
     EventGate gate;
@@ -83,4 +83,6 @@ int main()
     CHECK(toldEarly.load());
     std::printf("ok\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

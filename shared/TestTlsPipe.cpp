@@ -33,7 +33,6 @@ namespace {
 constexpr std::chrono::seconds kDeadline{5};
 constexpr std::chrono::seconds kExpiry{1};
 constexpr std::size_t kLineBytes = 64;
-constexpr int kRandomNameBytes = 8;
 
 class Listener {
 public:
@@ -77,9 +76,9 @@ std::string readAll(TlsPipe& pipe, const std::size_t want)
 }  // namespace
 
 int main()
-{
-    const fs::path root = fs::temp_directory_path()
-        / ("bazarish-tls-pipe-" + bazarish::toHex(bazarish::randomBytes(kRandomNameBytes)));
+try {
+    const testutil::ScratchDir scratch("tls-pipe");
+    const fs::path& root = scratch.path();
     fs::create_directories(root / "a");
     fs::create_directories(root / "b");
     const bazarish::tls::Credential gateway = bazarish::tls::selfSigned(root / "a");
@@ -157,7 +156,8 @@ int main()
         CHECK(refused);
     }
 
-    fs::remove_all(root);
     std::printf("TestTlsPipe: all checks passed\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

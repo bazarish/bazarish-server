@@ -41,9 +41,9 @@ std::string fieldOf(const std::filesystem::path& path, const char* key)
 }  // namespace
 
 int main()
-{
-    const std::filesystem::path root
-        = testutil::freshDir("peruserdest-test");
+try {
+    const testutil::ScratchDir scratch("peruserdest-test");
+    const std::filesystem::path& root = scratch.path();
     DiskStorage storage(root);
 
     DeliveryEngine engine(storage, DeliveryEngineOptions{});
@@ -196,6 +196,7 @@ int main()
     }
 
     std::printf("TestPerUserDestinations OK\n");
-    std::filesystem::remove_all(root);
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

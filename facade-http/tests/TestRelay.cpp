@@ -91,7 +91,7 @@ std::chrono::steady_clock::duration endAfterClientCloses(
 }  // namespace
 
 int main()
-{
+try {
     int ends[2] = {-1, -1};
     CHECK(::socketpair(AF_UNIX, SOCK_STREAM, 0, ends) == 0);
     ::close(ends[1]);
@@ -121,4 +121,6 @@ int main()
     std::sort(lingered.begin(), lingered.end());
     CHECK(lingered[lingered.size() / 2] < kEndsWithin);
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

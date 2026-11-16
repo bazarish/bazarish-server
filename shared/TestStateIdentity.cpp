@@ -11,8 +11,9 @@
 using namespace bazarish;
 
 int main()
-{
-    const std::filesystem::path root = testutil::freshDir("state-identity");
+try {
+    const testutil::ScratchDir scratch("state-identity");
+    const std::filesystem::path& root = scratch.path();
 
     const Key made = server::loadOrCreateSealingKey(root);
     CHECK(hybrid::isSealingKey(made));
@@ -25,7 +26,8 @@ int main()
     writePrivateFile(classicalOnly / "sealing.pem", Key::generateX25519().privatePem());
     CHECK_THROWS(server::loadOrCreateSealingKey(classicalOnly));
 
-    std::filesystem::remove_all(root);
     std::printf("TestStateIdentity OK\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

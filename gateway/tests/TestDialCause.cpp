@@ -56,8 +56,9 @@ int closedPort()
 }  // namespace
 
 int main()
-{
-    const std::filesystem::path root = testutil::freshDir("gateway-dial-cause-test");
+try {
+    const testutil::ScratchDir scratch("gateway-dial-cause-test");
+    const std::filesystem::path& root = scratch.path();
     std::filesystem::create_directories(root);
     const tls::Credential nobody = tls::selfSigned(root / "nobody");
 
@@ -114,7 +115,8 @@ int main()
     boost::system::error_code ignored;
     client.socket->next_layer().close(ignored);
     gateway.stop();
-    std::filesystem::remove_all(root);
     std::printf("TestDialCause ok\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

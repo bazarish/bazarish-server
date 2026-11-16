@@ -10,7 +10,7 @@
 using namespace bazarish::admin;
 
 int main()
-{
+try {
     const std::string text = R"({
         "admin": ["abcd1234"],
         "listen": {"host": "0.0.0.0", "port": 9000},
@@ -87,4 +87,6 @@ int main()
 
     std::printf("TestConfig: all checks passed\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

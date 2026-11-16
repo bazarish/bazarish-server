@@ -43,9 +43,9 @@ i2p::RouterConfig borrowedFrom(const int port, const std::string& fingerprint)
 }  // namespace
 
 int main()
-{
-    const std::filesystem::path root
-        = testutil::freshDir("gateway-stop-test");
+try {
+    const testutil::ScratchDir scratch("gateway-stop-test");
+    const std::filesystem::path& root = scratch.path();
     std::filesystem::create_directories(root);
 
     Settings settings;
@@ -128,7 +128,8 @@ int main()
     bob.stop();
     alice.stop();
     gateway.stop();
-    std::filesystem::remove_all(root);
     std::printf("TestStopWhileWriting ok\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

@@ -12,7 +12,7 @@
 using namespace bazarish;
 
 int main()
-{
+try {
     RateLimiter limiter(3, 60);
 
     const std::string alice = "alice.b32.i2p";
@@ -39,4 +39,6 @@ int main()
 
     std::printf("TestRateLimiter OK\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

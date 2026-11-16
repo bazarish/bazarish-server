@@ -37,7 +37,6 @@ namespace {
 constexpr std::chrono::seconds kDeadline{5};
 constexpr std::size_t kLineBytes = 64 * 1024;
 constexpr int kDelegationDays = 1;
-constexpr int kRandomNameBytes = 8;
 constexpr std::size_t kAccountIdBytes = 32;
 
 const std::string kWatch = nlohmann::json({{"watch", true}}).dump() + "\n";
@@ -120,9 +119,9 @@ bool cutOff(TlsPipe& pipe)
 }  // namespace
 
 int main()
-{
-    const fs::path root = fs::temp_directory_path()
-        / ("bazarish-gateway-link-" + toHex(randomBytes(kRandomNameBytes)));
+try {
+    const testutil::ScratchDir scratch("gateway-link");
+    const fs::path& root = scratch.path();
     DiskStorage storage(root / "storage");
     DeliveryEngine engine(storage, DeliveryEngineOptions{});
     std::unique_ptr<GatewayLink> linked;
@@ -207,7 +206,8 @@ int main()
     CHECK(cutOff(*watch));
 
     link.stop();
-    fs::remove_all(root);
     std::printf("TestGatewayLink: all checks passed\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

@@ -17,7 +17,7 @@ constexpr std::int64_t kStart = 1000000;
 }  // namespace
 
 int main()
-{
+try {
     SessionStore store(kTtl);
 
     const std::shared_ptr<Session> first = store.open(kStart);
@@ -91,4 +91,6 @@ int main()
 
     std::printf("TestSessions ok\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

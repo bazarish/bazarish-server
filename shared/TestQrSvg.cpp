@@ -19,7 +19,7 @@ constexpr std::size_t kTooLongForAnySymbol = 4000;
 }  // namespace
 
 int main()
-{
+try {
     const std::string small = svg("bazarish");
     CHECK(small.starts_with("<svg "));
     CHECK(small.find(kVersionOneViewBox) != std::string::npos);
@@ -37,4 +37,6 @@ int main()
     }
     CHECK(refused);
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

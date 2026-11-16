@@ -29,8 +29,9 @@ constexpr const char* kAnswer = "mail arrived";
 }  // namespace
 
 int main()
-{
-    const std::filesystem::path state = testutil::freshDir("facade-held-relay");
+try {
+    const testutil::ScratchDir scratch("facade-held-relay");
+    const std::filesystem::path& state = scratch.path();
     const bazarish::tls::Credential backendCredential
         = bazarish::tls::selfSigned(state / "backend");
     http::Server::Options backendOptions;
@@ -91,7 +92,8 @@ int main()
         }
     }
     backend.stop();
-    std::filesystem::remove_all(state);
     std::printf("TestHeldRelay ok\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

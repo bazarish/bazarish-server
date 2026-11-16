@@ -251,9 +251,10 @@ int pageStatus(const int port, const std::string& cookie)
 }  // namespace
 
 int main()
-{
+try {
     bazarish::log::setLevel(bazarish::log::Level::eError);
-    const std::filesystem::path root = testutil::freshDir("panel-logs-test");
+    const testutil::ScratchDir scratch("panel-logs-test");
+    const std::filesystem::path& root = scratch.path();
     const tls::Credential services = tls::selfSigned(root / "services");
     const tls::Credential panelKeys = tls::selfSigned(root / "panel");
 
@@ -375,7 +376,8 @@ int main()
 
     core->stop();
     edge->stop();
-    std::filesystem::remove_all(root);
     std::printf("TestPanelLogs OK\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

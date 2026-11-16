@@ -60,7 +60,7 @@ std::string askSlowly(const int port, const std::string& request)
 }  // namespace
 
 int main()
-{
+try {
     {
         std::atomic<int> stops{0};
         {
@@ -118,4 +118,6 @@ int main()
 
     std::printf("TestRestart: all checks passed\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

@@ -16,9 +16,10 @@ using namespace bazarish;
 using namespace bazarish::service;
 
 int main()
-{
+try {
     namespace fs = std::filesystem;
-    const fs::path root = fs::temp_directory_path() / ("bazarish-grants-" + toHex(randomBytes(8)));
+    const testutil::ScratchDir scratch("grants");
+    const fs::path& root = scratch.path();
     const std::string user = Identity::generate().fingerprint();
 
     {
@@ -75,7 +76,8 @@ int main()
         grants.erase(open);
     }
 
-    fs::remove_all(root);
     std::printf("TestGrantStore: all checks passed\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

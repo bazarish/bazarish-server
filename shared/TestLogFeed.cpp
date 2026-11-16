@@ -43,9 +43,10 @@ nlohmann::json pageOf(const http::ClientResponse& answer)
 }  // namespace
 
 int main()
-{
+try {
     bazarish::log::setLevel(Level::eError);
-    const std::filesystem::path root = testutil::freshDir("log-feed-test");
+    const testutil::ScratchDir scratch("log-feed-test");
+    const std::filesystem::path& root = scratch.path();
     const tls::Credential serverKeys = tls::selfSigned(root / "server");
     const tls::Credential clientKeys = tls::selfSigned(root / "client");
     const Identity panel = Identity::generate();
@@ -129,7 +130,8 @@ int main()
 
         ops.stop();
     }
-    std::filesystem::remove_all(root);
     std::printf("TestLogFeed OK\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

@@ -32,10 +32,10 @@ using bazarish::http::collectAuthHeaders;
 }  // namespace
 
 int main()
-{
+try {
     const Identity panel = Identity::generate();
-    const std::filesystem::path keyRoot
-        = testutil::freshDir("panel-client-test");
+    const testutil::ScratchDir scratch("panel-client-test");
+    const std::filesystem::path& keyRoot = scratch.path();
     const bazarish::tls::Credential servicePins = bazarish::tls::selfSigned(keyRoot / "service");
     const bazarish::tls::Credential panelPins = bazarish::tls::selfSigned(keyRoot / "panel");
 
@@ -145,7 +145,8 @@ int main()
     CHECK(!probeHealth(wrongPin, panel, panelPins).reachable);
 
     service.stop();
-    std::filesystem::remove_all(keyRoot);
     std::printf("TestServiceClient: all checks passed\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

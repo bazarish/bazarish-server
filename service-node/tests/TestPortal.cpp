@@ -64,7 +64,8 @@ void testLoginVerification()
 void testLoginCallback()
 {
     namespace fs = std::filesystem;
-    const fs::path root = fs::temp_directory_path() / ("bazarish-portal-" + toHex(randomBytes(8)));
+    const testutil::ScratchDir scratch("portal");
+    const fs::path& root = scratch.path();
     SubscriptionStore store(root);
     GrantStore grants(root);
 
@@ -128,7 +129,6 @@ void testLoginCallback()
     }
 
     api.stop();
-    fs::remove_all(root);
 }
 
 http::ClientResponse postForm(const int port, const std::string& path, const std::string& body,
@@ -158,7 +158,8 @@ std::string between(const std::string& text, const std::string& open, const std:
 void testWebFlow()
 {
     namespace fs = std::filesystem;
-    const fs::path root = fs::temp_directory_path() / ("bazarish-portal-web-" + toHex(randomBytes(8)));
+    const testutil::ScratchDir scratch("portal-web");
+    const fs::path& root = scratch.path();
     GrantStore grants(root);
 
     const Identity identity = Identity::generate();
@@ -364,16 +365,17 @@ void testWebFlow()
     }
 
     portal.stop();
-    fs::remove_all(root);
 }
 
 }  // namespace
 
 int main()
-{
+try {
     testLoginVerification();
     testLoginCallback();
     testWebFlow();
     std::printf("TestPortal: all checks passed\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

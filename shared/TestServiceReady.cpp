@@ -49,8 +49,9 @@ std::string received(const int fd)
 }  // namespace
 
 int main()
-{
-    const std::filesystem::path root = testutil::freshDir("service-ready");
+try {
+    const testutil::ScratchDir scratch("service-ready");
+    const std::filesystem::path& root = scratch.path();
     std::filesystem::create_directories(root);
     std::filesystem::current_path(root);
 
@@ -75,7 +76,8 @@ int main()
     CHECK_THROWS(announceReady());
 
     std::filesystem::current_path(root.parent_path());
-    std::filesystem::remove_all(root);
     std::printf("TestServiceReady OK\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

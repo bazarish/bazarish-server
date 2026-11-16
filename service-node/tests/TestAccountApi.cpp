@@ -97,9 +97,9 @@ testutil::Headers deviceSigned(const DeviceCredential& device, const std::string
 }  // namespace
 
 int main()
-{
-    const std::filesystem::path root
-        = testutil::freshDir("account-test");
+try {
+    const testutil::ScratchDir scratch("account-test");
+    const std::filesystem::path& root = scratch.path();
     SubscriptionStore store(root);
     GrantStore grants(root);
 
@@ -588,6 +588,7 @@ int main()
 
     api.stop();
     serverThread.join();
-    std::filesystem::remove_all(root);
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

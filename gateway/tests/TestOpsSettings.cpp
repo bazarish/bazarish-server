@@ -97,12 +97,12 @@ http::ClientResponse askOps(const int port, const std::string& pin, const std::s
 }  // namespace
 
 int main()
-{
+try {
     // Routing and tunnel counts reach a client only while it is active.
     i2p::windowActive(true);
     i2p::userActed();
-    const std::filesystem::path root
-        = testutil::freshDir("gateway-ops-test");
+    const testutil::ScratchDir scratch("gateway-ops-test");
+    const std::filesystem::path& root = scratch.path();
     std::filesystem::create_directories(root);
 
     const std::filesystem::path configPath = root / "gateway.json";
@@ -280,7 +280,8 @@ int main()
 
     gateway.stop();
     listener.stop();
-    std::filesystem::remove_all(root);
     std::printf("TestOpsSettings ok\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

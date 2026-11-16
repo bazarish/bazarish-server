@@ -20,7 +20,7 @@ constexpr std::size_t kFileBytes = 1000;
 }  // namespace
 
 int main()
-{
+try {
     const health::MemoryUsage memory = health::processMemoryUsage();
     CHECK(memory.current > 0);
     CHECK(memory.peak >= memory.current);
@@ -33,7 +33,8 @@ int main()
     CHECK(report.at("ramBytes").get<std::uint64_t>() > 0);
     CHECK(report.contains("ramPeakBytes"));
 
-    const std::filesystem::path tree = testutil::freshDir("health-tree");
+    const testutil::ScratchDir scratch("health-tree");
+    const std::filesystem::path& tree = scratch.path();
     std::filesystem::create_directories(tree / "inner");
     std::ofstream(tree / "a.bin") << std::string(kFileBytes, 'a');
     std::ofstream(tree / "inner" / "b.bin") << std::string(kFileBytes * 2, 'b');
@@ -43,4 +44,6 @@ int main()
 
     std::printf("TestHealth: all checks passed\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

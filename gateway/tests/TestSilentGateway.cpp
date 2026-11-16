@@ -35,9 +35,9 @@ i2p::RouterConfig borrowedFrom(const int port, const std::string& fingerprint)
 }  // namespace
 
 int main()
-{
-    const std::filesystem::path root
-        = testutil::freshDir("gateway-silent-test");
+try {
+    const testutil::ScratchDir scratch("gateway-silent-test");
+    const std::filesystem::path& root = scratch.path();
     std::filesystem::create_directories(root);
 
     Settings settings;
@@ -73,6 +73,7 @@ int main()
     CHECK(unanswered == nullptr);
     relay.stall(false);
 
-    std::filesystem::remove_all(root);
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

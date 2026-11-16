@@ -42,10 +42,10 @@ bool opensAsAnswer(const std::string& body, const SecretBytes& tunnelKey, const 
 }  // namespace
 
 int main()
-{
+try {
     bazarish::log::setLevel(bazarish::log::Level::eError);
-    const std::filesystem::path root
-        = testutil::freshDir("tunnel-test");
+    const testutil::ScratchDir scratch("tunnel-test");
+    const std::filesystem::path& root = scratch.path();
     DiskStorage storage(root);
 
     const Identity serverIdentity = Identity::generate();
@@ -163,7 +163,8 @@ int main()
 
     api.stop();
     serverThread.join();
-    std::filesystem::remove_all(root);
     std::printf("TestTunnelFace OK\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

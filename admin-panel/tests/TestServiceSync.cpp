@@ -51,14 +51,14 @@ ServiceEntry entry(const std::string& name, const std::string& kind, const int p
 }  // namespace
 
 int main()
-{
+try {
     CHECK(hostOf("http://abc.b32.i2p/x/y") == "abc.b32.i2p");
     CHECK(hostOf("http://h:8080/p") == "h");
     CHECK(hostOf("abc.b32.i2p") == "abc.b32.i2p");
 
     const Identity panel = Identity::generate();
-    const std::filesystem::path root
-        = testutil::freshDir("panel-sync-test");
+    const testutil::ScratchDir scratch("panel-sync-test");
+    const std::filesystem::path& root = scratch.path();
     const tls::Credential services = tls::selfSigned(root / "services");
     const tls::Credential panelKeys = tls::selfSigned(root / "panel");
 
@@ -246,7 +246,8 @@ int main()
     core->stop();
     directFacade->stop();
     linked->stop();
-    std::filesystem::remove_all(root);
     std::printf("TestServiceSync: all checks passed\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

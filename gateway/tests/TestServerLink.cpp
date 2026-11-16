@@ -32,7 +32,6 @@ namespace {
 constexpr const char* kPath = "/5d1c0e93b2a7";
 constexpr int kWaitSeconds = 20;
 constexpr std::chrono::seconds kShortWait{1};
-constexpr int kRandomNameBytes = 8;
 constexpr std::size_t kEchoBytes = 256;
 constexpr const char* kUserDest = "ykmtx5g3h4var6o4n4tw6k2fqsmszqwzkj2abdmax7avtiqyeskwb2zi.b32.i2p";
 constexpr const char* kOtherDest = "r4obpwh2bvnmfiaks7oramvjbpv4ldf6ezxmbl3xiqhrmjcjqj6tapv2.b32.i2p";
@@ -86,13 +85,12 @@ std::string echoed(i2p::Stream& stream, const std::string& said)
 }  // namespace
 
 int main()
-{
+try {
     // Routing and tunnel counts reach a client only while it is active.
     i2p::windowActive(true);
     i2p::userActed();
-    const fs::path root = fs::temp_directory_path()
-        / ("bazarish-gateway-server-link-" + toHex(randomBytes(kRandomNameBytes)));
-    fs::create_directories(root);
+    const testutil::ScratchDir scratch("gateway-server-link");
+    const fs::path& root = scratch.path();
 
     Settings settings;
     settings.listenHost = "127.0.0.1";
@@ -207,7 +205,8 @@ int main()
     alice.stop();
     gateway.stop();
     link.stop();
-    fs::remove_all(root);
     std::printf("TestServerLink ok\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

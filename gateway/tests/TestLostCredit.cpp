@@ -64,9 +64,9 @@ void settle(const std::function<std::size_t()>& read)
 }  // namespace
 
 int main()
-{
-    const std::filesystem::path root
-        = testutil::freshDir("gateway-lost-credit-test");
+try {
+    const testutil::ScratchDir scratch("gateway-lost-credit-test");
+    const std::filesystem::path& root = scratch.path();
     std::filesystem::create_directories(root);
 
     Settings settings;
@@ -159,7 +159,8 @@ int main()
     sender.stop();
     receiver.stop();
     gateway.stop();
-    std::filesystem::remove_all(root);
     std::printf("TestLostCredit ok\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

@@ -23,7 +23,7 @@ constexpr std::int64_t kWindow = 300;
 const bazarish::Bytes kKey = bazarish::newLinkKey();
 
 int main()
-{
+try {
     bazarish::service::LoginChallenge site("site-secret",
         bazarish::service::LoginConsumer{"Bazarish server", {"https://portal.example"}, "Account owner"});
     const std::string challenge = site.issue(kNow);
@@ -88,4 +88,6 @@ int main()
 
     std::printf("TestLoginMailbox: all checks passed\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

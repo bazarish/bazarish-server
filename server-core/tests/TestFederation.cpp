@@ -162,9 +162,9 @@ FederationFetchResult roundTripCard(DeliveryEngine& engine, const CardFetchQuery
 }  // namespace
 
 int main()
-{
-    const std::filesystem::path root
-        = testutil::freshDir("federation-test");
+try {
+    const testutil::ScratchDir scratch("federation-test");
+    const std::filesystem::path& root = scratch.path();
     DiskStorage storage(root);
 
     const std::string alice = toBase32(Bytes(32, 0x01));
@@ -518,6 +518,7 @@ int main()
         CHECK(answer.find("DELIVERY_REJECTED") != std::string::npos);
     }
 
-    std::filesystem::remove_all(root);
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

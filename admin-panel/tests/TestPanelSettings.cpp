@@ -26,10 +26,10 @@ namespace fs = std::filesystem;
 
 constexpr std::int64_t kNow = 1'700'000'000;
 
-fs::path writeConfig(const std::string& text)
+fs::path writeConfig(
+    const testutil::ScratchDir& scratch, const std::string& name, const std::string& text)
 {
-    const fs::path path
-        = fs::temp_directory_path() / ("bazarish-panel-" + toHex(randomBytes(8)) + ".json");
+    const fs::path path = scratch.path() / name;
     std::ofstream out(path);
     out << text;
     return path;
@@ -44,9 +44,10 @@ nlohmann::json read(const fs::path& path)
 }  // namespace
 
 int main()
-{
+try {
+    const testutil::ScratchDir scratch("panel-settings");
     {
-        const fs::path path = writeConfig(R"({
+        const fs::path path = writeConfig(scratch, "first.json", R"({
   "state": "/var/lib/bazarish/admin-panel",
   "assets": "/opt/bazarish/web",
   "listen": {"host": "0.0.0.0", "port": 8460}
@@ -79,11 +80,10 @@ int main()
         const std::string text = blob.dump();
         CHECK(panelAuth.login(challenge, toBase64(Bytes(text.begin(), text.end())), kNow)
             == owner.fingerprint());
-        fs::remove(path);
     }
 
     {
-        const fs::path path = writeConfig(R"({
+        const fs::path path = writeConfig(scratch, "second.json", R"({
   "admin": ["kg3xjmqsuwzq5xakkyk6cqiwpxu63xqcprzhcy4wkeegj7ivhtxq"],
   "state": "/var/lib/bazarish/admin-panel",
   "assets": "/opt/bazarish/web",
@@ -117,7 +117,6 @@ int main()
         CHECK(again.services.size() == 1);
         CHECK(again.services.front().url == "https://127.0.0.1:8428");
         CHECK(again.services.front().pin == "pin-of-core");
-        fs::remove(path);
     }
 
     {
@@ -138,4 +137,6 @@ int main()
 
     std::printf("TestPanelSettings: all checks passed\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

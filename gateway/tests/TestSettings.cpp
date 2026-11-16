@@ -63,7 +63,7 @@ const char* kWhole = R"({
 }  // namespace
 
 int main()
-{
+try {
     const Settings whole = Settings::from(document(kWhole));
     CHECK(whole.listenHost == "0.0.0.0");
     CHECK(whole.listenPort == 8431);
@@ -205,4 +205,6 @@ int main()
 
     std::printf("TestSettings ok\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

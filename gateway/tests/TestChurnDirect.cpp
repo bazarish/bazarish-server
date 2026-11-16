@@ -33,9 +33,9 @@ constexpr std::chrono::milliseconds kMoveEvery{1500};
 }  // namespace
 
 int main()
-{
-    const std::filesystem::path root
-        = testutil::freshDir("gateway-churn-direct-test");
+try {
+    const testutil::ScratchDir scratch("gateway-churn-direct-test");
+    const std::filesystem::path& root = scratch.path();
     std::filesystem::create_directories(root);
 
     const tls::Credential served = tls::selfSigned(root / "served");
@@ -127,7 +127,8 @@ int main()
     client.stop();
     gateway.stop();
     listener.stop();
-    std::filesystem::remove_all(root);
     std::printf("TestChurnDirect ok\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

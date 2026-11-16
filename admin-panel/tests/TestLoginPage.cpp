@@ -44,11 +44,10 @@ std::string formEncoded(const std::string& text)
 }  // namespace
 
 int main()
-{
+try {
     bazarish::log::setLevel(bazarish::log::Level::eError);
-    const std::filesystem::path root
-        = testutil::freshDir("loginpage-test");
-    std::filesystem::create_directories(root);
+    const testutil::ScratchDir rootScratch("loginpage-test");
+    const std::filesystem::path& root = rootScratch.path();
     const std::filesystem::path configPath = root / "admin-panel.json";
     { std::ofstream(configPath) << "{}\n"; }
 
@@ -62,7 +61,8 @@ int main()
     HttpApiOptions options;
     options.version = "test";
     options.assetsDirectory = std::filesystem::path(BAZARISH_PANEL_WEB_DIR);
-    const std::filesystem::path certificateDir = testutil::freshDir("login-page-test");
+    const testutil::ScratchDir certificateScratch("login-page-test");
+    const std::filesystem::path& certificateDir = certificateScratch.path();
     const bazarish::tls::Credential credential = bazarish::tls::selfSigned(certificateDir);
     HttpApi api(settings, identity, credential, options);
     const int port = api.bind("127.0.0.1", 0);
@@ -85,8 +85,8 @@ int main()
 
     api.stop();
     serverThread.join();
-    std::filesystem::remove_all(root);
-    std::filesystem::remove_all(certificateDir);
     std::printf("TestLoginPage OK\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

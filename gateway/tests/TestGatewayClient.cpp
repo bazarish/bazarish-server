@@ -58,9 +58,9 @@ http::SocketDial dialFor(const int port)
 }  // namespace
 
 int main()
-{
-    const std::filesystem::path root
-        = testutil::freshDir("gateway-client-test");
+try {
+    const testutil::ScratchDir scratch("gateway-client-test");
+    const std::filesystem::path& root = scratch.path();
     std::filesystem::create_directories(root);
 
     Settings settings;
@@ -210,7 +210,8 @@ int main()
     mine->stop();
     borrowed.stop();
     gateway.stop();
-    std::filesystem::remove_all(root);
     std::printf("TestGatewayClient ok\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

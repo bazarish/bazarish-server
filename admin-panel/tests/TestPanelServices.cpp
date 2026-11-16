@@ -110,10 +110,10 @@ std::string signIn(const int port, const Identity& admin, const std::string& pat
 }  // namespace
 
 int main()
-{
+try {
     bazarish::log::setLevel(bazarish::log::Level::eError);
-    const std::filesystem::path root
-        = testutil::freshDir("panel-services-test");
+    const testutil::ScratchDir scratch("panel-services-test");
+    const std::filesystem::path& root = scratch.path();
     std::filesystem::create_directories(root);
     const tls::Credential services = tls::selfSigned(root / "services");
     const tls::Credential panelKeys = tls::selfSigned(root / "panel");
@@ -407,7 +407,8 @@ int main()
     node->stop();
     facade->stop();
     gateway->stop();
-    std::filesystem::remove_all(root);
     std::printf("TestPanelServices OK\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

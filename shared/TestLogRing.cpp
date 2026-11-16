@@ -22,7 +22,7 @@ constexpr std::int64_t kSomeMillis = 1700000000000;
 }  // namespace
 
 int main()
-{
+try {
     {
         const LogRing empty(kSmallRing);
         const LogPage page = empty.after(0, kAll);
@@ -101,4 +101,6 @@ int main()
 
     std::printf("TestLogRing OK\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

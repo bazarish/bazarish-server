@@ -43,8 +43,9 @@ bool routedLocally(const i2p::Router& router, const std::string& host)
 }  // namespace
 
 int main()
-{
-    const std::filesystem::path root = testutil::freshDir("gateway-idle-status-test");
+try {
+    const testutil::ScratchDir scratch("gateway-idle-status-test");
+    const std::filesystem::path& root = scratch.path();
     std::filesystem::create_directories(root);
 
     Settings settings;
@@ -92,7 +93,8 @@ int main()
     hers->stop();
     client.stop();
     gateway.stop();
-    std::filesystem::remove_all(root);
     std::printf("TestIdleStatus ok\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

@@ -59,9 +59,9 @@ Bytes botCard(const devicetest::Account& owner, const std::int64_t issuedAt,
 }  // namespace
 
 int main()
-{
-    const std::filesystem::path root
-        = testutil::freshDir("moderation-test");
+try {
+    const testutil::ScratchDir scratch("moderation-test");
+    const std::filesystem::path& root = scratch.path();
     SubscriptionStore store(root);
     GrantStore grants(root);
 
@@ -182,7 +182,8 @@ int main()
 
     api.stop();
     serverThread.join();
-    std::filesystem::remove_all(root);
     std::printf("TestModeratedRegistration: all checks passed\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

@@ -64,8 +64,9 @@ bool reachedAt(const nlohmann::json& link, const nlohmann::json& listen, const s
 }  // namespace
 
 int main()
-{
-    const fs::path root = testutil::freshDir("server-setup-test");
+try {
+    const testutil::ScratchDir scratch("server-setup-test");
+    const fs::path& root = scratch.path();
 
     const bazarish::setup::Layout layout = layoutUnder(root / "fresh");
     writeGateway(layout);
@@ -161,7 +162,8 @@ int main()
     CHECK(bazarish::readFileText(partial.configDir / "gateway.json") == gatewayBefore);
     CHECK(!fs::exists(partial.configDir / "server-core.json"));
 
-    fs::remove_all(root);
     std::printf("TestServerSetup OK\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

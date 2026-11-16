@@ -59,9 +59,9 @@ http::ClientResponse call(const int port, const Identity& identity, const std::s
 }  // namespace
 
 int main()
-{
-    const std::filesystem::path root
-        = testutil::freshDir("operator-test");
+try {
+    const testutil::ScratchDir scratch("operator-test");
+    const std::filesystem::path& root = scratch.path();
     SubscriptionStore store(root);
     GrantStore grants(root);
 
@@ -373,7 +373,8 @@ int main()
 
     api.stop();
     serverThread.join();
-    std::filesystem::remove_all(root);
     std::printf("TestOperatorApi: all checks passed\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

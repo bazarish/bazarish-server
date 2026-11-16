@@ -74,9 +74,9 @@ constexpr std::int64_t kNow = 1780000000;
 constexpr std::size_t kHeavyPayloadBytes = 64 * 1024;
 
 int main()
-{
-    const std::filesystem::path root
-        = testutil::freshDir("httpapi-test");
+try {
+    const testutil::ScratchDir scratch("httpapi-test");
+    const std::filesystem::path& root = scratch.path();
     DiskStorage storage(root);
 
     const Identity serverIdentity = Identity::generate();
@@ -692,6 +692,7 @@ int main()
 
     api.stop();
     serverThread.join();
-    std::filesystem::remove_all(root);
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

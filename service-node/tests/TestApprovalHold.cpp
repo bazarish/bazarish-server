@@ -78,8 +78,9 @@ void registerPending(const int port, GrantStore& grants, const devicetest::Accou
 }  // namespace
 
 int main()
-{
-    const std::filesystem::path root = testutil::freshDir("approval-hold-test");
+try {
+    const testutil::ScratchDir scratch("approval-hold-test");
+    const std::filesystem::path& root = scratch.path();
     SubscriptionStore store(root);
     GrantStore grants(root);
 
@@ -170,7 +171,8 @@ int main()
 
     api.stop();
     serving.join();
-    std::filesystem::remove_all(root);
     std::printf("TestApprovalHold ok\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

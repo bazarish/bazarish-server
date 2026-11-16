@@ -45,9 +45,10 @@ Bytes cardOf(const devicetest::Account& owner)
 }  // namespace
 
 int main()
-{
+try {
     bazarish::log::setLevel(bazarish::log::Level::eError);
-    const std::filesystem::path root = testutil::freshDir("node-cards-test");
+    const testutil::ScratchDir scratch("node-cards-test");
+    const std::filesystem::path& root = scratch.path();
     const tls::Credential credential = tls::selfSigned(root);
     const auto identity = std::make_shared<const Identity>(Identity::generate());
 
@@ -82,7 +83,8 @@ int main()
     CHECK_THROWS(cards.card(mallory.fingerprint()));
 
     node.stop();
-    std::filesystem::remove_all(root);
     std::printf("TestNodeCards OK\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

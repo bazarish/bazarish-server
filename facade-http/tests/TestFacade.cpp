@@ -94,8 +94,8 @@ void testLoadSample()
 
 void testAddress()
 {
-    const std::filesystem::path state
-        = testutil::freshDir("facade-test-address");
+    const testutil::ScratchDir scratch("facade-test-address");
+    const std::filesystem::path& state = scratch.path();
 
     const bazarish::facade::FacadeAddress first = bazarish::facade::loadAddress(state);
     CHECK(first.address().find(".b32.i2p") != std::string::npos);
@@ -105,15 +105,14 @@ void testAddress()
     const bazarish::facade::FacadeAddress minted = bazarish::facade::mintAddress(state);
     CHECK(minted.address() != first.address());
     CHECK(bazarish::facade::loadAddress(state).address() == minted.address());
-    std::filesystem::remove_all(state);
 }
 
 int main()
-{
+try {
     testLoadSample();
     testAddress();
-    const std::filesystem::path backendState
-        = testutil::freshDir("facade-test-backend");
+    const testutil::ScratchDir backendScratch("facade-test-backend");
+    const std::filesystem::path& backendState = backendScratch.path();
     const bazarish::tls::Credential backendCredential
         = bazarish::tls::selfSigned(backendState);
     http::Server::Options messagingOptions = backendOptions();
@@ -123,7 +122,8 @@ int main()
     installBackend(messaging, "messaging");
     const int messagingPort = messaging.start();
     CHECK(messagingPort > 0);
-    const std::filesystem::path nodeState = testutil::freshDir("facade-test-node");
+    const testutil::ScratchDir nodeScratch("facade-test-node");
+    const std::filesystem::path& nodeState = nodeScratch.path();
     const bazarish::tls::Credential nodeCredential = bazarish::tls::selfSigned(nodeState);
     http::Server::Options nodeOptions = backendOptions();
     nodeOptions.certificate = nodeCredential.certificate.string();
@@ -137,7 +137,8 @@ int main()
     options.messaging = {"127.0.0.1", messagingPort, backendCredential.pin};
     options.serviceNode = {"127.0.0.1", nodePort, nodeCredential.pin};
     options.address = "example.b32.i2p";
-    const std::filesystem::path configDir = testutil::freshDir("facade-test");
+    const testutil::ScratchDir configScratch("facade-test");
+    const std::filesystem::path& configDir = configScratch.path();
     const std::filesystem::path configPath = configDir / "facade.json";
     {
         std::ofstream config(configPath);
@@ -163,8 +164,8 @@ int main()
     options.settings = facadeSettings;
     const bazarish::Identity operatorIdentity = bazarish::Identity::generate();
     options.operatorFingerprints = {operatorIdentity.fingerprint()};
-    const std::filesystem::path facadeState
-        = testutil::freshDir("facade-test-own");
+    const testutil::ScratchDir facadeScratch("facade-test-own");
+    const std::filesystem::path& facadeState = facadeScratch.path();
     options.stateDirectory = facadeState.string();
     std::atomic<int> restarts{0};
     options.requestRestart = [&restarts]() { ++restarts; };
@@ -355,8 +356,7 @@ int main()
     facade.stop();
     messaging.stop();
     serviceNode.stop();
-    for (const std::filesystem::path& dir : {backendState, nodeState, configDir, facadeState}) {
-        std::filesystem::remove_all(dir);
-    }
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

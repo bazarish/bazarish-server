@@ -87,8 +87,9 @@ void sendToSelf(const int port, const devicetest::Device& from, const devicetest
 }  // namespace
 
 int main()
-{
-    const std::filesystem::path root = testutil::freshDir("overview-test");
+try {
+    const testutil::ScratchDir scratch("overview-test");
+    const std::filesystem::path& root = scratch.path();
     DiskStorage storage(root);
     const std::filesystem::path configPath = root / "server-core.json";
     {
@@ -211,7 +212,8 @@ int main()
 
     api.stop();
     serving.join();
-    std::filesystem::remove_all(root);
     std::printf("TestOverview ok\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

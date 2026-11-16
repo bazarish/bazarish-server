@@ -22,7 +22,7 @@ const auth::DeviceCaller kCaller{kUser, "aaaaaaaaaa", DeviceRole::ePrimary};
 }  // namespace
 
 int main()
-{
+try {
     const SecretBytes secret(randomBytes(32));
 
     {
@@ -104,4 +104,6 @@ int main()
 
     std::printf("TestSessionStore passed\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

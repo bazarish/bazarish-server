@@ -30,8 +30,9 @@ constexpr shape::Pareto kQuickReading{shape::kReadAlpha, 0.5, 1.0};
 }  // namespace
 
 int main()
-{
-    const std::filesystem::path root = testutil::freshDir("gateway-decoy-burst-test");
+try {
+    const testutil::ScratchDir scratch("gateway-decoy-burst-test");
+    const std::filesystem::path& root = scratch.path();
     std::filesystem::create_directories(root);
 
     Settings settings;
@@ -89,7 +90,8 @@ int main()
 
     client.stop();
     gateway.stop();
-    std::filesystem::remove_all(root);
     std::printf("TestDecoyBurst ok\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

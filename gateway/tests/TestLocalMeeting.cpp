@@ -66,12 +66,12 @@ std::string readAll(i2p::Stream& stream, const std::size_t expected)
 }  // namespace
 
 int main()
-{
+try {
     // Routing and tunnel counts reach a client only while it is active.
     i2p::windowActive(true);
     i2p::userActed();
-    const std::filesystem::path root
-        = testutil::freshDir("gateway-meeting-test");
+    const testutil::ScratchDir scratch("gateway-meeting-test");
+    const std::filesystem::path& root = scratch.path();
     std::filesystem::create_directories(root);
 
     Settings settings;
@@ -225,7 +225,8 @@ int main()
     alice.stop();
     gateway.stop();
     listener.stop();
-    std::filesystem::remove_all(root);
     std::printf("TestLocalMeeting ok\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

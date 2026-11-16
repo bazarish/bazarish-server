@@ -153,8 +153,9 @@ http::ClientResponse operatorCall(const int port, const Identity& panel,
 }  // namespace
 
 int main()
-{
-    const std::filesystem::path root = testutil::freshDir("push-queue-test");
+try {
+    const testutil::ScratchDir scratch("push-queue-test");
+    const std::filesystem::path& root = scratch.path();
     SubscriptionStore store(root);
     GrantStore grants(root);
 
@@ -333,7 +334,8 @@ int main()
         std::filesystem::remove(older);
     }
 
-    std::filesystem::remove_all(root);
     std::printf("TestPushQueue OK\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

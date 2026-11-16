@@ -8,7 +8,7 @@
 using bazarish::server::configArgument;
 
 int main()
-{
+try {
     int usages = 0;
     const auto usage = [&usages]() { ++usages; };
 
@@ -33,4 +33,6 @@ int main()
 
     std::printf("TestCommandLine passed\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

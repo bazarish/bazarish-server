@@ -35,9 +35,9 @@ std::string makeUser(const unsigned char fill)
 }  // namespace
 
 int main()
-{
-    const std::filesystem::path root
-        = testutil::freshDir("storage-test");
+try {
+    const testutil::ScratchDir scratch("storage-test");
+    const std::filesystem::path& root = scratch.path();
     DiskStorage storage(root);
 
     const std::string alice = makeUser(0x01);
@@ -59,7 +59,8 @@ int main()
     CHECK(storage.listClients(alice).size() == 2);
 
     {
-        DiskStorage addressed(testutil::freshDir("storage-addressed-test"));
+        const testutil::ScratchDir addressedScratch("storage-addressed-test");
+        DiskStorage addressed(addressedScratch.path());
         const std::string owner = makeUser(0x05);
         addressed.registerClient(owner, "phone", "install1");
         addressed.registerClient(owner, "tablet", "install1");
@@ -191,7 +192,8 @@ int main()
     CHECK(storage.usage(alice) == 100);
 
     {
-        DiskStorage aging(testutil::freshDir("storage-retention-test"));
+        const testutil::ScratchDir agingScratch("storage-retention-test");
+        DiskStorage aging(agingScratch.path());
         const std::string carol = makeUser(0x03);
         aging.registerClient(carol, "cclient", "install1");
         CHECK(aging.putBlob(carol, "untaken", blob, "content", kQuota, kNow)
@@ -277,6 +279,7 @@ int main()
     CHECK(reopened.getBlob(alice, "msg4") == blob);
     CHECK(reopened.userQuota(dave, kQuota) == 8);
 
-    std::filesystem::remove_all(root);
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

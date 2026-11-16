@@ -23,9 +23,9 @@ std::string makeUser(const unsigned char fill)
 }  // namespace
 
 int main()
-{
-    const std::filesystem::path root
-        = testutil::freshDir("subscription-test");
+try {
+    const testutil::ScratchDir scratch("subscription-test");
+    const std::filesystem::path& root = scratch.path();
     SubscriptionStore store(root);
 
     const std::string alice = makeUser(0x01);
@@ -51,6 +51,7 @@ int main()
     CHECK(reopened.getAccount(alice).has_value());
     CHECK(reopened.allAccounts().size() == 1);
 
-    std::filesystem::remove_all(root);
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

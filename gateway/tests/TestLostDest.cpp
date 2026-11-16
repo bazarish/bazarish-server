@@ -36,9 +36,9 @@ i2p::RouterConfig borrowedFrom(const int port, const std::string& fingerprint)
 }  // namespace
 
 int main()
-{
-    const std::filesystem::path root
-        = testutil::freshDir("gateway-lost-dest-test");
+try {
+    const testutil::ScratchDir scratch("gateway-lost-dest-test");
+    const std::filesystem::path& root = scratch.path();
     std::filesystem::create_directories(root);
 
     Settings settings;
@@ -105,7 +105,8 @@ int main()
     before->stop();
     client.stop();
     second.stop();
-    std::filesystem::remove_all(root);
     std::printf("TestLostDest ok\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

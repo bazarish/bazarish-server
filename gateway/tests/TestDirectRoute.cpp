@@ -18,8 +18,9 @@ using namespace bazarish;
 using namespace bazarish::gateway;
 
 int main()
-{
-    const fs::path root = fs::temp_directory_path() / ("bazarish-direct-" + toHex(randomBytes(8)));
+try {
+    const testutil::ScratchDir scratch("direct");
+    const fs::path& root = scratch.path();
     const tls::Credential served = tls::selfSigned(root / "served");
     const tls::Credential other = tls::selfSigned(root / "other");
 
@@ -68,7 +69,8 @@ int main()
     CHECK_THROWS(overTls(nobody, std::chrono::seconds(2)));
 
     listener.stop();
-    fs::remove_all(root);
     std::printf("TestDirectRoute: all checks passed\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

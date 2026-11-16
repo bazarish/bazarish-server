@@ -44,11 +44,12 @@ std::int64_t days(const std::int64_t count)
 }  // namespace
 
 int main()
-{
+try {
     namespace fs = std::filesystem;
     const StopGate going;
     UserLocks locks;
-    const fs::path root = fs::temp_directory_path() / ("bazarish-sweep-" + toHex(randomBytes(8)));
+    const testutil::ScratchDir scratch("sweep");
+    const fs::path& root = scratch.path();
 
     const std::string active = Identity::generate().fingerprint();
     const std::string lapsed = Identity::generate().fingerprint();
@@ -106,7 +107,8 @@ int main()
         CHECK(!grants.peekApproval(pending).has_value());
     }
 
-    fs::remove_all(root);
     std::printf("TestIdleSweep: all checks passed\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

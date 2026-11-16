@@ -30,9 +30,9 @@ constexpr const char* kHeaderEnd = "\r\n\r\n";
 }  // namespace
 
 int main()
-{
-    const std::filesystem::path root
-        = testutil::freshDir("gateway-drop-after-answer-test");
+try {
+    const testutil::ScratchDir scratch("gateway-drop-after-answer-test");
+    const std::filesystem::path& root = scratch.path();
     std::filesystem::create_directories(root);
 
     const tls::Credential served = tls::selfSigned(root / "served");
@@ -119,7 +119,8 @@ int main()
     client.stop();
     gateway.stop();
     listener.stop();
-    std::filesystem::remove_all(root);
     std::printf("TestDropAfterAnswer ok\n");
     return 0;
+} catch (...) {
+    return testutil::failed();
 }

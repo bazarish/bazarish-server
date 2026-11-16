@@ -57,6 +57,7 @@ endfunction()
 
 bazarish_service_add_test(TestSubscriptionStore)
 bazarish_service_add_test(TestAccountApi)
+bazarish_service_add_test(TestApprovalHold)
 bazarish_service_add_test(TestGrantStore)
 bazarish_service_add_test(TestIdleSweep)
 bazarish_service_add_test(TestModeratedRegistration)

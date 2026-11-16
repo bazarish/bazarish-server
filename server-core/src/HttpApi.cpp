@@ -48,6 +48,9 @@ constexpr char kHoldKey[] = "hold";
 constexpr char kHoldValue[] = "1";
 constexpr char kDeferredKey[] = "deferred";
 constexpr char kDeferredSeparator = ',';
+constexpr char kOverviewPath[] = "/v1/messaging/overview";
+constexpr char kSinceKey[] = "since";
+constexpr char kVersionField[] = "version";
 
 using bazarish::nowSeconds;
 
@@ -122,6 +125,7 @@ namespace bazarish::server {
 HttpApi::HttpApi(DiskStorage& storage, EventGate& eventGate, const HttpApiOptions options)
     : storage_(storage)
     , eventGate_(eventGate)
+    , overviewGate_(std::make_shared<EventGate>(EventGate::Missed::eDropped))
     , options_(options)
     , tunnel_(options_.sealingKey, options_.fingerprint)
     , startedAt_(nowSeconds())
@@ -129,7 +133,43 @@ HttpApi::HttpApi(DiskStorage& storage, EventGate& eventGate, const HttpApiOption
     if (!options_.accountDevices) {
         throw std::invalid_argument("the mailbox serves only the accounts its node knows");
     }
+    storage_.watch(overviewChanged());
     janitorThread_ = std::thread([this]() { expiredSweepLoop(); });
+}
+
+std::function<void(const std::string& user)> HttpApi::overviewChanged() const
+{
+    return [gate = overviewGate_](const std::string& user) { gate->notify(user); };
+}
+
+nlohmann::json HttpApi::eventsAnswer(const std::string& user, nlohmann::json pending)
+{
+    return {
+        {"pending", std::move(pending)},
+        {"usedBytes", storage_.usage(user)},
+        {"quotaBytes", storage_.userQuota(user, options_.defaultQuotaBytes)},
+    };
+}
+
+nlohmann::json HttpApi::overviewOf(const std::string& user, const std::string& device)
+{
+    const DestinationAssignment assigned = options_.assignDestination(user);
+    nlohmann::json clients = nlohmann::json::array();
+    for (const std::string& registered : storage_.listClients(user)) {
+        clients.push_back({{"device", registered}, {"current", registered == device},
+            {"queue", storage_.listPending(user, registered).size()}});
+    }
+    nlohmann::json overview = {
+        {"dest", assigned.dest},
+        {"state", assigned.state},
+        {"transientExpires", assigned.transientExpires},
+        {"usedBytes", storage_.usage(user)},
+        {"quotaBytes", storage_.userQuota(user, options_.defaultQuotaBytes)},
+        {"clients", clients},
+    };
+    const std::string shown = overview.dump();
+    overview[kVersionField] = toHex(sha256(Bytes(shown.begin(), shown.end())));
+    return overview;
 }
 
 std::optional<bazarish::http::Response> HttpApi::admitted(
@@ -492,17 +532,17 @@ void HttpApi::setupRoutes()
             }
             const nlohmann::json waiting = pendingJson(store, user, clientId);
             if (holdsNews(waiting, deferred) || request.query(kHoldKey) != kHoldValue) {
-                return jsonResponse({{"pending", waiting}});
+                return jsonResponse(eventsAnswer(user, waiting));
             }
             eventGate_.wait(http_->executor(), user, clientId,
-                [&store, user, clientId, respond]() {
-                    nlohmann::json items = nlohmann::json::array();
+                [this, &store, user, clientId, respond]() {
                     try {
-                        items = pendingJson(store, user, clientId);
+                        respond(jsonResponse(
+                            eventsAnswer(user, pendingJson(store, user, clientId))));
                     } catch (const std::exception& error) {
                         bazarish::log::warn("event face: {}", error.what());
+                        respond(jsonResponse({{"pending", nlohmann::json::array()}}));
                     }
-                    respond(jsonResponse({{"pending", items}}));
                 });
             try {
                 if (holdsNews(pendingJson(store, user, clientId), deferred)) {
@@ -527,17 +567,6 @@ void HttpApi::setupRoutes()
             return jsonResponse({{"ok", true}});
         }));
 
-    http_->get("/v1/messaging/clients",
-        authenticated([&store](const bazarish::http::Request&,
-                          const Caller& caller) -> bazarish::http::Response {
-            nlohmann::json clients = nlohmann::json::array();
-            for (const std::string& device : store.listClients(caller.user)) {
-                clients.push_back({{"device", device}, {"current", device == caller.device},
-                    {"queue", store.listPending(caller.user, device).size()}});
-            }
-            return jsonResponse({{"clients", clients}});
-        }));
-
     http_->get("/v1/messaging/destination",
         authenticated([this](const bazarish::http::Request&, const Caller& caller)
                           -> bazarish::http::Response {
@@ -546,15 +575,36 @@ void HttpApi::setupRoutes()
             return jsonResponse({{"dest", assigned.dest}, {"state", assigned.state}});
         }));
 
-    http_->get("/v1/messaging/storage-usage",
-        authenticated([this](const bazarish::http::Request&, const Caller& caller)
-                          -> bazarish::http::Response {
-            const std::string& user = caller.user;
-            return jsonResponse({
-                    {"usedBytes", storage_.usage(user)},
-                    {"quotaBytes", storage_.userQuota(user, options_.defaultQuotaBytes)},
-                });
-        }));
+    http_->getAsync(kOverviewPath,
+        [this](const bazarish::http::Request& request,
+            bazarish::http::Responder respond) -> std::optional<bazarish::http::Response> {
+            Caller caller;
+            const std::optional<bazarish::http::Response> refused = admitted(request, caller);
+            if (refused.has_value()) {
+                return *refused;
+            }
+            const std::string user = caller.user;
+            const std::string device = caller.device;
+            const std::string since = request.query(kSinceKey);
+            const nlohmann::json current = overviewOf(user, device);
+            if (request.query(kHoldKey) != kHoldValue
+                || since != current.at(kVersionField).get<std::string>()) {
+                overviewGate_->release(user, device);
+                return jsonResponse(current);
+            }
+            overviewGate_->wait(http_->executor(), user, device, [this, user, device, respond]() {
+                try {
+                    respond(jsonResponse(overviewOf(user, device)));
+                } catch (const std::exception& error) {
+                    bazarish::log::warn("overview face: {}", error.what());
+                    respond(errorResponse(500, ErrorCode::eRequestFailed, error.what()));
+                }
+            });
+            if (overviewOf(user, device).at(kVersionField).get<std::string>() != since) {
+                overviewGate_->notify(user);
+            }
+            return std::nullopt;
+        });
 
     http_->post("/v1/messaging/passes",
         authenticated([&store, registered, clientUnregistered](

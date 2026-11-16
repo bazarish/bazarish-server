@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -22,6 +23,9 @@ public:
     };
 
     explicit GrantStore(std::filesystem::path root);
+
+    // Told under the store lock whenever the approval or the ban of a user may have changed.
+    void watch(std::function<void(const std::string& user)> changed);
 
     void grantSubscription(const std::string& user, std::uint64_t quotaBytes,
         std::int64_t now);
@@ -70,8 +74,11 @@ private:
     std::filesystem::path grantPath(const std::string& user) const;
     std::filesystem::path banPath(const std::string& user) const;
 
+    void tellChanged(const std::string& user) const;
+
     std::filesystem::path root_;
     mutable std::mutex mutex_;
+    std::function<void(const std::string& user)> changed_;
 };
 
 }  // namespace bazarish::service

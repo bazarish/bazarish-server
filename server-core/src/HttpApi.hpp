@@ -14,6 +14,8 @@
 #include <Restart.hpp>
 #include <TunnelFace.hpp>
 
+#include <nlohmann/json.hpp>
+
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -30,6 +32,7 @@ class EventGate;
 struct DestinationAssignment {
     std::string dest;
     std::string state;
+    std::int64_t transientExpires = 0;
 };
 
 using AssignDestinationFn = std::function<DestinationAssignment(const std::string& user)>;
@@ -72,6 +75,8 @@ public:
     HttpApi(const HttpApi&) = delete;
     HttpApi& operator=(const HttpApi&) = delete;
 
+    std::function<void(const std::string& user)> overviewChanged() const;
+
     int bind(const std::string& host, int port);
     int bindOps(const std::string& host, int port);
     void wait();
@@ -79,6 +84,8 @@ public:
 
 private:
     void wakeUser(const std::string& user);
+    nlohmann::json eventsAnswer(const std::string& user, nlohmann::json pending);
+    nlohmann::json overviewOf(const std::string& user, const std::string& device);
     std::optional<bazarish::http::Response> admitted(
         const bazarish::http::Request& request, Caller& caller);
 
@@ -94,6 +101,7 @@ private:
 
     DiskStorage& storage_;
     EventGate& eventGate_;
+    const std::shared_ptr<EventGate> overviewGate_;
     const HttpApiOptions options_;
 
     std::unique_ptr<bazarish::http::Server> http_;

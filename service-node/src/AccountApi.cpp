@@ -43,6 +43,11 @@ using bazarish::nowSeconds;
 using bazarish::http::filled;
 
 constexpr std::string_view kSchemeEnd = "://";
+constexpr char kI2pStatusPath[] = "/v1/account/i2p-status";
+constexpr char kHoldKey[] = "hold";
+constexpr char kHoldValue[] = "1";
+constexpr char kSinceKey[] = "since";
+constexpr char kApprovalField[] = "approval";
 
 // The client puts the slash back where it needs one, so a URL is kept without it.
 std::string withoutTrailingSlash(std::string url)
@@ -253,12 +258,30 @@ AccountApi::AccountApi(
     , store_(store)
     , grants_(grants)
     , options_(options)
+    , approvalGate_(std::make_shared<server::EventGate>(server::EventGate::Missed::eDropped))
     , startedAt_(nowSeconds())
     , tunnel_(options_.sealingKey, options_.serverFingerprint)
 {
     if (!options_.pushes) {
         throw std::invalid_argument("the node tells its messaging server of every quota and card");
     }
+    grants_.watch([gate = approvalGate_](const std::string& user) { gate->notify(user); });
+}
+
+http::Response AccountApi::approvalStatus(const std::string& user)
+{
+    if (const std::optional<GrantStore::Ban> ban = grants_.peekBan(user); ban.has_value()) {
+        return http::errorResponse(403, ErrorCode::eRequestFailed, ban->reason);
+    }
+    const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
+    const std::optional<GrantStore::Transient> transient = grants_.peekTransient(user);
+    return http::jsonResponse({
+        {kApprovalField, approvalState(approval)},
+        {"registrationMessage",
+            approval.has_value() && approval->pending() ? holdMessageFor(approval, settings())
+                                                         : std::string()},
+        {"transientExpires", transient.has_value() ? transient->expires : 0},
+    });
 }
 
 AccountApi::~AccountApi() = default;
@@ -977,21 +1000,51 @@ void AccountApi::setupRoutes()
             respondJson(response, {{"dest", served->dest}});
         });
 
-    clientRoute("GET", "/v1/account/i2p-status",
-        [this](const http::Request&, http::Response& response,
-                          const server::Caller& caller) {
-            const std::string& user = caller.user;
-            const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
-            const std::optional<GrantStore::Transient> transient = grants_.peekTransient(user);
-            respondJson(response,
-                {
-                    {"approval", approvalState(approval)},
-                    {"registrationMessage",
-                        approval.has_value() && approval->pending()
-                            ? holdMessageFor(approval, settings())
-                            : std::string()},
-                    {"transientExpires", transient.has_value() ? transient->expires : 0},
+    http_->getAsync(kI2pStatusPath,
+        [this](const http::Request& request,
+            http::Responder respond) -> std::optional<http::Response> {
+            const server::Caller caller = tunnel_.authenticate(request);
+            if (caller.refused.has_value()) {
+                return *caller.refused;
+            }
+            const std::string user = caller.user;
+            const std::string device = caller.device;
+            if (options_.admitsUser && !options_.admitsUser(user)) {
+                return http::errorResponse(
+                    403, ErrorCode::eRequestFailed, "this node serves only its own accounts");
+            }
+            http::Response current;
+            {
+                const UserLocks::Held locked = options_.userLocks->hold(user);
+                if (revokedHere(user, device)) {
+                    return http::errorResponse(
+                        403, ErrorCode::eDeviceRevoked, "this device was revoked");
+                }
+                current = approvalStatus(user);
+            }
+            const auto approvalOf = [](const http::Response& answer) {
+                return answer.status == 200
+                    ? nlohmann::json::parse(answer.body).at(kApprovalField).get<std::string>()
+                    : std::string();
+            };
+            const std::string since = request.query(kSinceKey);
+            if (request.query(kHoldKey) != kHoldValue || since != approvalOf(current)) {
+                approvalGate_->release(user, device);
+                return current;
+            }
+            approvalGate_->wait(http_->executor(), user, device,
+                [this, user, respond]() {
+                    try {
+                        respond(approvalStatus(user));
+                    } catch (const std::exception& error) {
+                        bazarish::log::warn("approval wait: {}", error.what());
+                        respond(http::errorResponse(500, ErrorCode::eRequestFailed, error.what()));
+                    }
                 });
+            if (approvalOf(approvalStatus(user)) != since) {
+                approvalGate_->notify(user);
+            }
+            return std::nullopt;
         });
 
     http_->get(routes::kAccountCard,

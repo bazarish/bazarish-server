@@ -41,6 +41,7 @@ public:
         std::string dest;
         std::shared_ptr<Key> sealingKey;
         std::string state = "none";
+        std::int64_t transientExpires = 0;
     };
 
     Assignment provision(const std::string& userFp, const std::string& transientB64,
@@ -62,6 +63,8 @@ public:
     Assignment assignmentFor(const std::string& userFp, std::int64_t now) const;
     std::int64_t heldUntil(const std::string& userFp) const;
 
+    // Told whenever what assignmentFor answers for a user may have changed.
+    void watchUsers(std::function<void(const std::string& user)> changed);
 
 private:
     struct Destination {
@@ -73,6 +76,8 @@ private:
         std::shared_ptr<Key> signingKey;
         std::string dest;
         std::shared_ptr<bazarish::i2p::Endpoint> endpoint;
+        std::atomic<bool> wasReady{false};
+        std::unique_ptr<bazarish::i2p::EndpointWatch> readyWatch;
     };
 
     void bringUp(const std::string& userFp, const std::string& transientB64,
@@ -82,6 +87,7 @@ private:
     void reapRetired();
     static Assignment assignedLocked(const Destination& destination, std::int64_t now);
     void announceServed() const;
+    void tellUser(const std::string& userFp) const;
     void reloadLocked(std::int64_t now);
     void serveLoop(Destination& destination, const std::string& userFp);
     void startWatchdog();
@@ -98,6 +104,8 @@ private:
     const bazarish::i2p::Privacy privacy_;
     const GetCardFn getCard_;
     const std::function<void()> servedChanged_;
+    mutable std::mutex userWatchMutex_;
+    std::function<void(const std::string& user)> userChanged_;
     mutable std::mutex mutex_;
     std::map<std::string, std::shared_ptr<Destination>> dests_;
     std::thread sweeper_;

@@ -1,6 +1,7 @@
 # Bazarish project (c) 2026
 add_library(bazarish_server_shared STATIC
     CommandLine.cpp
+    EventGate.cpp
     Health.cpp
     LogFeed.cpp
     LogRing.cpp

@@ -237,6 +237,13 @@ void PerUserDestinations::bringUp(const std::string& userFp, const std::string& 
         dest->endpoint = router_->get().createEndpoint(bazarish::i2p::EndpointConfig{
             bazarish::i2p::Keys::fromBlob(fromBase64(transientB64)), privacy_,
             bazarish::i2p::kServerTunnelQuantity, true});
+        dest->readyWatch = std::make_unique<bazarish::i2p::EndpointWatch>(*dest->endpoint,
+            [this, &endpoint = *dest->endpoint, &wasReady = dest->wasReady, userFp]() {
+                const bool ready = endpoint.ready();
+                if (wasReady.exchange(ready) != ready) {
+                    tellUser(userFp);
+                }
+            });
         dest->workers.emplace_back([this, dest, userFp]() {
             if (!readyOrLost(*dest->endpoint)) {
                 return;
@@ -343,6 +350,7 @@ PerUserDestinations::Assignment PerUserDestinations::provision(const std::string
     }
     reapRetired();
     announceServed();
+    tellUser(userFp);
     return served;
 }
 
@@ -370,6 +378,9 @@ std::size_t PerUserDestinations::sweepExpired(const std::int64_t now)
     }
     if (!lapsed.empty()) {
         announceServed();
+    }
+    for (const std::string& userFp : lapsed) {
+        tellUser(userFp);
     }
     return lapsed.size();
 }
@@ -411,6 +422,7 @@ void PerUserDestinations::forget(const std::string& userFp)
     }
     reapRetired();
     announceServed();
+    tellUser(userFp);
 }
 
 void PerUserDestinations::reloadPersisted(const std::int64_t now)
@@ -459,6 +471,20 @@ void PerUserDestinations::announceServed() const
 {
     if (servedChanged_) {
         servedChanged_();
+    }
+}
+
+void PerUserDestinations::watchUsers(std::function<void(const std::string& user)> changed)
+{
+    const std::lock_guard<std::mutex> lock(userWatchMutex_);
+    userChanged_ = std::move(changed);
+}
+
+void PerUserDestinations::tellUser(const std::string& userFp) const
+{
+    const std::lock_guard<std::mutex> lock(userWatchMutex_);
+    if (userChanged_) {
+        userChanged_(userFp);
     }
 }
 
@@ -551,6 +577,7 @@ PerUserDestinations::Assignment PerUserDestinations::assignedLocked(
     Assignment assignment;
     assignment.dest = destination.dest;
     assignment.sealingKey = destination.sealingKey;
+    assignment.transientExpires = destination.expiresUnix;
     if (destination.expiresUnix != 0 && now >= destination.expiresUnix) {
         assignment.state = "expired";
     } else if (destination.dest.empty() || !destination.endpoint

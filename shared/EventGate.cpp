@@ -12,7 +12,9 @@ void EventGate::notify(const std::string& user)
         const std::lock_guard<std::mutex> lock(mutex_);
         const auto found = waiters_.find(user);
         if (found == waiters_.end()) {
-            early_.insert(user);
+            if (missed_ == Missed::eKept) {
+                early_.insert(user);
+            }
             return;
         }
         woken.swap(found->second);
@@ -22,6 +24,33 @@ void EventGate::notify(const std::string& user)
         if (const std::shared_ptr<boost::asio::steady_timer> timer = held.timer.lock()) {
             timer->cancel();
         }
+    }
+}
+
+void EventGate::release(const std::string& user, const std::string& client)
+{
+    std::vector<std::shared_ptr<boost::asio::steady_timer>> released;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        const auto found = waiters_.find(user);
+        if (found == waiters_.end()) {
+            return;
+        }
+        std::erase_if(found->second, [&client, &released](const Waiter& waiter) {
+            if (waiter.client != client) {
+                return false;
+            }
+            if (const std::shared_ptr<boost::asio::steady_timer> alive = waiter.timer.lock()) {
+                released.push_back(alive);
+            }
+            return true;
+        });
+        if (found->second.empty()) {
+            waiters_.erase(found);
+        }
+    }
+    for (const std::shared_ptr<boost::asio::steady_timer>& timer : released) {
+        timer->cancel();
     }
 }
 

@@ -130,6 +130,19 @@ DiskStorage::DiskStorage(const fs::path& root)
     fs::create_directories(root_ / "users");
 }
 
+void DiskStorage::watch(std::function<void(const std::string& user)> changed)
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    changed_ = std::move(changed);
+}
+
+void DiskStorage::tellChanged(const std::string& user) const
+{
+    if (changed_) {
+        changed_(user);
+    }
+}
+
 fs::path DiskStorage::userDir(const std::string& user) const
 {
     return root_ / "users" / user;
@@ -149,6 +162,7 @@ DiskStorage::RegisterResult DiskStorage::registerClient(
     }
     createDirectoryDurably(dir);
     writeFileAtomic(dir / clientId, install);
+    tellChanged(user);
     return RegisterResult::eRegistered;
 }
 
@@ -173,6 +187,7 @@ void DiskStorage::unregisterClient(const std::string& user, const std::string& c
     }
     if (fs::remove(clients / clientId)) {
         syncDirectory(clients);
+        tellChanged(user);
     }
 }
 
@@ -314,6 +329,7 @@ DiskStorage::PutResult DiskStorage::putLocked(const std::string& user, const std
     writeFileAtomic(meta / (blobId + ".json"), metaBody.dump());
     writeFileAtomic(blobs / blobId, data);
     writeFileAtomic(seen / blobId, std::to_string(receivedAt));
+    tellChanged(user);
     return PutResult::eStored;
 }
 
@@ -466,6 +482,7 @@ void DiskStorage::ackBlob(const std::string& user, const std::string& blobId,
         removeItem(user, blobId);
     } else if (fresh) {
         writeFileAtomic(metaPath, meta.dump());
+        tellChanged(user);
     }
 }
 
@@ -475,6 +492,7 @@ void DiskStorage::forgetUser(const std::string& user)
     const std::lock_guard<std::mutex> lock(mutex_);
     if (fs::remove_all(userDir(user)) > 0) {
         syncDirectory(root_ / "users");
+        tellChanged(user);
     }
 }
 
@@ -531,8 +549,14 @@ void DiskStorage::setUserQuota(const std::string& user, const std::uint64_t quot
 {
     requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
+    const fs::path path = userDir(user) / "quota";
+    const std::string granted = std::to_string(quotaBytes);
+    if (fs::exists(path) && readFileText(path) == granted) {
+        return;
+    }
     createDirectoryDurably(userDir(user));
-    writeFileAtomic(userDir(user) / "quota", std::to_string(quotaBytes));
+    writeFileAtomic(path, granted);
+    tellChanged(user);
 }
 
 std::uint64_t DiskStorage::userQuota(const std::string& user, const std::uint64_t fallback)
@@ -570,6 +594,7 @@ void DiskStorage::removeItem(const std::string& user, const std::string& blobId)
     if (fs::remove(userDir(user) / "meta" / (blobId + ".json"))) {
         syncDirectory(userDir(user) / "meta");
     }
+    tellChanged(user);
 }
 
 }  // namespace bazarish::server

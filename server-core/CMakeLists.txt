@@ -30,7 +30,6 @@ add_library(bazarish_server_lib STATIC
     src/Federation.cpp
     src/PerUserDestinations.cpp
     src/GatewayLink.cpp
-    src/EventGate.cpp
     src/HttpApi.cpp
     src/NodeCards.cpp
     src/ServerSettings.cpp
@@ -50,6 +49,7 @@ bazarish_server_test(TestDiskStorage bazarish_server_lib)
 bazarish_server_test(TestEventGate bazarish_server_lib)
 bazarish_server_test(TestHeldMailWait bazarish_server_lib)
 bazarish_server_test(TestHttpApi bazarish_server_lib)
+bazarish_server_test(TestOverview bazarish_server_lib)
 bazarish_server_test(TestFederation bazarish_server_lib)
 bazarish_server_test(TestGatewayLink bazarish_server_lib)
 bazarish_server_test(TestPerUserDestinations bazarish_server_lib)

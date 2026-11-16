@@ -14,6 +14,8 @@
 #include <bazarish/Auth.hpp>
 #include <bazarish/Bytes.hpp>
 #include <bazarish/Crypto.hpp>
+#include <bazarish/HttpServer.hpp>
+#include <EventGate.hpp>
 #include <LogFeed.hpp>
 #include <LogRing.hpp>
 #include <Restart.hpp>
@@ -83,6 +85,7 @@ private:
 
     nlohmann::json userRecord(
         const std::string& user, const std::optional<GrantStore::Approval>& approval);
+    bazarish::http::Response approvalStatus(const std::string& user);
 
     void setupRoutes();
     void setupOpsRoutes();
@@ -91,6 +94,7 @@ private:
     SubscriptionStore& store_;
     GrantStore& grants_;
     const AccountApiOptions options_;
+    const std::shared_ptr<server::EventGate> approvalGate_;
     std::int64_t startedAt_ = 0;
     bazarish::StopGate stopGate_;
     auth::ReplayCache replayCache_;

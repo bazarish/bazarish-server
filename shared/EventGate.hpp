@@ -19,6 +19,14 @@ namespace bazarish::server {
 
 class EventGate {
 public:
+    // Dropped: the waiters of the gate check the state themselves once they wait.
+    enum class Missed { eKept, eDropped };
+
+    explicit EventGate(Missed missed = Missed::eKept)
+        : missed_(missed)
+    {
+    }
+
     // No deadline: a wait ends when its user is told, or when the same client waits again.
     template <class Handler>
     void wait(const boost::asio::any_io_executor& executor, const std::string& user,
@@ -57,6 +65,7 @@ public:
     }
 
     void notify(const std::string& user);
+    void release(const std::string& user, const std::string& client);
 
     std::size_t waiting() const;
 
@@ -69,6 +78,7 @@ private:
 
     void forget(const std::string& user, const std::shared_ptr<boost::asio::steady_timer>& timer);
 
+    const Missed missed_;
     mutable std::mutex mutex_;
     std::map<std::string, std::vector<Waiter>> waiters_;
     // Told while nobody waited: the next wait ends at once rather than miss it.

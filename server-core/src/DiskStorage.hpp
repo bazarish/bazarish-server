@@ -6,6 +6,7 @@
 #include <cstdint>
 
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -41,6 +42,9 @@ public:
     };
 
     explicit DiskStorage(const std::filesystem::path& root);
+
+    // Told under the storage lock whenever what a user's mailbox holds or who reads it changes.
+    void watch(std::function<void(const std::string& user)> changed);
 
     RegisterResult registerClient(
         const std::string& user, const std::string& clientId, const std::string& install);
@@ -92,12 +96,14 @@ private:
     std::uint64_t usageLocked(const std::string& user) const;
     std::size_t countHeldLocked(const std::string& user, const std::string& deliveryClass);
     void removeItem(const std::string& user, const std::string& blobId);
+    void tellChanged(const std::string& user) const;
     PutResult putLocked(const std::string& user, const std::string& blobId, const Bytes& data,
         const std::string& deliveryClass, std::uint64_t quotaBytes, std::int64_t receivedAt,
         std::optional<std::size_t> heldLimit, const std::string& addressedTo);
 
     std::filesystem::path root_;
     std::mutex mutex_;
+    std::function<void(const std::string& user)> changed_;
 };
 
 }  // namespace bazarish::server

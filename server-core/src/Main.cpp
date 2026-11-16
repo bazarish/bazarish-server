@@ -216,7 +216,7 @@ int main(const int argc, const char** argv)
         = [&perUserDests](const std::string& user) -> bazarish::server::DestinationAssignment {
         const bazarish::server::PerUserDestinations::Assignment assigned
             = perUserDests->assignmentFor(user, nowSeconds());
-        return {assigned.dest, assigned.state};
+        return {assigned.dest, assigned.state, assigned.transientExpires};
     };
     {
         httpOptions.provisionI2pDest = [&perUserDests](const std::string& user,
@@ -227,7 +227,7 @@ int main(const int argc, const char** argv)
             -> bazarish::server::DestinationAssignment {
             const bazarish::server::PerUserDestinations::Assignment served = perUserDests->provision(
                 user, transientB64, expiresUnix, sealingKeyPem, signingKeyPem);
-            return {served.dest, served.state};
+            return {served.dest, served.state, served.transientExpires};
         };
         httpOptions.forgetI2pDest = [&perUserDests, &nodeCards](const std::string& user) {
             nodeCards.forget(user);
@@ -267,6 +267,7 @@ int main(const int argc, const char** argv)
     httpOptions.requestRestart = [restartHook]() { (*restartHook)(); };
 
     bazarish::server::HttpApi api(storage, eventGate, httpOptions);
+    perUserDests->watchUsers(api.overviewChanged());
 
     bazarish::RestartSwitch restart([&api]() { api.stop(); });
     *restartHook = [&restart]() { restart.request(); };

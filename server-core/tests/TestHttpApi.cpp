@@ -336,8 +336,8 @@ int main()
             == payload);
 
         const auto aliceQueue = [port, &alice, &aliceDev]() {
-            const http::ClientResponse clients = call(port, "GET", "/v1/messaging/clients",
-                makeHeaders(aliceDev, "GET", "/v1/messaging/clients", ""));
+            const http::ClientResponse clients = call(port, "GET", "/v1/messaging/overview",
+                makeHeaders(aliceDev, "GET", "/v1/messaging/overview", ""));
             CHECK(clients.status == 200);
             const nlohmann::json list = nlohmann::json::parse(clients.body).at("clients");
             CHECK(list.size() == 1);
@@ -447,15 +447,15 @@ int main()
                 Bytes(body.begin(), body.end()));
             return Headers(headers.begin(), headers.end());
         };
-        CHECK(call(port, "GET", "/v1/messaging/storage-usage",
-                  maced(1, "GET", "/v1/messaging/storage-usage", ""))
+        CHECK(call(port, "GET", "/v1/messaging/overview",
+                  maced(1, "GET", "/v1/messaging/overview", ""))
                   .status
             == 200);
         CHECK(call(port, "GET", "/v1/messaging/pending", maced(2, "GET", "/v1/messaging/pending", ""))
                   .status
             == 200);
-        CHECK(call(port, "GET", "/v1/messaging/storage-usage",
-                  maced(1, "GET", "/v1/messaging/storage-usage", ""))
+        CHECK(call(port, "GET", "/v1/messaging/overview",
+                  maced(1, "GET", "/v1/messaging/overview", ""))
                   .status
             == 401);
     }

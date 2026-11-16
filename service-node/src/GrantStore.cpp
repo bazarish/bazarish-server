@@ -122,6 +122,19 @@ std::optional<GrantStore::SubscriptionGrant> GrantStore::takeSubscription(const 
     return grant;
 }
 
+void GrantStore::watch(std::function<void(const std::string& user)> changed)
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    changed_ = std::move(changed);
+}
+
+void GrantStore::tellChanged(const std::string& user) const
+{
+    if (changed_) {
+        changed_(user);
+    }
+}
+
 void GrantStore::recordRegistration(
     const std::string& user, const std::int64_t now, const bool approved)
 {
@@ -140,6 +153,7 @@ void GrantStore::recordRegistration(
         entry["approvedAt"] = now;
     }
     writeFileAtomic(path, body.dump());
+    tellChanged(user);
 }
 
 std::optional<GrantStore::Approval> GrantStore::peekApproval(const std::string& user)
@@ -183,6 +197,7 @@ void GrantStore::approve(const std::string& user, const std::int64_t now)
     entry["message"] = "";
     entry.erase("heldUntil");
     writeFileAtomic(path, body.dump());
+    tellChanged(user);
 }
 
 void GrantStore::hold(const std::string& user, const std::string& message, const std::int64_t now,
@@ -202,6 +217,7 @@ void GrantStore::hold(const std::string& user, const std::string& message, const
         entry["heldUntil"] = delegatedUntil;
     }
     writeFileAtomic(path, body.dump());
+    tellChanged(user);
 }
 
 void GrantStore::ban(const std::string& user, const std::string& reason)
@@ -210,6 +226,7 @@ void GrantStore::ban(const std::string& user, const std::string& reason)
     const std::lock_guard<std::mutex> lock(mutex_);
     writeFileAtomic(banPath(user),
         nlohmann::json{{"reason", reason}}.dump());
+    tellChanged(user);
 }
 
 std::optional<GrantStore::Ban> GrantStore::peekBan(const std::string& user) const
@@ -255,7 +272,9 @@ void GrantStore::erase(const std::string& user)
     requireFingerprint(user);
     const std::lock_guard<std::mutex> lock(mutex_);
     std::error_code ignored;
-    fs::remove(grantPath(user), ignored);
+    if (fs::remove(grantPath(user), ignored)) {
+        tellChanged(user);
+    }
 }
 
 }  // namespace bazarish::service

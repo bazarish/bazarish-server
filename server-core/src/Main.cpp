@@ -6,6 +6,7 @@
 #include <LogRing.hpp>
 #include <OpsSettings.hpp>
 #include <Restart.hpp>
+#include <ServiceReady.hpp>
 #include <StateIdentity.hpp>
 
 #include "DiskStorage.hpp"
@@ -295,6 +296,7 @@ int main(const int argc, const char** argv)
         bazarish::log::error("failed to listen on {}:{}", host, port);
         return 1;
     }
+    bazarish::announceReady();
     api.wait();
     return restart.requested() ? bazarish::kRestartExitCode : 0;
 }

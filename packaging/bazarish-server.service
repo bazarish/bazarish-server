@@ -4,7 +4,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=notify
 User=bazarish
 Group=bazarish
 ExecStart=/usr/lib/bazarish-server/bazarish-server --config /etc/bazarish/server-core.json

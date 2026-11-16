@@ -4,7 +4,6 @@
 #include <bazarish/Bytes.hpp>
 #include <bazarish/HttpClient.hpp>
 
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -48,8 +47,6 @@ public:
     };
 
     OperatorPush(Dial backend, const Identity& signer, std::function<void()> answered = {});
-
-    bool waitReachable(std::chrono::seconds budget) const;
 
     std::optional<ServedDestination> publish(const std::string& user,
         const std::string& transientB64, std::int64_t expiresUnix, const AddressKeys& keys) const;

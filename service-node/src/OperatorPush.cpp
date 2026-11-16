@@ -16,7 +16,6 @@
 #include <chrono>
 #include <map>
 #include <ctime>
-#include <thread>
 #include <exception>
 #include <utility>
 
@@ -26,7 +25,6 @@ namespace {
 
 constexpr int kConnectTimeoutSeconds = 5;
 constexpr int kReadTimeoutSeconds = 30;
-constexpr int kReadyPollSeconds = 1;
 constexpr int kFirstServerErrorStatus = 500;
 
 }  // namespace
@@ -36,38 +34,6 @@ OperatorPush::OperatorPush(Dial backend, const Identity& signer, std::function<v
     , signer_(signer)
     , answered_(std::move(answered))
 {
-}
-
-bool OperatorPush::waitReachable(const std::chrono::seconds budget) const
-{
-    const std::chrono::steady_clock::time_point deadline
-        = std::chrono::steady_clock::now() + budget;
-    bool waited = false;
-    std::string lastError;
-    while (true) {
-        try {
-            const bazarish::http::ClientResponse response = call("GET", "/healthz", {});
-            if (response.status > 0) {
-                if (waited) {
-                    bazarish::log::info("the messaging server is answering");
-                }
-                return true;
-            }
-            lastError = response.error;
-        } catch (const std::exception& error) {
-            lastError = error.what();
-        }
-        if (std::chrono::steady_clock::now() >= deadline) {
-            bazarish::log::error("the messaging server at {} is not answering: {}", backend_.url,
-                lastError.empty() ? std::string("no answer") : lastError);
-            return false;
-        }
-        if (!waited) {
-            bazarish::log::info("waiting for the messaging server at {}", backend_.url);
-            waited = true;
-        }
-        std::this_thread::sleep_for(std::chrono::seconds(kReadyPollSeconds));
-    }
 }
 
 std::optional<MailboxUsage> OperatorPush::accountUsage(

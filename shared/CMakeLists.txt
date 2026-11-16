@@ -10,6 +10,7 @@ add_library(bazarish_server_shared STATIC
     OpsSettings.cpp
     RateLimiter.cpp
     Restart.cpp
+    ServiceReady.cpp
     SessionStore.cpp
     StateIdentity.cpp
     TlsPipe.cpp
@@ -49,3 +50,4 @@ bazarish_server_test(TestQrSvg bazarish_server_qr TestQrSvg.cpp)
 bazarish_server_test(TestLogRing bazarish_server_shared TestLogRing.cpp)
 bazarish_server_test(TestLogFeed bazarish_server_shared TestLogFeed.cpp)
 bazarish_server_test(TestStateIdentity bazarish_server_shared TestStateIdentity.cpp)
+bazarish_server_test(TestServiceReady bazarish_server_shared TestServiceReady.cpp)

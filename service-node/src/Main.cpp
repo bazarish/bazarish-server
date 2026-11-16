@@ -51,7 +51,6 @@ constexpr int kDefaultPort = bazarish::ports::kNodePort;
 constexpr int kDefaultOpsPort = bazarish::ports::kNodeOpsPort;
 constexpr std::size_t kPortalSecretBytes = 16;
 constexpr std::chrono::hours kIdleSweepInterval{1};
-constexpr std::chrono::seconds kBackendWaitBudget{60};
 constexpr const char* kDefaultRegistrationMessage
     = "Send a few sentences about yourself and your key fingerprint to me@example.com";
 
@@ -291,9 +290,6 @@ int main(const int argc, const char** argv)
     const auto restartHook = std::make_shared<std::function<void()>>();
     options.requestRestart = [restartHook]() { (*restartHook)(); };
 
-    if (!operatorPush.waitReachable(kBackendWaitBudget)) {
-        return 1;
-    }
     const std::optional<bazarish::Bytes> nodeCard = operatorPush.nodeCard(sealing->publicDer());
     if (!nodeCard.has_value()) {
         bazarish::log::error("the messaging server issued this node no card: no client could open"

@@ -109,7 +109,11 @@ int main()
     while (payload.size() < kTotalBytes) {
         payload += static_cast<char>('a' + payload.size() % 26);
     }
-    out->writeAll(bazarish::viewOf(payload));
+    std::atomic<bool> written{false};
+    std::thread writer([&]() {
+        out->writeAll(bazarish::viewOf(payload));
+        written.store(true);
+    });
     settle([&]() { return out->pendingBytes(); });
     CHECK(out->pendingBytes() >= kStreamWindowBytes);
 
@@ -143,7 +147,9 @@ int main()
 
     CHECK(testutil::waitFor([&]() { return received.load() == kTotalBytes; }));
     reader.join();
+    writer.join();
     CHECK(ended.load());
+    CHECK(written.load());
     CHECK(gateway.refusals() == 0);
 
     out->close();

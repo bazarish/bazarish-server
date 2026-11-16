@@ -156,8 +156,9 @@ int main()
     while (bulk.size() < 3 * kStreamWindowBytes) {
         bulk += "0123456789abcdef";
     }
-    out->writeAll(bazarish::viewOf(bulk));
+    std::thread writer([&]() { out->writeAll(bazarish::viewOf(bulk)); });
     CHECK(readAll(*in, bulk.size()) == bulk);
+    writer.join();
 
     const std::string last = "goodbye";
     in->writeAll(bazarish::viewOf(last));

@@ -183,8 +183,7 @@ void editSettings(const nlohmann::json& body, bazarish::service::NodeSettings::V
                 throw std::invalid_argument(
                     "a facade is an address, with no scheme and no path");
             }
-            if (!bazarish::isI2pFacadeAddress(address)
-                && !bazarish::allowFacadeWithoutI2pForDevPurposes()) {
+            if (!bazarish::isI2pFacadeAddress(address)) {
                 throw std::invalid_argument(
                     "a facade must be a .b32.i2p address: " + address);
             }
@@ -205,7 +204,7 @@ void editSettings(const nlohmann::json& body, bazarish::service::NodeSettings::V
             if (!bazarish::i2p::isReseedUrl(url)) {
                 throw std::invalid_argument("a reseed is an https URL: " + url);
             }
-            if (bazarish::isI2pUrl(url) && !bazarish::allowFacadeWithoutI2pForDevPurposes()) {
+            if (bazarish::isI2pUrl(url)) {
                 throw std::invalid_argument(
                     "a reseed must not be a .b32.i2p address: " + url);
             }

@@ -27,7 +27,6 @@
 #include <bazarish/Log.hpp>
 #include <bazarish/PrivateFile.hpp>
 #include <bazarish/Tls.hpp>
-#include <bazarish/ServerDescriptor.hpp>
 
 #include <chrono>
 #include <cstdint>
@@ -108,7 +107,6 @@ struct NodeConfig {
     std::uint64_t freeStorageBytes = 50 * 1024 * 1024;
     PortalConfig portal;
     RegistrationConfig registration;
-    bool allowFacadeWithoutI2pForDevPurposes = false;
 };
 
 NodeConfig loadNodeConfig(const fs::path& path)
@@ -143,8 +141,6 @@ NodeConfig loadNodeConfig(const fs::path& path)
             throw std::invalid_argument("portal.reseeds holds " + reseed + ", not an https URL");
         }
     }
-    config.allowFacadeWithoutI2pForDevPurposes
-        = view.flag("allowFacadeWithoutI2pForDevPurposes", false);
     config.registration.requireApproval
         = view.flag("registration.requireApproval", config.registration.requireApproval);
     config.registration.message
@@ -252,11 +248,6 @@ int main(const int argc, const char** argv)
     }
     const bazarish::service::OperatorPush operatorPush(
         backend, nodeIdentity, [pushes]() { pushes->serverReached(); });
-
-    if (nodeConfig.allowFacadeWithoutI2pForDevPurposes) {
-        bazarish::setAllowFacadeWithoutI2pForDevPurposes(true);
-        bazarish::log::warn("facades and reseeds may hold each other's kind: development only");
-    }
 
     const auto settings = std::make_shared<bazarish::service::NodeSettings>(configPath,
         bazarish::service::NodeSettings::Values{

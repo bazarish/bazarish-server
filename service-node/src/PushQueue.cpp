@@ -44,9 +44,9 @@ PushQueue::PushQueue(
     , locks_(locks)
     , delivery_(std::move(delivery))
 {
-    if (!delivery_.quota || !delivery_.card || !delivery_.takeDownAddress) {
-        throw std::invalid_argument(
-            "the node tells its messaging server of every quota, card and address taken down");
+    if (!delivery_.quota || !delivery_.card || !delivery_.takeDownAddress || !delivery_.forget) {
+        throw std::invalid_argument("the node tells its messaging server of every quota, card,"
+                                    " address taken down and account deleted");
     }
     fs::create_directories(root_);
     worker_ = std::thread([this]() { run(); });
@@ -74,6 +74,7 @@ void PushQueue::record(const std::string& user, const Unsent changed)
     merged.quota = merged.quota || changed.quota;
     merged.card = merged.card || changed.card;
     merged.addressDown = merged.addressDown || changed.addressDown;
+    merged.forget = merged.forget || changed.forget;
     write(user, merged);
 }
 
@@ -83,6 +84,7 @@ void PushQueue::settled(const std::string& user, const Unsent confirmed)
     left.quota = left.quota && !confirmed.quota;
     left.card = left.card && !confirmed.card;
     left.addressDown = left.addressDown && !confirmed.addressDown;
+    left.forget = left.forget && !confirmed.forget;
     write(user, left);
 }
 
@@ -94,7 +96,7 @@ PushQueue::Unsent PushQueue::unsent(const std::string& user) const
     }
     const nlohmann::json body = readJsonFile(path);
     return {body.at("quota").get<bool>(), body.at("card").get<bool>(),
-        body.at("addressDown").get<bool>()};
+        body.at("addressDown").get<bool>(), body.at("forget").get<bool>()};
 }
 
 void PushQueue::write(const std::string& user, const Unsent left)
@@ -106,7 +108,8 @@ void PushQueue::write(const std::string& user, const Unsent left)
     }
     writeFileAtomic(path,
         nlohmann::json{
-            {"quota", left.quota}, {"card", left.card}, {"addressDown", left.addressDown}}
+            {"quota", left.quota}, {"card", left.card}, {"addressDown", left.addressDown},
+            {"forget", left.forget}}
             .dump());
 }
 
@@ -127,7 +130,13 @@ PushQueue::Attempt PushQueue::attempt(const std::string& user)
     if (!result.left.any()) {
         return result;
     }
-    if (result.left.addressDown) {
+    if (result.left.forget) {
+        settle(delivery_.forget(user), result.left.forget, result.delivered, result.unreachable);
+        if (!result.left.forget) {
+            result.left.addressDown = false;
+        }
+    }
+    if (result.left.addressDown && !result.unreachable && !result.left.forget) {
         settle(delivery_.takeDownAddress(user), result.left.addressDown, result.delivered,
             result.unreachable);
     }
@@ -136,11 +145,11 @@ PushQueue::Attempt PushQueue::attempt(const std::string& user)
         result.left.quota = false;
         result.left.card = false;
     }
-    if (result.left.quota && !result.unreachable) {
+    if (result.left.quota && !result.unreachable && !result.left.forget) {
         settle(delivery_.quota(user, account->quotaBytes), result.left.quota, result.delivered,
             result.unreachable);
     }
-    if (result.left.card && !result.unreachable) {
+    if (result.left.card && !result.unreachable && !result.left.forget) {
         settle(delivery_.card(user), result.left.card, result.delivered, result.unreachable);
     }
     write(user, result.left);

@@ -55,11 +55,10 @@ public:
         const std::string& transientB64, std::int64_t expiresUnix, const AddressKeys& keys) const;
     std::optional<MailboxUsage> accountUsage(const std::string& user) const;
 
-    bool forgetMailbox(const std::string& user) const;
-
     PushOutcome publishQuota(const std::string& user, std::uint64_t quotaBytes) const;
     PushOutcome publishCardChanged(const std::string& user) const;
     PushOutcome takeDownAddress(const std::string& user) const;
+    PushOutcome forgetAccount(const std::string& user) const;
 
     std::string reseedArchive() const;
 

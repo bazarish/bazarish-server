@@ -1,7 +1,7 @@
 // Bazarish project (c) 2026
 #include "GrantStore.hpp"
 #include "IdleSweep.hpp"
-#include "OperatorPush.hpp"
+#include "PushQueue.hpp"
 #include "SubscriptionStore.hpp"
 #include "TestUtil.hpp"
 
@@ -49,8 +49,6 @@ int main()
     const StopGate going;
     UserLocks locks;
     const fs::path root = fs::temp_directory_path() / ("bazarish-sweep-" + toHex(randomBytes(8)));
-    const Identity node = Identity::generate();
-    const OperatorPush noServer(OperatorPush::Dial{}, node);
 
     const std::string active = Identity::generate().fingerprint();
     const std::string lapsed = Identity::generate().fingerprint();
@@ -61,6 +59,14 @@ int main()
     {
         SubscriptionStore store(root);
         GrantStore grants(root);
+        const auto unreachable = [](const std::string&) { return PushOutcome::eUnreachable; };
+        PushQueue noServer(root, store, locks,
+            PushQueue::Delivery{
+                .quota = [](const std::string&,
+                             std::uint64_t) { return PushOutcome::eUnreachable; },
+                .card = unreachable,
+                .takeDownAddress = unreachable,
+                .forget = unreachable});
         store.putAccount(account(active, kRegisteredAt + days(kActiveDelegationDay)));
         store.putAccount(account(lapsed, kRegisteredAt + days(kLapsedDelegationDay)));
         store.putAccount(account(neverDelegated, 0));
@@ -85,6 +91,9 @@ int main()
         CHECK(store.getAccount(active).has_value());
         CHECK(!store.getAccount(lapsed).has_value());
         CHECK(!store.getAccount(neverDelegated).has_value());
+        CHECK(noServer.unsent(lapsed).forget);
+        CHECK(noServer.unsent(neverDelegated).forget);
+        CHECK(!noServer.unsent(active).any());
         CHECK(grants.peekApproval(pending).has_value());
 
         sweepIdleAccounts(store, grants, noServer, kIdleDays,

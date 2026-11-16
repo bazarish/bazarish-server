@@ -94,8 +94,8 @@ int main()
                 [&](const std::string& user) {
                     revokedUser = user;
                     return PushOutcome::eDelivered;
-                }});
-    options.forgetMailbox = [](const std::string&) { return true; };
+                },
+            .forget = [](const std::string&) { return PushOutcome::eDelivered; }});
     std::filesystem::create_directories(root);
     const std::filesystem::path configPath = root / "service-node.json";
     {

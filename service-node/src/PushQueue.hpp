@@ -23,14 +23,17 @@ public:
         bool quota = false;
         bool card = false;
         bool addressDown = false;
+        // The messaging server drops the mailbox and the address of a deleted account.
+        bool forget = false;
 
-        bool any() const { return quota || card || addressDown; }
+        bool any() const { return quota || card || addressDown || forget; }
     };
 
     struct Delivery {
         std::function<PushOutcome(const std::string& user, std::uint64_t quotaBytes)> quota;
         std::function<PushOutcome(const std::string& user)> card;
         std::function<PushOutcome(const std::string& user)> takeDownAddress;
+        std::function<PushOutcome(const std::string& user)> forget;
     };
 
     PushQueue(const std::filesystem::path& root, SubscriptionStore& store, UserLocks& locks,

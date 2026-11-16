@@ -110,11 +110,11 @@ std::optional<std::string> OperatorPush::putBody(
     return send("PUT", path, path, bodyText);
 }
 
-bool OperatorPush::forgetMailbox(const std::string& user) const
+PushOutcome OperatorPush::forgetAccount(const std::string& user) const
 {
-    return send("DELETE", routes::kMessagingAccount,
+    return exchange("DELETE", routes::kMessagingAccount,
         std::string(routes::kMessagingAccount) + "?user=" + user, std::string())
-        .has_value();
+        .outcome;
 }
 
 bazarish::http::ClientResponse OperatorPush::call(const std::string& method,

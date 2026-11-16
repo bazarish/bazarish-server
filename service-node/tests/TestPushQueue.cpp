@@ -76,6 +76,22 @@ public:
         return PushOutcome::eDelivered;
     }
 
+    PushOutcome forget(const std::string& user)
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        if (!up_) {
+            return PushOutcome::eUnreachable;
+        }
+        forgotten_.push_back(user);
+        return PushOutcome::eDelivered;
+    }
+
+    std::size_t forgetsOf(const std::string& user)
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        return static_cast<std::size_t>(std::count(forgotten_.begin(), forgotten_.end(), user));
+    }
+
     std::size_t takeDownsOf(const std::string& user)
     {
         const std::lock_guard<std::mutex> lock(mutex_);
@@ -101,6 +117,7 @@ private:
     std::map<std::string, std::uint64_t> quotas_;
     std::vector<std::string> cards_;
     std::vector<std::string> takenDown_;
+    std::vector<std::string> forgotten_;
 };
 
 Bytes cardOf(const devicetest::Account& owner, const std::int64_t issuedAt)
@@ -162,7 +179,6 @@ int main()
                                       const AddressKeys&) -> std::optional<ServedDestination> {
         return ServedDestination{};
     };
-    options.forgetMailbox = [](const std::string&) { return true; };
     const auto queue = [&]() {
         return std::make_shared<PushQueue>(root, store, *options.userLocks,
             PushQueue::Delivery{
@@ -172,7 +188,9 @@ int main()
                     },
                 .card = [&messaging](const std::string& user) { return messaging.card(user); },
                 .takeDownAddress =
-                    [&messaging](const std::string& user) { return messaging.takeDown(user); }});
+                    [&messaging](const std::string& user) { return messaging.takeDown(user); },
+                .forget =
+                    [&messaging](const std::string& user) { return messaging.forget(user); }});
     };
 
     const devicetest::Account alice;
@@ -275,6 +293,29 @@ int main()
         CHECK(testutil::waitFor([&]() { return messaging.takeDownsOf(user) == 1; }));
         CHECK(testutil::waitFor([&]() { return !serverPending(opsPort, panel, user); }));
         api.stop();
+    }
+
+    {
+        options.pushes = queue();
+        AccountApi api(store, grants, options);
+        const int opsPort = api.bindOps("127.0.0.1", 0);
+        CHECK(opsPort > 0);
+        messaging.setUp(false);
+        const std::string target = "/v1/account/user?user=" + user;
+        CHECK(operatorCall(opsPort, panel, "DELETE", target).status == 200);
+        CHECK(!store.getAccount(user).has_value());
+        CHECK(messaging.forgetsOf(user) == 0);
+        CHECK(options.pushes->unsent(user).forget);
+        api.stop();
+    }
+
+    {
+        options.pushes = queue();
+        CHECK(options.pushes->unsent(user).forget);
+        messaging.setUp(true);
+        options.pushes->serverReached();
+        CHECK(testutil::waitFor([&]() { return messaging.forgetsOf(user) == 1; }));
+        CHECK(testutil::waitFor([&]() { return !options.pushes->unsent(user).any(); }));
     }
     options.pushes.reset();
 

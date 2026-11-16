@@ -239,6 +239,10 @@ int main(const int argc, const char** argv)
             .takeDownAddress =
                 [&queuePush](const std::string& user) {
                     return queuePush.takeDownAddress(user);
+                },
+            .forget =
+                [&queuePush](const std::string& user) {
+                    return queuePush.forgetAccount(user);
                 }});
     const bazarish::service::OperatorPush operatorPush(
         backend, nodeIdentity, [pushes]() { pushes->serverReached(); });
@@ -287,8 +291,6 @@ int main(const int argc, const char** argv)
                                       const bazarish::service::AddressKeys& keys) {
         return operatorPush.publish(user, transientB64, expiresUnix, keys);
     };
-    options.forgetMailbox
-        = [&operatorPush](const std::string& user) { return operatorPush.forgetMailbox(user); };
     const auto restartHook = std::make_shared<std::function<void()>>();
     options.requestRestart = [restartHook]() { (*restartHook)(); };
 
@@ -336,15 +338,9 @@ int main(const int argc, const char** argv)
             return operatorPush.accountUsage(user);
         };
         portalOptions.deleteAccount
-            = [&store, &grants, &operatorPush, userLocks](const std::string& user) {
+            = [&store, &grants, pushes, userLocks](const std::string& user) {
                   const bazarish::service::UserLocks::Held held = userLocks->hold(user);
-                  bazarish::service::removeAccount(user, store, grants,
-                      [&operatorPush](const std::string& gone) {
-                          return operatorPush.publish(gone, std::string(), 0, {}).has_value();
-                      },
-                      [&operatorPush](const std::string& gone) {
-                          return operatorPush.forgetMailbox(gone);
-                      });
+                  bazarish::service::removeAccount(user, store, grants, *pushes);
                   bazarish::log::info(
                       "account deleted by its owner: {}", bazarish::log::redact(user));
               };
@@ -367,7 +363,7 @@ int main(const int argc, const char** argv)
     std::thread sweeper([&]() {
         while (!stopping.waitFor(kIdleSweepInterval)) {
             try {
-                bazarish::service::sweepIdleAccounts(store, grants, operatorPush,
+                bazarish::service::sweepIdleAccounts(store, grants, *pushes,
                     settings->get().idleDeleteDays, bazarish::nowSeconds(), stopping, *userLocks);
             } catch (const std::exception& error) {
                 bazarish::log::warn("idle sweep failed: {}", error.what());

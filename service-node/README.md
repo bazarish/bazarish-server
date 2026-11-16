@@ -34,9 +34,13 @@ An alias belongs to `alias-resolver`, which is a service of its own.
 - **Quota.** This node grants it, stores it and pushes it to the messaging
   server, which would otherwise keep serving its own default.
 - **What the messaging server has not confirmed.** A changed quota, a new
-  card or an address taken down by `undelegate` is first marked unsent in
-  `state/store/unsent/<user>.json`, then pushed. A delegation the messaging
-  server accepts afterwards replaces a takedown still marked.
+  card, an address taken down by `undelegate` or a deleted account - by its
+  owner, by the operator, by a ban or by the idle sweep - is first marked
+  unsent in `state/store/unsent/<user>.json`, then pushed. A delegation the
+  messaging server accepts afterwards replaces a takedown still marked. A
+  deleted account's mark has the messaging server drop its mailbox and its
+  address, and goes before anything else marked for that user; a delegation is
+  refused with 503 while it is still marked.
   The mark names what is due, not a value: a push always carries what the
   account record holds at that moment. A push that fails leaves the mark, and
   the change still answers 200, because it is made on this node; the account

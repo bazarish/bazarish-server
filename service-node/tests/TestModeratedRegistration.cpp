@@ -88,12 +88,12 @@ int main()
     options.serverCardDer = cardDer;
     options.operatorFingerprints = {panel.fingerprint()};
     options.settings = std::make_shared<NodeSettings>(std::filesystem::path(), values);
-    options.forgetMailbox = [](const std::string&) { return true; };
     options.pushes = std::make_shared<PushQueue>(root, store, *options.userLocks,
         PushQueue::Delivery{
             .quota = [](const std::string&, std::uint64_t) { return PushOutcome::eDelivered; },
             .card = [](const std::string&) { return PushOutcome::eDelivered; },
-            .takeDownAddress = [](const std::string&) { return PushOutcome::eDelivered; }});
+            .takeDownAddress = [](const std::string&) { return PushOutcome::eDelivered; },
+            .forget = [](const std::string&) { return PushOutcome::eDelivered; }});
     int pubCalls = 0;
     options.publishI2pTransient = [&pubCalls](const std::string&, const std::string&,
                                       std::int64_t, const AddressKeys&)

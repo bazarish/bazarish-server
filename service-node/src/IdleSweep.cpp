@@ -29,7 +29,7 @@ std::int64_t idleSince(const std::optional<SubscriptionStore::Account>& account,
     return 0;
 }
 
-void sweepIdleAccounts(SubscriptionStore& store, GrantStore& grants, const OperatorPush& push,
+void sweepIdleAccounts(SubscriptionStore& store, GrantStore& grants, PushQueue& pushes,
     const std::int64_t idleDays, const std::int64_t now, const StopGate& stopping, UserLocks& locks)
 {
     if (idleDays <= 0) {
@@ -52,11 +52,7 @@ void sweepIdleAccounts(SubscriptionStore& store, GrantStore& grants, const Opera
         if (since == 0 || since + idleSeconds > now) {
             continue;
         }
-        removeAccount(user, store, grants,
-            [&push](const std::string& gone) {
-                return push.publish(gone, std::string(), 0, {}).has_value();
-            },
-            [&push](const std::string& gone) { return push.forgetMailbox(gone); });
+        removeAccount(user, store, grants, pushes);
         log::info("swept idle account {}", log::redact(user));
     }
 }

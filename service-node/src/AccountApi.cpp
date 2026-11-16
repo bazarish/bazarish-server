@@ -338,11 +338,7 @@ void AccountApi::deleteAccount(const std::string& user)
     if (!grants_.peekApproval(user).has_value() && !store_.getAccount(user).has_value()) {
         return;
     }
-    removeAccount(user, store_, grants_,
-        [this](const std::string& gone) {
-            return options_.publishI2pTransient(gone, std::string(), 0, {}).has_value();
-        },
-        options_.forgetMailbox);
+    removeAccount(user, store_, grants_, *options_.pushes);
 }
 
 nlohmann::json AccountApi::userRecord(
@@ -953,6 +949,11 @@ void AccountApi::setupRoutes()
             if (!transient.empty() && (keys.sealingPem.empty() || keys.signingPem.empty())) {
                 respondError(response, 400, ErrorCode::eRequestFailed,
                     "a delegation comes with the serving and signing keys of its address");
+                return;
+            }
+            if (options_.pushes->deliver(user).forget) {
+                respondError(response, 503, ErrorCode::eRequestFailed,
+                    "the messaging server has not yet dropped this account's old mailbox");
                 return;
             }
             const std::optional<ServedDestination> served

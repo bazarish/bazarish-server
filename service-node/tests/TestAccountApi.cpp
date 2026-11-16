@@ -149,10 +149,7 @@ int main()
         return ServedDestination{kServedDest};
     };
     std::string forgottenMailbox;
-    options.forgetMailbox = [&forgottenMailbox](const std::string& user) {
-        forgottenMailbox = user;
-        return true;
-    };
+    std::function<void(const std::string& user)> forgetGate;
     std::string quotaUser;
     std::uint64_t quotaPushed = 0;
     int quotaCalls = 0;
@@ -171,7 +168,15 @@ int main()
                     cardsChanged.push_back(user);
                     return PushOutcome::eDelivered;
                 },
-            .takeDownAddress = [](const std::string&) { return PushOutcome::eDelivered; }});
+            .takeDownAddress = [](const std::string&) { return PushOutcome::eDelivered; },
+            .forget =
+                [&forgottenMailbox, &forgetGate](const std::string& user) {
+                    if (forgetGate) {
+                        forgetGate(user);
+                    }
+                    forgottenMailbox = user;
+                    return PushOutcome::eDelivered;
+                }});
     AccountApi api(store, grants, options);
 
     const int port = api.bind("127.0.0.1", 0);
@@ -447,8 +452,7 @@ int main()
         const http::ClientResponse result = call(port, "DELETE", "/v1/account/registration",
             deviceSigned(alice.device, "DELETE", "/v1/account/registration", ""));
         CHECK(result.status == 200);
-        CHECK(pubCalls == 4);
-        CHECK(pubTransient.empty());
+        CHECK(pubCalls == 3);
         CHECK(!grants.peekApproval(alice.fingerprint()).has_value());
         CHECK(forgottenMailbox == alice.fingerprint());
 
@@ -461,7 +465,7 @@ int main()
         const http::ClientResponse orphan = call(port, "POST", "/v1/account/i2p-dest",
             deviceSigned(alice.device, "POST", "/v1/account/i2p-dest", body), body);
         CHECK(orphan.status == 404);
-        CHECK(pubCalls == 4);
+        CHECK(pubCalls == 3);
     }
 
     {
@@ -542,14 +546,14 @@ int main()
         const std::shared_future<void> wasBanned = banned.get_future().share();
         std::atomic<bool> revokeSeen{false};
         std::atomic<bool> publishing{false};
-        pubGate = [&](const std::string& user, const std::string& transient) {
-            if (user != ben.fingerprint()) {
-                return;
-            }
-            if (transient.empty() && !revokeSeen.exchange(true)) {
+        forgetGate = [&](const std::string& user) {
+            if (user == ben.fingerprint() && !revokeSeen.exchange(true)) {
                 revoking.set_value();
                 mayGoOn.wait();
-            } else if (!transient.empty()) {
+            }
+        };
+        pubGate = [&](const std::string& user, const std::string& transient) {
+            if (user == ben.fingerprint() && !transient.empty()) {
                 publishing = true;
                 wasBanned.wait();
             }
@@ -576,6 +580,7 @@ int main()
         banned.set_value();
         delegating.join();
         pubGate = nullptr;
+        forgetGate = nullptr;
         CHECK(delegatedStatus.load() != 200);
         CHECK(!grants.peekTransient(ben.fingerprint()).has_value());
         CHECK(grants.peekBan(ben.fingerprint()).has_value());

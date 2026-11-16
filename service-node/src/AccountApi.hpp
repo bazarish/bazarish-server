@@ -45,7 +45,6 @@ struct AccountApiOptions {
         const std::string& transientB64, std::int64_t expiresUnix, const AddressKeys& keys)>
         publishI2pTransient;
 
-    std::function<bool(const std::string& user)> forgetMailbox;
 
     std::shared_ptr<PushQueue> pushes;
     // A private node, such as a bot's own: a signer outside this set is refused. Empty: a public node.

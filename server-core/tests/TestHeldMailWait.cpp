@@ -10,6 +10,7 @@
 
 #include <bazarish/Crypto.hpp>
 #include <bazarish/HttpClient.hpp>
+#include <bazarish/Limits.hpp>
 #include <nlohmann/json.hpp>
 
 #include <atomic>
@@ -43,14 +44,21 @@ Headers signedFor(const devicetest::Device& device, const std::string& method,
     return testutil::deviceHeaders(device.credential, method, path, body);
 }
 
-std::future<http::ClientResponse> holdFor(const int port, const devicetest::Device& device)
+std::future<http::ClientResponse> holdFor(
+    const int port, const devicetest::Device& device, const std::string& target = kHeld)
 {
-    return std::async(std::launch::async, [port, &device]() {
+    return std::async(std::launch::async, [port, &device, target]() {
         http::ClientOptions unbounded;
         unbounded.readTimeout = std::chrono::seconds(0);
         return testutil::call(
-            port, "GET", kHeld, signedFor(device, "GET", kHeld, ""), {}, unbounded);
+            port, "GET", target, signedFor(device, "GET", target, ""), {}, unbounded);
     });
+}
+
+http::ClientResponse askAtOnce(
+    const int port, const devicetest::Device& device, const std::string& target)
+{
+    return testutil::call(port, "GET", target, signedFor(device, "GET", target, ""));
 }
 
 std::size_t pendingIn(const http::ClientResponse& response)
@@ -129,6 +137,31 @@ int main()
         static_cast<long long>(std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::steady_clock::now() - heldSince)
                                    .count()));
+
+    const std::string keptId
+        = nlohmann::json::parse(answered.body).at("pending").at(0).at("id").get<std::string>();
+    const std::string deferring = std::string(kHeld) + "&deferred=" + keptId;
+    const http::ClientResponse unknownNamed
+        = askAtOnce(port, phone, std::string(kHeld) + "&deferred=not-held-here");
+    CHECK(unknownNamed.status == 200);
+    CHECK(pendingIn(unknownNamed) == 1);
+    std::string tooMany = std::string(kHeld) + "&deferred=";
+    for (std::size_t i = 0; i <= kMaxDeferredMailItems; ++i) {
+        tooMany += (i == 0 ? "" : ",") + ("held-" + std::to_string(i));
+    }
+    CHECK(askAtOnce(port, phone, tooMany).status == 400);
+
+    std::future<http::ClientResponse> deferredHeld = holdFor(port, phone, deferring);
+    CHECK(deferredHeld.wait_for(kSoon) == std::future_status::timeout);
+    const std::string another = nlohmann::json{{"deliveryId", "another-from-the-laptop"},
+        {"payload", toBase64(randomBytes(kPayloadBytes))}, {"to", phone.id()}}.dump();
+    CHECK(testutil::call(port, "POST", kSelf, signedFor(laptop, "POST", kSelf, another), another)
+              .status
+        == 200);
+    CHECK(deferredHeld.wait_for(kSoon) == std::future_status::ready);
+    const http::ClientResponse withNews = deferredHeld.get();
+    CHECK(withNews.status == 200);
+    CHECK(pendingIn(withNews) == 2);
 
     api.stop();
     serving.join();

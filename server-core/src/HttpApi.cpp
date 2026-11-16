@@ -26,6 +26,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <set>
@@ -45,6 +46,8 @@ constexpr std::size_t kReseedRouters = 60;
 constexpr std::int64_t kReseedRefreshSeconds = 3600;
 constexpr char kHoldKey[] = "hold";
 constexpr char kHoldValue[] = "1";
+constexpr char kDeferredKey[] = "deferred";
+constexpr char kDeferredSeparator = ',';
 
 using bazarish::nowSeconds;
 
@@ -61,6 +64,37 @@ nlohmann::json pendingJson(bazarish::server::DiskStorage& storage, const std::st
             {{"id", entry.blobId}, {"class", entry.deliveryClass}, {"bytes", entry.bytes}});
     }
     return items;
+}
+
+// The ids a device names as held already: they alone do not end its wait.
+std::set<std::string> deferredIds(const bazarish::http::Request& request)
+{
+    std::set<std::string> ids;
+    const std::string listed = request.query(kDeferredKey);
+    std::string::size_type begin = 0;
+    while (begin < listed.size()) {
+        const std::string::size_type end
+            = std::min(listed.find(kDeferredSeparator, begin), listed.size());
+        if (end > begin) {
+            ids.insert(listed.substr(begin, end - begin));
+        }
+        if (ids.size() > bazarish::kMaxDeferredMailItems) {
+            throw std::invalid_argument("a wait may name at most "
+                + std::to_string(bazarish::kMaxDeferredMailItems) + " held items");
+        }
+        begin = end + 1;
+    }
+    return ids;
+}
+
+bool holdsNews(const nlohmann::json& pending, const std::set<std::string>& deferred)
+{
+    for (const nlohmann::json& entry : pending) {
+        if (!deferred.contains(entry.at("id").get<std::string>())) {
+            return true;
+        }
+    }
+    return false;
 }
 
 std::vector<Bytes> passHandles(const nlohmann::json& body)
@@ -450,11 +484,14 @@ void HttpApi::setupRoutes()
             }
             const std::string user = caller.user;
             const std::string clientId = caller.device;
-            const nlohmann::json waiting = pendingJson(store, user, clientId);
-            if (!waiting.empty()) {
-                return jsonResponse({{"pending", waiting}});
+            std::set<std::string> deferred;
+            try {
+                deferred = deferredIds(request);
+            } catch (const std::invalid_argument& error) {
+                return errorResponse(400, ErrorCode::eRequestFailed, error.what());
             }
-            if (request.query(kHoldKey) != kHoldValue) {
+            const nlohmann::json waiting = pendingJson(store, user, clientId);
+            if (holdsNews(waiting, deferred) || request.query(kHoldKey) != kHoldValue) {
                 return jsonResponse({{"pending", waiting}});
             }
             eventGate_.wait(http_->executor(), user, clientId,
@@ -468,7 +505,7 @@ void HttpApi::setupRoutes()
                     respond(jsonResponse({{"pending", items}}));
                 });
             try {
-                if (!pendingJson(store, user, clientId).empty()) {
+                if (holdsNews(pendingJson(store, user, clientId), deferred)) {
                     eventGate_.notify(user);
                 }
             } catch (const std::exception& error) {

@@ -8,17 +8,17 @@
 #include <unistd.h>
 
 #include <array>
-#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <exception>
+#include <mutex>
 #include <thread>
 
 namespace bazarish::facade {
 
 inline constexpr std::size_t kPumpBufferBytes = 32 * 1024;
-inline constexpr int kDrainMillis = 60000;
-inline constexpr int kDrainPollMillis = 50;
+inline constexpr std::chrono::seconds kDrainFor{60};
 
 // The fd stays the caller's to close, so a stop from outside can shut it while this runs.
 template <typename Stream>
@@ -26,8 +26,10 @@ void relay(Stream& stream, const int fd)
 {
     std::size_t fromClient = 0;
     std::size_t toClient = 0;
-    std::atomic<bool> clientClosed{false};
-    std::thread inbound([&stream, fd, &fromClient, &clientClosed]() {
+    std::mutex closing;
+    std::condition_variable closed;
+    bool clientClosed = false;
+    std::thread inbound([&stream, fd, &fromClient, &closing, &closed, &clientClosed]() {
         std::array<unsigned char, kPumpBufferBytes> buffer{};
         bool open = true;
         while (open) {
@@ -47,8 +49,12 @@ void relay(Stream& stream, const int fd)
                 written += static_cast<std::size_t>(n);
             }
         }
-        clientClosed = true;
         ::shutdown(fd, SHUT_WR);
+        {
+            const std::lock_guard<std::mutex> lock(closing);
+            clientClosed = true;
+        }
+        closed.notify_one();
     });
 
     std::array<unsigned char, kPumpBufferBytes> buffer{};
@@ -65,8 +71,9 @@ void relay(Stream& stream, const int fd)
             break;
         }
     }
-    for (int waited = 0; !clientClosed && waited < kDrainMillis; waited += kDrainPollMillis) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(kDrainPollMillis));
+    {
+        std::unique_lock<std::mutex> lock(closing);
+        closed.wait_for(lock, kDrainFor, [&clientClosed]() { return clientClosed; });
     }
     stream.close();
     ::shutdown(fd, SHUT_RD);

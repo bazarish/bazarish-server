@@ -91,7 +91,7 @@ the seed never travels. What the operator holds is bounded by the day:
 | Server authentication | The gateway's own hybrid key. The link carries its fingerprint, and the gateway proves it in the handshake (The channel, below) |
 | Client authentication | The secret path. A client is given the gateway in one link, `https://bazari.sh/#gateway?v=1&url=<secret URL>&fp=<fingerprint>` |
 | Headers | None of this protocol's own. The client sends Chrome's upgrade request: its headers, in its order, with a User-Agent of the platform the client runs on |
-| Keepalive | The client pings once it has sent nothing or heard nothing for a wait drawn uniformly in `kIdleKeepaliveMin`..`kIdleKeepaliveMax`, afresh each time either side sends; a ping not answered within `kPongTimeout` ends the socket. The gateway never pings: it answers pings and closes a socket it has heard nothing on for `kSilenceLimit` |
+| Keepalive | The client pings once it has sent nothing or heard nothing for a wait drawn uniformly, afresh each time either side sends, in `kForegroundKeepaliveMin`..`kForegroundKeepaliveMax` while the app is in front and its screen is on, else in `kBackgroundKeepaliveMin`..`kBackgroundKeepaliveMax`; the wait is drawn again when that changes; a ping not answered within `kPongTimeout` ends the socket. The gateway never pings: it answers pings and closes a socket it has heard nothing on for `kSilenceLimit` |
 
 ### Getting in, and not getting in
 
@@ -247,7 +247,7 @@ own keepalive, an empty datagram every 500 ms of silence, travels end to end
 over I2P, tells the far end the call is alive, and is carried in a slot like
 any other datagram.
 
-A keepalive ping carries one byte, the same flags. The gateway keeps the last
+A keepalive ping carries the same flags in its first byte, then zero bytes up to a length drawn uniformly up to `kMaxPingPayloadBytes`; the pong echoes it. The gateway keeps the last
 flags a session's client sent in a record or a ping: while they say idle, it
 sends `endpoint-status` only when `ready` changes, and the counts that changed
 meanwhile follow once the client is active again.
@@ -1111,10 +1111,12 @@ Both sides agree, so there is nothing to refuse.
 | `kMaxStreamsPerSession` | 1024 | Streams one session holds, dialled and accepted together |
 | `kInboundQueue` | 8 | Unaccepted inbound streams per endpoint before the client resets the oldest |
 | `kDatagramQueue` | 64 | Received datagrams held per endpoint, at either end |
-| `kIdleKeepaliveMin`, `kIdleKeepaliveMax` | 180 s, 260 s | The range the silence before a ping is drawn in, uniformly and afresh for each quiet spell: no two pings need be the same time apart, at most 20 pings an hour, under the five minutes a mobile carrier's NAT keeps a silent TCP flow |
+| `kForegroundKeepaliveMin`, `kForegroundKeepaliveMax` | 30 s, 70 s | The range the silence before a ping is drawn in while the app is in front: a silently lost link shows within about a minute and a half |
+| `kBackgroundKeepaliveMin`, `kBackgroundKeepaliveMax` | 120 s, 240 s | The range in the background, under the five minutes a mobile carrier's NAT keeps a silent TCP flow |
+| `kMaxPingPayloadBytes` | 125 | RFC 6455 5.5: the most a control frame carries |
 | `kPongTimeout` | 15 s | A ping unanswered this long is a dead socket |
-| `kSilenceMargin` | 10 s | Room for a ping drawn at `kIdleKeepaliveMax` to reach the gateway |
-| `kSilenceLimit` | 285 s | `kIdleKeepaliveMax` + `kPongTimeout` + `kSilenceMargin`: the gateway closes a socket it has heard nothing on for this long |
+| `kSilenceMargin` | 10 s | Room for a ping drawn at `kBackgroundKeepaliveMax` to reach the gateway |
+| `kSilenceLimit` | 265 s | `kBackgroundKeepaliveMax` + `kPongTimeout` + `kSilenceMargin`: the gateway closes a socket it has heard nothing on for this long |
 | `kRecordPadFloor`, `kRecordPadCeiling` | 1536, 4096 | The range a padded record's plaintext is drawn in |
 | `kRecordPadMedian`, `kRecordPadSigma` | 1800, 0.5 | The log-normal it is drawn from |
 | `kBulkPadMedian`, `kBulkPadSigma`, `kBulkPadMax` | 256, 1.0, 4096 | The padding added to a frame longer than the ceiling |

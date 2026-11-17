@@ -178,11 +178,11 @@
       "ar": "واصف الخادم"
     },
     "descriptor.paste": {
-      "en": "Paste it into Bazarish App to connect this account here",
-      "ru": "Вставьте его в приложение Bazarish, чтобы подключить этот аккаунт к серверу",
-      "es": "Pégalo en la app de Bazarish para conectar esta cuenta aquí",
-      "zh": "把它粘贴到 Bazarish 应用里，就能把这个账号连接到本服务器",
-      "ar": "ألصقه في تطبيق Bazarish لربط هذا الحساب بهذا الخادم"
+      "en": "Paste it into Bazarish App to connect",
+      "ru": "Вставьте его в приложение Bazarish, чтобы подключиться",
+      "es": "Pégalo en la app de Bazarish para conectarte",
+      "zh": "把它粘贴到 Bazarish 应用里即可连接",
+      "ar": "ألصقه في تطبيق Bazarish للاتصال"
     },
     "qr.show": {
       "en": "Show as a QR code",

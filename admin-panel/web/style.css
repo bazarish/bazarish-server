@@ -128,9 +128,6 @@ body {
     color: var(--bz-key-dim);
 }
 
-.panel-title::before {
-    content: "/";
-}
 
 .panel-note,
 .muted {
@@ -1067,10 +1064,6 @@ body.centred {
     color: var(--bz-key-dim);
 }
 
-.section-title::before {
-    content: "/ ";
-    color: var(--bz-line-2);
-}
 
 .badge-restart {
     display: inline-flex;

@@ -136,9 +136,6 @@ body {
     color: var(--bz-key-dim);
 }
 
-.panel-title::before {
-    content: "/";
-}
 
 .view-title {
     margin: 0 0 1.5rem;

@@ -115,9 +115,9 @@
       "ar": "خروج"
     },
     "banned.title": {
-      "en": "refused",
-      "ru": "отказано",
-      "es": "rechazado",
+      "en": "Refused",
+      "ru": "Отказано",
+      "es": "Rechazado",
       "zh": "已拒绝",
       "ar": "مرفوض"
     },
@@ -129,9 +129,9 @@
       "ar": "لا يمكن لهذا المفتاح التسجيل هنا"
     },
     "registered.title": {
-      "en": "account",
-      "ru": "аккаунт",
-      "es": "cuenta",
+      "en": "Account",
+      "ru": "Аккаунт",
+      "es": "Cuenta",
       "zh": "账号",
       "ar": "الحساب"
     },
@@ -143,9 +143,9 @@
       "ar": "يوافق المشغّل على الحسابات يدويًا. اربط تطبيق Bazarish الآن، وسيبدأ الخادم بخدمة الحساب بمجرد الموافقة عليه."
     },
     "waiting.title": {
-      "en": "waiting for the operator",
-      "ru": "ожидает оператора",
-      "es": "esperando al operador",
+      "en": "Waiting for the operator",
+      "ru": "Ожидает оператора",
+      "es": "Esperando al operador",
       "zh": "等待运营者审核",
       "ar": "في انتظار المشغّل"
     },
@@ -199,9 +199,9 @@
       "ar": "إغلاق"
     },
     "delete.title": {
-      "en": "delete this account",
-      "ru": "удаление аккаунта",
-      "es": "eliminar esta cuenta",
+      "en": "Delete this account",
+      "ru": "Удаление аккаунта",
+      "es": "Eliminar esta cuenta",
       "zh": "删除这个账号",
       "ar": "حذف هذا الحساب"
     },

@@ -567,6 +567,22 @@ void HttpApi::setupRoutes()
             return jsonResponse({{"ok", true}});
         }));
 
+    http_->del("/v1/messaging/clients/{id}",
+        authenticated([&store](const bazarish::http::Request& request,
+                          const Caller& caller) -> bazarish::http::Response {
+            if (caller.role != DeviceRole::ePrimary) {
+                return errorResponse(403, ErrorCode::eDeviceNotPrimary,
+                    "only a primary device forgets another device's mail");
+            }
+            const std::string& device = request.captures.at(0);
+            if (device == caller.device) {
+                return errorResponse(400, ErrorCode::eRequestFailed,
+                    "a device does not forget its own mail");
+            }
+            store.unregisterClient(caller.user, device);
+            return jsonResponse({{"ok", true}});
+        }));
+
     http_->get("/v1/messaging/destination",
         authenticated([this](const bazarish::http::Request&, const Caller& caller)
                           -> bazarish::http::Response {

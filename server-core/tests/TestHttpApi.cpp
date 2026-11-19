@@ -509,6 +509,31 @@ try {
         }
 
         {
+            const std::string strayInstall = nlohmann::json{{"install", "install-stray"}}.dump();
+            CHECK(call(port, "POST", "/v1/messaging/clients",
+                      makeHeaders(aliceStray, "POST", "/v1/messaging/clients", strayInstall),
+                      strayInstall)
+                      .status
+                == 200);
+            CHECK(toSelf(aliceDev, "to-stray", aliceStray.id()).status == 200);
+            const auto forget = [&](const devicetest::Device& by, const std::string& device) {
+                const std::string path = "/v1/messaging/clients/" + device;
+                return call(port, "DELETE", path, makeHeaders(by, "DELETE", path, ""));
+            };
+            CHECK(forget(alicePhone, aliceStray.id()).status == 403);
+            CHECK(forget(aliceDev, aliceDev.id()).status == 400);
+            CHECK(storage.hasBlob(alice.fingerprint(), "to-stray"));
+            CHECK(forget(aliceDev, aliceStray.id()).status == 200);
+            CHECK(!storage.isClientRegistered(alice.fingerprint(), aliceStray.id()));
+            CHECK(!storage.hasBlob(alice.fingerprint(), "to-stray"));
+            CHECK(call(port, "POST", "/v1/messaging/clients",
+                      makeHeaders(aliceStray, "POST", "/v1/messaging/clients", strayInstall),
+                      strayInstall)
+                      .status
+                == 200);
+        }
+
+        {
             const std::lock_guard<std::mutex> lock(booksMutex);
             books[alice.fingerprint()] = devicetest::bookOf(
                 alice, {&aliceDev, &aliceStray}, kFirstRevocationNumber + 1, {alicePhone.id()});

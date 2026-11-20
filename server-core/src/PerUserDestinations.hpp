@@ -5,6 +5,7 @@
 #include "Federation.hpp"
 
 #include <bazarish/Bytes.hpp>
+#include <bazarish/Clock.hpp>
 #include <bazarish/I2p.hpp>
 #include <Restart.hpp>
 #include <TlsPipe.hpp>
@@ -56,7 +57,30 @@ public:
     std::chrono::seconds nextSweepIn(std::int64_t now) const;
 
     std::vector<std::string> served() const;
-    bool serveDirect(const std::string& to, const std::string& from, TlsPipe& pipe);
+
+    // i2pd ends a lease before this, so an exchange that has not finished is not going to.
+    static constexpr int kServeDeadlineSeconds = 45;
+
+    struct DirectTarget {
+        std::string owner;
+        std::shared_ptr<Key> sealing;
+        std::shared_ptr<Key> signing;
+    };
+    std::optional<DirectTarget> directTargetFor(const std::string& to) const;
+
+    // A destination this node serves, answered without the frame leaving the host.
+    template <class Pipe>
+    bool serveDirect(const std::string& to, const std::string& from, Pipe& pipe)
+    {
+        const std::optional<DirectTarget> target = directTargetFor(to);
+        if (!target.has_value()) {
+            return false;
+        }
+        pipe.closeAfter(std::chrono::seconds(kServeDeadlineSeconds));
+        federationServeOnce(pipe, engine_, nowSeconds(), from, *target->sealing, target->owner,
+            getCard_, ackSignerFor(target->signing));
+        return true;
+    }
 
     std::size_t size() const;
 
@@ -80,6 +104,7 @@ private:
         std::unique_ptr<bazarish::i2p::EndpointWatch> readyWatch;
     };
 
+    static SignAckFn ackSignerFor(std::shared_ptr<Key> signingKey);
     void bringUp(const std::string& userFp, const std::string& transientB64,
         std::int64_t expiresUnix, const std::string& sealingKeyPem,
         const std::string& signingKeyPem);

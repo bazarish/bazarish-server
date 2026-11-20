@@ -31,7 +31,6 @@ namespace {
 constexpr std::chrono::seconds kReadyWaitSlice{60};
 constexpr int kAcceptTimeoutSeconds = 2;
 constexpr std::size_t kServeWorkers = 3;
-constexpr int kServeDeadlineSeconds = 45;
 constexpr int kWatchdogTickSeconds = 2;
 constexpr std::chrono::minutes kExpirySweepInterval{10};
 
@@ -95,16 +94,6 @@ bool readyOrLost(bazarish::i2p::Endpoint& endpoint)
         }
     }
     return true;
-}
-
-SignAckFn signAckWith(std::shared_ptr<Key> signingKey)
-{
-    return [signingKey = std::move(signingKey)](const std::string& deliveryId,
-               Bytes& outSignerPublicDer, Bytes& outSignature) {
-        const Bytes signedBytes = deliveryAckInput(deliveryId);
-        outSignature = bazarish::sign(*signingKey, signedBytes);
-        outSignerPublicDer = signingKey->publicDer();
-    };
 }
 
 }  // namespace
@@ -289,7 +278,7 @@ void PerUserDestinations::serveLoop(Destination& destination, const std::string&
             }
             watchStream(stream);
             federationServeOnce(*stream, engine_, nowSeconds(), peer, *serving, userFp,
-                getCard_, signAckWith(signingKey));
+                getCard_, ackSignerFor(signingKey));
             unwatchStream(stream);
         } catch (const std::exception& error) {
             unwatchStream(stream);
@@ -501,30 +490,26 @@ std::vector<std::string> PerUserDestinations::served() const
     return hosts;
 }
 
-bool PerUserDestinations::serveDirect(
-    const std::string& to, const std::string& from, TlsPipe& pipe)
+SignAckFn PerUserDestinations::ackSignerFor(std::shared_ptr<Key> signingKey)
 {
-    std::string owner;
-    std::shared_ptr<Key> sealing;
-    std::shared_ptr<Key> signing;
-    {
-        const std::lock_guard<std::mutex> lock(mutex_);
-        for (const auto& [userFp, destination] : dests_) {
-            if (destination->dest == to) {
-                owner = userFp;
-                sealing = destination->sealingKey;
-                signing = destination->signingKey;
-                break;
-            }
+    return [signingKey = std::move(signingKey)](const std::string& deliveryId,
+               Bytes& outSignerPublicDer, Bytes& outSignature) {
+        const Bytes signedBytes = deliveryAckInput(deliveryId);
+        outSignature = bazarish::sign(*signingKey, signedBytes);
+        outSignerPublicDer = signingKey->publicDer();
+    };
+}
+
+std::optional<PerUserDestinations::DirectTarget> PerUserDestinations::directTargetFor(
+    const std::string& to) const
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& [userFp, destination] : dests_) {
+        if (destination->dest == to) {
+            return DirectTarget{userFp, destination->sealingKey, destination->signingKey};
         }
     }
-    if (owner.empty()) {
-        return false;
-    }
-    pipe.closeAfter(std::chrono::seconds(kServeDeadlineSeconds));
-    federationServeOnce(pipe, engine_, nowSeconds(), from, *sealing, owner, getCard_,
-        signAckWith(std::move(signing)));
-    return true;
+    return std::nullopt;
 }
 
 std::size_t PerUserDestinations::size() const

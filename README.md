@@ -54,10 +54,10 @@ build-core`); it then picks up the same `common` submodule from one directory up
 - `bazarish-server` - server-core, the service node, the facade and the admin
   panel, with `bazarish-gateway` as a dependency.
 
-Every binary here reports the git tag it is built from, or `dev (<commit>)` between
-tags. A package built on a tag `vX.Y.Z` is version `X.Y.Z`; one built between tags is
-`0~dev.<commits>+<commit>`, which apt takes for older than any release and for newer
-than the dev builds before it.
+Every binary here reports the nearest release tag `vX.Y.Z` as `X.Y.Z (<commit>)`, or
+`dev (<commit>)` before the first one. A package built on the tag is version `X.Y.Z`;
+one built after it is `X.Y.Z+<commits since the tag>.<commit>`, newer than the tag and
+older than the next one; before the first tag it is `0~dev.<commits>+<commit>`.
 
 The first install of `bazarish-server` runs `bazarish-setup`. It writes the four
 configs into `/etc/bazarish`, makes every service's keys under `/var/lib/bazarish`

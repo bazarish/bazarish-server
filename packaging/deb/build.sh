@@ -9,13 +9,20 @@ readonly kJobs=${BAZARISH_JOBS:-4}
 readonly kBuild=build-deb
 readonly kArch=$(dpkg --print-architecture)
 
-# A release tag, or dev with a commit count so that apt takes a later build for newer.
-if tag=$(git describe --tags --exact-match 2>/dev/null); then
+# The nearest release tag, past it the commits since and the hash, so that apt takes a later build for newer.
+if described=$(git describe --tags --long --match 'v[0-9]*' 2>/dev/null); then
+    tag=${described%-*-g*}
     if [[ ! $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         echo "a release tag is v and three numbers, as in v1.2.3: $tag" >&2
         exit 1
     fi
-    readonly kVersion=${tag#v}
+    since=${described#"$tag"-}
+    since=${since%%-*}
+    if [ "$since" = 0 ]; then
+        readonly kVersion=${tag#v}
+    else
+        readonly kVersion=${tag#v}+$since.$(git rev-parse --short HEAD)
+    fi
 else
     readonly kVersion=0~dev.$(git rev-list --count HEAD)+$(git rev-parse --short HEAD)
 fi

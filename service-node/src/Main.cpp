@@ -73,7 +73,6 @@ void printUsage()
         bazarish::kBuildVersion);
 }
 
-using bazarish::readFileBytes;
 
 struct PortalConfig {
     std::string name;
@@ -92,7 +91,6 @@ struct RegistrationConfig {
 
 struct NodeConfig {
     std::string stateDir;
-    std::string serverCard;
     bazarish::ConfigView::Endpoint listen{kDefaultHost, kDefaultPort};
     bazarish::ConfigView::Endpoint portalListen;
     std::string portalAssets;
@@ -114,7 +112,6 @@ NodeConfig loadNodeConfig(const fs::path& path)
 
     NodeConfig config;
     config.stateDir = view.text("state");
-    config.serverCard = view.text("serverCard");
     config.listen = view.endpoint("listen").value_or(config.listen);
     config.portalListen = view.endpoint("portal.listen").value_or(config.portalListen);
     config.portalAssets = view.text("portal.assets");
@@ -180,8 +177,8 @@ int main(const int argc, const char** argv)
         std::fprintf(stderr, "config: %s\n", error.what());
         return 2;
     }
-    if (nodeConfig.stateDir.empty() || nodeConfig.serverCard.empty()) {
-        std::fprintf(stderr, "config: \"state\" and \"serverCard\" are required\n");
+    if (nodeConfig.stateDir.empty()) {
+        std::fprintf(stderr, "config: \"state\" is required\n");
         return 2;
     }
     const fs::path stateDir(nodeConfig.stateDir);
@@ -201,10 +198,6 @@ int main(const int argc, const char** argv)
     bazarish::log::setLevel(nodeConfig.logLevel);
     const auto logRing = std::make_shared<bazarish::server::LogRing>();
     const bazarish::server::LogCapture logCapture(logRing);
-
-    const bazarish::Bytes cardDer = readFileBytes(fs::path(nodeConfig.serverCard));
-    const bazarish::ServerCard card
-        = bazarish::ServerCard::verify(cardDer, bazarish::ServerCard::Service::eMessaging);
 
     fs::create_directories(stateDir);
     const bazarish::Identity nodeIdentity = bazarish::server::loadOrCreateIdentity(stateDir);
@@ -267,8 +260,6 @@ int main(const int argc, const char** argv)
             .idleDeleteDays = nodeConfig.registration.idleDeleteDays});
 
     bazarish::service::AccountApiOptions options;
-    options.serverFingerprint = card.server;
-    options.serverCardDer = cardDer;
     options.sealingKey = sealing;
     options.version = bazarish::kBuildVersion;
     options.operatorFingerprints = nodeConfig.operators;
@@ -296,11 +287,10 @@ int main(const int argc, const char** argv)
                              " a tunnel to it");
         return 1;
     }
-    if (bazarish::ServerCard::verify(*nodeCard, bazarish::ServerCard::Service::eServiceNode).server
-        != card.server) {
-        bazarish::log::error("the node card names another server than this node's server card");
-        return 1;
-    }
+    // The pinned link to the messaging server vouches for the card, so its signer is the server.
+    const std::string serverFingerprint
+        = bazarish::ServerCard::verify(*nodeCard, bazarish::ServerCard::Service::eServiceNode).server;
+    options.serverFingerprint = serverFingerprint;
     options.nodeCardDer = *nodeCard;
 
     bazarish::service::AccountApi api(store, grants, options);
@@ -319,7 +309,7 @@ int main(const int argc, const char** argv)
             return 2;
         }
         bazarish::service::PortalApiOptions portalOptions;
-        portalOptions.serverFingerprint = card.server;
+        portalOptions.serverFingerprint = serverFingerprint;
         portalOptions.fetchReseedArchive
             = [&operatorPush]() { return operatorPush.reseedArchive(); };
         portalOptions.challengeSecret = bazarish::toHex(bazarish::randomBytes(kPortalSecretBytes));
@@ -375,7 +365,7 @@ int main(const int argc, const char** argv)
     *restartHook = [&restart]() { restart.request(); };
 
     std::printf("bazarish-service-node %s\n", bazarish::kBuildVersion);
-    std::printf("bound to server: %s\n", card.server.c_str());
+    std::printf("bound to server: %s\n", serverFingerprint.c_str());
     std::fflush(stdout);
     bazarish::log::info("listening on {}:{} (private channel for facades and the messaging server)",
         nodeConfig.listen.host, nodeConfig.listen.port);

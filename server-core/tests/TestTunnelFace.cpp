@@ -51,7 +51,7 @@ try {
     const Identity serverIdentity = Identity::generate();
     const Key serverSealing = Key::generateSealing();
     const Bytes card = ServerCard::issue(serverIdentity, ServerCard::Service::eMessaging,
-        Key::fromPublicDer(serverSealing.publicDer()), nowSeconds());
+        Key::fromPublicDer(serverSealing.publicDer()));
 
     HttpApiOptions options;
     options.fingerprint = serverIdentity.fingerprint();

@@ -892,8 +892,6 @@ void AccountApi::setupRoutes()
 
             respondJson(response,
                 {
-                    {"quotaBytes", quota},
-                    {"serverCard", toBase64(options_.serverCardDer)},
                     {"approval", pending ? "pending" : "approved"},
                     {"registrationMessage",
                         pending ? holdMessageFor(approval, settings()) : std::string()},

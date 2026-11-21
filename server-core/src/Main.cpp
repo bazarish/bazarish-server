@@ -58,8 +58,7 @@ void printUsage()
         "Everything this server runs on is in the config file - state directory,\n"
         "listen addresses, operator fingerprints, I2P settings - so there is\n"
         "one place to look and one place to change. The state directory holds the\n"
-        "server keys and the content storage; keys are generated on first start,\n"
-        "and the server card is always written to <state>/server-card.der.\n"
+        "server keys and the content storage; keys are generated on first start.\n"
         "\n"
         "The server keeps no destination of its own: inbound federation arrives on\n"
         "each user's own I2P destination, which it operates from the transient that\n"
@@ -191,18 +190,7 @@ int main(const int argc, const char** argv)
 
     const bazarish::Bytes card = bazarish::ServerCard::issue(*identity,
         bazarish::ServerCard::Service::eMessaging,
-        bazarish::Key::fromPublicDer(sealing->publicDer()), nowSeconds());
-    {
-        const fs::path cardPath = stateDir / "server-card.der";
-        std::ofstream out(cardPath, std::ios::binary | std::ios::trunc);
-        out.write(reinterpret_cast<const char*>(card.data()),
-            static_cast<std::streamsize>(card.size()));
-        out.close();
-        if (!out) {
-            std::fprintf(stderr, "cannot write %s\n", cardPath.string().c_str());
-            return 1;
-        }
-    }
+        bazarish::Key::fromPublicDer(sealing->publicDer()));
 
     bazarish::server::HttpApiOptions httpOptions;
     httpOptions.operatorFingerprints = operatorFingerprints;

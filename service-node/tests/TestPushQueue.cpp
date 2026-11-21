@@ -170,11 +170,9 @@ try {
     AccountApiOptions options;
     options.opsClientPins = {"a pin a plain test socket never checks"};
     options.serverFingerprint = serverIdentity.fingerprint();
-    options.serverCardDer = ServerCard::issue(serverIdentity, ServerCard::Service::eMessaging,
-        Key::fromPublicDer(Key::generateSealing().publicDer()), now);
     options.sealingKey = std::make_shared<Key>(Key::fromPrivatePem(nodeSealing.privatePem()));
     options.nodeCardDer = ServerCard::issue(serverIdentity, ServerCard::Service::eServiceNode,
-        Key::fromPublicDer(nodeSealing.publicDer()), now);
+        Key::fromPublicDer(nodeSealing.publicDer()));
     options.settings = std::make_shared<NodeSettings>(std::filesystem::path(), values);
     options.operatorFingerprints = {panel.fingerprint()};
     options.publishI2pTransient = [](const std::string&, const std::string&, std::int64_t,

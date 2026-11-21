@@ -96,7 +96,7 @@ try {
     CHECK(core.at("serviceNode").at("pin") == nodePin);
 
     CHECK(reachedAt(node.at("messaging"), core.at("opsListen"), corePin));
-    CHECK(node.at("serverCard") == (fs::path(core.at("state")) / "server-card.der").string());
+    CHECK(!node.contains("serverCard"));
     CHECK(node.at("portal").at("assets") == "/assets/portal");
     CHECK(!node.at("portal").contains("listen"));
 

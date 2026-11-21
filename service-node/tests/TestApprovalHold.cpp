@@ -85,7 +85,6 @@ try {
     GrantStore grants(root);
 
     const Identity serverIdentity = Identity::generate();
-    const Key serverSealing = Key::generateSealing();
     const std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
     const Key nodeSealing = Key::generateSealing();
 
@@ -95,11 +94,9 @@ try {
     AccountApiOptions options;
     options.opsClientPins = {"a pin a plain test socket never checks"};
     options.serverFingerprint = serverIdentity.fingerprint();
-    options.serverCardDer = ServerCard::issue(serverIdentity, ServerCard::Service::eMessaging,
-        Key::fromPublicDer(serverSealing.publicDer()), now);
     options.sealingKey = std::make_shared<Key>(Key::fromPrivatePem(nodeSealing.privatePem()));
     options.nodeCardDer = ServerCard::issue(serverIdentity, ServerCard::Service::eServiceNode,
-        Key::fromPublicDer(nodeSealing.publicDer()), now);
+        Key::fromPublicDer(nodeSealing.publicDer()));
     options.settings = std::make_shared<NodeSettings>(std::filesystem::path(), values);
     options.pushes = std::make_shared<PushQueue>(root, store, *options.userLocks,
         PushQueue::Delivery{

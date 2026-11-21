@@ -36,7 +36,6 @@ namespace bazarish::service {
 
 struct AccountApiOptions {
     std::string serverFingerprint;
-    Bytes serverCardDer;
     std::shared_ptr<Key> sealingKey;
     Bytes nodeCardDer;
     std::string version;

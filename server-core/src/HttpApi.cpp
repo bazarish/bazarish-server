@@ -458,7 +458,7 @@ void HttpApi::setupOpsRoutes()
             const Key sealing
                 = Key::fromPublicDer(fromBase64(body.at("sealingKey").get<std::string>()));
             const Bytes card = ServerCard::issue(
-                *options_.identity, ServerCard::Service::eServiceNode, sealing, nowSeconds());
+                *options_.identity, ServerCard::Service::eServiceNode, sealing);
             bazarish::log::info("issued the service node its card");
             return jsonResponse({{"card", toBase64(card)}});
         }));

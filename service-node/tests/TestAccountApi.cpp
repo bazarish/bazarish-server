@@ -107,11 +107,9 @@ try {
     const Key serverSealing = Key::generateSealing();
     const std::string serverFp = serverIdentity.fingerprint();
     const std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
-    const Bytes cardDer = ServerCard::issue(serverIdentity, ServerCard::Service::eMessaging,
-        Key::fromPublicDer(serverSealing.publicDer()), now);
     const Key nodeSealing = Key::generateSealing();
     const Bytes nodeCardDer = ServerCard::issue(serverIdentity,
-        ServerCard::Service::eServiceNode, Key::fromPublicDer(nodeSealing.publicDer()), now);
+        ServerCard::Service::eServiceNode, Key::fromPublicDer(nodeSealing.publicDer()));
 
     constexpr std::uint64_t kQuota = 10 * 1024 * 1024;
     NodeSettings::Values values;
@@ -119,7 +117,6 @@ try {
     AccountApiOptions options;
     options.opsClientPins = {"a pin a plain test socket never checks"};
     options.serverFingerprint = serverFp;
-    options.serverCardDer = cardDer;
     options.sealingKey = std::make_shared<Key>(Key::fromPrivatePem(nodeSealing.privatePem()));
     options.nodeCardDer = nodeCardDer;
     options.settings = std::make_shared<NodeSettings>(std::filesystem::path(), values);
@@ -195,9 +192,6 @@ try {
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
             deviceSigned(alice.device, "POST", "/v1/account/card", body), body);
         CHECK(result.status == 200);
-        const nlohmann::json reply = nlohmann::json::parse(result.body);
-        CHECK(reply.at("quotaBytes") == kQuota);
-        CHECK(fromBase64(reply.at("serverCard").get<std::string>()) == cardDer);
         CHECK(quotaCalls == 1);
         CHECK(quotaUser == alice.fingerprint());
         CHECK(quotaPushed == kQuota);
@@ -248,7 +242,6 @@ try {
         const http::ClientResponse result = call(port, "POST", "/v1/account/card",
             deviceSigned(alice.device, "POST", "/v1/account/card", body), body);
         CHECK(result.status == 200);
-        CHECK(nlohmann::json::parse(result.body).at("quotaBytes") == kQuota);
 
         const http::ClientResponse looked
             = call(port, "GET", "/v1/account/card?user=" + alice.fingerprint(),

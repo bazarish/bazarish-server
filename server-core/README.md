@@ -58,9 +58,7 @@ bazarish-server --config <path>
 One flag and no others: everything is in that file (see
 `config.example.json`) - the state directory, the addresses it listens on, the
 operators who may call its operator endpoints, the service node beside it, and
-the I2P settings. Keys are generated in the state directory on first start and
-the server card is written there as `server-card.der` (its sealing key and
-transport endpoints).
+the I2P settings. Keys are generated in the state directory on first start.
 
 Under systemd the packaged unit is `Type=notify`: the server tells systemd it is
 ready once all its sockets listen, and a service node ordered after it finds it

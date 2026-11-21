@@ -1,8 +1,6 @@
 {
   // Where this node keeps its identity and its records.
   "state": "/var/lib/bazarish/service-node",
-  // The card of the messaging server this node belongs to.
-  "serverCard": "/var/lib/bazarish/server-core/server-card.der",
   // What the facades and the messaging server reach, over TLS.
   "listen": {"host": "127.0.0.1", "port": 8421},
   // The operator's socket: the panel and nothing else.

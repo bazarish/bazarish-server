@@ -66,12 +66,8 @@ try {
     GrantStore grants(root);
 
     const Identity serverIdentity = Identity::generate();
-    const Key serverSealing = Key::generateSealing();
     const std::string serverFp = serverIdentity.fingerprint();
     const std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
-    const Bytes cardDer
-        = ServerCard::issue(serverIdentity, ServerCard::Service::eMessaging,
-            Key::fromPublicDer(serverSealing.publicDer()), now);
 
     const Identity panel = Identity::generate();
     const devicetest::Account alice;
@@ -85,7 +81,6 @@ try {
     AccountApiOptions options;
     options.opsClientPins = {"a pin a plain test socket never checks"};
     options.serverFingerprint = serverFp;
-    options.serverCardDer = cardDer;
     options.operatorFingerprints = {panel.fingerprint()};
     options.settings = std::make_shared<NodeSettings>(std::filesystem::path(), values);
     options.pushes = std::make_shared<PushQueue>(root, store, *options.userLocks,

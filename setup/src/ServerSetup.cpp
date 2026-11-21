@@ -38,7 +38,6 @@ constexpr const char* kNodeName = "service-node";
 constexpr const char* kFacadeName = "facade";
 constexpr const char* kPanelName = "admin-panel";
 constexpr const char* kGatewayName = "gateway";
-constexpr const char* kServerCardName = "server-card.der";
 
 nlohmann::json endpoint(const int port)
 {
@@ -125,7 +124,6 @@ bool setUpServer(const Layout& layout)
 
     writeConfig(configOf(kNodeName),
         {{"state", stateOf(kNodeName).string()},
-            {"serverCard", (stateOf(kCoreName) / kServerCardName).string()},
             {"listen", endpoint(kNodePort)}, {"opsListen", endpoint(kNodeOpsPort)},
             {"messaging", pinned(kCoreOpsPort, corePin)}, {"operators", panelOperators},
             {"opsClients", panelClients},

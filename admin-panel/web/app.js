@@ -153,7 +153,7 @@
             facts.appendChild(fact(N_("memory"), t("%1 / %2 peak",
                 humanBytes(service.ramBytes), humanBytes(service.ramPeakBytes))));
             if (service.kind === "facade") {
-                facts.appendChild(fact(N_("requests"), t("%1/min  %2/h  %3/day",
+                facts.appendChild(fact(N_("requests"), t("%1/min %2/h %3/day",
                     humanCount(service.requestsLastMinute), humanCount(service.requestsLastHour),
                     humanCount(service.requestsLastDay))));
                 facts.appendChild(fact(N_("in flight"), String(service.inFlight)));

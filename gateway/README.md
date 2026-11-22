@@ -26,7 +26,8 @@ ctest --test-dir build-gateway
 
 On Debian 13 the gateway is also a package of its own, `bazarish-gateway`. Its
 first install writes `/etc/bazarish/gateway.json` with a fresh path and starts
-the daemon.
+the daemon; `bazarish-setup gateway-link https://<the front's name>` then sets the
+public address and prints the link (the repository's README, Installing).
 
 ## Configuring
 
@@ -61,8 +62,9 @@ head -c 18 /dev/urandom | base64 | tr -d '=+/' | head -c 24    # basePath
 chmod 600 /etc/bazarish/gateway.json
 ```
 
-The gateway makes its identity and sealing key in `state` on its first start and
-logs its fingerprint; the link carries that fingerprint.
+The gateway makes its identity and sealing key in `state` on its first start, or
+`bazarish-setup` does on install, and logs its fingerprint; the link carries that
+fingerprint.
 
 ## The front
 

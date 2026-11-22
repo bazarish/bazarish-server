@@ -137,12 +137,15 @@ With the server service on another host, install `bazarish-server-core` and
 core host:     bazarish-setup listen server-core <core address>
                bazarish-setup token server-core
                bazarish-setup token admin-panel
-service host:  bazarish-setup join <server-core token>
-               bazarish-setup join <admin-panel token>
+service host:  bazarish-setup join <admin-panel token>
                bazarish-setup listen server-service <service address>
                bazarish-setup token server-service
 core host:     bazarish-setup join <server-service token>
+service host:  bazarish-setup join <server-core token>
 ```
+
+The server service asks the running core for its card when it starts, so the core
+takes the server service's token first.
 
 ### A facade on its own host
 

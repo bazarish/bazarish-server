@@ -1,7 +1,7 @@
 # bazarish-admin-panel
 
 A single web interface to monitor and manage one Bazarish server: its
-`server-core`, `service-node`, facades and private gateways.
+`server-core`, `server-service`, facades and private gateways.
 
 ## Authentication
 
@@ -37,8 +37,8 @@ identity, exactly like every other request in the system. Each service authorise
 the panel by fingerprint: put the panel's fingerprint (printed at panel startup)
 in that service's `"operators"` list. There is no shared secret.
 
-The service node also signs its own quota and transient pushes, so server-core's
-list carries both the panel and the service node.
+The server service also signs its own quota and transient pushes, so server-core's
+list carries both the panel and the server service.
 
 The transport underneath is TLS both ways. Every service makes a certificate of
 its own on first start and prints the hash of its key; the panel is configured
@@ -56,13 +56,13 @@ A sidebar with two views, drawn by a small script from the panel's own JSON API:
 - **Monitoring** - every configured service probed concurrently through its
   signed `GET /healthz` (name, version, uptime, current and peak RAM, latency),
   re-probed every few seconds.
-- **Users** - the accounts on the service node: search by fingerprint (the node
+- **Users** - the accounts on the server service: search by fingerprint (the server service
   does the searching), filter by approval state, open an account to read its
   terms, set its storage quota in megabytes, or approve it. An account whose
   quota, card or address takedown the messaging server has not yet received
   is tagged "server not updated".
 
-The settings page of server-core, the service node, each facade and each gateway
+The settings page of server-core, the server service, each facade and each gateway
 opens with a Logs section: the service's log level and, for server-core, a facade
 or a gateway, the level of libi2pd's lines in that log (`none`, `error`, `warn`,
 `info`, `debug`). Both apply at once. Its `[open]` opens the
@@ -95,9 +95,9 @@ list), the listen address, and the `services` it manages - no secrets. Each
 service is named by its operator socket and by the `pin` it presents there; an
 `http://` URL or a missing pin refuses to load, so a service cannot quietly be
 reached unauthenticated. The list holds one `server-core`, the one
-`service-node` bound to it, and any number of facades and gateways; every service
+`server-service` bound to it, and any number of facades and gateways; every service
 has a name of its own, and a configuration with two of a name, a second core or
-node, or a key the panel does not know refuses to load.
+server service, or a key the panel does not know refuses to load.
 
 Each facade mints its own address and reports it, and the panel writes them into the server descriptor
 whenever the panel is claimed, the service list is saved or a facade is given a

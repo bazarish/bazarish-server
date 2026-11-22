@@ -110,7 +110,7 @@ std::string settingsPathOf(const std::string& kind)
     if (kind == bazarish::admin::kServerCoreKind) {
         return routes::kMessagingSettings;
     }
-    if (kind == bazarish::admin::kServiceNodeKind) {
+    if (kind == bazarish::admin::kServerServiceKind) {
         return routes::kAccountSettings;
     }
     if (kind == bazarish::admin::kFacadeKind || kind == bazarish::admin::kGatewayKind) {
@@ -124,7 +124,7 @@ std::string restartPathOf(const std::string& kind)
     if (kind == bazarish::admin::kServerCoreKind) {
         return routes::kMessagingRestart;
     }
-    if (kind == bazarish::admin::kServiceNodeKind) {
+    if (kind == bazarish::admin::kServerServiceKind) {
         return routes::kAccountRestart;
     }
     if (kind == bazarish::admin::kFacadeKind || kind == bazarish::admin::kGatewayKind) {
@@ -138,7 +138,7 @@ std::string logsPathOf(const std::string& kind)
     if (kind == bazarish::admin::kServerCoreKind) {
         return routes::kMessagingLogs;
     }
-    if (kind == bazarish::admin::kServiceNodeKind) {
+    if (kind == bazarish::admin::kServerServiceKind) {
         return routes::kAccountLogs;
     }
     if (kind == bazarish::admin::kFacadeKind || kind == bazarish::admin::kGatewayKind) {
@@ -246,7 +246,7 @@ std::optional<ServiceEntry> HttpApi::logSource(const http::Request& request) con
     std::optional<ServiceEntry> service;
     if (!name.empty()) {
         service = serviceNamed(name);
-    } else if (kind == kServerCoreKind || kind == kServiceNodeKind) {
+    } else if (kind == kServerCoreKind || kind == kServerServiceKind) {
         service = serviceOfKind(kind);
     }
     if (!service.has_value() || logsPathOf(service->kind).empty()) {
@@ -270,7 +270,7 @@ std::string HttpApi::loginFacade(const ServiceEntry& node)
     const JsonResult settings
         = callJson(node, identity_, credential_, "GET", routes::kAccountSettings);
     if (!settings.ok) {
-        bazarish::log::warn("sign-in shows no code: the service node did not answer ({})",
+        bazarish::log::warn("sign-in shows no code: the server service did not answer ({})",
             failureText(settings));
         return {};
     }
@@ -284,7 +284,7 @@ std::string HttpApi::loginFacade(const ServiceEntry& node)
 std::string HttpApi::loginForm(const std::string& error, http::Response& response)
 {
     const std::int64_t now = nowSeconds();
-    const std::optional<ServiceEntry> node = serviceOfKind(kServiceNodeKind);
+    const std::optional<ServiceEntry> node = serviceOfKind(kServerServiceKind);
     const std::string facade = node.has_value() ? loginFacade(*node) : std::string();
     std::string scan;
     if (!facade.empty()) {
@@ -299,7 +299,7 @@ std::string HttpApi::loginForm(const std::string& error, http::Response& respons
             setCookie(response, kSignInCookie, token, kSignInCookieAttributes);
             scan = signInScan(assets_, facade, challenge, key);
         } else {
-            bazarish::log::warn("sign-in shows no code: the service node refused it ({})",
+            bazarish::log::warn("sign-in shows no code: the server service refused it ({})",
                 failureText(expected));
         }
     }
@@ -315,15 +315,15 @@ std::string HttpApi::loginForm(const std::string& error, http::Response& respons
 void HttpApi::proxyToNode(http::Response& response, const std::string& method,
     const std::string& path, const std::string& body)
 {
-    const std::optional<ServiceEntry> node = serviceOfKind(kServiceNodeKind);
+    const std::optional<ServiceEntry> node = serviceOfKind(kServerServiceKind);
     if (!node.has_value()) {
-        sendError(response, 503, "the panel lists no service node it can reach");
+        sendError(response, 503, "the panel lists no server service it can reach");
         return;
     }
     const JsonResult result = callJson(*node, identity_, credential_, method, path, body);
     if (result.status == 0) {
-        bazarish::log::warn("service-node unreachable: {}", result.error);
-        sendError(response, 502, result.error.empty() ? "service-node unreachable" : result.error);
+        bazarish::log::warn("server-service unreachable: {}", result.error);
+        sendError(response, 502, result.error.empty() ? "server-service unreachable" : result.error);
         return;
     }
     sendJsonText(response, result.body, result.status);
@@ -406,7 +406,7 @@ void HttpApi::registerRoutes()
     }));
 
     http_->get("/login/wait", filled([this](const http::Request& request, http::Response& response) {
-        const std::optional<ServiceEntry> node = serviceOfKind(kServiceNodeKind);
+        const std::optional<ServiceEntry> node = serviceOfKind(kServerServiceKind);
         if (!node.has_value()) {
             sendJson(response, nlohmann::json{{"state", "gone"}});
             return;
@@ -633,15 +633,15 @@ void HttpApi::registerRoutes()
     }));
 
     http_->get("/api/settings", api([this](const http::Request&, http::Response& response) {
-        const std::optional<ServiceEntry> node = serviceOfKind(kServiceNodeKind);
+        const std::optional<ServiceEntry> node = serviceOfKind(kServerServiceKind);
         if (!node.has_value()) {
-            sendError(response, 503, "the panel lists no service node it can reach");
+            sendError(response, 503, "the panel lists no server service it can reach");
             return;
         }
         const JsonResult settings
             = callJson(*node, identity_, credential_, "GET", routes::kAccountSettings);
         if (!settings.ok) {
-            bazarish::log::warn("service-node settings unavailable: {}", settings.error);
+            bazarish::log::warn("server-service settings unavailable: {}", settings.error);
             sendJsonText(response, settings.body, settings.status == 0 ? 502 : settings.status);
             return;
         }
@@ -674,12 +674,12 @@ void HttpApi::registerRoutes()
         std::optional<ServiceEntry> service;
         if (!name.empty()) {
             service = serviceNamed(name);
-        } else if (kind == kServerCoreKind || kind == kServiceNodeKind) {
+        } else if (kind == kServerCoreKind || kind == kServerServiceKind) {
             service = serviceOfKind(kind);
         } else {
             sendError(response, 400,
                 "the panel has one " + std::string(kServerCoreKind) + " and one "
-                    + kServiceNodeKind + "; anything else is asked for by name");
+                    + kServerServiceKind + "; anything else is asked for by name");
             return;
         }
         if (!service.has_value()) {
@@ -716,8 +716,8 @@ void HttpApi::registerRoutes()
     http_->get("/api/facades", api([this](const http::Request&, http::Response& response) {
         const std::vector<ServiceEntry> services = settings_->get().services;
         nlohmann::json described = nlohmann::json::array();
-        std::string describedError = "the panel lists no service node";
-        if (const std::optional<ServiceEntry> node = serviceOfKind(kServiceNodeKind);
+        std::string describedError = "the panel lists no server service";
+        if (const std::optional<ServiceEntry> node = serviceOfKind(kServerServiceKind);
             node.has_value()) {
             const JsonResult shown
                 = callJson(*node, identity_, credential_, "GET", routes::kAccountSettings);

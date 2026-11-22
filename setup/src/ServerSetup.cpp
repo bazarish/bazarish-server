@@ -34,7 +34,7 @@ using ports::kNodePort;
 constexpr int kJsonIndent = 2;
 
 constexpr const char* kCoreName = "server-core";
-constexpr const char* kNodeName = "service-node";
+constexpr const char* kNodeName = "server-service";
 constexpr const char* kFacadeName = "facade";
 constexpr const char* kPanelName = "admin-panel";
 constexpr const char* kGatewayName = "gateway";
@@ -132,14 +132,14 @@ bool setUpServer(const Layout& layout)
         {{"state", stateOf(kFacadeName).string()}, {"listen", endpoint(kFacadePort)},
             {"directListen", endpoint(kFacadeDirectPort)},
             {"opsListen", endpoint(kFacadeOpsPort)}, {"messaging", pinned(kCorePort, corePin)},
-            {"serviceNode", pinned(kNodePort, nodePin)}, {"operators", panelOperators},
+            {"serverService", pinned(kNodePort, nodePin)}, {"operators", panelOperators},
             {"opsClients", panelClients}});
     writeConfig(configOf(kCoreName),
         {{"state", stateOf(kCoreName).string()}, {"listen", endpoint(kCorePort)},
             {"opsListen", endpoint(kCoreOpsPort)}, {"gatewayListen", endpoint(kCoreGatewayPort)},
             {"operators", nlohmann::json::array({nodeFingerprint, panelFingerprint})},
             {"opsClients", nlohmann::json::array({nodePin, panelPin})},
-            {"serviceNode", {{"url", tlsUrl(kNodePort)}, {"pin", nodePin}}}});
+            {"serverService", {{"url", tlsUrl(kNodePort)}, {"pin", nodePin}}}});
     writeConfig(configOf(kPanelName),
         {{"state", stateOf(kPanelName).string()}, {"assets", layout.panelAssets.string()},
             {"listen", endpoint(kPanelPort)},

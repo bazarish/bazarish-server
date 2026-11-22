@@ -47,7 +47,7 @@ PushQueue::PushQueue(
     , delivery_(std::move(delivery))
 {
     if (!delivery_.quota || !delivery_.card || !delivery_.takeDownAddress || !delivery_.forget) {
-        throw std::invalid_argument("the node tells its messaging server of every quota, card,"
+        throw std::invalid_argument("the server service tells its messaging server of every quota, card,"
                                     " address taken down and account deleted");
     }
     fs::create_directories(root_);
@@ -103,7 +103,7 @@ PushQueue::Unsent PushQueue::unsent(const std::string& user) const
     for (const char* const mark : kMarks) {
         if (!body.is_object() || !body.contains(mark) || !body.at(mark).is_boolean()) {
             throw std::runtime_error(path.string()
-                + " is not an unsent mark this node reads: it names quota, card, addressDown"
+                + " is not an unsent mark this server service reads: it names quota, card, addressDown"
                   " and forget as true or false");
         }
     }

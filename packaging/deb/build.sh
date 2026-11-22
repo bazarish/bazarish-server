@@ -98,15 +98,15 @@ install -D -m 0644 gateway/README.md \
 pack bazarish-gateway "" "Bazarish gateway" \
     "Runs the I2P router for Bazarish clients that do not run their own."
 
-for program in server-core/bazarish-server service-node/bazarish-service-node \
+for program in server-core/bazarish-server-core server-service/bazarish-server-service \
     facade-http/bazarish-facade-http admin-panel/bazarish-admin-panel setup/bazarish-setup; do
     installProgram bazarish-server "$program"
 done
-for unit in bazarish-server bazarish-service-node bazarish-facade bazarish-admin-panel; do
+for unit in bazarish-server-core bazarish-server-service bazarish-facade bazarish-admin-panel; do
     installUnit bazarish-server "$unit"
 done
 installTree bazarish-server admin-panel/web admin-panel
-installTree bazarish-server service-node/portal portal
+installTree bazarish-server server-service/portal portal
 install -D -m 0644 README.md "$(stageOf bazarish-server)/usr/share/doc/bazarish-server/README.md"
 pack bazarish-server "bazarish-gateway (= $kVersion), " "Bazarish server" \
     "Message delivery, accounts, the client-facing facade and the admin panel."

@@ -1,5 +1,5 @@
 {
-  // Keys and stored content; the server card is written here on first start.
+  // Keys and stored content.
   "state": "/var/lib/bazarish/server-core",
   // The sealed tunnel and the server card. TLS, with the certificate this server
   // makes in its state directory on first start.
@@ -7,17 +7,17 @@
   // The operator's socket: health, settings, restart, quotas, destinations.
   // Nothing a client speaks is here.
   "opsListen": {"host": "127.0.0.1", "port": 8428},
-  // Who may call the operator endpoints: the service node and the admin panel.
+  // Who may call the operator endpoints: the server service and the admin panel.
   "operators": [],
   // The keys allowed to open the operator's socket, printed by the panel and by
-  // the node when they start.
+  // the server service when they start.
   "opsClients": [],
   // Optional: the gateways of the same operator, each admitted by its key. The
   // admin panel writes both.
   // "gatewayListen": {"host": "127.0.0.1", "port": 8424},
   // "gateways": [],
-  // The local service node, for first-contact card fetches by fingerprint.
-  "serviceNode": {"url": "https://127.0.0.1:8421", "pin": ""},
+  // The local server service, for first-contact card fetches by fingerprint.
+  "serverService": {"url": "https://127.0.0.1:8421", "pin": ""},
   "i2p": {
     "privacy": "max",
     // libi2pd's lines in this log: none, error, warn, info or debug.

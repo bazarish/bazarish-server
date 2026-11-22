@@ -57,19 +57,19 @@ constexpr const char* kDefaultRegistrationMessage
 void printUsage()
 {
     std::printf(
-        "bazarish-service-node %s\n"
-        "Usage: bazarish-service-node --config <path>\n"
-        "       bazarish-service-node --config <path> --fingerprint\n"
-        "       bazarish-service-node --version\n"
+        "bazarish-server-service %s\n"
+        "Usage: bazarish-server-service --config <path>\n"
+        "       bazarish-server-service --config <path> --fingerprint\n"
+        "       bazarish-server-service --version\n"
         "\n"
-        "Everything this node runs on is in the config file: where its state\n"
+        "Everything this server service runs on is in the config file: where its state\n"
         "lives, the server card that binds it to its messaging server, the\n"
         "addresses it listens on and reaches, who may act as operator, and what\n"
         "new accounts get. Nothing is settable twice - a flag that could override\n"
         "the file would mean two answers to the same question.\n"
-        "--fingerprint prints this node's operator fingerprint (creating its\n"
+        "--fingerprint prints this server service's operator fingerprint (creating its\n"
         "identity if needed) and exits, so the messaging server can be started\n"
-        "with it already authorised before this node runs.\n",
+        "with it already authorised before this server service runs.\n",
         bazarish::kBuildVersion);
 }
 
@@ -165,7 +165,7 @@ int main(const int argc, const char** argv)
     const bool fingerprintOnly = argc == 4 && std::strcmp(argv[3], "--fingerprint") == 0;
     const std::variant<fs::path, int> argument = bazarish::server::configArgument(
         fingerprintOnly ? 3 : argc, argv,
-        std::string("bazarish-service-node ") + bazarish::kBuildVersion, printUsage);
+        std::string("bazarish-server-service ") + bazarish::kBuildVersion, printUsage);
     if (const int* const status = std::get_if<int>(&argument)) {
         return *status;
     }
@@ -189,12 +189,12 @@ int main(const int argc, const char** argv)
         return 0;
     }
     if (nodeConfig.messaging.port <= 0) {
-        std::fprintf(stderr, "config: \"messaging\" is required - a node whose messaging server"
+        std::fprintf(stderr, "config: \"messaging\" is required - a server service whose messaging server"
                              " it cannot reach\ncan register an account and then serve nobody\n");
         return 2;
     }
 
-    bazarish::log::setComponent("service-node");
+    bazarish::log::setComponent("server-service");
     bazarish::log::setLevel(nodeConfig.logLevel);
     const auto logRing = std::make_shared<bazarish::server::LogRing>();
     const bazarish::server::LogCapture logCapture(logRing);
@@ -203,8 +203,8 @@ int main(const int argc, const char** argv)
     const bazarish::Identity nodeIdentity = bazarish::server::loadOrCreateIdentity(stateDir);
     const auto sealing = std::make_shared<bazarish::Key>(bazarish::server::loadOrCreateSealingKey(stateDir));
     const bazarish::tls::Credential credential = bazarish::tls::selfSigned(stateDir);
-    std::printf("service-node operator fingerprint: %s\n", nodeIdentity.fingerprint().c_str());
-    std::printf("service-node socket pin: %s\n", credential.pin.c_str());
+    std::printf("server-service operator fingerprint: %s\n", nodeIdentity.fingerprint().c_str());
+    std::printf("server-service socket pin: %s\n", credential.pin.c_str());
     bazarish::service::SubscriptionStore store(stateDir / "store");
     bazarish::service::GrantStore grants(stateDir / "store");
     const std::string messagingUrl = "https://" + nodeConfig.messaging.host + ":"
@@ -283,13 +283,13 @@ int main(const int argc, const char** argv)
 
     const std::optional<bazarish::Bytes> nodeCard = operatorPush.nodeCard(sealing->publicDer());
     if (!nodeCard.has_value()) {
-        bazarish::log::error("the messaging server issued this node no card: no client could open"
+        bazarish::log::error("the messaging server issued this server service no card: no client could open"
                              " a tunnel to it");
         return 1;
     }
     // The pinned link to the messaging server vouches for the card, so its signer is the server.
     const std::string serverFingerprint
-        = bazarish::ServerCard::verify(*nodeCard, bazarish::ServerCard::Service::eServiceNode).server;
+        = bazarish::ServerCard::verify(*nodeCard, bazarish::ServerCard::Service::eServerService).server;
     options.serverFingerprint = serverFingerprint;
     options.nodeCardDer = *nodeCard;
 
@@ -364,7 +364,7 @@ int main(const int argc, const char** argv)
     bazarish::RestartSwitch restart(stopEverything);
     *restartHook = [&restart]() { restart.request(); };
 
-    std::printf("bazarish-service-node %s\n", bazarish::kBuildVersion);
+    std::printf("bazarish-server-service %s\n", bazarish::kBuildVersion);
     std::printf("bound to server: %s\n", serverFingerprint.c_str());
     std::fflush(stdout);
     bazarish::log::info("listening on {}:{} (private channel for facades and the messaging server)",

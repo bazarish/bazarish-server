@@ -40,7 +40,7 @@ if [ "$(grep -c "$kNotice" <<<"$first")" -ne 2 ]; then
     echo "$first" >&2
     exit 1
 fi
-for config in server-core service-node facade admin-panel gateway; do
+for config in server-core server-service facade admin-panel gateway; do
     if [ ! -s "/etc/bazarish/$config.json" ]; then
         echo "the first install wrote no $config.json" >&2
         exit 1
@@ -57,7 +57,7 @@ def change(name, edit):
     with open(path, "w") as file:
         json.dump(config, file)
 change("admin-panel", lambda c: c.update(admin=["the-operator-who-claimed-it"]))
-change("service-node", lambda c: c.update(registration={"requireApproval": True}))
+change("server-service", lambda c: c.update(registration={"requireApproval": True}))
 change("gateway", lambda c: c.update(basePath="/the-path-clients-were-given"))
 OPERATOR
 for state in /var/lib/bazarish/*/; do

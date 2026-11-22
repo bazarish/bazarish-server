@@ -191,7 +191,7 @@ try {
     initial.admins = {admin.fingerprint()};
     initial.consumer
         = service::LoginConsumer{"Bazarish admin panel", {"http://127.0.0.1"}, "Administrator"};
-    initial.services = {ServiceEntry{"node", kServiceNodeKind, at(nodePort), services.pin},
+    initial.services = {ServiceEntry{"node", kServerServiceKind, at(nodePort), services.pin},
         ServiceEntry{"front", kFacadeKind, at(facadePort), services.pin},
         ServiceEntry{"edge", kGatewayKind, at(gatewayPort), services.pin}};
     const auto settings = std::make_shared<PanelSettings>(configPath, initial);

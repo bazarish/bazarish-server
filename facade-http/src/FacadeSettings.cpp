@@ -13,7 +13,7 @@ namespace fs = std::filesystem;
 
 const char* const kLogLevelKey = "logLevel";
 const char* const kMessagingKey = "messaging";
-const char* const kServiceNodeKey = "serviceNode";
+const char* const kServerServiceKey = "serverService";
 const char* const kListenKey = "listen";
 const char* const kOpsListenKey = "opsListen";
 const char* const kDirectListenKey = "directListen";
@@ -31,9 +31,9 @@ void persistFacadeSettings(
     setIfChanged(file, {kMessagingKey, kHostKey}, values.messagingHost, before.messagingHost);
     setIfChanged(file, {kMessagingKey, kPortKey}, values.messagingPort, before.messagingPort);
     setIfChanged(
-        file, {kServiceNodeKey, kHostKey}, values.serviceNodeHost, before.serviceNodeHost);
+        file, {kServerServiceKey, kHostKey}, values.serverServiceHost, before.serverServiceHost);
     setIfChanged(
-        file, {kServiceNodeKey, kPortKey}, values.serviceNodePort, before.serviceNodePort);
+        file, {kServerServiceKey, kPortKey}, values.serverServicePort, before.serverServicePort);
     setIfChanged(file, {kListenKey, kHostKey}, values.listenHost, before.listenHost);
     setIfChanged(file, {kListenKey, kPortKey}, values.listenPort, before.listenPort);
     setIfChanged(file, {kOpsListenKey, kHostKey}, values.opsHost, before.opsHost);

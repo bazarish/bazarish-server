@@ -8,9 +8,9 @@ gets the same bare 404:
 
 - `POST /t` and `GET /v1/server/card` go to the messaging server: the sealed
   tunnel of the mailbox calls and the signed card whose key seals it.
-- `POST /n` and `GET /v1/node/card` go to the service node: the same for the
+- `POST /n` and `GET /v1/node/card` go to the server service: the same for the
   account calls.
-- `POST /login/callback` and `GET /login/c/<nonce>` go to the service node: a
+- `POST /login/callback` and `GET /login/c/<nonce>` go to the server service: a
   sign-in by code at the portal or the admin panel, whose callback names this
   facade.
 
@@ -72,4 +72,4 @@ destination, and the flow does not enter I2P. Left out, the destination is the
 only way in.
 
 Both backends are reached over TLS, each pinned by the key it prints:
-`"messaging"` and `"serviceNode"`, each `{"host": ..., "port": ..., "pin": ...}`.
+`"messaging"` and `"serverService"`, each `{"host": ..., "port": ..., "pin": ...}`.

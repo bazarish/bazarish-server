@@ -18,7 +18,7 @@ int main(const int argc, const char**)
         std::printf(
             "Usage: bazarish-setup\n"
             "\n"
-            "Writes the configs of server-core, the service node, the facade and the\n"
+            "Writes the configs of server-core, the server service, the facade and the\n"
             "admin panel into %s, makes the keys each of them presents under %s,\n"
             "and opens the gateway's operator socket to the panel. Once any of the\n"
             "four configs is there it changes nothing.\n",

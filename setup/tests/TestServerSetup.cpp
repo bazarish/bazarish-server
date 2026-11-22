@@ -73,7 +73,7 @@ try {
     CHECK(bazarish::setup::setUpServer(layout));
 
     const nlohmann::json core = configOf(layout, "server-core");
-    const nlohmann::json node = configOf(layout, "service-node");
+    const nlohmann::json node = configOf(layout, "server-service");
     const nlohmann::json facade = configOf(layout, "facade");
     const nlohmann::json panel = configOf(layout, "admin-panel");
     const nlohmann::json gateway = configOf(layout, "gateway");
@@ -92,8 +92,8 @@ try {
 
     CHECK(core.at("operators") == nlohmann::json::array({nodeFingerprint, panelFingerprint}));
     CHECK(core.at("opsClients") == nlohmann::json::array({nodePin, panelPin}));
-    CHECK(core.at("serviceNode").at("url") == reached(node.at("listen")));
-    CHECK(core.at("serviceNode").at("pin") == nodePin);
+    CHECK(core.at("serverService").at("url") == reached(node.at("listen")));
+    CHECK(core.at("serverService").at("pin") == nodePin);
 
     CHECK(reachedAt(node.at("messaging"), core.at("opsListen"), corePin));
     CHECK(!node.contains("serverCard"));
@@ -101,7 +101,7 @@ try {
     CHECK(!node.at("portal").contains("listen"));
 
     CHECK(reachedAt(facade.at("messaging"), core.at("listen"), corePin));
-    CHECK(reachedAt(facade.at("serviceNode"), node.at("listen"), nodePin));
+    CHECK(reachedAt(facade.at("serverService"), node.at("listen"), nodePin));
 
     for (const nlohmann::json* operated : {&node, &facade, &gateway}) {
         CHECK(operated->at("operators") == nlohmann::json::array({panelFingerprint}));
@@ -123,8 +123,8 @@ try {
     };
     CHECK(entry("server-core").at("url") == reached(core.at("opsListen")));
     CHECK(entry("server-core").at("pin") == corePin);
-    CHECK(entry("service-node").at("url") == reached(node.at("opsListen")));
-    CHECK(entry("service-node").at("pin") == nodePin);
+    CHECK(entry("server-service").at("url") == reached(node.at("opsListen")));
+    CHECK(entry("server-service").at("pin") == nodePin);
     CHECK(entry("facade").at("url") == reached(facade.at("opsListen")));
     CHECK(entry("facade").at("pin") == facadePin);
     CHECK(entry("gateway").at("url") == reached(gateway.at("opsListen")));

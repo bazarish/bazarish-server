@@ -48,7 +48,7 @@ struct AccountApiOptions {
 
 
     std::shared_ptr<PushQueue> pushes;
-    // A private node, such as a bot's own: a signer outside this set is refused. Empty: a public node.
+    // A private server service, such as a bot's own: a signer outside this set is refused. Empty: a public server service.
     std::function<bool(const std::string& user)> admitsUser;
     std::shared_ptr<UserLocks> userLocks = std::make_shared<UserLocks>();
 

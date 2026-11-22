@@ -7,8 +7,8 @@ implement is specified in the `docs-main` repository; the desktop client
 
 | Directory | Binary | Role |
 |---|---|---|
-| `server-core` | `bazarish-server` | message delivery, mailboxes, federation over I2P |
-| `service-node` | `bazarish-service-node` | registration, accounts, the browser portal |
+| `server-core` | `bazarish-server-core` | message delivery, mailboxes, federation over I2P |
+| `server-service` | `bazarish-server-service` | registration, accounts, the browser portal |
 | `facade-http` | `bazarish-facade-http` | the client-facing last mile: a sealed tunnel, forwarded blind |
 | `admin-panel` | `bazarish-admin-panel` | operator UI, authenticated by identity signature |
 | `gateway` | `bazarish-gateway` | optional: runs the I2P router for clients that do not run their own |
@@ -51,7 +51,7 @@ build-core`); it then picks up the same `common` submodule from one directory up
 `packaging/deb/build.sh <out-dir>` builds, tests and packs two Debian 13 packages:
 
 - `bazarish-gateway` - the gateway alone. It needs nothing else to run.
-- `bazarish-server` - server-core, the service node, the facade and the admin
+- `bazarish-server` - server-core, the server service, the facade and the admin
   panel, with `bazarish-gateway` as a dependency.
 
 Every binary here reports the nearest release tag `vX.Y.Z` as `X.Y.Z (<commit>)`, or

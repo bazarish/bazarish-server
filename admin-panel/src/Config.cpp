@@ -18,7 +18,7 @@ using bazarish::readFileText;
 namespace {
 
 const char* const kKnownKinds[]
-    = {kServerCoreKind, kServiceNodeKind, kFacadeKind, kGatewayKind};
+    = {kServerCoreKind, kServerServiceKind, kFacadeKind, kGatewayKind};
 
 const char* const kKnownKeys[] = {"admin", "state", "assets", "listen", "consumer", "services"};
 
@@ -58,11 +58,11 @@ void requireCoherentServices(const std::vector<ServiceEntry>& services)
                 + service.name + "\": each needs a name of its own");
         }
         cores += service.kind == kServerCoreKind ? 1 : 0;
-        nodes += service.kind == kServiceNodeKind ? 1 : 0;
+        nodes += service.kind == kServerServiceKind ? 1 : 0;
     }
     if (cores > 1 || nodes > 1) {
         throw std::invalid_argument(
-            "the panel holds one server-core and one service-node at most");
+            "the panel holds one server-core and one server-service at most");
     }
 }
 

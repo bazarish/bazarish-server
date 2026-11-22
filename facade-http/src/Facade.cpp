@@ -60,11 +60,11 @@ std::optional<Upstream> upstreamFor(
     }
     if ((tunnel && path == bazarish::tunnel::kNodeTunnelPath)
         || (card && path == bazarish::tunnel::kNodeCardPath)) {
-        return options.serviceNode;
+        return options.serverService;
     }
     if ((tunnel && path == loginrelay::kCallbackPath)
         || (card && loginrelay::nonceAfter(path, loginrelay::kChallengePrefix))) {
-        return options.serviceNode;
+        return options.serverService;
     }
     return std::nullopt;
 }
@@ -249,8 +249,8 @@ void Facade::setupOpsRoutes()
                 {"logLevel", values.logLevel},
                 {"address", options_.address},
                 {"messaging", {{"host", values.messagingHost}, {"port", values.messagingPort}}},
-                {"serviceNode",
-                    {{"host", values.serviceNodeHost}, {"port", values.serviceNodePort}}},
+                {"serverService",
+                    {{"host", values.serverServiceHost}, {"port", values.serverServicePort}}},
                 {"listen", {{"host", values.listenHost}, {"port", values.listenPort}}},
                 {"opsListen", {{"host", values.opsHost}, {"port", values.opsPort}}},
                 {"directListen", {{"host", values.directHost}, {"port", values.directPort}}},
@@ -269,7 +269,7 @@ void Facade::setupOpsRoutes()
         const nlohmann::json body = bazarish::parseJson(request.body);
         values.logLevel = bazarish::server::logLevelIn(body, values.logLevel);
         readEndpointInto(body, "messaging", values.messagingHost, values.messagingPort);
-        readEndpointInto(body, "serviceNode", values.serviceNodeHost, values.serviceNodePort);
+        readEndpointInto(body, "serverService", values.serverServiceHost, values.serverServicePort);
         readEndpointInto(body, "listen", values.listenHost, values.listenPort);
         readEndpointInto(body, "opsListen", values.opsHost, values.opsPort);
         readEndpointInto(body, "directListen", values.directHost, values.directPort);

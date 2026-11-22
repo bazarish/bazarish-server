@@ -65,7 +65,7 @@ try {
     values.messagingPort = backendPort;
     bazarish::facade::FacadeOptions options;
     options.messaging = {"127.0.0.1", backendPort, backendCredential.pin};
-    options.serviceNode = {"127.0.0.1", backendPort, backendCredential.pin};
+    options.serverService = {"127.0.0.1", backendPort, backendCredential.pin};
     options.address = "example.b32.i2p";
     options.settings = std::make_shared<bazarish::facade::FacadeSettings>(configPath, values);
     options.stateDirectory = (state / "facade").string();

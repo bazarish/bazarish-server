@@ -51,9 +51,9 @@ constexpr int kDefaultOpsPort = bazarish::ports::kCoreOpsPort;
 void printUsage()
 {
     std::printf(
-        "bazarish-server %s\n"
-        "Usage: bazarish-server --config <path>\n"
-        "       bazarish-server --version\n"
+        "bazarish-server-core %s\n"
+        "Usage: bazarish-server-core --config <path>\n"
+        "       bazarish-server-core --version\n"
         "\n"
         "Everything this server runs on is in the config file - state directory,\n"
         "listen addresses, operator fingerprints, I2P settings - so there is\n"
@@ -76,7 +76,7 @@ using bazarish::writePrivateFile;
 int main(const int argc, const char** argv)
 {
     const std::variant<fs::path, int> argument = bazarish::server::configArgument(
-        argc, argv, std::string("bazarish-server ") + bazarish::kBuildVersion, printUsage);
+        argc, argv, std::string("bazarish-server-core ") + bazarish::kBuildVersion, printUsage);
     if (const int* const status = std::get_if<int>(&argument)) {
         return *status;
     }
@@ -105,10 +105,10 @@ int main(const int argc, const char** argv)
             kDefaultOpsPort});
     bazarish::server::DeliveryEngineOptions engineOptions;
     const std::vector<std::string> operatorFingerprints = config.list("operators");
-    const std::string serviceNodeUrl = config.text("serviceNode.url");
-    const std::string serviceNodePin = config.text("serviceNode.pin");
-    if (serviceNodeUrl.empty() || serviceNodePin.empty()) {
-        std::fprintf(stderr, "config: serviceNode.url and serviceNode.pin are required\n");
+    const std::string serverServiceUrl = config.text("serverService.url");
+    const std::string serverServicePin = config.text("serverService.pin");
+    if (serverServiceUrl.empty() || serverServicePin.empty()) {
+        std::fprintf(stderr, "config: serverService.url and serverService.pin are required\n");
         return 1;
     }
     const std::vector<std::string> opsClientPins = config.list("opsClients");
@@ -144,18 +144,18 @@ int main(const int argc, const char** argv)
     bazarish::server::DeliveryEngine engine(storage, engineOptions);
 
     const bazarish::tls::Credential credential = bazarish::tls::selfSigned(stateDir);
-    std::printf("bazarish-server %s\n", bazarish::kBuildVersion);
+    std::printf("bazarish-server-core %s\n", bazarish::kBuildVersion);
     std::printf("server fingerprint: %s\n", identity->fingerprint().c_str());
     std::printf("server socket pin: %s\n", credential.pin.c_str());
     std::fflush(stdout);
 
-    const bazarish::http::Url serviceNode = bazarish::http::parseUrl(serviceNodeUrl);
-    if (!serviceNode.tls) {
-        std::fprintf(stderr, "config: serviceNode.url is an https:// URL\n");
+    const bazarish::http::Url serverService = bazarish::http::parseUrl(serverServiceUrl);
+    if (!serverService.tls) {
+        std::fprintf(stderr, "config: serverService.url is an https:// URL\n");
         return 1;
     }
     bazarish::server::NodeCards nodeCards(
-        {serviceNode.host, serviceNode.port, serviceNode.tls, serviceNodePin}, identity);
+        {serverService.host, serverService.port, serverService.tls, serverServicePin}, identity);
 
     std::unique_ptr<bazarish::i2p::Router> router;
     std::unique_ptr<bazarish::server::PerUserDestinations> perUserDests;
@@ -232,7 +232,7 @@ int main(const int argc, const char** argv)
     settingValues.i2pPrivacy = bazarish::i2p::privacyName(privacy);
     settingValues.listenHost = host;
     settingValues.listenPort = port;
-    settingValues.serviceNodeUrl = serviceNodeUrl;
+    settingValues.serverServiceUrl = serverServiceUrl;
     settingValues.gatewayListenHost = gatewayListen.has_value() ? gatewayListen->host : "";
     settingValues.gatewayListenPort = gatewayListen.has_value() ? gatewayListen->port : 0;
     settingValues.gateways = gatewayPins;

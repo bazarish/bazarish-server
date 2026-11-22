@@ -97,7 +97,7 @@ try {
                 },
             .forget = [](const std::string&) { return PushOutcome::eDelivered; }});
     std::filesystem::create_directories(root);
-    const std::filesystem::path configPath = root / "service-node.json";
+    const std::filesystem::path configPath = root / "server-service.json";
     {
         std::ofstream config(configPath);
         config << "{}\n";

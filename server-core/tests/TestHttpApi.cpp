@@ -109,7 +109,7 @@ try {
     initialSettings.i2pLogLevel = "none";
     initialSettings.listenHost = "127.0.0.1";
     initialSettings.listenPort = 8420;
-    initialSettings.serviceNodeUrl = "http://127.0.0.1:8421";
+    initialSettings.serverServiceUrl = "http://127.0.0.1:8421";
     const auto serverSettings = std::make_shared<bazarish::server::ServerSettings>(
         configPath, initialSettings);
     httpOptions.settings = serverSettings;
@@ -219,7 +219,7 @@ try {
         CHECK(issued.status == 200);
         const Bytes der
             = fromBase64(nlohmann::json::parse(issued.body).at("card").get<std::string>());
-        const ServerCard card = ServerCard::verify(der, ServerCard::Service::eServiceNode);
+        const ServerCard card = ServerCard::verify(der, ServerCard::Service::eServerService);
         CHECK(card.server == serverFp);
         CHECK(card.sealingKey().fingerprint() == nodeSealing.fingerprint());
     }
@@ -694,12 +694,12 @@ try {
                   .status
             == 400);
         CHECK(bazarish::i2p::i2pLogLevel() == bazarish::i2p::I2pLogLevel::eInfo);
-        const std::string moved = nlohmann::json{{"serviceNode", "https://127.0.0.1:9421"}}.dump();
+        const std::string moved = nlohmann::json{{"serverService", "https://127.0.0.1:9421"}}.dump();
         CHECK(call(opsPort, "PUT", path, operatorHeaders(operatorIdentity, "PUT", path, moved), moved)
                   .status
             == 200);
         std::ifstream rewritten(configPath);
-        CHECK(nlohmann::json::parse(rewritten).at("serviceNode").at("url").get<std::string>()
+        CHECK(nlohmann::json::parse(rewritten).at("serverService").at("url").get<std::string>()
             == "https://127.0.0.1:9421");
         const std::string quiet
             = nlohmann::json{{"logLevel", "info"}, {"i2pLogLevel", "none"}}.dump();

@@ -10,9 +10,9 @@
   "assets": "/opt/bazarish/bazarish-server/admin-panel/web",
   "listen": {"host": "127.0.0.1", "port": 8460},
 
-  // The services of this server: the messaging server, the node bound to it,
+  // The services of this server: the messaging server, the server service bound to it,
   // the facades in front of the pair, and any gateways. Every service needs a
-  // name of its own; the list has one server-core and one service-node. They
+  // name of its own; the list has one server-core and one server-service. They
   // only have to be reachable from this host (a private network, a VPN, a tunnel
   // the operator set up - the panel does not care which).
   // Each service is reached on its operator socket, over TLS, and is named by
@@ -21,7 +21,7 @@
   "services": [
     {"name": "server-core",  "kind": "server-core",
      "url": "https://127.0.0.1:8428", "pin": ""},
-    {"name": "service-node", "kind": "service-node",
+    {"name": "server-service", "kind": "server-service",
      "url": "https://127.0.0.1:8427", "pin": ""},
     {"name": "facade",       "kind": "facade",
      "url": "https://127.0.0.1:8429", "pin": ""}

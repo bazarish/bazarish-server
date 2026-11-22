@@ -115,7 +115,7 @@ try {
     const int idlePort = idle->start();
 
     const std::string pin = services.pin;
-    const std::vector<ServiceEntry> home{entry("node", kServiceNodeKind, nodePort, pin),
+    const std::vector<ServiceEntry> home{entry("node", kServerServiceKind, nodePort, pin),
         entry("second", kFacadeKind, facadeBPort, pin), entry("first", kFacadeKind, facadeAPort, pin),
         entry("edge", kGatewayKind, gatewayPort, pin)};
 
@@ -141,7 +141,7 @@ try {
     CHECK(!publishFacades(broken, panel, panelKeys).empty());
     CHECK(nodeWrites.size() == writesBefore);
 
-    const std::vector<ServiceEntry> facadeless{entry("node", kServiceNodeKind, nodePort, pin)};
+    const std::vector<ServiceEntry> facadeless{entry("node", kServerServiceKind, nodePort, pin)};
     CHECK(!publishFacades(facadeless, panel, panelKeys).empty());
     CHECK(nodeWrites.size() == writesBefore);
 

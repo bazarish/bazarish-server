@@ -1,6 +1,6 @@
 # Bazarish project (c) 2026
 cmake_minimum_required(VERSION 3.20)
-project(bazarish-service-node CXX)
+project(bazarish-server-service CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -42,10 +42,10 @@ target_link_libraries(bazarish_service_lib PUBLIC Bazarish::Common Threads::Thre
     bazarish_server_qr)
 target_compile_options(bazarish_service_lib PRIVATE -Wall -Wextra -Werror)
 
-add_executable(bazarish-service-node src/Main.cpp)
-bazarish_stamp_version(bazarish-service-node)
-target_link_libraries(bazarish-service-node PRIVATE bazarish_service_lib)
-target_compile_options(bazarish-service-node PRIVATE -Wall -Wextra -Werror)
+add_executable(bazarish-server-service src/Main.cpp)
+bazarish_stamp_version(bazarish-server-service)
+target_link_libraries(bazarish-server-service PRIVATE bazarish_service_lib)
+target_compile_options(bazarish-server-service PRIVATE -Wall -Wextra -Werror)
 
 enable_testing()
 

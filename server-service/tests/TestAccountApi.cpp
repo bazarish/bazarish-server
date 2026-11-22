@@ -109,7 +109,7 @@ try {
     const std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
     const Key nodeSealing = Key::generateSealing();
     const Bytes nodeCardDer = ServerCard::issue(serverIdentity,
-        ServerCard::Service::eServiceNode, Key::fromPublicDer(nodeSealing.publicDer()));
+        ServerCard::Service::eServerService, Key::fromPublicDer(nodeSealing.publicDer()));
 
     constexpr std::uint64_t kQuota = 10 * 1024 * 1024;
     NodeSettings::Values values;

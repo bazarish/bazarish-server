@@ -1,13 +1,13 @@
 [Unit]
-Description=Bazarish service node
-After=network-online.target bazarish-server.service
+Description=Bazarish server service
+After=network-online.target bazarish-server-core.service
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=bazarish
 Group=bazarish
-ExecStart=/usr/lib/bazarish-server/bazarish-service-node --config /etc/bazarish/service-node.json
+ExecStart=/usr/lib/bazarish-server/bazarish-server-service --config /etc/bazarish/server-service.json
 Restart=on-failure
 RestartSec=5
 LimitNOFILE=65536

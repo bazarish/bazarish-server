@@ -3,7 +3,7 @@
 # bazarish-setup writes the configs on the first install only; bazarish-gateway made the user.
 set -e
 
-readonly kUnits="bazarish-server.service bazarish-service-node.service \
+readonly kUnits="bazarish-server-core.service bazarish-server-service.service \
 bazarish-facade.service bazarish-admin-panel.service"
 
 if [ "$1" = "configure" ]; then

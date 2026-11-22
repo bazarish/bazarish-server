@@ -12,8 +12,8 @@ struct FacadeSettingsValues {
     std::string logLevel;
     std::string messagingHost;
     int messagingPort = 0;
-    std::string serviceNodeHost;
-    int serviceNodePort = 0;
+    std::string serverServiceHost;
+    int serverServicePort = 0;
     std::string listenHost;
     int listenPort = 0;
     std::string opsHost;

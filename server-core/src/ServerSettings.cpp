@@ -18,7 +18,7 @@ const char* const kI2pPrivacyKey = "privacy";
 const char* const kListenKey = "listen";
 const char* const kHostKey = "host";
 const char* const kPortKey = "port";
-const char* const kServiceNodeKey = "serviceNode";
+const char* const kServerServiceKey = "serverService";
 const char* const kUrlKey = "url";
 const char* const kGatewayListenKey = "gatewayListen";
 const char* const kGatewaysKey = "gateways";
@@ -32,7 +32,7 @@ void persistServerSettings(
     setIfChanged(file, {kListenKey, kHostKey}, values.listenHost, before.listenHost);
     setIfChanged(file, {kListenKey, kPortKey}, values.listenPort, before.listenPort);
     setIfChanged(
-        file, {kServiceNodeKey, kUrlKey}, values.serviceNodeUrl, before.serviceNodeUrl);
+        file, {kServerServiceKey, kUrlKey}, values.serverServiceUrl, before.serverServiceUrl);
     if (!values.gatewayListenHost.empty()) {
         setIfChanged(file, {kGatewayListenKey, kHostKey}, values.gatewayListenHost,
             before.gatewayListenHost);

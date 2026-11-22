@@ -127,7 +127,7 @@
         if (service.kind === "server-core") {
             return "#/settings/server";
         }
-        if (service.kind === "service-node") {
+        if (service.kind === "server-service") {
             return "#/settings/addresses";
         }
         return "#/settings/" + (service.kind === "facade" ? "facades" : "gateways") + "/"
@@ -637,7 +637,7 @@
     ];
     var kLogLevels = ["error", "warn", "info", "debug"];
     var kI2pLogLevels = ["none", "error", "warn", "info", "debug"];
-    var kServiceKinds = ["server-core", "service-node", "facade", "gateway"];
+    var kServiceKinds = ["server-core", "server-service", "facade", "gateway"];
     var kPrivacyLevels = ["minimal", "middle", "max"];
     var kRestartWaitMs = 10000;
     var kLogWindowWidth = 960;
@@ -1096,7 +1096,7 @@
                     }
                 };
             });
-        restartButton(footer, { kind: "service-node" });
+        restartButton(footer, { kind: "server-service" });
     }
 
     function renderPortalTab(form, data) {
@@ -1146,11 +1146,11 @@
                     }
                 };
             });
-        restartButton(footer, { kind: "service-node" });
+        restartButton(footer, { kind: "server-service" });
     }
 
     function renderAddressesTab(form, data) {
-        var talk = logsSection(form, { kind: "service-node" });
+        var talk = logsSection(form, { kind: "server-service" });
         var level = chipRow(talk, N_("Log level"), N_("Applies at once"),
             kLogLevels.map(function (name) { return { value: name, label: name, raw: true }; }),
             data.logLevel || "info");
@@ -1175,12 +1175,12 @@
             shareButtons(descriptorRow, data.descriptor);
         }
 
-        var wiring = section(form, N_("Service node"));
+        var wiring = section(form, N_("Server service"));
         var listen = endpointRow(wiring, "API", data.listen,
             N_("Facades and the messaging server connect here. Not public."),
             true);
         var messaging = endpointRow(wiring, N_("Messaging server"), data.messaging,
-            N_("The server-core this node works with"),
+            N_("The server-core this server service works with"),
             true);
 
         var footer = saveFooter(form,
@@ -1207,7 +1207,7 @@
                     }
                 };
             });
-        restartButton(footer, { kind: "service-node" });
+        restartButton(footer, { kind: "server-service" });
     }
 
     function renderAccountsTab(form, data) {
@@ -1263,10 +1263,10 @@
 
         var wiring = section(form, N_("Connections"));
         var listen = endpointRow(wiring, N_("Listens on"), data.listen,
-            N_("The facade and the node connect here. Not public."), true);
+            N_("The facade and the server service connect here. Not public."), true);
         var gatewaysAt = endpointRow(wiring, N_("Gateway socket"), data.gatewayListen,
             N_("Gateways connect here without I2P. Not public."), true);
-        var node = fieldRow(wiring, N_("Service node"), data.serviceNode, {
+        var node = fieldRow(wiring, N_("Server service"), data.serverService, {
             placeholder: "http://127.0.0.1:8421", restart: true
         });
         readOnlyRow(wiring, N_("Fingerprint"), data.fingerprint);
@@ -1284,7 +1284,7 @@
                         host: listen.host.value.trim(),
                         port: portRead(listen.port, N_("The messaging server"))
                     },
-                    serviceNode: node.value.trim()
+                    serverService: node.value.trim()
                 };
                 if (gatewaysAt.host.value.trim() !== "" || gatewaysAt.port.value !== "") {
                     body.gatewayListen = {
@@ -1398,7 +1398,7 @@
 
         var backends = section(form, N_("Backends"));
         var messaging = endpointRow(backends, N_("Messaging server"), data.messaging, "", true);
-        var serviceNode = endpointRow(backends, N_("Service node"), data.serviceNode, "", true);
+        var serverService = endpointRow(backends, N_("Server service"), data.serverService, "", true);
 
         var i2p = section(form, N_("I2P"));
         var privacy = chipRow(i2p, N_("Privacy"),
@@ -1435,9 +1435,9 @@
                             host: messaging.host.value.trim(),
                             port: portRead(messaging.port, N_("The messaging server"))
                         },
-                        serviceNode: {
-                            host: serviceNode.host.value.trim(),
-                            port: portRead(serviceNode.port, N_("The service node"))
+                        serverService: {
+                            host: serverService.host.value.trim(),
+                            port: portRead(serverService.port, N_("The server service"))
                         },
                         i2pLogLevel: i2pLogLevel(),
                         i2pPrivacy: privacy(),
@@ -1685,7 +1685,7 @@
                         throw new Error(t("Two services are named %1", named));
                     }
                     names[named] = true;
-                    if (entry.kind.value === "server-core" || entry.kind.value === "service-node") {
+                    if (entry.kind.value === "server-core" || entry.kind.value === "server-service") {
                         if (singles[entry.kind.value]) {
                             throw new Error(t("The panel already has a %1", entry.kind.value));
                         }

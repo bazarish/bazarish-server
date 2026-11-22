@@ -166,15 +166,15 @@ void testWebFlow()
     constexpr std::uint64_t kQuota = 20 * 1024 * 1024;
     NodeSettings::Values values;
     values.loginConsumer
-        = LoginConsumer{"Bazarish service node", {"http://node.example"}, "Account owner"};
+        = LoginConsumer{"Bazarish server service", {"http://node.example"}, "Account owner"};
     values.defaultQuotaBytes = kQuota;
     values.facades = {"abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqr.b32.i2p"};
     PortalApiOptions options;
-    options.serverFingerprint = "service-node-fingerprint";
+    options.serverFingerprint = "a-server-key-fingerprint";
     options.challengeSecret = toHex(randomBytes(kSecretBytes));
     options.sessionSecret = toHex(randomBytes(kSecretBytes));
     options.assetsDirectory = BAZARISH_PORTAL_ASSETS_DIR;
-    const fs::path nodeConfig = root / "service-node.json";
+    const fs::path nodeConfig = root / "server-service.json";
     fs::create_directories(root);
     std::ofstream(nodeConfig) << "{}";
     options.settings = std::make_shared<NodeSettings>(nodeConfig, values);
@@ -197,7 +197,7 @@ void testWebFlow()
     const http::ClientResponse page = call(port, "GET", "/");
     CHECK(page.status == 200);
     CHECK(page.body.find("<h2 class=\"view-title\">Sign in<") != std::string::npos);
-    CHECK(page.body.find("server serv ice- node -fin gerp rint<") != std::string::npos);
+    CHECK(page.body.find("server a-se rver -key -fin gerp rint<") != std::string::npos);
 
     for (const char* const code : {"en", "ru", "es", "zh", "ar"}) {
         const http::ClientResponse drawn

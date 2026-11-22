@@ -131,7 +131,7 @@ HttpApi::HttpApi(DiskStorage& storage, EventGate& eventGate, const HttpApiOption
     , startedAt_(nowSeconds())
 {
     if (!options_.accountDevices) {
-        throw std::invalid_argument("the mailbox serves only the accounts its node knows");
+        throw std::invalid_argument("the mailbox serves only the accounts its server service knows");
     }
     storage_.watch(overviewChanged());
     janitorThread_ = std::thread([this]() { expiredSweepLoop(); });
@@ -346,7 +346,7 @@ void HttpApi::setupOpsRoutes()
                 {"i2pLogLevel", values.i2pLogLevel},
                 {"i2pPrivacy", values.i2pPrivacy},
                 {"listen", {{"host", values.listenHost}, {"port", values.listenPort}}},
-                {"serviceNode", values.serviceNodeUrl},
+                {"serverService", values.serverServiceUrl},
                 {"gatewayListen", values.gatewayListenHost.empty()
                         ? nlohmann::json(nullptr)
                         : nlohmann::json{{"host", values.gatewayListenHost},
@@ -367,11 +367,11 @@ void HttpApi::setupOpsRoutes()
                 values.i2pLogLevel = i2pLogLevelIn(body, values.i2pLogLevel);
                 values.i2pPrivacy = privacyIn(body, values.i2pPrivacy);
                 readEndpointInto(body, "listen", values.listenHost, values.listenPort);
-                if (body.contains("serviceNode")) {
-                    values.serviceNodeUrl = body.at("serviceNode").get<std::string>();
-                    if (!bazarish::http::parseUrl(values.serviceNodeUrl).tls) {
+                if (body.contains("serverService")) {
+                    values.serverServiceUrl = body.at("serverService").get<std::string>();
+                    if (!bazarish::http::parseUrl(values.serverServiceUrl).tls) {
                         return errorResponse(400, ErrorCode::eRequestFailed,
-                            "the service node is reached at an https:// URL");
+                            "the server service is reached at an https:// URL");
                     }
                 }
                 readEndpointInto(
@@ -458,8 +458,8 @@ void HttpApi::setupOpsRoutes()
             const Key sealing
                 = Key::fromPublicDer(fromBase64(body.at("sealingKey").get<std::string>()));
             const Bytes card = ServerCard::issue(
-                *options_.identity, ServerCard::Service::eServiceNode, sealing);
-            bazarish::log::info("issued the service node its card");
+                *options_.identity, ServerCard::Service::eServerService, sealing);
+            bazarish::log::info("issued the server service its card");
             return jsonResponse({{"card", toBase64(card)}});
         }));
 }

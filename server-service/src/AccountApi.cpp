@@ -263,7 +263,7 @@ AccountApi::AccountApi(
     , tunnel_(options_.sealingKey, options_.serverFingerprint)
 {
     if (!options_.pushes) {
-        throw std::invalid_argument("the node tells its messaging server of every quota and card");
+        throw std::invalid_argument("the server service tells its messaging server of every quota and card");
     }
     grants_.watch([gate = approvalGate_](const std::string& user) { gate->notify(user); });
 }
@@ -440,7 +440,7 @@ void AccountApi::setupOpsRoutes()
         filled(operatorOnly([this](const http::Request&, http::Response& response) {
             response.contentType = "application/json";
             response.body
-                = health::reportJson("service-node", options_.version, startedAt_, nowSeconds());
+                = health::reportJson("server-service", options_.version, startedAt_, nowSeconds());
         })));
 
     ops_->get("/v1/account/users",
@@ -756,7 +756,7 @@ void AccountApi::setupRoutes()
             const std::string& user = caller.user;
             if (options_.admitsUser && !options_.admitsUser(user)) {
                 respondError(response, 403, ErrorCode::eRequestFailed,
-                    "this node serves only its own accounts");
+                    "this server service serves only its own accounts");
                 return;
             }
             const UserLocks::Held locked = options_.userLocks->hold(user);
@@ -1009,7 +1009,7 @@ void AccountApi::setupRoutes()
             const std::string device = caller.device;
             if (options_.admitsUser && !options_.admitsUser(user)) {
                 return http::errorResponse(
-                    403, ErrorCode::eRequestFailed, "this node serves only its own accounts");
+                    403, ErrorCode::eRequestFailed, "this server service serves only its own accounts");
             }
             http::Response current;
             {

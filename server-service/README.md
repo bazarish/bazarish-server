@@ -1,10 +1,10 @@
-# Bazarish - service-node
+# Bazarish - server-service
 
 Account management for the [Bazarish](https://github.com/bazarish/docs-main)
 messenger, kept as a separate process from the messaging logic: who has an
 account here, what their destination is, and what they are allowed.
 
-A service node is bound to one messaging server by that server's card (passed at
+A server service is bound to one messaging server by that server's card (passed at
 startup), from which it takes the server fingerprint a card must name.
 Authenticated requests carry the caller's hybrid identity, and a caller may only
 act on its own account.
@@ -33,7 +33,7 @@ An alias belongs to `alias-resolver`, which is a service of its own.
   is what redeems a registration into an account. `GET /v1/account/card?user=`
   hands it back to whoever reached this account's destination, which is the only
   way in: the address itself is the secret.
-- **Quota.** This node grants it, stores it and pushes it to the messaging
+- **Quota.** This server service grants it, stores it and pushes it to the messaging
   server, which would otherwise keep serving its own default.
 - **What the messaging server has not confirmed.** A changed quota, a new
   card, an address taken down by `undelegate` or a deleted account - by its
@@ -42,14 +42,14 @@ An alias belongs to `alias-resolver`, which is a service of its own.
   messaging server accepts afterwards replaces a takedown still marked. A
   deleted account's mark has the messaging server drop its mailbox and its
   address, and goes before anything else marked for that user; a delegation is
-  refused with 503 while it is still marked. The node reads every mark at
+  refused with 503 while it is still marked. The server service reads every mark at
   start and refuses to start, naming the file, when one does not name all four.
   The mark names what is due, not a value: a push always carries what the
   account record holds at that moment. A push that fails leaves the mark, and
-  the change still answers 200, because it is made on this node; the account
+  the change still answers 200, because it is made on this server service; the account
   then reads `serverPending: true` on the operator's face. Marks are pushed
   again when the messaging server is known to answer: any answer to a call this
-  node makes to it, including the health check at start, and any signed request
+  server service makes to it, including the health check at start, and any signed request
   the messaging server sends here. There is no timer and no repeat on failure.
 - **The operator's face**: on a socket of its own (`opsListen`, TLS, answering
   only the keys in `opsClients`): listing and searching accounts, ban/unban,
@@ -71,35 +71,35 @@ ctest --test-dir build
 ## Run
 
 ```
-bazarish-service-node --config <path>
+bazarish-server-service --config <path>
 ```
 
-Everything the node runs on is in that file (see `config.example.json`): its
+Everything the server service runs on is in that file (see `config.example.json`): its
 state directory, the server card, the addresses it listens on and reaches, the
 operator fingerprints, and what new accounts get. There are no value flags - one
 place to look, one place to change - and the admin panel edits the same file one
 value at a time, leaving the rest of it, comments included, untouched.
 
-The server card is produced by the messaging server and binds this node to it.
-A client reaches this node through the facade (`facade-http` in this repository)
-in a sealed tunnel of the node's own, `POST /n`, opened under the key in the node
-card, `GET /v1/node/card`. The node makes that key in `state`; at every start the
+The server card is produced by the messaging server and binds this server service to it.
+A client reaches this server service through the facade (`facade-http` in this repository)
+in a sealed tunnel of the server service's own, `POST /n`, opened under the key in the server service
+card, `GET /v1/node/card`. The server service makes that key in `state`; at every start the
 messaging server signs the card with its root, so a client checks it against the
-same fingerprint as the server card, and the node does not start without it. The
-node asks for the card once; a messaging server that does not answer stops the
+same fingerprint as the server card, and the server service does not start without it. The
+server service asks for the card once; a messaging server that does not answer stops the
 start, with the cause in the log. The packaged messaging server tells systemd it is
-ready once it listens, and the node's unit is ordered after it, so at boot the node
+ready once it listens, and the server service's unit is ordered after it, so at boot the server service
 asks a server that already answers.
 
-`listen` and `opsListen` both speak TLS, with a certificate this node makes in
+`listen` and `opsListen` both speak TLS, with a certificate this server service makes in
 its state directory on first start; the hash of its key is printed at startup
 and is what a peer is configured with. `listen` is what the facade and the
 messaging server reach. `opsListen` carries the operator's face and admits only
-a certificate listed in `opsClients`, which is the admin panel's. What this node
+a certificate listed in `opsClients`, which is the admin panel's. What this server service
 asks of the messaging server - quotas, destinations, a deleted mailbox, the
 reseed archive the portal publishes - goes to that server's operator socket:
-`"messaging": {"host": ..., "port": ..., "pin": ...}`, signed with this node's
-identity and presenting this node's certificate, which the messaging server
+`"messaging": {"host": ..., "port": ..., "pin": ...}`, signed with this server service's
+identity and presenting this server service's certificate, which the messaging server
 lists in its own `opsClients`.
 
 `portal.listen` opens the browser-facing portal: one JS-free page where a user

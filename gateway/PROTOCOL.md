@@ -906,7 +906,7 @@ unnecessary.
 
 ## Meeting on the gateway
 
-A gateway is a node its users chose to trust with everything, and it sees both
+A gateway is a server service its users chose to trust with everything, and it sees both
 ends of a dial when both ends are its own. When the host named in `stream-open`
 or `raw-send` is the routing host of a **published** endpoint this gateway
 operates, for any of its sessions, it connects the two directly and nothing
@@ -952,10 +952,10 @@ operator, who already sees both of them and every address either one dials.
 The servers refuse this shortcut among themselves:
 mail federates over I2P even between two accounts on one host, because a bypass
 there would tell a server operator's users which of them share a server, and a
-server is not a node its users picked. A gateway is, and so the users of a
+server is not a server service its users picked. A gateway is, and so the users of a
 gateway reach the server its operator linked to it without I2P (The server
 link). The two decisions look opposite and rest on the same question, which is
-whether the node in the middle was chosen.
+whether the server service in the middle was chosen.
 
 ## The server link
 

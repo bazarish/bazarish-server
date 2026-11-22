@@ -13,7 +13,7 @@
 namespace bazarish::admin {
 
 inline constexpr const char* kServerCoreKind = "server-core";
-inline constexpr const char* kServiceNodeKind = "service-node";
+inline constexpr const char* kServerServiceKind = "server-service";
 inline constexpr const char* kFacadeKind = "facade";
 inline constexpr const char* kGatewayKind = "gateway";
 

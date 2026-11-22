@@ -95,7 +95,7 @@ try {
     options.opsClientPins = {"a pin a plain test socket never checks"};
     options.serverFingerprint = serverIdentity.fingerprint();
     options.sealingKey = std::make_shared<Key>(Key::fromPrivatePem(nodeSealing.privatePem()));
-    options.nodeCardDer = ServerCard::issue(serverIdentity, ServerCard::Service::eServiceNode,
+    options.nodeCardDer = ServerCard::issue(serverIdentity, ServerCard::Service::eServerService,
         Key::fromPublicDer(nodeSealing.publicDer()));
     options.settings = std::make_shared<NodeSettings>(std::filesystem::path(), values);
     options.pushes = std::make_shared<PushQueue>(root, store, *options.userLocks,

@@ -128,14 +128,14 @@ try {
     http::Server::Options nodeOptions = backendOptions();
     nodeOptions.certificate = nodeCredential.certificate.string();
     nodeOptions.key = nodeCredential.key.string();
-    http::Server serviceNode(nodeOptions);
-    installBackend(serviceNode, "service-node");
-    const int nodePort = serviceNode.start();
+    http::Server serverService(nodeOptions);
+    installBackend(serverService, "server-service");
+    const int nodePort = serverService.start();
     CHECK(nodePort > 0);
 
     bazarish::facade::FacadeOptions options;
     options.messaging = {"127.0.0.1", messagingPort, backendCredential.pin};
-    options.serviceNode = {"127.0.0.1", nodePort, nodeCredential.pin};
+    options.serverService = {"127.0.0.1", nodePort, nodeCredential.pin};
     options.address = "example.b32.i2p";
     const testutil::ScratchDir configScratch("facade-test");
     const std::filesystem::path& configDir = configScratch.path();
@@ -148,8 +148,8 @@ try {
     facadeValues.logLevel = "info";
     facadeValues.messagingHost = "127.0.0.1";
     facadeValues.messagingPort = messagingPort;
-    facadeValues.serviceNodeHost = "127.0.0.1";
-    facadeValues.serviceNodePort = nodePort;
+    facadeValues.serverServiceHost = "127.0.0.1";
+    facadeValues.serverServicePort = nodePort;
     facadeValues.listenHost = "127.0.0.1";
     facadeValues.listenPort = 8419;
     facadeValues.opsHost = "127.0.0.1";
@@ -230,11 +230,11 @@ try {
     {
         const http::ClientResponse tunnel = call(facadePort, "POST", "/n", {}, "frame");
         CHECK(tunnel.status == 200);
-        CHECK(nlohmann::json::parse(tunnel.body).at("backend") == "service-node");
+        CHECK(nlohmann::json::parse(tunnel.body).at("backend") == "server-service");
         CHECK(nlohmann::json::parse(tunnel.body).at("body") == "frame");
         const http::ClientResponse card = call(facadePort, "GET", "/v1/node/card");
         CHECK(card.status == 200);
-        CHECK(nlohmann::json::parse(card.body).at("backend") == "service-node");
+        CHECK(nlohmann::json::parse(card.body).at("backend") == "server-service");
         CHECK(call(facadePort, "GET", "/n").status == 404);
         CHECK(call(facadePort, "POST", "/v1/node/card", {}, "{}").status == 404);
         CHECK(call(facadePort, "GET", "/t").status == 404);
@@ -243,11 +243,11 @@ try {
         const http::ClientResponse callback
             = call(facadePort, "POST", bazarish::loginrelay::kCallbackPath, {}, "{}");
         CHECK(callback.status == 200);
-        CHECK(nlohmann::json::parse(callback.body).at("backend") == "service-node");
+        CHECK(nlohmann::json::parse(callback.body).at("backend") == "server-service");
         const http::ClientResponse challenge
             = call(facadePort, "GET", std::string(bazarish::loginrelay::kChallengePrefix) + nonce);
         CHECK(challenge.status == 200);
-        CHECK(nlohmann::json::parse(challenge.body).at("backend") == "service-node");
+        CHECK(nlohmann::json::parse(challenge.body).at("backend") == "server-service");
         for (const auto& [method, path] : std::initializer_list<std::pair<std::string, std::string>>{
                  {"GET", bazarish::loginrelay::kCallbackPath},
                  {"POST", std::string(bazarish::loginrelay::kCallbackPath) + "/" + nonce},
@@ -291,12 +291,12 @@ try {
         CHECK(!values.contains("url"));
         CHECK(values.at("i2pTunnelQuantity").get<int>() == 3);
         CHECK(values.at("directListen").at("port").get<int>() == kDirectPort);
-        CHECK(values.at("serviceNode").at("port").get<int>() == nodePort);
+        CHECK(values.at("serverService").at("port").get<int>() == nodePort);
         CHECK(values.at("i2pLogLevel").get<std::string>() == "none");
 
         const nlohmann::json wanted = {{"i2pTunnelQuantity", 8}, {"i2pLogLevel", "debug"},
             {"directListen", {{"host", "127.0.0.1"}, {"port", kMovedDirectPort}}},
-            {"serviceNode", {{"host", "127.0.0.1"}, {"port", kMovedNodePort}}}};
+            {"serverService", {{"host", "127.0.0.1"}, {"port", kMovedNodePort}}}};
         const std::string body = wanted.dump();
         CHECK(opsCall("PUT", path, signedHeaders(operatorIdentity, "PUT", path, body), body)
                   .status
@@ -309,7 +309,7 @@ try {
         CHECK(onDisk.at("i2p").at("tunnelQuantity").get<int>() == 8);
         CHECK(onDisk.at("i2p").at("logLevel").get<std::string>() == "debug");
         CHECK(onDisk.at("directListen").at("port").get<int>() == kMovedDirectPort);
-        CHECK(onDisk.at("serviceNode").at("port").get<int>() == kMovedNodePort);
+        CHECK(onDisk.at("serverService").at("port").get<int>() == kMovedNodePort);
 
         const std::string bad = nlohmann::json{{"i2pTunnelQuantity", 0}}.dump();
         CHECK(opsCall("PUT", path, signedHeaders(operatorIdentity, "PUT", path, bad), bad)
@@ -355,7 +355,7 @@ try {
 
     facade.stop();
     messaging.stop();
-    serviceNode.stop();
+    serverService.stop();
     return 0;
 } catch (...) {
     return testutil::failed();

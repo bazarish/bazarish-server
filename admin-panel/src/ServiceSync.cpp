@@ -98,7 +98,7 @@ std::string publishFacades(const std::vector<ServiceEntry>& services, const Iden
 {
     std::optional<ServiceEntry> node;
     for (const ServiceEntry& service : services) {
-        if (service.kind == kServiceNodeKind) {
+        if (service.kind == kServerServiceKind) {
             node = service;
         }
     }
@@ -133,7 +133,7 @@ std::string publishFacades(const std::vector<ServiceEntry>& services, const Iden
     const JsonResult written = callJson(*node, identity, credential, "PUT", routes::kAccountSettings,
         nlohmann::json{{"facades", ordered}}.dump());
     if (!written.ok) {
-        return "the service node did not take the addresses: " + failureText(written);
+        return "the server service did not take the addresses: " + failureText(written);
     }
     return {};
 }

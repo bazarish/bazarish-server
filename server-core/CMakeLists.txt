@@ -38,10 +38,10 @@ target_include_directories(bazarish_server_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR
 target_link_libraries(bazarish_server_lib PUBLIC Bazarish::Common Threads::Threads bazarish_server_shared)
 target_compile_options(bazarish_server_lib PRIVATE -Wall -Wextra -Werror)
 
-add_executable(bazarish-server src/Main.cpp)
-bazarish_stamp_version(bazarish-server)
-target_link_libraries(bazarish-server PRIVATE bazarish_server_lib)
-target_compile_options(bazarish-server PRIVATE -Wall -Wextra -Werror)
+add_executable(bazarish-server-core src/Main.cpp)
+bazarish_stamp_version(bazarish-server-core)
+target_link_libraries(bazarish-server-core PRIVATE bazarish_server_lib)
+target_compile_options(bazarish-server-core PRIVATE -Wall -Wextra -Werror)
 
 enable_testing()
 

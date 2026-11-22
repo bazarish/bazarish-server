@@ -1,11 +1,11 @@
 {
-  // Where this node keeps its identity and its records.
-  "state": "/var/lib/bazarish/service-node",
+  // Where this server service keeps its identity and its records.
+  "state": "/var/lib/bazarish/server-service",
   // What the facades and the messaging server reach, over TLS.
   "listen": {"host": "127.0.0.1", "port": 8421},
   // The operator's socket: the panel and nothing else.
   "opsListen": {"host": "127.0.0.1", "port": 8427},
-  // The messaging server's operator socket, for the pushes this node owes it.
+  // The messaging server's operator socket, for the pushes this server service owes it.
   // "pin" is the key that server prints when it starts.
   "messaging": {"host": "127.0.0.1", "port": 8428, "pin": ""},
   // Who may call the operator endpoints (the admin panel).
@@ -19,7 +19,7 @@
 
   "portal": {
     "listen": {"host": "0.0.0.0", "port": 8431},
-    "assets": "/opt/bazarish/bazarish-server/service-node/portal",
+    "assets": "/opt/bazarish/bazarish-server/server-service/portal",
     // What the portal calls itself and where users open it. A client shows these
     // words before it signs a login, and the user compares them with the address
     // bar, so "address" has to be the address they actually opened. Left out,

@@ -68,7 +68,7 @@ public:
     };
     std::optional<DirectTarget> directTargetFor(const std::string& to) const;
 
-    // A destination this node serves, answered without the frame leaving the host.
+    // A destination this server service serves, answered without the frame leaving the host.
     template <class Pipe>
     bool serveDirect(const std::string& to, const std::string& from, Pipe& pipe)
     {

@@ -28,7 +28,7 @@ NodeCards::NodeCards(NodeAddress node, std::shared_ptr<const Identity> identity)
     , identity_(std::move(identity))
 {
     if (!node_.tls || node_.pin.empty()) {
-        throw std::invalid_argument("the service node is reached over TLS with its key pinned");
+        throw std::invalid_argument("the server service is reached over TLS with its key pinned");
     }
 }
 
@@ -76,7 +76,7 @@ std::optional<NodeCards::Held> NodeCards::held(const std::string& user)
     }
     if (answer.status != kFound) {
         throw std::runtime_error(
-            "the service node answered a card lookup with HTTP " + std::to_string(answer.status));
+            "the server service answered a card lookup with HTTP " + std::to_string(answer.status));
     }
     const nlohmann::json found = parseJson(answer.body);
     Held fetched;
@@ -85,7 +85,7 @@ std::optional<NodeCards::Held> NodeCards::held(const std::string& user)
         linkKeyFromText(found.at("cardKey").get<std::string>())};
     const ContactCard verified = ContactCard::verify(fetched.card.der);
     if (found.at("user").get<std::string>() != user || verified.fingerprint() != user) {
-        throw std::runtime_error("the service node answered a card lookup with another account's card");
+        throw std::runtime_error("the server service answered a card lookup with another account's card");
     }
     fetched.devices = verified.devices;
     const std::lock_guard<std::mutex> lock(mutex_);

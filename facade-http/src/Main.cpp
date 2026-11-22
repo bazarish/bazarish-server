@@ -37,8 +37,8 @@ void printUsage()
         "       bazarish-facade-http --version\n"
         "\n"
         "Forwards the sealed client tunnel and the public card of two backends - the\n"
-        "messaging server (\"messaging\") and the service node (\"serviceNode\") - and\n"
-        "the service node's login callback and /login/c/<nonce>; everything else is a\n"
+        "messaging server (\"messaging\") and the server service (\"serverService\") - and\n"
+        "the server service's login callback and /login/c/<nonce>; everything else is a\n"
         "bare 404. Everything it runs on is in the config file.\n"
         "\n"
         "Clients reach it through its own I2P destination: \"listen\" is the socket it\n"
@@ -107,7 +107,7 @@ int main(const int argc, const char** argv)
         }
     };
     readUpstream("messaging", options.messaging);
-    readUpstream("serviceNode", options.serviceNode);
+    readUpstream("serverService", options.serverService);
 
     if (stateDir.empty()) {
         std::fprintf(stderr, "config: \"state\" is mandatory: the destination key must"
@@ -134,8 +134,8 @@ int main(const int argc, const char** argv)
     settingValues.logLevel = config.text("logLevel").empty() ? "info" : config.text("logLevel");
     settingValues.messagingHost = options.messaging.host;
     settingValues.messagingPort = options.messaging.port;
-    settingValues.serviceNodeHost = options.serviceNode.host;
-    settingValues.serviceNodePort = options.serviceNode.port;
+    settingValues.serverServiceHost = options.serverService.host;
+    settingValues.serverServicePort = options.serverService.port;
     settingValues.listenHost = listen.host;
     settingValues.listenPort = listen.port;
     settingValues.opsHost = ops.has_value() ? ops->host : std::string();
@@ -168,7 +168,7 @@ int main(const int argc, const char** argv)
     std::fflush(stdout);
     bazarish::log::info("messaging -> {}:{}", options.messaging.host, options.messaging.port);
     bazarish::log::info(
-        "service node -> {}:{}", options.serviceNode.host, options.serviceNode.port);
+        "server service -> {}:{}", options.serverService.host, options.serverService.port);
 
     if (ops.has_value()) {
         if (facade.bindOps(ops->host, ops->port) <= 0) {

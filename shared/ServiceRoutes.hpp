@@ -20,6 +20,7 @@ inline constexpr char kAccountLogs[] = "/v1/account/logs";
 inline constexpr char kAccountQuota[] = "/v1/account/quota";
 inline constexpr char kAccountRestart[] = "/v1/account/restart";
 inline constexpr char kAccountSettings[] = "/v1/account/settings";
+inline constexpr char kAccountTotals[] = "/v1/account/totals";
 inline constexpr char kAccountUnban[] = "/v1/account/unban";
 inline constexpr char kAccountUndelegate[] = "/v1/account/undelegate";
 

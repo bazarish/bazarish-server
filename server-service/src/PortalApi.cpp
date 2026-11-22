@@ -265,7 +265,7 @@ void PortalApi::setupWebRoutes()
         if (request.param("confirm") != "yes") {
             sendHtml(response,
                 page(request, "{{t.delete.title}}", assets_.render("session.html", {{"fingerprint", htmlEscape(user)}}),
-                    assets_.render("confirm-delete.html", accountValues(user))));
+                    assets_.render("confirm-delete.html", mailboxValues(user))));
             return;
         }
         options_.deleteAccount(user);
@@ -315,14 +315,8 @@ std::string PortalApi::languageSwitch(const std::string& lang, const std::string
         + list + "    </ul>\n  </details>\n";
 }
 
-std::map<std::string, std::string> PortalApi::accountValues(const std::string& user)
+std::map<std::string, std::string> PortalApi::mailboxValues(const std::string& user)
 {
-    const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
-    const NodeSettings::Values values = settings();
-    const std::string note = approval.has_value() && !approval->message.empty()
-        ? approval->message
-        : values.registrationMessage;
-
     std::string mailbox = "{{t.facts.unknown}}";
     std::string devices = "{{t.facts.unknown}}";
     if (const std::optional<MailboxUsage> usage = options_.accountUsage(user);
@@ -330,17 +324,23 @@ std::map<std::string, std::string> PortalApi::accountValues(const std::string& u
         mailbox = bytesHuman(usage->usedBytes) + " of " + bytesHuman(usage->quotaBytes);
         devices = std::to_string(usage->devices);
     }
+    return {{"mailbox", htmlEscape(mailbox)}, {"devices", htmlEscape(devices)}};
+}
 
+std::map<std::string, std::string> PortalApi::accountValues(const std::string& user)
+{
+    const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
+    const NodeSettings::Values values = settings();
+    const std::string note = approval.has_value() && !approval->message.empty()
+        ? approval->message
+        : values.registrationMessage;
     const std::string descriptor
         = encodeServerDescriptor({options_.serverFingerprint, values.facades, values.reseeds});
-    return {
-        {"descriptor",
-            assets_.render(
-                "descriptor.html", {{"text", htmlEscape(descriptor)}, {"qr", bazarish::qr::svg(descriptor)}})},
-        {"message", notice(note, "is-waiting")},
-        {"mailbox", htmlEscape(mailbox)},
-        {"devices", htmlEscape(devices)},
-    };
+    std::map<std::string, std::string> shown = mailboxValues(user);
+    shown["descriptor"] = assets_.render(
+        "descriptor.html", {{"text", htmlEscape(descriptor)}, {"qr", bazarish::qr::svg(descriptor)}});
+    shown["message"] = notice(note, "is-waiting");
+    return shown;
 }
 
 std::string PortalApi::signInPanel(const std::string& error, http::Response& response)

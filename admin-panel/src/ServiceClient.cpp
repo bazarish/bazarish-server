@@ -76,6 +76,11 @@ HealthResult probeHealth(const ServiceEntry& service, const Identity& identity,
     }
     try {
         const nlohmann::json body = bazarish::parseJson(result.body);
+        const std::string named = body.at("service").get<std::string>();
+        if (named != service.kind) {
+            out.error = "this socket is a " + named + ", not a " + service.kind;
+            return out;
+        }
         out.version = body.value("version", std::string());
         out.uptime = body.value("uptime", static_cast<std::int64_t>(0));
         out.ramBytes = body.value("ramBytes", static_cast<std::uint64_t>(0));

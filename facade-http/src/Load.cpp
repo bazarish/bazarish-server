@@ -22,7 +22,6 @@ void Load::record(const std::int64_t nowSeconds)
 {
     const std::int64_t minute = nowSeconds / static_cast<std::int64_t>(kSecondsPerMinute);
     const std::lock_guard<std::mutex> lock(mutex_);
-    ++total_;
 
     Bucket& second = seconds_[static_cast<std::size_t>(nowSeconds) % kSecondsPerMinute];
     if (second.stamp != nowSeconds) {
@@ -46,7 +45,6 @@ Load::Sample Load::sample(const std::int64_t nowSeconds) const
 
     Sample sample;
     sample.inFlight = inFlight_;
-    sample.total = total_;
     for (const Bucket& bucket : seconds_) {
         if (bucket.stamp > nowSeconds - static_cast<std::int64_t>(kSecondsPerMinute)
             && bucket.stamp <= nowSeconds) {

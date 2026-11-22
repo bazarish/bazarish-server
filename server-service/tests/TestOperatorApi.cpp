@@ -56,6 +56,15 @@ http::ClientResponse call(const int port, const Identity& identity, const std::s
     return http::request("127.0.0.1", port, request, {});
 }
 
+nlohmann::json recordOf(const int opsPort, const Identity& panel, const std::string& user)
+{
+    const http::ClientResponse found = call(opsPort, panel, "GET", "/v1/account/users?q=" + user);
+    CHECK(found.status == 200);
+    const nlohmann::json body = nlohmann::json::parse(found.body);
+    CHECK(body.at("total").get<std::size_t>() == 1);
+    return body.at("users").at(0);
+}
+
 }  // namespace
 
 int main()
@@ -178,15 +187,24 @@ try {
 
     {
         const http::ClientResponse one
-            = call(opsPort, panel, "GET", "/v1/account/user?user=" + served);
+            = call(opsPort, panel, "GET", "/v1/account/users?q=" + served);
         CHECK(one.status == 200);
         const nlohmann::json body = nlohmann::json::parse(one.body);
-        CHECK(body.at("approval").get<std::string>() == "approved");
-        CHECK(body.at("quotaBytes").get<std::uint64_t>() == kQuota);
-        CHECK(body.at("grantPending").get<bool>());
+        CHECK(body.at("total").get<std::size_t>() == 1);
+        const nlohmann::json& record = body.at("users").at(0);
+        CHECK(record.at("approval").get<std::string>() == "approved");
+        CHECK(record.at("quotaBytes").get<std::uint64_t>() == kQuota);
+        CHECK(!record.contains("grantPending"));
 
-        CHECK(call(opsPort, panel, "GET", "/v1/account/user?user=" + unknown).status == 404);
-        CHECK(call(opsPort, panel, "GET", "/v1/account/user?user=not-a-fingerprint").status == 400);
+        CHECK(nlohmann::json::parse(call(opsPort, panel, "GET", "/v1/account/users?q=" + unknown).body)
+                  .at("total")
+            == 0);
+
+        const nlohmann::json totals
+            = nlohmann::json::parse(call(opsPort, panel, "GET", "/v1/account/totals").body);
+        CHECK(totals.at("accounts").get<std::size_t>() == 3);
+        CHECK(!nlohmann::json::parse(call(opsPort, panel, "GET", "/v1/account/settings").body)
+                   .contains("accounts"));
     }
 
     {
@@ -196,10 +214,10 @@ try {
         const http::ClientResponse set
             = call(opsPort, panel, "PUT", "/v1/account/quota", body);
         CHECK(set.status == 200);
-        CHECK(nlohmann::json::parse(set.body).at("quotaBytes").get<std::uint64_t>() == raised);
+        CHECK(nlohmann::json::parse(set.body).at("ok") == true);
         CHECK(quotaUser.empty());
         CHECK(quotaPushed == 0);
-        CHECK(!nlohmann::json::parse(set.body).at("serverPending").get<bool>());
+        CHECK(!recordOf(opsPort, panel, served).at("serverPending").get<bool>());
         CHECK(grants.peekSubscription(served)->quotaBytes == raised);
 
         const std::string missing
@@ -223,8 +241,8 @@ try {
             = call(opsPort, panel, "POST", "/v1/account/undelegate", body);
         CHECK(held.status == 200);
         CHECK(revokedUser == served);
-        CHECK(!nlohmann::json::parse(held.body).at("serverPending").get<bool>());
-        const nlohmann::json record = nlohmann::json::parse(held.body);
+        const nlohmann::json record = recordOf(opsPort, panel, served);
+        CHECK(!record.at("serverPending").get<bool>());
         CHECK(record.at("approval").get<std::string>() == "pending");
         CHECK(record.at("holdMessage").get<std::string>()
             == "Talk to the operator before this comes back.");
@@ -240,7 +258,10 @@ try {
             = call(opsPort, panel, "DELETE", "/v1/account/user?user=" + waitingOne);
         CHECK(gone.status == 200);
         CHECK(!grants.peekApproval(waitingOne).has_value());
-        CHECK(call(opsPort, panel, "GET", "/v1/account/user?user=" + waitingOne).status == 404);
+        CHECK(nlohmann::json::parse(
+                  call(opsPort, panel, "GET", "/v1/account/users?q=" + waitingOne).body)
+                  .at("total")
+            == 0);
     }
 
     {

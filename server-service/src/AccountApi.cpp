@@ -391,7 +391,6 @@ nlohmann::json AccountApi::userRecord(
                              : (grant.has_value() ? grant->quotaBytes
                                                  : values.defaultQuotaBytes)},
         {"registered", held.has_value()},
-        {"grantPending", grant.has_value()},
         {"approval", approvalState(approval)},
         {"requestedAt", approval.has_value() ? approval->requestedAt : 0},
         {"approvedAt", approval.has_value() ? approval->approvedAt : 0},
@@ -481,7 +480,7 @@ void AccountApi::setupOpsRoutes()
                 users.push_back(userRecord(user, approval));
             }
             respondJson(response,
-                {{"users", users}, {"total", matched}, {"limit", limit}, {"offset", offset}});
+                {{"users", users}, {"total", matched}});
         })));
 
     ops_->post(routes::kAccountUndelegate,
@@ -501,7 +500,7 @@ void AccountApi::setupOpsRoutes()
             revokeDestination(user);
             grants_.hold(user, message, nowSeconds(), transient.has_value() ? transient->expires : 0);
             options_.pushes->deliver(user);
-            respondJson(response, userRecord(user, grants_.peekApproval(user)));
+            respondJson(response, {{"ok", true}});
         })));
 
     ops_->del("/v1/account/user",
@@ -525,7 +524,7 @@ void AccountApi::setupOpsRoutes()
             const UserLocks::Held locked = options_.userLocks->hold(user);
             deleteAccount(user);
             grants_.ban(user, reason.empty() ? std::string(kDefaultBanReason) : reason);
-            respondJson(response, userRecord(user, grants_.peekApproval(user)));
+            respondJson(response, {{"ok", true}});
         })));
 
     ops_->post(routes::kAccountUnban,
@@ -537,7 +536,7 @@ void AccountApi::setupOpsRoutes()
             respondJson(response, {{"ok", true}});
         })));
 
-    ops_->get(routes::kAccountSettings,
+    ops_->get(routes::kAccountTotals,
         filled(operatorOnly([this](const http::Request&, http::Response& response) {
             const NodeSettings::Values values = settings();
             std::uint64_t allocated = 0;
@@ -552,6 +551,12 @@ void AccountApi::setupOpsRoutes()
                                               : (grant.has_value() ? grant->quotaBytes
                                                                    : values.defaultQuotaBytes);
             }
+            respondJson(response, {{"accounts", accounts}, {"allocatedBytes", allocated}});
+        })));
+
+    ops_->get(routes::kAccountSettings,
+        filled(operatorOnly([this](const http::Request&, http::Response& response) {
+            const NodeSettings::Values values = settings();
             respondJson(response,
                 {
                     {"requireApproval", values.requireApproval},
@@ -576,8 +581,6 @@ void AccountApi::setupOpsRoutes()
                         {{"host", values.messagingHost}, {"port", values.messagingPort}}},
                     {"defaultQuotaBytes", values.defaultQuotaBytes},
                     {"idleDeleteDays", values.idleDeleteDays},
-                    {"accounts", accounts},
-                    {"allocatedBytes", allocated},
                 });
         })));
 
@@ -604,13 +607,7 @@ void AccountApi::setupOpsRoutes()
                     bazarish::log::setLevel(*level);
                 }
             }
-            respondJson(response,
-                {
-                    {"requireApproval", values.requireApproval},
-                    {"registrationMessage", values.registrationMessage},
-                    {"defaultQuotaBytes", values.defaultQuotaBytes},
-                    {"idleDeleteDays", values.idleDeleteDays},
-                });
+            respondJson(response, {{"ok", true}});
         })));
 
     ops_->post(routes::kAccountRestart,
@@ -618,17 +615,6 @@ void AccountApi::setupOpsRoutes()
             bazarish::log::info("restarting at the operator's request");
             options_.requestRestart();
             respondJson(response, {{"restarting", true}});
-        })));
-
-    ops_->get("/v1/account/user",
-        filled(operatorOnly([this](const http::Request& request, http::Response& response) {
-            const std::string user = request.query("user");
-            const std::optional<GrantStore::Approval> approval = grants_.peekApproval(user);
-            if (!approval.has_value() && !store_.getAccount(user).has_value()) {
-                respondError(response, 404, ErrorCode::eAccountUnknown, "no such account");
-                return;
-            }
-            respondJson(response, userRecord(user, approval));
         })));
 
     ops_->put(routes::kAccountQuota,
@@ -656,7 +642,7 @@ void AccountApi::setupOpsRoutes()
                 grant.has_value()) {
                 grants_.grantSubscription(user, quotaBytes, grant->grantedAt);
             }
-            respondJson(response, userRecord(user, approval));
+            respondJson(response, {{"ok", true}});
         })));
 
     ops_->post(routes::kAccountApprove,
@@ -863,8 +849,12 @@ void AccountApi::setupRoutes()
             }
             std::uint64_t quota = 0;
             if (grant.has_value()) {
-                grants_.takeSubscription(user);
-                quota = grant->quotaBytes;
+                const std::optional<GrantStore::SubscriptionGrant> taken
+                    = grants_.takeSubscription(user);
+                if (!taken.has_value()) {
+                    throw std::runtime_error("the registration grant went while the card was published");
+                }
+                quota = taken->quotaBytes;
             } else if (held.has_value()) {
                 quota = held->quotaBytes;
             } else {
@@ -878,7 +868,7 @@ void AccountApi::setupRoutes()
             record.registeredAt
                 = held.has_value() && held->registeredAt != 0 ? held->registeredAt : now;
             record.quotaBytes = quota;
-            record.dest = card.dest.empty() && held.has_value() ? held->dest : card.dest;
+            record.dest = card.dest;
             record.delegatedAt = held.has_value() ? held->delegatedAt : 0;
             record.card = der;
             record.cardKey = cardKey;
@@ -1083,11 +1073,7 @@ void AccountApi::setupRoutes()
                 && !grants_.peekSubscription(user).has_value()) {
                 grants_.grantSubscription(user, values.defaultQuotaBytes, now);
             }
-            respondJson(response,
-                {{"ok", true}, {"quotaBytes", values.defaultQuotaBytes},
-                    {"requiresApproval", values.requireApproval},
-                    {"message", values.requireApproval ? values.registrationMessage
-                                                       : std::string()}});
+            respondJson(response, {{"ok", true}});
         });
 }
 

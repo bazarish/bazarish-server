@@ -135,13 +135,20 @@ Bytes cardOf(const devicetest::Account& owner, const std::int64_t issuedAt)
     return card.issue(owner.device.signing());
 }
 
-bool serverPending(const int opsPort, const Identity& panel, const std::string& user)
+nlohmann::json recordOf(const int opsPort, const Identity& panel, const std::string& user)
 {
-    const std::string target = "/v1/account/user?user=" + user;
+    const std::string target = "/v1/account/users?q=" + user;
     const http::ClientResponse answer
         = call(opsPort, "GET", target, signedHeaders(panel, "GET", target, {}));
     CHECK(answer.status == 200);
-    return nlohmann::json::parse(answer.body).at("serverPending").get<bool>();
+    const nlohmann::json body = nlohmann::json::parse(answer.body);
+    CHECK(body.at("total").get<std::size_t>() == 1);
+    return body.at("users").at(0);
+}
+
+bool serverPending(const int opsPort, const Identity& panel, const std::string& user)
+{
+    return recordOf(opsPort, panel, user).at("serverPending").get<bool>();
 }
 
 http::ClientResponse operatorCall(const int port, const Identity& panel,
@@ -220,7 +227,7 @@ try {
         const http::ClientResponse set
             = operatorCall(opsPort, panel, "PUT", "/v1/account/quota", quotaBody);
         CHECK(set.status == 200);
-        const nlohmann::json record = nlohmann::json::parse(set.body);
+        const nlohmann::json record = recordOf(opsPort, panel, user);
         CHECK(record.at("quotaBytes").get<std::uint64_t>() == kRaised);
         CHECK(record.at("serverPending").get<bool>());
         CHECK(messaging.quotaOf(user) == 0);
@@ -267,7 +274,7 @@ try {
         const http::ClientResponse held
             = operatorCall(opsPort, panel, "POST", "/v1/account/undelegate", hold);
         CHECK(held.status == 200);
-        CHECK(nlohmann::json::parse(held.body).at("serverPending").get<bool>());
+        CHECK(serverPending(opsPort, panel, user));
         CHECK(messaging.takeDownsOf(user) == 0);
 
         const std::string approve = nlohmann::json{{"user", user}}.dump();

@@ -233,7 +233,7 @@ try {
         const http::ClientResponse result = call(port, "POST", "/v1/messaging/passes",
             makeHeaders(aliceDev, "POST", "/v1/messaging/passes", body), body);
         CHECK(result.status == 200);
-        CHECK(nlohmann::json::parse(result.body).at("held") == 1);
+        CHECK(nlohmann::json::parse(result.body).at("ok") == true);
     }
     {
         const std::string body
@@ -241,7 +241,7 @@ try {
         const http::ClientResponse result = call(port, "POST", "/v1/messaging/passes",
             makeHeaders(aliceDev, "POST", "/v1/messaging/passes", body), body);
         CHECK(result.status == 200);
-        CHECK(nlohmann::json::parse(result.body).at("held") == 1);
+        CHECK(nlohmann::json::parse(result.body).at("ok") == true);
     }
     CHECK(storage.passCount(alice.fingerprint()) == 1);
     CHECK(storage.hasPass(alice.fingerprint(), handleForBob));
@@ -290,7 +290,7 @@ try {
         const http::ClientResponse result = call(port, "POST", "/v1/messaging/passes/revoke",
             makeHeaders(aliceDev, "POST", "/v1/messaging/passes/revoke", body), body);
         CHECK(result.status == 200);
-        CHECK(nlohmann::json::parse(result.body).at("revoked") == 1);
+        CHECK(nlohmann::json::parse(result.body).at("ok") == true);
         CHECK(!storage.hasPass(alice.fingerprint(), handleForBob));
         CHECK(storage.hasPass(alice.fingerprint(), handleForCarol));
         CHECK(storage.registerPasses(alice.fingerprint(), {handleForBob}, kMaxPassesPerMailbox));
@@ -561,7 +561,7 @@ try {
         CHECK(result.status == 200);
         const nlohmann::json body = nlohmann::json::parse(result.body);
         CHECK(body.at("dest").get<std::string>() == serverDest);
-        CHECK(body.at("state").get<std::string>() == "home");
+        CHECK(!body.contains("state"));
     }
 
     {

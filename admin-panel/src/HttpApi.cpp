@@ -645,7 +645,15 @@ void HttpApi::registerRoutes()
             sendJsonText(response, settings.body, settings.status == 0 ? 502 : settings.status);
             return;
         }
+        const JsonResult totals
+            = callJson(*node, identity_, credential_, "GET", routes::kAccountTotals);
+        if (!totals.ok) {
+            bazarish::log::warn("server-service totals unavailable: {}", totals.error);
+            sendJsonText(response, totals.body, totals.status == 0 ? 502 : totals.status);
+            return;
+        }
         nlohmann::json merged = bazarish::parseJson(settings.body);
+        merged.update(bazarish::parseJson(totals.body));
         merged["diskUsedBytes"] = nullptr;
         merged["diskError"] = "no server-core configured in this panel";
         if (const std::optional<ServiceEntry> core = serviceOfKind(kServerCoreKind);
@@ -782,8 +790,8 @@ void HttpApi::registerRoutes()
                 {"error", repointed.error}});
         }
         sendJson(response,
-            nlohmann::json{{"address", address}, {"previousAddress", previous},
-                {"descriptorError", descriptorError}, {"gateways", gateways}});
+            nlohmann::json{{"address", address}, {"descriptorError", descriptorError},
+                {"gateways", gateways}});
     }));
 
     http_->get("/api/service-settings", api([toService](

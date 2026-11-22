@@ -81,7 +81,6 @@ void testLoadSample()
     CHECK(sample.lastMinute == 3);
     CHECK(sample.lastHour == 4);
     CHECK(sample.lastDay == 5);
-    CHECK(sample.total == 6);
     CHECK(sample.inFlight == 0);
 
     {

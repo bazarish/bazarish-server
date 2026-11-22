@@ -66,6 +66,7 @@ private:
     std::string page(const bazarish::http::Request& request, const std::string& title,
         const std::string& session,
         const std::string& content);
+    std::map<std::string, std::string> mailboxValues(const std::string& user);
     std::map<std::string, std::string> accountValues(const std::string& user);
 
     NodeSettings::Values settings() const { return settings_->get(); }

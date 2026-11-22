@@ -237,7 +237,6 @@ void Facade::setupOpsRoutes()
         report["requestsLastMinute"] = sample.lastMinute;
         report["requestsLastHour"] = sample.lastHour;
         report["requestsLastDay"] = sample.lastDay;
-        report["requestsTotal"] = sample.total;
         report["inFlight"] = sample.inFlight;
         return bazarish::http::Response{200, "application/json", {}, report.dump()};
     }));
@@ -287,7 +286,7 @@ void Facade::setupOpsRoutes()
         bazarish::server::applyLogLevel(before.logLevel, values.logLevel);
         bazarish::server::applyI2pLogLevel(before.i2pLogLevel, values.i2pLogLevel);
         return bazarish::http::Response{200, "application/json", {},
-            nlohmann::json{{"logLevel", values.logLevel}, {"i2pLogLevel", values.i2pLogLevel}}
+            nlohmann::json{{"ok", true}}
                 .dump()};
     }));
 

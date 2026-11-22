@@ -14,7 +14,6 @@ public:
         std::uint64_t lastHour = 0;
         std::uint64_t lastDay = 0;
         std::uint64_t inFlight = 0;
-        std::uint64_t total = 0;
     };
 
     class InFlight {
@@ -45,7 +44,6 @@ private:
     std::array<Bucket, kSecondsPerMinute> seconds_{};
     std::array<Bucket, kMinutesPerDay> minutes_{};
     std::uint64_t inFlight_ = 0;
-    std::uint64_t total_ = 0;
 };
 
 }  // namespace bazarish::facade

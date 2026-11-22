@@ -125,6 +125,11 @@ try {
         const std::lock_guard<std::mutex> lock(guard);
         return json({{"facades", described}});
     });
+    constexpr std::size_t kAccounts = 2;
+    constexpr std::uint64_t kAllocatedBytes = 5 * 1024 * 1024;
+    node->get("/v1/account/totals", [&](const http::Request&) {
+        return json({{"accounts", kAccounts}, {"allocatedBytes", kAllocatedBytes}});
+    });
     node->put("/v1/account/settings", [&](const http::Request& request) {
         const std::lock_guard<std::mutex> lock(guard);
         described = nlohmann::json::parse(request.body).at("facades");
@@ -217,6 +222,15 @@ try {
     }
 
     {
+        const http::ClientResponse shown = panel.ask("GET", "/api/settings");
+        CHECK(shown.status == 200);
+        const nlohmann::json body = nlohmann::json::parse(shown.body);
+        CHECK(body.at("accounts") == kAccounts);
+        CHECK(body.at("allocatedBytes") == kAllocatedBytes);
+        CHECK(body.contains("facades"));
+    }
+
+    {
         const Identity colleague = Identity::generate();
         Config both = settings->get();
         both.admins.push_back(colleague.fingerprint());
@@ -271,7 +285,7 @@ try {
         CHECK(renewed.status == 200);
         const nlohmann::json body = nlohmann::json::parse(renewed.body);
         CHECK(body.at("address") == kNewAddress);
-        CHECK(body.at("previousAddress") == kOldAddress);
+        CHECK(!body.contains("previousAddress"));
         CHECK(!body.contains("url"));
         CHECK(body.at("descriptorError") == "");
         CHECK(body.at("gateways").size() == 1);

@@ -392,8 +392,7 @@ void HttpApi::setupOpsRoutes()
             if (values.gateways != before.gateways) {
                 options_.gatewaysChanged(values.gateways);
             }
-            return jsonResponse(
-                {{"logLevel", values.logLevel}, {"i2pLogLevel", values.i2pLogLevel}});
+            return jsonResponse({{"ok", true}});
         }));
 
     logFeed_ = std::make_unique<LogFeed>(*ops_, routes::kMessagingLogs, options_.logRing,
@@ -541,7 +540,7 @@ void HttpApi::setupRoutes()
                             eventsAnswer(user, pendingJson(store, user, clientId))));
                     } catch (const std::exception& error) {
                         bazarish::log::warn("event face: {}", error.what());
-                        respond(jsonResponse({{"pending", nlohmann::json::array()}}));
+                        respond(errorResponse(500, ErrorCode::eRequestFailed, error.what()));
                     }
                 });
             try {
@@ -588,7 +587,7 @@ void HttpApi::setupRoutes()
                           -> bazarish::http::Response {
             const std::string& user = caller.user;
             const DestinationAssignment assigned = options_.assignDestination(user);
-            return jsonResponse({{"dest", assigned.dest}, {"state", assigned.state}});
+            return jsonResponse({{"dest", assigned.dest}});
         }));
 
     http_->getAsync(kOverviewPath,
@@ -635,7 +634,7 @@ void HttpApi::setupRoutes()
             if (!store.registerPasses(user, handles, kMaxPassesPerMailbox)) {
                 throw std::invalid_argument("this mailbox holds too many delivery passes");
             }
-            return jsonResponse({{"ok", true}, {"held", store.passCount(user)}});
+            return jsonResponse({{"ok", true}});
         }));
 
     http_->post("/v1/messaging/passes/revoke",
@@ -650,7 +649,7 @@ void HttpApi::setupRoutes()
                 = store.revokePasses(user, passHandles(bazarish::parseJson(request.body)));
             bazarish::log::info(
                 "revoked {} delivery pass(es) for {}", dropped, bazarish::log::redact(user));
-            return jsonResponse({{"revoked", dropped}});
+            return jsonResponse({{"ok", true}});
         }));
 
     http_->get("/v1/messaging/pending",
@@ -738,7 +737,7 @@ void HttpApi::setupRoutes()
                         + std::to_string(bazarish::kMaxMessagePayloadBytes) + " bytes");
             }
             if (storage_.hasSeen(user, deliveryId)) {
-                return jsonResponse({{"ok", true}, {"stored", true}});
+                return jsonResponse({{"ok", true}});
             }
 
             const DiskStorage::PutResult result = storage_.putAddressedBlob(user, deliveryId,
@@ -750,7 +749,7 @@ void HttpApi::setupRoutes()
             if (result == DiskStorage::PutResult::eStored) {
                 wakeUser(user);
             }
-            return jsonResponse({{"ok", true}, {"stored", true}});
+            return jsonResponse({{"ok", true}});
         }));
 
 }

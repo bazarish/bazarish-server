@@ -113,6 +113,12 @@ try {
     CHECK(ok.uptime == 42);
     CHECK(ok.ramBytes > 0);
 
+    ServiceEntry misnamed = entry;
+    misnamed.kind = "facade";
+    const HealthResult swapped = probeHealth(misnamed, panel, panelPins);
+    CHECK(!swapped.reachable);
+    CHECK(swapped.error == "this socket is a server-core, not a facade");
+
     const Identity stranger = Identity::generate();
     const HealthResult denied = probeHealth(entry, stranger, panelPins);
     CHECK(!denied.reachable);

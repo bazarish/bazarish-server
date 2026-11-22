@@ -263,6 +263,21 @@ try {
                       deviceSigned(alice.device, "POST", "/v1/account/card", staleBody), staleBody)
                       .status
                 == 409);
+            SubscriptionStore::Account damaged = *store.getAccount(alice.fingerprint());
+            const Bytes kept = damaged.card;
+            damaged.card.back() ^= 1;
+            store.putAccount(damaged);
+            const Bytes newer = botCard(alice, now + 2, oldDest, sealing.publicDer(), servingKey);
+            const std::string newerBody
+                = nlohmann::json{{"card", toBase64(newer)}, {"cardKey", kCardKeyText}}.dump();
+            CHECK(call(port, "POST", "/v1/account/card",
+                      deviceSigned(alice.device, "POST", "/v1/account/card", newerBody), newerBody)
+                      .status
+                == 500);
+            CHECK(store.getAccount(alice.fingerprint())->card == damaged.card);
+            damaged.card = kept;
+            store.putAccount(damaged);
+
             const Bytes sameAge = botCard(
                 alice, now + 1, oldDest, sealing.publicDer(), servingKey);
             const std::string sameBody = nlohmann::json{{"card", toBase64(sameAge)}, {"cardKey", kCardKeyText}}.dump();

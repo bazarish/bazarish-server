@@ -248,6 +248,16 @@ void editSettings(const nlohmann::json& body, bazarish::service::NodeSettings::V
     }
 }
 
+bazarish::ContactCard heldCard(const std::string& user, const Bytes& der)
+{
+    try {
+        return bazarish::ContactCard::verify(der);
+    } catch (const std::exception& error) {
+        throw std::runtime_error(
+            "the card held for " + bazarish::log::redact(user) + " does not verify: " + error.what());
+    }
+}
+
 }  // namespace
 
 namespace bazarish::service {
@@ -352,7 +362,7 @@ bool AccountApi::revokedHere(const std::string& user, const std::string& device)
 {
     const std::optional<SubscriptionStore::Account> held = store_.getAccount(user);
     return held.has_value() && !held->card.empty()
-        && ContactCard::verify(held->card).devices.revoked(device);
+        && heldCard(user, held->card).devices.revoked(device);
 }
 
 void AccountApi::deleteAccount(const std::string& user)
@@ -825,21 +835,16 @@ void AccountApi::setupRoutes()
                 return;
             }
             if (held.has_value() && !held->card.empty()) {
-                try {
-                    const ContactCard previous = ContactCard::verify(held->card);
-                    if (card.issuedAt <= previous.issuedAt) {
-                        respondError(response, 409, ErrorCode::eRequestFailed,
-                            "this card is not newer than the one already published");
-                        return;
-                    }
-                    if (card.devices.revocationNumber() < previous.devices.revocationNumber()) {
-                        respondError(response, 409, ErrorCode::eRequestFailed,
-                            "this card carries an older revocation list than the one published");
-                        return;
-                    }
-                } catch (const std::exception& error) {
-                    bazarish::log::warn("the card held for {} could not be read, replacing it: {}",
-                        bazarish::log::redact(user), error.what());
+                const ContactCard previous = heldCard(user, held->card);
+                if (card.issuedAt <= previous.issuedAt) {
+                    respondError(response, 409, ErrorCode::eRequestFailed,
+                        "this card is not newer than the one already published");
+                    return;
+                }
+                if (card.devices.revocationNumber() < previous.devices.revocationNumber()) {
+                    respondError(response, 409, ErrorCode::eRequestFailed,
+                        "this card carries an older revocation list than the one published");
+                    return;
                 }
             }
             if (card.issuedAt > now + auth::kAuthFreshnessWindowSeconds) {

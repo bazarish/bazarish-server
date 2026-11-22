@@ -23,6 +23,7 @@ constexpr const char* kStateDir = "/var/lib/bazarish";
 constexpr const char* kPanelAssets = "/usr/share/bazarish-admin-panel/web";
 constexpr const char* kPortalAssets = "/usr/share/bazarish-server-service/portal";
 constexpr const char* kSystemdRunning = "/run/systemd/system";
+constexpr const char* kServiceUser = "bazarish";
 constexpr int kNotReady = 1;
 constexpr int kFailed = 1;
 constexpr int kUsage = 2;
@@ -166,7 +167,7 @@ void printStatus(const nlohmann::json& services)
 
 int dispatch(const std::vector<std::string>& args)
 {
-    const setup::Layout layout{kConfigDir, kStateDir, kPanelAssets, kPortalAssets};
+    const setup::Layout layout{kConfigDir, kStateDir, kPanelAssets, kPortalAssets, kServiceUser};
     const std::string command = args.empty() ? std::string() : args.at(0);
     if (command == "init" && args.size() == 2) {
         const setup::Kind kind = kindArgument(args.at(1));

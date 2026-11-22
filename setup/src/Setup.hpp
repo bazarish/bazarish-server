@@ -26,6 +26,8 @@ struct Layout {
     std::filesystem::path stateDir;
     std::filesystem::path panelAssets;
     std::filesystem::path portalAssets;
+    // Empty leaves what setup writes to whoever runs it.
+    std::string owner;
 };
 
 struct Socket {

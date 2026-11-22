@@ -33,7 +33,7 @@ constexpr const char* kGatewayFront = "https://gw.example";
 
 Layout layoutUnder(const fs::path& root)
 {
-    return {root / "etc", root / "state", "/assets/panel", "/assets/portal"};
+    return {root / "etc", root / "state", "/assets/panel", "/assets/portal", ""};
 }
 
 nlohmann::json configOf(const Layout& layout, const Kind kind)

@@ -34,7 +34,6 @@ using ports::kLoopback;
 constexpr int kJsonIndent = 2;
 constexpr std::size_t kBasePathBytes = 16;
 constexpr char kTokenSeparator = ':';
-constexpr const char* kServiceUser = "bazarish";
 constexpr const char* kSecureScheme = "https://";
 constexpr std::string_view kWildcards[] = {"", "0.0.0.0", "::"};
 constexpr std::string_view kLoopbacks[] = {"127.0.0.1", "::1", "localhost"};
@@ -128,14 +127,14 @@ nlohmann::json endpoint(const int port)
     return {{"host", kLoopback}, {"port", port}};
 }
 
-void own(const fs::path& path, const bool recursive)
+void own(const Layout& layout, const fs::path& path, const bool recursive)
 {
-    if (geteuid() != 0) {
+    if (layout.owner.empty()) {
         return;
     }
-    const passwd* const user = getpwnam(kServiceUser);
+    const passwd* const user = getpwnam(layout.owner.c_str());
     if (user == nullptr) {
-        throw std::runtime_error(std::string("there is no user ") + kServiceUser);
+        throw std::runtime_error("there is no user " + layout.owner);
     }
     const auto chownOne = [user](const fs::path& one) {
         if (lchown(one.c_str(), user->pw_uid, user->pw_gid) != 0) {
@@ -210,7 +209,7 @@ public:
     Changed done() const
     {
         for (const Kind kind : changed_) {
-            own(configOf(layout_, kind), false);
+            own(layout_, configOf(layout_, kind), false);
         }
         return changed_;
     }
@@ -439,7 +438,7 @@ Changed init(const Layout& layout, const Kind kind)
     fs::create_directories(state);
     writePrivateFile(configOf(layout, kind), config.dump(kJsonIndent) + "\n");
     const Peer made = peerOf(layout, kind, true);
-    own(state, true);
+    own(layout, state, true);
 
     Edits edits(layout);
     std::vector<Kind> others;
@@ -454,7 +453,7 @@ Changed init(const Layout& layout, const Kind kind)
     }
     Changed changed = edits.done();
     changed.insert(kind);
-    own(configOf(layout, kind), false);
+    own(layout, configOf(layout, kind), false);
     return changed;
 }
 

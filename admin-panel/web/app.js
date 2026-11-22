@@ -635,6 +635,35 @@
         { id: "facades", label: N_("Facades") },
         { id: "gateways", label: N_("Gateways") }
     ];
+    var kTabKinds = {
+        registration: "server-service",
+        portal: "server-service",
+        addresses: "server-service",
+        accounts: "server-service",
+        server: "server-core",
+        facades: "facade",
+        gateways: "gateway"
+    };
+    var kViewKinds = { users: "server-service" };
+    var listedKinds = null;
+
+    function listed(kind) {
+        return !kind || listedKinds.indexOf(kind) >= 0;
+    }
+
+    function shownTabs() {
+        return kSettingsTabs.filter(function (tab) { return listed(kTabKinds[tab.id]); });
+    }
+
+    function refreshKinds() {
+        return api("GET", "/api/panel").then(function (data) {
+            listedKinds = data.services.map(function (service) { return service.kind; });
+            Array.prototype.forEach.call(nav.querySelectorAll("a"), function (link) {
+                link.parentNode.hidden = !listed(kViewKinds[link.dataset.view]);
+            });
+        });
+    }
+
     var kLogLevels = ["error", "warn", "info", "debug"];
     var kI2pLogLevels = ["none", "error", "warn", "info", "debug"];
     var kServiceKinds = ["server-core", "server-service", "facade", "gateway"];
@@ -990,15 +1019,20 @@
     }
 
     function renderSettings(wanted, item) {
-        if (wanted && kSettingsTabs.some(function (tab) { return tab.id === wanted; })) {
+        var tabs = shownTabs();
+        if (wanted && tabs.some(function (tab) { return tab.id === wanted; })) {
             settingsTab = wanted;
             settingsItem = item || "";
+        }
+        if (!tabs.some(function (tab) { return tab.id === settingsTab; })) {
+            settingsTab = tabs[0].id;
+            settingsItem = "";
         }
         setHash("#/settings/" + settingsTab
             + (settingsItem ? "/" + encodeURIComponent(settingsItem) : ""));
         var box = view(N_("settings"));
         var bar = element("nav", "tabs");
-        kSettingsTabs.forEach(function (tab) {
+        tabs.forEach(function (tab) {
             var button = element("button", "tab" + (tab.id === settingsTab ? " is-on" : ""),
                 t(tab.label));
             button.addEventListener("click", function () {
@@ -1703,6 +1737,9 @@
                 return {
                     method: "PUT", path: "/api/panel",
                     after: function (answer, at) {
+                        refreshKinds().catch(function (error) {
+                            at.appendChild(notice(error.message, "is-error"));
+                        });
                         answer.descriptorErrors.forEach(function (failed) {
                             at.appendChild(notice(t("Saved, but the descriptor was not"
                                 + " updated: %1", failed), "is-error"));
@@ -1755,8 +1792,14 @@
     function route() {
         window.clearInterval(pollTimer);
         pollTimer = null;
+        if (listedKinds === null) {
+            refreshKinds().then(route).catch(function (error) {
+                view(N_("monitoring")).appendChild(notice(error.message, "is-error"));
+            });
+            return;
+        }
         var parts = (window.location.hash || "#/monitoring").replace("#/", "").split("/");
-        var name = views[parts[0]] ? parts[0] : "monitoring";
+        var name = views[parts[0]] && listed(kViewKinds[parts[0]]) ? parts[0] : "monitoring";
         Array.prototype.forEach.call(nav.querySelectorAll("a"), function (link) {
             link.className = link.dataset.view === name ? "is-current" : "";
         });

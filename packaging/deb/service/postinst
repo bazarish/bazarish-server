@@ -1,0 +1,21 @@
+#!/bin/sh
+# Bazarish project (c) 2026
+set -e
+
+readonly kKind=@KIND@
+readonly kUnit=@UNIT@.service
+
+if [ "$1" = "configure" ]; then
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload
+    fi
+    bazarish-setup init "$kKind"
+    if [ -d /run/systemd/system ]; then
+        if [ -z "$2" ]; then
+            systemctl enable --now "$kUnit"
+        elif systemctl is-enabled --quiet "$kUnit"; then
+            systemctl restart "$kUnit"
+        fi
+    fi
+    dpkg-trigger --no-await bazarish-services
+fi

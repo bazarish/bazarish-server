@@ -4,7 +4,9 @@
 set -euo pipefail
 
 readonly kOut=$1
-readonly kNotice="To finish:"
+readonly kPanelNotice="administers the panel"
+readonly kGatewayNotice="bazarish-setup gateway-link"
+readonly kWaiting="starts once it is linked"
 readonly kData=(/etc/bazarish /var/lib/bazarish)
 readonly kOperatorFile=written-by-the-operator
 kWork=$(mktemp -d)
@@ -30,19 +32,35 @@ nextVersion() {
     dpkg-deb --root-owner-group -b "$unpacked" "$kWork/$(basename "$1" | sed "s/_${version}_/_${next}_/")" >/dev/null
 }
 
-readonly kFirst=(./"$kOut"/bazarish-gateway_*.deb ./"$kOut"/bazarish-server_*.deb)
+readonly kFirst=(./"$kOut"/bazarish-*.deb)
+readonly kKinds=(server-core server-service facade admin-panel gateway)
 if ! first=$(installPackages "${kFirst[@]}"); then
     echo "$first" >&2
     exit 1
 fi
-if [ "$(grep -c "$kNotice" <<<"$first")" -ne 2 ]; then
-    echo "the first install did not say what is left, both packages should have:" >&2
+for notice in "$kPanelNotice" "$kGatewayNotice"; do
+    if [ "$(grep -c "$notice" <<<"$first")" -ne 1 ]; then
+        echo "the first install did not say once: $notice" >&2
+        echo "$first" >&2
+        exit 1
+    fi
+done
+if grep -q "$kWaiting" <<<"$first"; then
+    echo "the first install left a service waiting:" >&2
     echo "$first" >&2
     exit 1
 fi
-for config in server-core server-service facade admin-panel gateway; do
-    if [ ! -s "/etc/bazarish/$config.json" ]; then
-        echo "the first install wrote no $config.json" >&2
+for kind in "${kKinds[@]}"; do
+    if [ ! -s "/etc/bazarish/$kind.json" ]; then
+        echo "the first install wrote no $kind.json" >&2
+        exit 1
+    fi
+    if ! bazarish-setup ready "$kind"; then
+        echo "the $kind is not linked after the first install" >&2
+        exit 1
+    fi
+    if [ "$(stat -c %U "/etc/bazarish/$kind.json")" != bazarish ]; then
+        echo "$kind.json does not belong to the service user" >&2
         exit 1
     fi
 done
@@ -78,8 +96,8 @@ for round in reinstall upgrade; do
         echo "$said" >&2
         exit 1
     fi
-    if grep -q "$kNotice" <<<"$said"; then
-        echo "the $round set the server up again:" >&2
+    if grep -q -e "$kPanelNotice" -e "$kGatewayNotice" -e "$kWaiting" <<<"$said"; then
+        echo "the $round set the services up again:" >&2
         echo "$said" >&2
         exit 1
     fi
@@ -90,4 +108,4 @@ for round in reinstall upgrade; do
     fi
     echo "$round: every file under ${kData[*]} kept its bytes, owner and mode"
 done
-dpkg-query -W bazarish-gateway bazarish-server
+dpkg-query -W "bazarish-*"

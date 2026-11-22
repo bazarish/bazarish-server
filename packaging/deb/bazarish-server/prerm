@@ -1,8 +1,0 @@
-#!/bin/sh
-# Bazarish project (c) 2026
-set -e
-
-if [ "$1" = "remove" ] && [ -d /run/systemd/system ]; then
-    systemctl stop bazarish-admin-panel.service bazarish-facade.service \
-        bazarish-server-service.service bazarish-server-core.service
-fi

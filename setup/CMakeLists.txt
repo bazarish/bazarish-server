@@ -21,9 +21,13 @@ if(NOT TARGET bazarish_server_shared)
     add_subdirectory(${BAZARISH_SERVER_ROOT}/shared bazarish-server-shared)
 endif()
 
-add_library(bazarish_setup_lib STATIC src/ServerSetup.cpp)
+if(NOT TARGET bazarish_gateway_lib)
+    add_subdirectory(${BAZARISH_SERVER_ROOT}/gateway bazarish-gateway)
+endif()
+
+add_library(bazarish_setup_lib STATIC src/Setup.cpp)
 target_include_directories(bazarish_setup_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(bazarish_setup_lib PUBLIC Bazarish::Common bazarish_server_shared)
+target_link_libraries(bazarish_setup_lib PUBLIC Bazarish::Common bazarish_server_shared bazarish_gateway_lib)
 target_compile_options(bazarish_setup_lib PRIVATE -Wall -Wextra -Werror)
 
 add_executable(bazarish-setup src/Main.cpp)
@@ -32,7 +36,7 @@ target_compile_options(bazarish-setup PRIVATE -Wall -Wextra -Werror)
 
 enable_testing()
 
-add_executable(TestServerSetup tests/TestServerSetup.cpp)
-target_link_libraries(TestServerSetup PRIVATE bazarish_setup_lib bazarish_test_util)
-target_compile_options(TestServerSetup PRIVATE -Wall -Wextra -Werror)
-add_test(NAME TestServerSetup COMMAND TestServerSetup)
+add_executable(TestSetup tests/TestSetup.cpp)
+target_link_libraries(TestSetup PRIVATE bazarish_setup_lib bazarish_test_util)
+target_compile_options(TestSetup PRIVATE -Wall -Wextra -Werror)
+add_test(NAME TestSetup COMMAND TestSetup)

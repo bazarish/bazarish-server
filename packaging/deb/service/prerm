@@ -3,5 +3,5 @@
 set -e
 
 if [ "$1" = "remove" ] && [ -d /run/systemd/system ]; then
-    systemctl stop bazarish-gateway.service
+    systemctl stop @UNIT@.service
 fi

@@ -4,9 +4,7 @@
 set -e
 
 if [ "$1" = "purge" ]; then
-    for unit in bazarish-server bazarish-server-service bazarish-facade bazarish-admin-panel; do
-        rm -f "/etc/systemd/system/multi-user.target.wants/$unit.service"
-    done
+    rm -f /etc/systemd/system/multi-user.target.wants/@UNIT@.service
 fi
 if [ -d /run/systemd/system ]; then
     systemctl daemon-reload

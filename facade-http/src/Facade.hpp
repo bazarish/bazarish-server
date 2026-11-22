@@ -22,7 +22,7 @@ namespace bazarish::facade {
 
 inline constexpr const char* kDefaultUpstreamHost = ports::kLoopback;
 inline constexpr int kDefaultMessagingPort = ports::kCorePort;
-inline constexpr int kDefaultServerServicePort = ports::kNodePort;
+inline constexpr int kDefaultServerServicePort = ports::kServerServicePort;
 
 struct Upstream {
     std::string host;

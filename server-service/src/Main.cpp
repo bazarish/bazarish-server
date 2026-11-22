@@ -47,8 +47,8 @@ namespace {
 namespace fs = std::filesystem;
 
 constexpr const char* kDefaultHost = bazarish::ports::kLoopback;
-constexpr int kDefaultPort = bazarish::ports::kNodePort;
-constexpr int kDefaultOpsPort = bazarish::ports::kNodeOpsPort;
+constexpr int kDefaultPort = bazarish::ports::kServerServicePort;
+constexpr int kDefaultOpsPort = bazarish::ports::kServerServiceOpsPort;
 constexpr std::size_t kPortalSecretBytes = 16;
 constexpr std::chrono::hours kIdleSweepInterval{1};
 constexpr const char* kDefaultRegistrationMessage

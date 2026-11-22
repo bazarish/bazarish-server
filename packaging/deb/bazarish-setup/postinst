@@ -1,0 +1,18 @@
+#!/bin/sh
+# Bazarish project (c) 2026
+set -e
+
+if [ "$1" = "configure" ]; then
+    if ! getent passwd bazarish >/dev/null; then
+        adduser --system --group --home /var/lib/bazarish --no-create-home bazarish
+    fi
+    if [ ! -d /etc/bazarish ]; then
+        install -d -o root -g bazarish -m 0770 /etc/bazarish
+    fi
+    if [ ! -d /var/lib/bazarish ]; then
+        install -d -o bazarish -g bazarish /var/lib/bazarish
+    fi
+fi
+if [ "$1" = "triggered" ]; then
+    bazarish-setup waiting
+fi

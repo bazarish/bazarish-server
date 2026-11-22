@@ -1,6 +1,6 @@
 #!/bin/bash
 # Bazarish project (c) 2026
-# Builds, tests and packs bazarish-server and bazarish-gateway for Debian 13: build.sh <out-dir>.
+# Builds, tests and packs the Bazarish server packages for Debian 13: build.sh <out-dir>.
 set -euo pipefail
 umask 022
 
@@ -57,14 +57,16 @@ installTree() {
 # dpkg-shlibdeps reads the package name from a control file beside the binaries.
 libraryDepends() {
     local -r probe=$kBuild/shlibs-$1
-    local -r programs="$PWD/$(stageOf "$1")/usr/lib/$1"
     rm -rf "$probe"
     mkdir -p "$probe/debian"
     printf 'Source: %s\n\nPackage: %s\nArchitecture: any\n' "$1" "$1" > "$probe/debian/control"
-    (cd "$probe" && dpkg-shlibdeps -O "$programs"/*) | sed -n 's/^shlibs:Depends=//p'
+    local programs
+    mapfile -t programs < <(find "$PWD/$(stageOf "$1")/usr" -type f \
+        \( -path '*/usr/bin/*' -o -path '*/usr/lib/bazarish-*' \))
+    (cd "$probe" && dpkg-shlibdeps -O "${programs[@]}") | sed -n 's/^shlibs:Depends=//p'
 }
 
-# pack <package> <depends> <summary> <description>
+# pack <package> <depends> <maintainer scripts dir> <summary> <description>
 pack() {
     local -r stage=$(stageOf "$1")
     local libraries
@@ -75,38 +77,61 @@ Package: $1
 Version: $kVersion
 Architecture: $kArch
 Maintainer: Bazarish <gusto@bazari.sh>
-Depends: adduser, systemd, ca-certificates, $2$libraries
+Depends: $2$libraries
 Section: net
 Priority: optional
 Homepage: https://bazarish.org
-Description: $3
- $4
+Description: $4
+ $5
 CONTROL
-    for script in postinst prerm postrm; do
-        install -m 0755 "packaging/deb/$1/$script" "$stage/DEBIAN/$script"
+    local script
+    for script in "$3"/*; do
+        install -m 0755 "$script" "$stage/DEBIAN/$(basename "$script")"
     done
+    if [ -f "$stage/DEBIAN/triggers" ]; then
+        chmod 0644 "$stage/DEBIAN/triggers"
+    fi
     mkdir -p "$kOut"
     dpkg-deb --root-owner-group --build "$stage" "$kOut/${1}_${kVersion}_${kArch}.deb"
 }
 
-rm -rf "$(stageOf bazarish-gateway)" "$(stageOf bazarish-server)"
+# service <package> <kind> <unit> <built binary> <summary> <description>
+service() {
+    installProgram "$1" "$4"
+    installUnit "$1" "$3"
+    local -r scripts=$kBuild/scripts-$1
+    mkdir -p "$scripts"
+    local script
+    for script in postinst prerm postrm; do
+        sed "s/@KIND@/$2/; s/@UNIT@/$3/" "packaging/deb/service/$script" > "$scripts/$script"
+    done
+    pack "$1" "bazarish-setup (= $kVersion), systemd, " "$scripts" "$5" "$6"
+}
 
-installProgram bazarish-gateway gateway/bazarish-gateway
-installUnit bazarish-gateway bazarish-gateway
+readonly kPackages=(bazarish-setup bazarish-server-core bazarish-server-service bazarish-facade
+    bazarish-admin-panel bazarish-gateway)
+for package in "${kPackages[@]}"; do
+    rm -rf "$(stageOf "$package")" "$kBuild/scripts-$package"
+done
+
+install -D -m 0755 "$kBuild/setup/bazarish-setup" "$(stageOf bazarish-setup)/usr/bin/bazarish-setup"
+strip --strip-unneeded "$(stageOf bazarish-setup)/usr/bin/bazarish-setup"
+install -D -m 0644 README.md "$(stageOf bazarish-setup)/usr/share/doc/bazarish-setup/README.md"
+pack bazarish-setup "adduser, ca-certificates, " packaging/deb/bazarish-setup "Bazarish service setup" \
+    "Writes the configs and keys of the Bazarish services and links them, here and across hosts."
+
+service bazarish-server-core server-core bazarish-server-core server-core/bazarish-server-core \
+    "Bazarish server core" "Message delivery and mailboxes; federation over I2P."
+installTree bazarish-server-service server-service/portal portal
+service bazarish-server-service server-service bazarish-server-service \
+    server-service/bazarish-server-service "Bazarish server service" \
+    "Accounts, registration and the service portal of a Bazarish server."
+service bazarish-facade facade bazarish-facade facade-http/bazarish-facade-http \
+    "Bazarish facade" "The I2P address clients reach a Bazarish server at."
+installTree bazarish-admin-panel admin-panel/web web
+service bazarish-admin-panel admin-panel bazarish-admin-panel admin-panel/bazarish-admin-panel \
+    "Bazarish admin panel" "The web panel that runs the Bazarish services of one server."
 install -D -m 0644 gateway/README.md \
     "$(stageOf bazarish-gateway)/usr/share/doc/bazarish-gateway/README.md"
-pack bazarish-gateway "" "Bazarish gateway" \
-    "Runs the I2P router for Bazarish clients that do not run their own."
-
-for program in server-core/bazarish-server-core server-service/bazarish-server-service \
-    facade-http/bazarish-facade-http admin-panel/bazarish-admin-panel setup/bazarish-setup; do
-    installProgram bazarish-server "$program"
-done
-for unit in bazarish-server-core bazarish-server-service bazarish-facade bazarish-admin-panel; do
-    installUnit bazarish-server "$unit"
-done
-installTree bazarish-server admin-panel/web admin-panel
-installTree bazarish-server server-service/portal portal
-install -D -m 0644 README.md "$(stageOf bazarish-server)/usr/share/doc/bazarish-server/README.md"
-pack bazarish-server "bazarish-gateway (= $kVersion), " "Bazarish server" \
-    "Message delivery, accounts, the client-facing facade and the admin panel."
+service bazarish-gateway gateway bazarish-gateway gateway/bazarish-gateway \
+    "Bazarish gateway" "Runs the I2P router for Bazarish clients that do not run their own."

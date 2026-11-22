@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 User=bazarish
 Group=bazarish
-ExecStart=/usr/lib/bazarish-server/bazarish-admin-panel --config /etc/bazarish/admin-panel.json
+ExecStart=/usr/lib/bazarish-admin-panel/bazarish-admin-panel --config /etc/bazarish/admin-panel.json
 Restart=on-failure
 RestartSec=5
 

@@ -564,6 +564,33 @@ try {
         }
 
         {
+            const auto clear = [&](const devicetest::Device& by, const std::string& device) {
+                const std::string path = "/v1/messaging/clients/" + device;
+                return call(port, "DELETE", path, makeHeaders(by, "DELETE", path, ""));
+            };
+            CHECK(toSelf(aliceDev, "held-for-phone", alicePhone.id()).status == 200);
+            CHECK(clear(alicePhone, aliceDev.id()).status == 403);
+            CHECK(clear(aliceDev, aliceDev.id()).status == 400);
+            CHECK(clear(aliceDev, alicePhone.id()).status == 200);
+            CHECK(!storage.isClientRegistered(alice.fingerprint(), alicePhone.id()));
+            CHECK(!storage.hasBlob(alice.fingerprint(), "held-for-phone"));
+            bool listedInactive = false;
+            const nlohmann::json afterClearing = devicesOf(aliceDev);
+            for (const nlohmann::json& device : afterClearing.at("devices")) {
+                if (fromBase64(device.at("cert").get<std::string>()) == alicePhone.certDer) {
+                    listedInactive = !device.at("registered").get<bool>()
+                        && device.at("departure").get<std::string>().empty();
+                }
+            }
+            CHECK(listedInactive);
+            CHECK(call(port, "POST", "/v1/messaging/clients",
+                      makeHeaders(alicePhone, "POST", "/v1/messaging/clients", install), install)
+                      .status
+                == 200);
+            CHECK(storage.isClientRegistered(alice.fingerprint(), alicePhone.id()));
+        }
+
+        {
             const std::string strayInstall = enrollment(aliceStray, "install-stray");
             CHECK(call(port, "POST", "/v1/messaging/clients",
                       makeHeaders(aliceStray, "POST", "/v1/messaging/clients", strayInstall),

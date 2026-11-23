@@ -596,6 +596,22 @@ void HttpApi::setupRoutes()
                 {"card", card.has_value() ? toBase64(*card) : std::string()}});
         }));
 
+    http_->del("/v1/messaging/clients/{id}",
+        authenticated([&store](const bazarish::http::Request& request,
+                          const Caller& caller) -> bazarish::http::Response {
+            if (caller.role != DeviceRole::ePrimary) {
+                return errorResponse(403, ErrorCode::eDeviceNotPrimary,
+                    "only a primary device clears another device's queue");
+            }
+            const std::string& device = request.captures.at(0);
+            if (device == caller.device) {
+                return errorResponse(400, ErrorCode::eRequestFailed,
+                    "a device does not clear its own queue");
+            }
+            store.unregisterClient(caller.user, device);
+            return jsonResponse({{"ok", true}});
+        }));
+
     http_->post("/v1/messaging/departure",
         authenticated([&store](const bazarish::http::Request& request,
                           const Caller& caller) -> bazarish::http::Response {

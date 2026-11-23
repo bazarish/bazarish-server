@@ -171,11 +171,14 @@ nlohmann::json freshConfig(const Layout& layout, const Kind kind)
     case Kind::eAdminPanel:
         return {{kState, state}, {"assets", layout.panelAssets.string()},
             {kListen, endpoint(ports::kPanelPort)}, {kServices, none}};
-    case Kind::eGateway:
-        return {{kListen, endpoint(ports::kGatewayPort)},
-            {"basePath", "/" + toHex(randomBytes(kBasePathBytes))}, {kState, state},
+    case Kind::eGateway: {
+        // GCC 12 misreads "literal" + std::string here as an overlapping copy (-Wrestrict).
+        std::string basePath("/");
+        basePath += toHex(randomBytes(kBasePathBytes));
+        return {{kListen, endpoint(ports::kGatewayPort)}, {"basePath", basePath}, {kState, state},
             {kOpsListen, endpoint(ports::kGatewayOpsPort)}, {kOperators, none},
             {kOpsClients, none}};
+    }
     }
     throw std::logic_error("a service kind without a config");
 }

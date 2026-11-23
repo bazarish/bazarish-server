@@ -33,15 +33,14 @@ public:
     NodeCards(NodeAddress node, std::shared_ptr<const Identity> identity);
 
     std::optional<HeldCard> card(const std::string& user);
-    // The devices the account's card lists, and its newest revocation list.
-    std::optional<DeviceBook> devices(const std::string& user);
+    std::optional<Revocation> revocation(const std::string& user);
     void forget(const std::string& user);
 
 private:
     struct Held {
         std::int64_t fetchedAt = 0;
         HeldCard card;
-        DeviceBook devices;
+        Revocation revocation;
     };
 
     std::optional<Held> held(const std::string& user);

@@ -88,8 +88,9 @@ try {
     const Identity alice = Identity::generate();
     const devicetest::Device phone(alice);
     const devicetest::Device laptop(alice, DeviceRole::eSecondary);
-    const DeviceBook devices = devicetest::bookOf(alice, {&phone, &laptop});
-    options.accountDevices = [&devices](const std::string&) { return std::optional<DeviceBook>(devices); };
+    options.accountRevocation
+        = [](const std::string&) { return std::optional<Revocation>(Revocation{}); };
+    options.accountCard = [](const std::string&) { return std::optional<Bytes>(); };
     options.assignDestination = [](const std::string&) {
         return DestinationAssignment{std::string(52, 'd') + ".b32.i2p", "home"};
     };
@@ -103,7 +104,9 @@ try {
     std::thread serving([&api]() { api.wait(); });
 
     for (const devicetest::Device* const device : {&phone, &laptop}) {
-        const std::string body = nlohmann::json{{"install", "install1"}}.dump();
+        const std::string body = nlohmann::json{{"install", "install1"},
+            {"sealing", toBase64(device->keys.sealing().publicDer())}}
+                                     .dump();
         CHECK(testutil::call(port, "POST", "/v1/messaging/clients",
                   signedFor(*device, "POST", "/v1/messaging/clients", body), body)
                   .status
@@ -138,6 +141,30 @@ try {
         static_cast<long long>(std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::steady_clock::now() - heldSince)
                                    .count()));
+
+    {
+        const std::uint64_t version
+            = nlohmann::json::parse(answered.body).at("devicesVersion").get<std::uint64_t>();
+        const std::string knowing = "/v1/messaging/events?hold=1&devices=" + std::to_string(version)
+            + "&deferred="
+            + nlohmann::json::parse(answered.body).at("pending").at(0).at("id").get<std::string>();
+        std::future<http::ClientResponse> listWait = holdFor(port, laptop, knowing);
+        CHECK(listWait.wait_for(kSoon) == std::future_status::timeout);
+        const devicetest::Device tablet(alice, DeviceRole::eSecondary);
+        const std::string body = nlohmann::json{{"install", "install1"},
+            {"sealing", toBase64(tablet.keys.sealing().publicDer())}}
+                                     .dump();
+        CHECK(testutil::call(port, "POST", "/v1/messaging/clients",
+                  signedFor(tablet, "POST", "/v1/messaging/clients", body), body)
+                  .status
+            == 200);
+        CHECK(listWait.wait_for(kSoon) == std::future_status::ready);
+        const http::ClientResponse moved = listWait.get();
+        CHECK(moved.status == 200);
+        CHECK(nlohmann::json::parse(moved.body).at("devicesVersion").get<std::uint64_t>() > version);
+        const http::ClientResponse stale = askAtOnce(port, laptop, knowing);
+        CHECK(stale.status == 200);
+    }
 
     const std::string keptId
         = nlohmann::json::parse(answered.body).at("pending").at(0).at("id").get<std::string>();

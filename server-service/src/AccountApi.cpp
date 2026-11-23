@@ -362,7 +362,7 @@ bool AccountApi::revokedHere(const std::string& user, const std::string& device)
 {
     const std::optional<SubscriptionStore::Account> held = store_.getAccount(user);
     return held.has_value() && !held->card.empty()
-        && heldCard(user, held->card).devices.revoked(device);
+        && heldCard(user, held->card).revocation.revokes(device);
 }
 
 void AccountApi::deleteAccount(const std::string& user)
@@ -830,7 +830,7 @@ void AccountApi::setupRoutes()
             const std::optional<GrantStore::SubscriptionGrant> grant
                 = grants_.peekSubscription(user);
             const std::optional<SubscriptionStore::Account> held = store_.getAccount(user);
-            if (card.devices.revoked(caller.device)) {
+            if (card.revocation.revokes(caller.device)) {
                 respondError(response, 403, ErrorCode::eDeviceRevoked, "this device was revoked");
                 return;
             }
@@ -841,9 +841,9 @@ void AccountApi::setupRoutes()
                         "this card is not newer than the one already published");
                     return;
                 }
-                if (card.devices.revocationNumber() < previous.devices.revocationNumber()) {
+                if (card.revocation.number < previous.revocation.number) {
                     respondError(response, 409, ErrorCode::eRequestFailed,
-                        "this card carries an older revocation list than the one published");
+                        "this card carries an older revocation than the one published");
                     return;
                 }
             }

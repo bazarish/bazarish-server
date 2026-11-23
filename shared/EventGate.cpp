@@ -27,6 +27,25 @@ void EventGate::notify(const std::string& user)
     }
 }
 
+void EventGate::wakeWaiting(const std::string& user)
+{
+    std::vector<Waiter> woken;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        const auto found = waiters_.find(user);
+        if (found == waiters_.end()) {
+            return;
+        }
+        woken.swap(found->second);
+        waiters_.erase(found);
+    }
+    for (const Waiter& held : woken) {
+        if (const std::shared_ptr<boost::asio::steady_timer> timer = held.timer.lock()) {
+            timer->cancel();
+        }
+    }
+}
+
 void EventGate::release(const std::string& user, const std::string& client)
 {
     std::vector<std::shared_ptr<boost::asio::steady_timer>> released;

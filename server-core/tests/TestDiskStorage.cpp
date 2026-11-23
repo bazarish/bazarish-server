@@ -26,6 +26,8 @@ constexpr std::int64_t kNow = 1780000000;
 constexpr std::size_t kPassCap = 64;
 constexpr std::size_t kRacers = 16;
 constexpr std::size_t kHeldLimit = 5;
+const Bytes kCert{0xce, 0x47};
+const Bytes kSealing{0x5e, 0xa1};
 
 std::string makeUser(const unsigned char fill)
 {
@@ -42,29 +44,29 @@ try {
 
     const std::string alice = makeUser(0x01);
 
-    CHECK_THROWS(storage.registerClient("not-a-user", "client1", "install1"));
-    CHECK_THROWS(storage.registerClient(alice, "../escape", "install1"));
+    CHECK_THROWS(storage.registerClient("not-a-user", "client1", "install1", kCert, kSealing, nowSeconds()));
+    CHECK_THROWS(storage.registerClient(alice, "../escape", "install1", kCert, kSealing, nowSeconds()));
     CHECK_THROWS(storage.putBlob(alice, "bad/blob", Bytes{1}, "content", kQuota, kNow));
     CHECK_THROWS(storage.putBlob(alice, "", Bytes{1}, "content", kQuota, kNow));
 
     CHECK(!storage.isClientRegistered(alice, "client1"));
-    storage.registerClient(alice, "client1", "install1");
-    storage.registerClient(alice, "client2", "install1");
-    storage.registerClient(alice, "client1", "install1");
+    storage.registerClient(alice, "client1", "install1", kCert, kSealing, nowSeconds());
+    storage.registerClient(alice, "client2", "install1", kCert, kSealing, nowSeconds());
+    storage.registerClient(alice, "client1", "install1", kCert, kSealing, nowSeconds());
     CHECK(storage.isClientRegistered(alice, "client1"));
     CHECK(storage.listClients(alice).size() == 2);
-    CHECK(storage.registerClient(alice, "client1", "install1")
+    CHECK(storage.registerClient(alice, "client1", "install1", kCert, kSealing, nowSeconds())
         == DiskStorage::RegisterResult::eRegistered);
-    CHECK(storage.registerClient(alice, "client1", "install2") == DiskStorage::RegisterResult::eTaken);
+    CHECK(storage.registerClient(alice, "client1", "install2", kCert, kSealing, nowSeconds()) == DiskStorage::RegisterResult::eTaken);
     CHECK(storage.listClients(alice).size() == 2);
 
     {
         const testutil::ScratchDir addressedScratch("storage-addressed-test");
         DiskStorage addressed(addressedScratch.path());
         const std::string owner = makeUser(0x05);
-        addressed.registerClient(owner, "phone", "install1");
-        addressed.registerClient(owner, "tablet", "install1");
-        addressed.registerClient(owner, "laptop", "install1");
+        addressed.registerClient(owner, "phone", "install1", kCert, kSealing, nowSeconds());
+        addressed.registerClient(owner, "tablet", "install1", kCert, kSealing, nowSeconds());
+        addressed.registerClient(owner, "laptop", "install1", kCert, kSealing, nowSeconds());
         CHECK(addressed.putAddressedBlob(owner, "to-tablet", Bytes{1, 2}, "device", kQuota, kNow, "tablet")
             == DiskStorage::PutResult::eStored);
         CHECK(addressed.listPending(owner, "phone").empty());
@@ -80,6 +82,76 @@ try {
             == DiskStorage::PutResult::eStored);
         addressed.unregisterClient(owner, "laptop");
         CHECK(!addressed.hasBlob(owner, "to-laptop"));
+    }
+
+    {
+        const testutil::ScratchDir devicesScratch("storage-devices-test");
+        DiskStorage devices(devicesScratch.path());
+        const std::string owner = makeUser(0x06);
+        std::size_t told = 0;
+        devices.watchDevices([&told](const std::string&) { ++told; });
+        CHECK(devices.devicesVersion(owner) == 0);
+        devices.registerClient(owner, "phone", "install1", kCert, kSealing, nowSeconds());
+        CHECK(devices.devicesVersion(owner) == 1);
+        CHECK(told == 1);
+        CHECK(devices.putSelfBlob(owner, "alone", Bytes{1}, kQuota, kNow, "phone")
+            == DiskStorage::PutResult::eStored);
+        CHECK(!devices.hasBlob(owner, "alone"));
+        devices.registerClient(owner, "desk", "install1", kCert, kSealing, nowSeconds());
+        devices.registerClient(owner, "desk", "install1", kCert, kSealing, nowSeconds());
+        CHECK(devices.devicesVersion(owner) == 2);
+        const DiskStorage::DeviceList listed = devices.deviceList(owner);
+        CHECK(listed.version == 2);
+        CHECK(listed.devices.size() == 2);
+        CHECK(listed.devices.front().certDer == kCert);
+        CHECK(listed.devices.front().sealingDer == kSealing);
+        CHECK(listed.devices.front().registered);
+        CHECK(listed.devices.front().departure.empty());
+
+        CHECK(devices.putSelfBlob(owner, "echo", Bytes{2}, kQuota, kNow, "phone")
+            == DiskStorage::PutResult::eStored);
+        CHECK(devices.listPending(owner, "phone").empty());
+        CHECK(devices.isPendingFor(owner, "echo", "desk"));
+        devices.ackBlob(owner, "echo", "desk");
+        CHECK(!devices.hasBlob(owner, "echo"));
+
+        CHECK(devices.putSelfBlob(owner, "waits", Bytes{3}, kQuota, kNow, "phone")
+            == DiskStorage::PutResult::eStored);
+        const Bytes departure{0xde, 0xad};
+        devices.departClient(owner, "desk", departure);
+        CHECK(!devices.isClientRegistered(owner, "desk"));
+        CHECK(!devices.hasBlob(owner, "waits"));
+        CHECK(devices.devicesVersion(owner) == 3);
+        const DiskStorage::DeviceList left = devices.deviceList(owner);
+        CHECK(left.devices.size() == 2);
+        bool sawDeparture = false;
+        for (const DiskStorage::DeviceEntry& entry : left.devices) {
+            if (!entry.departure.empty()) {
+                sawDeparture = entry.departure == departure && !entry.registered;
+            }
+        }
+        CHECK(sawDeparture);
+        CHECK(devices.registerClient(owner, "desk", "install1", kCert, kSealing, nowSeconds())
+            == DiskStorage::RegisterResult::eTaken);
+        CHECK_THROWS(devices.departClient(owner, "stranger", departure));
+
+        devices.dropDevice(owner, "desk");
+        CHECK(devices.deviceList(owner).devices.size() == 1);
+        CHECK(devices.devicesVersion(owner) == 4);
+        devices.dropDevice(owner, "desk");
+        CHECK(devices.devicesVersion(owner) == 4);
+
+        constexpr std::int64_t kSilentDays = kMailRetentionDays + 1;
+        devices.registerClient(owner, "drawer", "install1", kCert, kSealing,
+            nowSeconds() - kSilentDays * kSecondsPerDay);
+        devices.noteAsked(owner, "phone", nowSeconds());
+        devices.purgeExpired(kNow, nowSeconds() - kMailRetentionDays * kSecondsPerDay);
+        CHECK(!devices.isClientRegistered(owner, "drawer"));
+        CHECK(devices.isClientRegistered(owner, "phone"));
+        CHECK(devices.deviceList(owner).devices.size() == 2);
+        CHECK(devices.registerClient(owner, "drawer", "install1", kCert, kSealing, nowSeconds())
+            == DiskStorage::RegisterResult::eRegistered);
+        CHECK(devices.isClientRegistered(owner, "drawer"));
     }
 
     const Bytes secret = randomBytes(kDeliverySecretSize);
@@ -181,7 +253,7 @@ try {
     CHECK(storage.usage(alice) == 100);
 
     const std::string bob = makeUser(0x02);
-    storage.registerClient(bob, "bclient", "install1");
+    storage.registerClient(bob, "bclient", "install1", kCert, kSealing, nowSeconds());
     CHECK(storage.putBlob(bob, "old", blob, "content", kQuota, kNow) == DiskStorage::PutResult::eStored);
     CHECK(storage.putBlob(bob, "fresh", blob, "contact", kQuota, kNow) == DiskStorage::PutResult::eStored);
     const std::int64_t storedAt = nowSeconds();
@@ -195,7 +267,7 @@ try {
         const testutil::ScratchDir agingScratch("storage-retention-test");
         DiskStorage aging(agingScratch.path());
         const std::string carol = makeUser(0x03);
-        aging.registerClient(carol, "cclient", "install1");
+        aging.registerClient(carol, "cclient", "install1", kCert, kSealing, nowSeconds());
         CHECK(aging.putBlob(carol, "untaken", blob, "content", kQuota, kNow)
             == DiskStorage::PutResult::eStored);
         aging.purgeExpired(kNow, storedAt - kRetentionSeconds);

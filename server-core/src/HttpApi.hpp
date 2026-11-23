@@ -51,8 +51,9 @@ struct HttpApiOptions {
         provisionI2pDest;
     std::function<void(const std::string& user)> forgetI2pDest;
     std::function<void(const std::string& user)> forgetCard;
-    // None for an account its server service does not know; else the devices its card lists.
-    std::function<std::optional<DeviceBook>(const std::string& user)> accountDevices;
+    // None for an account its server service does not know; else the revocation its card carries.
+    std::function<std::optional<Revocation>(const std::string& user)> accountRevocation;
+    std::function<std::optional<Bytes>(const std::string& user)> accountCard;
     AssignDestinationFn assignDestination;
 
     std::function<std::vector<Bytes>(std::size_t count)> reseedSample;

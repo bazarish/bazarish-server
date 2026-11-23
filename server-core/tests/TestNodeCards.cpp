@@ -38,8 +38,7 @@ Bytes cardOf(const devicetest::Account& owner)
     card.epochs = {{current, kFirstEpochGeneration, owner.keys.id(), Key::generateSealing().publicDer()},
         {current + 1, kFirstEpochGeneration, owner.keys.id(), Key::generateSealing().publicDer()}};
     card.servingSealingKeyDer = Key::generateSealing().publicDer();
-    card.devices = owner.book();
-    return card.issue(owner.device.signing());
+    return card.issue(owner.root);
 }
 
 }  // namespace

@@ -223,8 +223,16 @@ int main(const int argc, const char** argv)
         };
         httpOptions.forgetCard
             = [&nodeCards](const std::string& user) { nodeCards.forget(user); };
-        httpOptions.accountDevices
-            = [&nodeCards](const std::string& user) { return nodeCards.devices(user); };
+        httpOptions.accountRevocation
+            = [&nodeCards](const std::string& user) { return nodeCards.revocation(user); };
+        httpOptions.accountCard
+            = [&nodeCards](const std::string& user) -> std::optional<bazarish::Bytes> {
+            const std::optional<bazarish::server::HeldCard> held = nodeCards.card(user);
+            if (!held.has_value()) {
+                return std::nullopt;
+            }
+            return held->der;
+        };
     }
     bazarish::server::ServerSettings::Values settingValues;
     settingValues.logLevel = config.text("logLevel").empty() ? "info" : config.text("logLevel");

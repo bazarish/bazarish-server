@@ -107,9 +107,9 @@ try {
     const Identity bob = Identity::generate();
     const devicetest::Device phone(alice);
     const devicetest::Device laptop(alice, DeviceRole::eSecondary);
-    const DeviceBook devices = devicetest::bookOf(alice, {&phone, &laptop});
-    options.accountDevices
-        = [&devices](const std::string&) { return std::optional<DeviceBook>(devices); };
+    options.accountRevocation
+        = [](const std::string&) { return std::optional<Revocation>(Revocation{}); };
+    options.accountCard = [](const std::string&) { return std::optional<Bytes>(); };
     std::mutex destMutex;
     DestinationAssignment served{std::string(52, 'd') + ".b32.i2p", "building", kTransientExpires};
     std::atomic<int> destinationReads{0};
@@ -128,7 +128,9 @@ try {
     std::thread serving([&api]() { api.wait(); });
 
     for (const devicetest::Device* const device : {&phone, &laptop}) {
-        const std::string body = nlohmann::json{{"install", "install1"}}.dump();
+        const std::string body = nlohmann::json{{"install", "install1"},
+            {"sealing", toBase64(device->keys.sealing().publicDer())}}
+                                     .dump();
         CHECK(testutil::call(port, "POST", "/v1/messaging/clients",
                   signedFor(*device, "POST", "/v1/messaging/clients", body), body)
                   .status

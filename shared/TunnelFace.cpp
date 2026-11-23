@@ -163,13 +163,13 @@ Caller TunnelFace::authenticate(const http::Request& request)
         } catch (const std::exception& error) {
             return refusal(errorResponse(401, ErrorCode::eSessionInvalid, error.what()));
         }
-        return Caller{
-            session->caller.user, session->caller.device, session->caller.role, std::nullopt};
+        return Caller{session->caller.user, session->caller.device, session->caller.role,
+            session->caller.certDer, std::nullopt};
     }
     try {
         const auth::DeviceCaller caller = auth::verifyDeviceRequest(authHeaders, nowSeconds(),
             request.method, request.target, bodyBytes(request), replays_);
-        return Caller{caller.user, caller.device, caller.role, std::nullopt};
+        return Caller{caller.user, caller.device, caller.role, caller.certDer, std::nullopt};
     } catch (const std::exception& error) {
         return refusal(errorResponse(401, ErrorCode::eRequestFailed, error.what()));
     }

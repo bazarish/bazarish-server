@@ -49,8 +49,7 @@ Bytes cardOf(const devicetest::Account& owner, const std::int64_t issuedAt)
         {current, kFirstEpochGeneration, owner.keys.id(), Key::generateSealing().publicDer()},
         {current + 1, kFirstEpochGeneration, owner.keys.id(), Key::generateSealing().publicDer()}};
     card.servingSealingKeyDer = Key::generateSealing().publicDer();
-    card.devices = owner.book();
-    return card.issue(owner.device.signing());
+    return card.issue(owner.root);
 }
 
 std::future<http::ClientResponse> holdFor(const int port, const devicetest::Account& account)

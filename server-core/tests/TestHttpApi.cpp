@@ -142,17 +142,29 @@ try {
     const devicetest::Device alicePhone(alice, DeviceRole::eSecondary);
     const devicetest::Device aliceStray(alice, DeviceRole::eSecondary);
     const devicetest::Device bobDev(bob);
-    std::mutex booksMutex;
-    std::map<std::string, DeviceBook> books{
-        {alice.fingerprint(), devicetest::bookOf(alice, {&aliceDev, &alicePhone, &aliceStray})},
-        {bob.fingerprint(), devicetest::bookOf(bob, {&bobDev})}};
-    httpOptions.accountDevices = [&](const std::string& user) -> std::optional<DeviceBook> {
-        const std::lock_guard<std::mutex> lock(booksMutex);
-        const auto found = books.find(user);
-        if (found == books.end()) {
+    std::mutex revocationsMutex;
+    std::map<std::string, Revocation> revocations{
+        {alice.fingerprint(), Revocation::of(kFirstRevocationNumber, {})},
+        {bob.fingerprint(), Revocation::of(kFirstRevocationNumber, {})}};
+    httpOptions.accountRevocation = [&](const std::string& user) -> std::optional<Revocation> {
+        const std::lock_guard<std::mutex> lock(revocationsMutex);
+        const auto found = revocations.find(user);
+        if (found == revocations.end()) {
             return std::nullopt;
         }
         return found->second;
+    };
+    const Bytes aliceCard{0xca, 0x4d};
+    httpOptions.accountCard = [&](const std::string& user) -> std::optional<Bytes> {
+        if (user == alice.fingerprint()) {
+            return aliceCard;
+        }
+        return std::nullopt;
+    };
+    const auto enrollment = [](const devicetest::Device& device, const std::string& install) {
+        return nlohmann::json{
+            {"install", install}, {"sealing", toBase64(device.keys.sealing().publicDer())}}
+            .dump();
     };
     httpOptions.reseedSample = [](std::size_t) { return std::vector<Bytes>{}; };
     int restarts = 0;
@@ -176,7 +188,7 @@ try {
     }
 
     {
-        const std::string body = nlohmann::json{{"install", "install1"}}.dump();
+        const std::string body = enrollment(strangerDev, "install1");
         const http::ClientResponse result = call(port, "POST", "/v1/messaging/clients",
             makeHeaders(strangerDev, "POST", "/v1/messaging/clients", body), body);
         CHECK(result.status == 404);
@@ -188,8 +200,16 @@ try {
             == 404);
     }
 
+    {
+        const std::string wrongKey = enrollment(bobDev, "install1");
+        CHECK(call(port, "POST", "/v1/messaging/clients",
+                  makeHeaders(aliceDev, "POST", "/v1/messaging/clients", wrongKey), wrongKey)
+                  .status
+            == 400);
+        CHECK(!storage.isClientRegistered(alice.fingerprint(), aliceDev.id()));
+    }
     for (const devicetest::Device* const device : {&aliceDev, &bobDev}) {
-        const std::string body = nlohmann::json{{"install", "install1"}}.dump();
+        const std::string body = enrollment(*device, "install1");
         const http::ClientResponse result = call(port, "POST", "/v1/messaging/clients",
             makeHeaders(*device, "POST", "/v1/messaging/clients", body), body);
         CHECK(result.status == 200);
@@ -199,7 +219,7 @@ try {
             == 200);
     }
     {
-        const std::string twin = nlohmann::json{{"install", "install2"}}.dump();
+        const std::string twin = enrollment(bobDev, "install2");
         const http::ClientResponse taken = call(port, "POST", "/v1/messaging/clients",
             makeHeaders(bobDev, "POST", "/v1/messaging/clients", twin), twin);
         CHECK(taken.status == 409);
@@ -370,7 +390,8 @@ try {
     }
 
     {
-        storage.registerClient(alice.fingerprint(), alicePhone.id(), "install1");
+        storage.registerClient(alice.fingerprint(), alicePhone.id(), "install1", alicePhone.certDer,
+            alicePhone.keys.sealing().publicDer(), nowSeconds());
         CHECK(storage.putBlob(alice.fingerprint(), "seen-here", payload, "content", 1024 * 1024, kNow)
             == DiskStorage::PutResult::eStored);
         storage.ackBlob(alice.fingerprint(), "seen-here", aliceDev.id());
@@ -461,17 +482,51 @@ try {
     }
 
     {
-        const std::string install = nlohmann::json{{"install", "install1"}}.dump();
+        const auto devicesOf = [&](const devicetest::Device& device) {
+            const http::ClientResponse listed = call(port, "GET", "/v1/messaging/devices",
+                makeHeaders(device, "GET", "/v1/messaging/devices", ""));
+            CHECK(listed.status == 200);
+            return nlohmann::json::parse(listed.body);
+        };
+        const std::uint64_t versionBefore
+            = devicesOf(aliceDev).at("version").get<std::uint64_t>();
+        const std::string install = enrollment(alicePhone, "install1");
         CHECK(call(port, "POST", "/v1/messaging/clients",
                   makeHeaders(alicePhone, "POST", "/v1/messaging/clients", install), install)
                   .status
             == 200);
+        {
+            const nlohmann::json listed = devicesOf(aliceDev);
+            CHECK(listed.at("version").get<std::uint64_t>() > versionBefore);
+            CHECK(fromBase64(listed.at("card").get<std::string>()) == aliceCard);
+            bool phoneListed = false;
+            for (const nlohmann::json& device : listed.at("devices")) {
+                if (fromBase64(device.at("cert").get<std::string>()) == alicePhone.certDer) {
+                    phoneListed = device.at("registered").get<bool>()
+                        && fromBase64(device.at("sealing").get<std::string>())
+                            == alicePhone.keys.sealing().publicDer()
+                        && device.at("departure").get<std::string>().empty();
+                }
+            }
+            CHECK(phoneListed);
+            const std::string stale = "/v1/messaging/events?hold=1&devices="
+                + std::to_string(versionBefore);
+            const http::ClientResponse moved
+                = call(port, "GET", stale, makeHeaders(aliceDev, "GET", stale, ""));
+            CHECK(moved.status == 200);
+            CHECK(nlohmann::json::parse(moved.body).at("devicesVersion").get<std::uint64_t>()
+                == listed.at("version").get<std::uint64_t>());
+        }
         const auto toSelf = [&](const devicetest::Device& from, const std::string& id,
                                 const std::string& to) {
-            const std::string body = nlohmann::json{{"deliveryId", id},
-                {"payload", toBase64(Bytes{1, 2, 3})}, {"to", to}}.dump();
+            nlohmann::json body
+                = {{"deliveryId", id}, {"payload", toBase64(Bytes{1, 2, 3})}};
+            if (!to.empty()) {
+                body["to"] = to;
+            }
+            const std::string text = body.dump();
             return call(port, "POST", "/v1/messaging/self",
-                makeHeaders(from, "POST", "/v1/messaging/self", body), body);
+                makeHeaders(from, "POST", "/v1/messaging/self", text), text);
         };
         const auto pendingIds = [&](const devicetest::Device& device) {
             const http::ClientResponse listed = call(port, "GET", "/v1/messaging/pending",
@@ -509,40 +564,59 @@ try {
         }
 
         {
-            const std::string strayInstall = nlohmann::json{{"install", "install-stray"}}.dump();
+            const std::string strayInstall = enrollment(aliceStray, "install-stray");
             CHECK(call(port, "POST", "/v1/messaging/clients",
                       makeHeaders(aliceStray, "POST", "/v1/messaging/clients", strayInstall),
                       strayInstall)
                       .status
                 == 200);
+            CHECK(toSelf(aliceDev, "to-all", "").status == 200);
+            CHECK(pendingIds(alicePhone).count("to-all") == 1);
+            CHECK(pendingIds(aliceStray).count("to-all") == 1);
+            CHECK(pendingIds(aliceDev).count("to-all") == 0);
             CHECK(toSelf(aliceDev, "to-stray", aliceStray.id()).status == 200);
-            const auto forget = [&](const devicetest::Device& by, const std::string& device) {
-                const std::string path = "/v1/messaging/clients/" + device;
-                return call(port, "DELETE", path, makeHeaders(by, "DELETE", path, ""));
+
+            const auto depart = [&](const devicetest::Device& by, const Bytes& departure) {
+                const std::string body
+                    = nlohmann::json{{"departure", toBase64(departure)}}.dump();
+                return call(port, "POST", "/v1/messaging/departure",
+                    makeHeaders(by, "POST", "/v1/messaging/departure", body), body);
             };
-            CHECK(forget(alicePhone, aliceStray.id()).status == 403);
-            CHECK(forget(aliceDev, aliceDev.id()).status == 400);
-            CHECK(storage.hasBlob(alice.fingerprint(), "to-stray"));
-            CHECK(forget(aliceDev, aliceStray.id()).status == 200);
+            const Bytes strayDeparture = DeviceDeparture::issue(aliceStray.credential, kNow);
+            CHECK(depart(alicePhone, strayDeparture).status == 400);
+            CHECK(storage.isClientRegistered(alice.fingerprint(), aliceStray.id()));
+            CHECK(depart(aliceStray, strayDeparture).status == 200);
             CHECK(!storage.isClientRegistered(alice.fingerprint(), aliceStray.id()));
             CHECK(!storage.hasBlob(alice.fingerprint(), "to-stray"));
+            CHECK(pendingIds(alicePhone).count("to-all") == 1);
+            bool departureListed = false;
+            const nlohmann::json afterDeparture = devicesOf(aliceDev);
+            for (const nlohmann::json& device : afterDeparture.at("devices")) {
+                if (fromBase64(device.at("cert").get<std::string>()) == aliceStray.certDer) {
+                    departureListed = !device.at("registered").get<bool>()
+                        && fromBase64(device.at("departure").get<std::string>()) == strayDeparture;
+                }
+            }
+            CHECK(departureListed);
             CHECK(call(port, "POST", "/v1/messaging/clients",
                       makeHeaders(aliceStray, "POST", "/v1/messaging/clients", strayInstall),
                       strayInstall)
                       .status
-                == 200);
+                == 409);
+            CHECK(toSelf(aliceDev, "to-departed", aliceStray.id()).status == 404);
         }
 
         {
-            const std::lock_guard<std::mutex> lock(booksMutex);
-            books[alice.fingerprint()] = devicetest::bookOf(
-                alice, {&aliceDev, &aliceStray}, kFirstRevocationNumber + 1, {alicePhone.id()});
+            const std::lock_guard<std::mutex> lock(revocationsMutex);
+            revocations[alice.fingerprint()]
+                = Revocation::of(kFirstRevocationNumber + 1, {alicePhone.id(), aliceStray.id()});
         }
         const http::ClientResponse revoked = call(port, "GET", "/v1/messaging/pending",
             makeHeaders(alicePhone, "GET", "/v1/messaging/pending", ""));
         CHECK(revoked.status == 403);
         CHECK(nlohmann::json::parse(revoked.body).at("error").at("code") == "DEVICE_REVOKED");
         CHECK(!storage.isClientRegistered(alice.fingerprint(), alicePhone.id()));
+        CHECK(devicesOf(aliceDev).at("devices").size() == 1);
         CHECK(call(port, "POST", "/v1/messaging/clients",
                   makeHeaders(alicePhone, "POST", "/v1/messaging/clients", install), install)
                   .status

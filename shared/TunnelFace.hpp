@@ -17,6 +17,7 @@ struct Caller {
     std::string user;
     std::string device;
     DeviceRole role = DeviceRole::eSecondary;
+    Bytes certDer;
     // Set when the request is not let in; the user is empty then.
     std::optional<http::Response> refused;
 };

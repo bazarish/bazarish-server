@@ -56,7 +56,7 @@ constexpr char kCardTypeName[] = "contact-card";
 
 const std::string kCardDest = "dlkbeyqjykssca6o7qlbwgq4fr2hry7kw2ursn2sh3lt3acox6gqaaaa.b32.i2p";
 
-Bytes cardWith(const devicetest::Account& owner, const DeviceBook& devices,
+Bytes cardWith(const devicetest::Account& owner, const Revocation& revocation,
     const std::int64_t issuedAt, const std::string& dest = kCardDest)
 {
     ContactCard card;
@@ -67,8 +67,8 @@ Bytes cardWith(const devicetest::Account& owner, const DeviceBook& devices,
     card.epochs = {{current, kFirstEpochGeneration, owner.keys.id(), Key::generateSealing().publicDer()},
         {current + 1, kFirstEpochGeneration, owner.keys.id(), Key::generateSealing().publicDer()}};
     card.servingSealingKeyDer = Key::generateSealing().publicDer();
-    card.devices = devices;
-    return card.issue(owner.device.signing());
+    card.revocation = revocation;
+    return card.issue(owner.root);
 }
 
 Bytes botCard(const devicetest::Account& owner, const std::int64_t issuedAt,
@@ -84,8 +84,7 @@ Bytes botCard(const devicetest::Account& owner, const std::int64_t issuedAt,
     card.epochs = {{current, kFirstEpochGeneration, owner.keys.id(), sealingDer},
         {current + 1, kFirstEpochGeneration, owner.keys.id(), Key::generateSealing().publicDer()}};
     card.servingSealingKeyDer = servingDer;
-    card.devices = owner.book();
-    return card.issue(owner.device.signing());
+    return card.issue(owner.root);
 }
 
 testutil::Headers deviceSigned(const DeviceCredential& device, const std::string& method,
@@ -416,7 +415,7 @@ try {
             return call(port, "POST", "/v1/account/card",
                 deviceSigned(alice.device, "POST", "/v1/account/card", body), body);
         };
-        CHECK(publish(cardWith(alice, devicetest::bookOf(alice.root, {&alice.primary, &tablet}),
+        CHECK(publish(cardWith(alice, Revocation::of(kFirstRevocationNumber, {}),
                   now + 2))
                   .status
             == 200);
@@ -432,7 +431,7 @@ try {
             CHECK(nlohmann::json::parse(takenOffline.body).at("error").at("code")
                 == "DEVICE_NOT_PRIMARY");
             const std::string body = nlohmann::json{{"card",
-                toBase64(cardWith(alice, devicetest::bookOf(alice.root, {&alice.primary, &tablet}),
+                toBase64(cardWith(alice, Revocation::of(kFirstRevocationNumber, {}),
                     now + 2))},
                 {"cardKey", kCardKeyText}}.dump();
             const http::ClientResponse bySecondary = call(port, "POST", "/v1/account/card",
@@ -441,8 +440,7 @@ try {
             CHECK(pubCalls == callsBefore);
         }
         CHECK(publish(cardWith(alice,
-                          devicetest::bookOf(alice.root, {&alice.primary},
-                              kFirstRevocationNumber + 1, {tablet.id()}),
+                          Revocation::of(kFirstRevocationNumber + 1, {tablet.id()}),
                           now + 3))
                   .status
             == 200);
@@ -450,7 +448,7 @@ try {
             deviceSigned(tablet.credential, "GET", "/v1/account/i2p-status", {}));
         CHECK(revoked.status == 403);
         CHECK(nlohmann::json::parse(revoked.body).at("error").at("code") == "DEVICE_REVOKED");
-        CHECK(publish(cardWith(alice, devicetest::bookOf(alice.root, {&alice.primary, &tablet}),
+        CHECK(publish(cardWith(alice, Revocation::of(kFirstRevocationNumber, {}),
                   now + 4))
                   .status
             == 409);

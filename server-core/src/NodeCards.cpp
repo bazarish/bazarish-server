@@ -41,13 +41,13 @@ std::optional<HeldCard> NodeCards::card(const std::string& user)
     return found->card;
 }
 
-std::optional<DeviceBook> NodeCards::devices(const std::string& user)
+std::optional<Revocation> NodeCards::revocation(const std::string& user)
 {
     const std::optional<Held> found = held(user);
     if (!found.has_value()) {
         return std::nullopt;
     }
-    return found->devices;
+    return found->revocation;
 }
 
 std::optional<NodeCards::Held> NodeCards::held(const std::string& user)
@@ -87,7 +87,7 @@ std::optional<NodeCards::Held> NodeCards::held(const std::string& user)
     if (found.at("user").get<std::string>() != user || verified.fingerprint() != user) {
         throw std::runtime_error("the server service answered a card lookup with another account's card");
     }
-    fetched.devices = verified.devices;
+    fetched.revocation = verified.revocation;
     const std::lock_guard<std::mutex> lock(mutex_);
     cached_[user] = fetched;
     return fetched;

@@ -65,6 +65,8 @@ public:
     }
 
     void notify(const std::string& user);
+    // Ends the waits held now and keeps nothing for a later one.
+    void wakeWaiting(const std::string& user);
     void release(const std::string& user, const std::string& client);
 
     std::size_t waiting() const;

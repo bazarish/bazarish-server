@@ -47,6 +47,7 @@ constexpr std::int64_t kReseedRefreshSeconds = 3600;
 constexpr char kHoldKey[] = "hold";
 constexpr char kHoldValue[] = "1";
 constexpr char kDeferredKey[] = "deferred";
+constexpr char kDevicesKey[] = "devices";
 constexpr char kDeferredSeparator = ',';
 constexpr char kOverviewPath[] = "/v1/messaging/overview";
 constexpr char kSinceKey[] = "since";
@@ -130,10 +131,11 @@ HttpApi::HttpApi(DiskStorage& storage, EventGate& eventGate, const HttpApiOption
     , tunnel_(options_.sealingKey, options_.fingerprint)
     , startedAt_(nowSeconds())
 {
-    if (!options_.accountDevices) {
+    if (!options_.accountRevocation || !options_.accountCard) {
         throw std::invalid_argument("the mailbox serves only the accounts its server service knows");
     }
     storage_.watch(overviewChanged());
+    storage_.watchDevices([this](const std::string& user) { eventGate_.wakeWaiting(user); });
     janitorThread_ = std::thread([this]() { expiredSweepLoop(); });
 }
 
@@ -148,6 +150,7 @@ nlohmann::json HttpApi::eventsAnswer(const std::string& user, nlohmann::json pen
         {"pending", std::move(pending)},
         {"usedBytes", storage_.usage(user)},
         {"quotaBytes", storage_.userQuota(user, options_.defaultQuotaBytes)},
+        {"devicesVersion", storage_.devicesVersion(user)},
     };
 }
 
@@ -166,6 +169,7 @@ nlohmann::json HttpApi::overviewOf(const std::string& user, const std::string& d
         {"usedBytes", storage_.usage(user)},
         {"quotaBytes", storage_.userQuota(user, options_.defaultQuotaBytes)},
         {"clients", clients},
+        {"devicesVersion", storage_.devicesVersion(user)},
     };
     const std::string shown = overview.dump();
     overview[kVersionField] = toHex(sha256(Bytes(shown.begin(), shown.end())));
@@ -179,18 +183,14 @@ std::optional<bazarish::http::Response> HttpApi::admitted(
     if (caller.refused.has_value()) {
         return caller.refused;
     }
-    const std::optional<DeviceBook> devices = options_.accountDevices(caller.user);
-    if (!devices.has_value()) {
+    const std::optional<Revocation> revocation = options_.accountRevocation(caller.user);
+    if (!revocation.has_value()) {
         return errorResponse(404, ErrorCode::eAccountUnknown, "this server serves no such account");
     }
-    for (const std::string& revoked : devices->revokedIds()) {
-        if (storage_.isClientRegistered(caller.user, revoked)) {
-            storage_.unregisterClient(caller.user, revoked);
-            bazarish::log::info("a revoked device of {} no longer has mail held",
-                bazarish::log::redact(caller.user));
-        }
+    for (const std::string& revoked : revocation->revoked) {
+        storage_.dropDevice(caller.user, revoked);
     }
-    if (devices->revoked(caller.device)) {
+    if (revocation->revokes(caller.device)) {
         return errorResponse(403, ErrorCode::eDeviceRevoked, "this device was revoked");
     }
     return std::nullopt;
@@ -529,8 +529,12 @@ void HttpApi::setupRoutes()
             } catch (const std::invalid_argument& error) {
                 return errorResponse(400, ErrorCode::eRequestFailed, error.what());
             }
+            store.noteAsked(user, clientId, nowSeconds());
+            const std::string knownDevices = request.query(kDevicesKey);
+            const bool listMoved = !knownDevices.empty()
+                && knownDevices != std::to_string(store.devicesVersion(user));
             const nlohmann::json waiting = pendingJson(store, user, clientId);
-            if (holdsNews(waiting, deferred) || request.query(kHoldKey) != kHoldValue) {
+            if (listMoved || holdsNews(waiting, deferred) || request.query(kHoldKey) != kHoldValue) {
                 return jsonResponse(eventsAnswer(user, waiting));
             }
             eventGate_.wait(http_->executor(), user, clientId,
@@ -544,7 +548,9 @@ void HttpApi::setupRoutes()
                     }
                 });
             try {
-                if (holdsNews(pendingJson(store, user, clientId), deferred)) {
+                if (holdsNews(pendingJson(store, user, clientId), deferred)
+                    || (!knownDevices.empty()
+                        && knownDevices != std::to_string(store.devicesVersion(user)))) {
                     eventGate_.notify(user);
                 }
             } catch (const std::exception& error) {
@@ -558,7 +564,13 @@ void HttpApi::setupRoutes()
                           const Caller& caller) -> bazarish::http::Response {
             const nlohmann::json body = bazarish::parseJson(request.body);
             const std::string install = body.at("install").get<std::string>();
-            if (store.registerClient(caller.user, caller.device, install)
+            const Bytes sealing = fromBase64(body.at("sealing").get<std::string>());
+            if (!DeviceCertificate::verify(caller.certDer).sealsWith(sealing)) {
+                return errorResponse(400, ErrorCode::eRequestFailed,
+                    "the sealing key is not the one this device's certificate names");
+            }
+            if (store.registerClient(caller.user, caller.device, install, caller.certDer, sealing,
+                    nowSeconds())
                 == DiskStorage::RegisterResult::eTaken) {
                 return errorResponse(409, ErrorCode::eDeviceTaken,
                     "this device is registered from another copy of its keys");
@@ -566,19 +578,35 @@ void HttpApi::setupRoutes()
             return jsonResponse({{"ok", true}});
         }));
 
-    http_->del("/v1/messaging/clients/{id}",
+    http_->get("/v1/messaging/devices",
+        authenticated([this, &store, registered, clientUnregistered](const bazarish::http::Request&,
+                          const Caller& caller) -> bazarish::http::Response {
+            if (!registered(caller)) {
+                return clientUnregistered();
+            }
+            const DiskStorage::DeviceList list = store.deviceList(caller.user);
+            const std::optional<Bytes> card = options_.accountCard(caller.user);
+            nlohmann::json devices = nlohmann::json::array();
+            for (const DiskStorage::DeviceEntry& entry : list.devices) {
+                devices.push_back({{"cert", toBase64(entry.certDer)},
+                    {"sealing", toBase64(entry.sealingDer)}, {"registered", entry.registered},
+                    {"departure", toBase64(entry.departure)}});
+            }
+            return jsonResponse({{"version", list.version}, {"devices", devices},
+                {"card", card.has_value() ? toBase64(*card) : std::string()}});
+        }));
+
+    http_->post("/v1/messaging/departure",
         authenticated([&store](const bazarish::http::Request& request,
                           const Caller& caller) -> bazarish::http::Response {
-            if (caller.role != DeviceRole::ePrimary) {
-                return errorResponse(403, ErrorCode::eDeviceNotPrimary,
-                    "only a primary device forgets another device's mail");
+            const Bytes departure
+                = fromBase64(bazarish::parseJson(request.body).at("departure").get<std::string>());
+            try {
+                DeviceDeparture::verify(departure, DeviceCertificate::verify(caller.certDer));
+            } catch (const std::exception& error) {
+                return errorResponse(400, ErrorCode::eRequestFailed, error.what());
             }
-            const std::string& device = request.captures.at(0);
-            if (device == caller.device) {
-                return errorResponse(400, ErrorCode::eRequestFailed,
-                    "a device does not forget its own mail");
-            }
-            store.unregisterClient(caller.user, device);
+            store.departClient(caller.user, caller.device, departure);
             return jsonResponse({{"ok", true}});
         }));
 
@@ -660,6 +688,7 @@ void HttpApi::setupRoutes()
             }
             const std::string& user = caller.user;
             const std::string& clientId = caller.device;
+            store.noteAsked(user, clientId, nowSeconds());
             return jsonResponse({{"pending", pendingJson(store, user, clientId)}});
         }));
 
@@ -724,11 +753,10 @@ void HttpApi::setupRoutes()
             const std::string& user = caller.user;
             const nlohmann::json body = bazarish::parseJson(request.body);
             const std::string deliveryId = body.at("deliveryId").get<std::string>();
-            const std::string to = body.at("to").get<std::string>();
-            const std::optional<DeviceBook> devices = options_.accountDevices(user);
-            if (to == caller.device || !devices.has_value() || !devices->active(to).has_value()) {
+            const std::string to = body.value("to", std::string());
+            if (!to.empty() && (to == caller.device || !storage_.isClientRegistered(user, to))) {
                 return errorResponse(404, ErrorCode::eClientUnregistered,
-                    "a letter to self names another active device of the account");
+                    "a letter to self names another registered device of the account");
             }
             const Bytes payload = fromBase64(body.at("payload").get<std::string>());
             if (payload.size() > bazarish::kMaxMessagePayloadBytes) {
@@ -740,9 +768,11 @@ void HttpApi::setupRoutes()
                 return jsonResponse({{"ok", true}});
             }
 
-            const DiskStorage::PutResult result = storage_.putAddressedBlob(user, deliveryId,
-                payload, kDeviceDeliveryClass, storage_.userQuota(user, options_.defaultQuotaBytes),
-                nowSeconds(), to);
+            const std::uint64_t quota = storage_.userQuota(user, options_.defaultQuotaBytes);
+            const DiskStorage::PutResult result = to.empty()
+                ? storage_.putSelfBlob(user, deliveryId, payload, quota, nowSeconds(), caller.device)
+                : storage_.putAddressedBlob(
+                    user, deliveryId, payload, kDeviceDeliveryClass, quota, nowSeconds(), to);
             if (result == DiskStorage::PutResult::eQuotaExceeded) {
                 return errorResponse(507, ErrorCode::eStorageFull, "your storage is full");
             }

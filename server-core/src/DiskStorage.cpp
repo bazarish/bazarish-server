@@ -25,6 +25,15 @@ namespace fs = std::filesystem;
 constexpr std::size_t kIdMaxLength = 64;
 
 constexpr std::int64_t kContactWindowSeconds = 60;
+// How stale a device's last ask may get before it is written down again.
+constexpr std::int64_t kAskedStepSeconds = 3600;
+
+constexpr char kDevicesDir[] = "devices";
+constexpr char kDevicesVersionFile[] = "devices-version";
+constexpr char kCertField[] = "cert";
+constexpr char kSealingField[] = "sealing";
+constexpr char kAskedAtField[] = "askedAt";
+constexpr char kDepartureField[] = "departure";
 
 bool isSafeId(const std::string& id)
 {
@@ -143,34 +152,60 @@ void DiskStorage::tellChanged(const std::string& user) const
     }
 }
 
+void DiskStorage::watchDevices(std::function<void(const std::string& user)> changed)
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    devicesChanged_ = std::move(changed);
+}
+
+void DiskStorage::bumpDevicesLocked(const std::string& user)
+{
+    const fs::path path = userDir(user) / kDevicesVersionFile;
+    const std::uint64_t version
+        = fs::exists(path) ? std::stoull(readFileText(path)) + 1 : 1;
+    writeFileAtomic(path, std::to_string(version));
+    tellChanged(user);
+    if (devicesChanged_) {
+        devicesChanged_(user);
+    }
+}
+
 fs::path DiskStorage::userDir(const std::string& user) const
 {
     return root_ / "users" / user;
 }
 
-DiskStorage::RegisterResult DiskStorage::registerClient(
-    const std::string& user, const std::string& clientId, const std::string& install)
+DiskStorage::RegisterResult DiskStorage::registerClient(const std::string& user,
+    const std::string& clientId, const std::string& install, const Bytes& certDer,
+    const Bytes& sealingDer, const std::int64_t now)
 {
     requireFingerprint(user);
     requireSafeId(clientId);
     requireSafeId(install);
     const std::lock_guard<std::mutex> lock(mutex_);
-    const fs::path dir = userDir(user) / "clients";
-    if (fs::exists(dir / clientId)) {
-        return readFileText(dir / clientId) == install ? RegisterResult::eRegistered
-                                                       : RegisterResult::eTaken;
+    const fs::path clients = userDir(user) / "clients";
+    const fs::path devices = userDir(user) / kDevicesDir;
+    const fs::path entry = devices / (clientId + ".json");
+    if (fs::exists(clients / clientId)) {
+        return readFileText(clients / clientId) == install ? RegisterResult::eRegistered
+                                                          : RegisterResult::eTaken;
     }
-    createDirectoryDurably(dir);
-    writeFileAtomic(dir / clientId, install);
-    tellChanged(user);
+    if (fs::exists(entry) && readJsonFile(entry).contains(kDepartureField)) {
+        return RegisterResult::eTaken;
+    }
+    createDirectoryDurably(devices);
+    createDirectoryDurably(clients);
+    writeFileAtomic(entry,
+        nlohmann::json{{kCertField, toBase64(certDer)}, {kSealingField, toBase64(sealingDer)},
+            {kAskedAtField, now}}
+            .dump());
+    writeFileAtomic(clients / clientId, install);
+    bumpDevicesLocked(user);
     return RegisterResult::eRegistered;
 }
 
-void DiskStorage::unregisterClient(const std::string& user, const std::string& clientId)
+void DiskStorage::unregisterLocked(const std::string& user, const std::string& clientId)
 {
-    requireFingerprint(user);
-    requireSafeId(clientId);
-    const std::lock_guard<std::mutex> lock(mutex_);
     const fs::path clients = userDir(user) / "clients";
     std::vector<std::string> staying = listDirectoryNames(clients);
     staying.erase(std::remove(staying.begin(), staying.end(), clientId), staying.end());
@@ -187,8 +222,101 @@ void DiskStorage::unregisterClient(const std::string& user, const std::string& c
     }
     if (fs::remove(clients / clientId)) {
         syncDirectory(clients);
-        tellChanged(user);
     }
+}
+
+void DiskStorage::unregisterClient(const std::string& user, const std::string& clientId)
+{
+    requireFingerprint(user);
+    requireSafeId(clientId);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    if (!fs::exists(userDir(user) / "clients" / clientId)) {
+        return;
+    }
+    unregisterLocked(user, clientId);
+    bumpDevicesLocked(user);
+}
+
+void DiskStorage::departClient(
+    const std::string& user, const std::string& clientId, const Bytes& departure)
+{
+    requireFingerprint(user);
+    requireSafeId(clientId);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const fs::path entry = userDir(user) / kDevicesDir / (clientId + ".json");
+    if (!fs::exists(entry)) {
+        throw std::runtime_error("a departure of a device this server does not list");
+    }
+    nlohmann::json held = readJsonFile(entry);
+    held[kDepartureField] = toBase64(departure);
+    writeFileAtomic(entry, held.dump());
+    unregisterLocked(user, clientId);
+    bumpDevicesLocked(user);
+}
+
+void DiskStorage::dropDevice(const std::string& user, const std::string& clientId)
+{
+    requireFingerprint(user);
+    requireSafeId(clientId);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const fs::path entry = userDir(user) / kDevicesDir / (clientId + ".json");
+    const bool registered = fs::exists(userDir(user) / "clients" / clientId);
+    if (!registered && !fs::exists(entry)) {
+        return;
+    }
+    unregisterLocked(user, clientId);
+    if (fs::remove(entry)) {
+        syncDirectory(entry.parent_path());
+    }
+    bumpDevicesLocked(user);
+}
+
+DiskStorage::DeviceList DiskStorage::deviceList(const std::string& user)
+{
+    requireFingerprint(user);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    DeviceList list;
+    const fs::path version = userDir(user) / kDevicesVersionFile;
+    list.version = fs::exists(version) ? std::stoull(readFileText(version)) : 0;
+    const fs::path devices = userDir(user) / kDevicesDir;
+    for (const std::string& name : listDirectoryNames(devices)) {
+        const nlohmann::json held = readJsonFile(devices / name);
+        const std::string clientId = fs::path(name).stem().string();
+        DeviceEntry entry;
+        entry.certDer = fromBase64(held.at(kCertField).get<std::string>());
+        entry.sealingDer = fromBase64(held.at(kSealingField).get<std::string>());
+        entry.registered = fs::exists(userDir(user) / "clients" / clientId);
+        if (held.contains(kDepartureField)) {
+            entry.departure = fromBase64(held.at(kDepartureField).get<std::string>());
+        }
+        list.devices.push_back(std::move(entry));
+    }
+    return list;
+}
+
+std::uint64_t DiskStorage::devicesVersion(const std::string& user)
+{
+    requireFingerprint(user);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const fs::path version = userDir(user) / kDevicesVersionFile;
+    return fs::exists(version) ? std::stoull(readFileText(version)) : 0;
+}
+
+void DiskStorage::noteAsked(const std::string& user, const std::string& clientId, const std::int64_t now)
+{
+    requireFingerprint(user);
+    requireSafeId(clientId);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const fs::path entry = userDir(user) / kDevicesDir / (clientId + ".json");
+    if (!fs::exists(entry)) {
+        return;
+    }
+    nlohmann::json held = readJsonFile(entry);
+    if (now - held.at(kAskedAtField).get<std::int64_t>() < kAskedStepSeconds) {
+        return;
+    }
+    held[kAskedAtField] = now;
+    writeFileAtomic(entry, held.dump());
 }
 
 std::vector<std::string> DiskStorage::listClients(const std::string& user)
@@ -280,7 +408,24 @@ DiskStorage::PutResult DiskStorage::putBlob(const std::string& user, const std::
     requireFingerprint(user);
     requireSafeId(blobId);
     const std::lock_guard<std::mutex> lock(mutex_);
-    return putLocked(user, blobId, data, deliveryClass, quotaBytes, receivedAt, heldLimit, {});
+    return putLocked(user, blobId, data, deliveryClass, quotaBytes, receivedAt, heldLimit, {}, {});
+}
+
+DiskStorage::PutResult DiskStorage::putSelfBlob(const std::string& user, const std::string& blobId,
+    const Bytes& data, const std::uint64_t quotaBytes, const std::int64_t receivedAt,
+    const std::string& writer)
+{
+    requireFingerprint(user);
+    requireSafeId(blobId);
+    requireSafeId(writer);
+    const std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<std::string> readers = listDirectoryNames(userDir(user) / "clients");
+    std::erase(readers, writer);
+    if (readers.empty()) {
+        return PutResult::eStored;
+    }
+    return putLocked(
+        user, blobId, data, kDeviceDeliveryClass, quotaBytes, receivedAt, std::nullopt, {}, writer);
 }
 
 DiskStorage::PutResult DiskStorage::putAddressedBlob(const std::string& user,
@@ -292,13 +437,13 @@ DiskStorage::PutResult DiskStorage::putAddressedBlob(const std::string& user,
     requireSafeId(device);
     const std::lock_guard<std::mutex> lock(mutex_);
     return putLocked(
-        user, blobId, data, deliveryClass, quotaBytes, receivedAt, std::nullopt, device);
+        user, blobId, data, deliveryClass, quotaBytes, receivedAt, std::nullopt, device, {});
 }
 
 DiskStorage::PutResult DiskStorage::putLocked(const std::string& user, const std::string& blobId,
     const Bytes& data, const std::string& deliveryClass, const std::uint64_t quotaBytes,
     const std::int64_t receivedAt, const std::optional<std::size_t> heldLimit,
-    const std::string& addressedTo)
+    const std::string& addressedTo, const std::string& ackedBy)
 {
 
     const fs::path blobs = userDir(user) / "blobs";
@@ -321,7 +466,7 @@ DiskStorage::PutResult DiskStorage::putLocked(const std::string& user, const std
     nlohmann::json metaBody = {
         {"receivedAtMs", nowMillis()},
         {"class", deliveryClass},
-        {"acked", nlohmann::json::array()},
+        {"acked", ackedBy.empty() ? nlohmann::json::array() : nlohmann::json::array({ackedBy})},
     };
     if (!addressedTo.empty()) {
         metaBody[kAddressedField] = addressedTo;
@@ -518,6 +663,19 @@ void DiskStorage::purgeExpired(const std::int64_t receivedBefore, const std::int
             if (fs::exists(metaPath, ec) && !ec && arrivalOf(readJsonFile(metaPath)) < storedBeforeMs) {
                 removeItem(user, blobId);
             }
+        }
+        bool silenced = false;
+        for (const std::string& name : listDirectoryNames(userPath / kDevicesDir)) {
+            const std::string clientId = fs::path(name).stem().string();
+            if (fs::exists(userPath / "clients" / clientId)
+                && readJsonFile(userPath / kDevicesDir / name).at(kAskedAtField).get<std::int64_t>()
+                    < storedBefore) {
+                unregisterLocked(user, clientId);
+                silenced = true;
+            }
+        }
+        if (silenced) {
+            bumpDevicesLocked(user);
         }
         for (const std::string& deliveryId : listDirectoryNames(userPath / "seen")) {
             const fs::path marker = userPath / "seen" / deliveryId;

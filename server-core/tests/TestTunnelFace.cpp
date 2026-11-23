@@ -59,8 +59,9 @@ try {
     options.serverCardDer = card;
     options.assignDestination
         = [](const std::string&) { return DestinationAssignment{"x.b32.i2p", "home"}; };
-    options.accountDevices
-        = [](const std::string&) { return std::optional<DeviceBook>(DeviceBook{}); };
+    options.accountRevocation
+        = [](const std::string&) { return std::optional<Revocation>(Revocation{}); };
+    options.accountCard = [](const std::string&) { return std::optional<Bytes>(); };
 
     EventGate eventGate;
     HttpApi api(storage, eventGate, options);

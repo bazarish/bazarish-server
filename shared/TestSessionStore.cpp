@@ -17,7 +17,7 @@ constexpr std::int64_t kNow = 1780000000;
 constexpr std::uint64_t kHandleWindow = 64;
 
 const std::string kUser = std::string(52, 'a');
-const auth::DeviceCaller kCaller{kUser, "aaaaaaaaaa", DeviceRole::ePrimary};
+const auth::DeviceCaller kCaller{kUser, "aaaaaaaaaa", DeviceRole::ePrimary, {}};
 
 }  // namespace
 
@@ -98,7 +98,7 @@ try {
         SessionStore sessions;
         std::int64_t expires = 0;
         (void)sessions.open(kCaller, secret, kNow, expires);
-        const auth::DeviceCaller otherDevice{kUser, "bbbbbbbbbb", DeviceRole::eSecondary};
+        const auth::DeviceCaller otherDevice{kUser, "bbbbbbbbbb", DeviceRole::eSecondary, {}};
         CHECK_THROWS(sessions.open(otherDevice, secret, kNow, expires));
     }
 

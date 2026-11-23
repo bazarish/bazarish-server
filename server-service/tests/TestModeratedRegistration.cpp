@@ -52,8 +52,7 @@ Bytes botCard(const devicetest::Account& owner, const std::int64_t issuedAt,
     card.epochs = {{current, kFirstEpochGeneration, owner.keys.id(), sealingDer},
         {current + 1, kFirstEpochGeneration, owner.keys.id(), Key::generateSealing().publicDer()}};
     card.servingSealingKeyDer = servingDer;
-    card.devices = owner.book();
-    return card.issue(owner.device.signing());
+    return card.issue(owner.root);
 }
 
 }  // namespace

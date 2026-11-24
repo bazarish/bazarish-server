@@ -1045,7 +1045,13 @@ std::shared_ptr<EndpointEntry> Gateway::localFor(
 
 void Gateway::unpublishLocked(const EndpointEntry& entry)
 {
-    if (published_.erase(entry.host) > 0 && entry.identity.empty()) {
+    // A restarted client publishes the same host from a new session before the old one retires.
+    const auto found = published_.find(entry.host);
+    if (found == published_.end() || found->second.endpoint.lock().get() != &entry) {
+        return;
+    }
+    published_.erase(found);
+    if (entry.identity.empty()) {
         goneHere_[entry.host] = std::chrono::steady_clock::now() + kGoneHereMemory;
     }
 }

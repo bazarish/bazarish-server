@@ -17,10 +17,10 @@
   <p class="sheet-note" data-t="Admin - setup">Admin - setup</p>
   <main class="sheet-body">
     <section class="panel-box">
-      <p class="view-title" data-t="Claim this panel">Claim this panel</p>
+      <p class="view-title" data-t="First sign-in">First sign-in</p>
       {{error}}
       <p class="panel-note" data-t="The panel has no administrator yet. The key that signs this challenge becomes one.">The panel has no administrator yet. The key that signs this challenge becomes one.</p>
-      <p class="panel-note is-warning" data-t="Until then anyone who reaches this page can claim the panel.">Until then anyone who reaches this page can claim the panel.</p>
+      <p class="panel-note is-warning" data-t="Until then, anyone who opens this page can make the first sign-in.">Until then, anyone who opens this page can make the first sign-in.</p>
       <p class="panel-note" data-t="Sign this challenge with your Bazarish account key and paste the signature.">Sign this challenge with your Bazarish account key and paste the signature.</p>
       <p class="field-label" data-t="Challenge">Challenge</p>
       <pre class="copy">{{challenge}}</pre>
@@ -28,7 +28,7 @@
         <input type="hidden" name="challenge" value="{{challenge}}">
         <label class="field-label" for="blob" data-t="Signature">Signature</label>
         <textarea class="field" id="blob" name="blob" required autofocus></textarea>
-        <button class="btn" type="submit" data-t="Claim this panel">Claim this panel</button>
+        <button class="btn" type="submit" data-t="Sign in">Sign in</button>
       </form>
     </section>
   </main>

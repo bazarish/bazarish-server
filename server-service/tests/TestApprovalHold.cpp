@@ -35,6 +35,7 @@ constexpr const char* kHeldWhilePending = "/v1/account/i2p-status?hold=1&since=p
 constexpr std::chrono::seconds kSoon{5};
 constexpr std::uint64_t kQuota = 10 * 1024 * 1024;
 constexpr char kBanReason[] = "spam from this key";
+constexpr char kHoldMessage[] = "Taken out of service until the owner writes to the operator";
 
 const std::string kCardDest = "dlkbeyqjykssca6o7qlbwgq4fr2hry7kw2ursn2sh3lt3acox6gqaaaa.b32.i2p";
 
@@ -151,6 +152,26 @@ try {
         const http::ClientResponse answer = held.get();
         CHECK(answer.status == 403);
         CHECK(nlohmann::json::parse(answer.body).at("error").at("message") == kBanReason);
+    }
+
+    {
+        const devicetest::Account served;
+        registerPending(port, grants, served, now);
+        const auto status = [&]() {
+            return nlohmann::json::parse(testutil::call(port, "GET", kStatus,
+                testutil::deviceHeaders(served.device, "GET", kStatus, ""))
+                    .body);
+        };
+        CHECK(!status().at("held").get<bool>());
+        grants.approve(served.fingerprint(), now);
+        CHECK(!status().at("held").get<bool>());
+        grants.hold(served.fingerprint(), kHoldMessage, now, 0);
+        const nlohmann::json held = status();
+        CHECK(held.at("approval") == "pending");
+        CHECK(held.at("held").get<bool>());
+        CHECK(held.at("registrationMessage") == kHoldMessage);
+        grants.approve(served.fingerprint(), now);
+        CHECK(!status().at("held").get<bool>());
     }
 
     {

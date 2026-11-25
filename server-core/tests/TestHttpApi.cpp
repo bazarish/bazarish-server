@@ -31,6 +31,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <map>
 #include <mutex>
 #include <set>
@@ -43,6 +44,9 @@ using namespace bazarish;
 using namespace bazarish::server;
 
 namespace {
+
+// Long enough that a wait still held then is held for good, short enough for a test.
+constexpr std::chrono::seconds kHeldWaitStays{3};
 
 using testutil::Headers;
 using testutil::call;
@@ -698,6 +702,24 @@ try {
             offlineBody);
         CHECK(offline.status == 200);
         CHECK(forgottenUser == "alicefp");
+    }
+
+    {
+        const std::string target = "/v1/messaging/events?hold=1";
+        std::future<http::ClientResponse> held = std::async(std::launch::async, [&]() {
+            http::ClientOptions unbounded;
+            unbounded.readTimeout = std::chrono::seconds(0);
+            return call(port, "GET", target, makeHeaders(bobDev, "GET", target, ""), {}, unbounded);
+        });
+        CHECK(held.wait_for(kHeldWaitStays) == std::future_status::timeout);
+        const std::string down = nlohmann::json{{"user", bob.fingerprint()}}.dump();
+        CHECK(call(opsPort, "PUT", "/v1/messaging/i2p-dest",
+                  operatorHeaders(operatorIdentity, "PUT", "/v1/messaging/i2p-dest", down), down)
+                  .status
+            == 200);
+        CHECK(held.wait_for(kHeldWaitStays) == std::future_status::ready);
+        CHECK(held.get().status == 200);
+        CHECK(forgottenUser == bob.fingerprint());
     }
 
     {

@@ -333,6 +333,7 @@ void HttpApi::setupOpsRoutes()
             }
             store.forgetUser(user);
             options_.forgetI2pDest(user);
+            wakeUser(user);
             bazarish::log::info("mailbox of {} dropped: the account was deleted",
                 bazarish::log::redact(user));
             return jsonResponse({{"ok", true}});
@@ -438,6 +439,8 @@ void HttpApi::setupOpsRoutes()
             const std::string transient = body.value("transient", std::string());
             if (transient.empty()) {
                 options_.forgetI2pDest(user);
+                // Its held mail wait answers now: the next ask is refused, and the owner learns why.
+                wakeUser(user);
                 return jsonResponse({{"dest", ""}});
             }
             const std::string sealingKey = body.value("sealingKey", std::string());

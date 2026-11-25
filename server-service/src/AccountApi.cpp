@@ -145,6 +145,12 @@ const char* approvalState(
     return approval->pending() ? "pending" : "approved";
 }
 
+// Taken out of service by the operator: waiting again, with the operator's own message.
+bool heldByOperator(const std::optional<bazarish::service::GrantStore::Approval>& approval)
+{
+    return approval.has_value() && approval->pending() && !approval->message.empty();
+}
+
 std::string holdMessageFor(const std::optional<bazarish::service::GrantStore::Approval>& approval,
     const bazarish::service::NodeSettings::Values& settings)
 {
@@ -290,6 +296,7 @@ http::Response AccountApi::approvalStatus(const std::string& user)
         {"registrationMessage",
             approval.has_value() && approval->pending() ? holdMessageFor(approval, settings())
                                                          : std::string()},
+        {"held", heldByOperator(approval)},
         {"transientExpires", transient.has_value() ? transient->expires : 0},
     });
 }
@@ -890,6 +897,7 @@ void AccountApi::setupRoutes()
                     {"approval", pending ? "pending" : "approved"},
                     {"registrationMessage",
                         pending ? holdMessageFor(approval, settings()) : std::string()},
+                    {"held", heldByOperator(approval)},
                 });
         });
 

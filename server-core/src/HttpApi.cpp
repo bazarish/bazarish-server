@@ -11,6 +11,7 @@
 #include <bazarish/Auth.hpp>
 #include <bazarish/Certificates.hpp>
 #include <bazarish/Clock.hpp>
+#include <bazarish/HeldWait.hpp>
 #include <bazarish/ConfigFile.hpp>
 #include <bazarish/Crypto.hpp>
 #include <bazarish/Errors.hpp>
@@ -540,7 +541,12 @@ void HttpApi::setupRoutes()
             if (listMoved || holdsNews(waiting, deferred) || request.query(kHoldKey) != kHoldValue) {
                 return jsonResponse(eventsAnswer(user, waiting));
             }
-            eventGate_.wait(http_->executor(), user, clientId,
+            const std::optional<std::chrono::seconds> hold
+                = heldWaitOf(request.query(kHeldWaitKey));
+            if (!hold.has_value()) {
+                return errorResponse(400, ErrorCode::eRequestFailed, heldWaitRefusal());
+            }
+            eventGate_.wait(http_->executor(), user, clientId, *hold,
                 [this, &store, user, clientId, respond]() {
                     try {
                         respond(jsonResponse(
@@ -654,14 +660,20 @@ void HttpApi::setupRoutes()
                 overviewGate_->release(user, device);
                 return jsonResponse(current);
             }
-            overviewGate_->wait(http_->executor(), user, device, [this, user, device, respond]() {
-                try {
-                    respond(jsonResponse(overviewOf(user, device)));
-                } catch (const std::exception& error) {
-                    bazarish::log::warn("overview face: {}", error.what());
-                    respond(errorResponse(500, ErrorCode::eRequestFailed, error.what()));
-                }
-            });
+            const std::optional<std::chrono::seconds> hold
+                = heldWaitOf(request.query(kHeldWaitKey));
+            if (!hold.has_value()) {
+                return errorResponse(400, ErrorCode::eRequestFailed, heldWaitRefusal());
+            }
+            overviewGate_->wait(
+                http_->executor(), user, device, *hold, [this, user, device, respond]() {
+                    try {
+                        respond(jsonResponse(overviewOf(user, device)));
+                    } catch (const std::exception& error) {
+                        bazarish::log::warn("overview face: {}", error.what());
+                        respond(errorResponse(500, ErrorCode::eRequestFailed, error.what()));
+                    }
+                });
             if (overviewOf(user, device).at(kVersionField).get<std::string>() != since) {
                 overviewGate_->notify(user);
             }

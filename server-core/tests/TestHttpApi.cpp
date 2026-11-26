@@ -704,6 +704,11 @@ try {
         CHECK(forgottenUser == "alicefp");
     }
 
+    for (const char* const hold : {"59", "301", "soon"}) {
+        const std::string target = std::string("/v1/messaging/events?hold=1&wait=") + hold;
+        CHECK(call(port, "GET", target, makeHeaders(bobDev, "GET", target, "")).status == 400);
+    }
+
     {
         const std::string target = "/v1/messaging/events?hold=1";
         std::future<http::ClientResponse> held = std::async(std::launch::async, [&]() {

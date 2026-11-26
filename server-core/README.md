@@ -29,10 +29,11 @@ sealed to the server's sealing key.
   registry, passes and their revocation, pending fetch/ack, the write a device
   makes into its own account's mailbox). A client delivers its own outgoing
   mail, so this server is never told whom its users write to. Two requests are
-  held open with no time limit: the mail wait, `events?hold=1`, until an entry is
-  pending that the device did not name in `deferred` (at most 32), and the
-  account overview, `overview?hold=1&since=<version>`, until anything on it
-  changes (`docs-main/api/ClientApi.md`). Each is answered by the same device's
+  held open for the hold the device names in `wait` (60 to 300 s, 300 without it):
+  the mail wait, `events?hold=1`, until an entry is pending that the device did
+  not name in `deferred` (at most 32), and the account overview,
+  `overview?hold=1&since=<version>`, until anything on it changes
+  (`docs-main/api/ClientApi.md`). Each is answered by the same device's
   next request of the same kind, and both carry the mailbox's used and granted
   bytes.
 - **Federation** - serves **each user's own destination** over I2P; there is no

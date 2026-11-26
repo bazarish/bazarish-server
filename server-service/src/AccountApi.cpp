@@ -12,6 +12,7 @@
 #include <bazarish/Auth.hpp>
 #include <bazarish/Certificates.hpp>
 #include <bazarish/Clock.hpp>
+#include <bazarish/HeldWait.hpp>
 #include <bazarish/ConfigFile.hpp>
 #include <bazarish/Errors.hpp>
 #include <bazarish/HttpResponses.hpp>
@@ -1033,7 +1034,12 @@ void AccountApi::setupRoutes()
                 approvalGate_->release(user, device);
                 return current;
             }
-            approvalGate_->wait(http_->executor(), user, device,
+            const std::optional<std::chrono::seconds> hold
+                = heldWaitOf(request.query(kHeldWaitKey));
+            if (!hold.has_value()) {
+                return http::errorResponse(400, ErrorCode::eRequestFailed, heldWaitRefusal());
+            }
+            approvalGate_->wait(http_->executor(), user, device, *hold,
                 [this, user, respond]() {
                     try {
                         respond(approvalStatus(user));

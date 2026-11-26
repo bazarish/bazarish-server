@@ -3,6 +3,8 @@
 
 #include <utility>
 
+#include <bazarish/Limits.hpp>
+
 #include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/asio/steady_timer.hpp>
@@ -22,19 +24,20 @@ public:
     // Dropped: the waiters of the gate check the state themselves once they wait.
     enum class Missed { eKept, eDropped };
 
-    explicit EventGate(Missed missed = Missed::eKept)
+    explicit EventGate(Missed missed = Missed::eKept,
+        const std::chrono::seconds hold = std::chrono::seconds(kHeldWaitSeconds))
         : missed_(missed)
+        , hold_(hold)
     {
     }
 
-    // No deadline: a wait ends when its user is told, or when the same client waits again.
+    // A wait ends when its user is told, when the same client waits again, or after the hold.
     template <class Handler>
     void wait(const boost::asio::any_io_executor& executor, const std::string& user,
         const std::string& client, Handler handler)
     {
         const std::shared_ptr<boost::asio::steady_timer> timer
-            = std::make_shared<boost::asio::steady_timer>(
-                executor, boost::asio::steady_timer::time_point::max());
+            = std::make_shared<boost::asio::steady_timer>(executor, hold_);
         std::vector<std::shared_ptr<boost::asio::steady_timer>> superseded;
         {
             const std::lock_guard<std::mutex> lock(mutex_);
@@ -81,6 +84,8 @@ private:
     void forget(const std::string& user, const std::shared_ptr<boost::asio::steady_timer>& timer);
 
     const Missed missed_;
+    // Without an answer in this, a client cannot tell a quiet wait from a link that died unheard.
+    const std::chrono::seconds hold_;
     mutable std::mutex mutex_;
     std::map<std::string, std::vector<Waiter>> waiters_;
     // Told while nobody waited: the next wait ends at once rather than miss it.

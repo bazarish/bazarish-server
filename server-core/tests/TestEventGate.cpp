@@ -16,6 +16,7 @@ namespace {
 
 constexpr std::chrono::milliseconds kSettle{200};
 constexpr std::chrono::seconds kHeld{2};
+constexpr std::chrono::seconds kShortHold{1};
 
 // A context that ran out of work stays stopped until it is restarted.
 void runFor(boost::asio::io_context& io, const std::chrono::milliseconds span)
@@ -81,6 +82,15 @@ try {
     gate.wait(io.get_executor(), "erin", "phone", [&toldEarly]() { toldEarly = true; });
     runFor(io, kSettle);
     CHECK(toldEarly.load());
+
+    EventGate bounded(EventGate::Missed::eKept, kShortHold);
+    std::atomic<bool> heldOut{false};
+    bounded.wait(io.get_executor(), "frank", "phone", [&heldOut]() { heldOut = true; });
+    runFor(io, kSettle);
+    CHECK(!heldOut.load());
+    runFor(io, kShortHold);
+    CHECK(heldOut.load());
+    CHECK(bounded.waiting() == 0);
     std::printf("ok\n");
     return 0;
 } catch (...) {

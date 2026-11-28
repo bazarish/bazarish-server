@@ -31,6 +31,7 @@ constexpr std::chrono::milliseconds kNothingArrives{1500};
 constexpr std::int64_t kAskedBeforeEnd = 300;
 constexpr std::int64_t kPastLapse = 30;
 constexpr std::chrono::milliseconds kRenewalRoundTrip{1000};
+constexpr std::int64_t kCreateRoom = 10;
 constexpr std::chrono::milliseconds kMediaWithin{3000};
 constexpr std::chrono::milliseconds kMediaProbeEvery{200};
 constexpr std::chrono::milliseconds kOversizeDropped{500};
@@ -45,6 +46,12 @@ constexpr double kPercentile99 = 0.99;
 constexpr std::chrono::duration<double, std::milli> kTwoPacersP99{80};
 constexpr double kLaneOverVoiceMost = 2.5;
 constexpr std::size_t kHerMediaLane = 1;
+
+std::int64_t nowUnix()
+{
+    return std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+}
 
 i2p::RouterConfig borrowedFrom(const int port, const std::string& fingerprint)
 {
@@ -267,6 +274,11 @@ try {
 
     const i2p::Keys own = i2p::Keys::generate();
     const Key reader = Key::generateX25519();
+    // A delegation to this midnight has lapsed in its last minute, so the address waits for the next day.
+    const std::int64_t leftToday = own.issueTransient(1).transientExpires() - nowUnix();
+    if (leftToday <= i2p::kDelegationLapseLeadSeconds + kCreateRoom) {
+        std::this_thread::sleep_for(std::chrono::seconds(leftToday + 1));
+    }
     i2p::EndpointConfig guarded;
     guarded.published = true;
     guarded.traffic = i2p::Traffic::eRaw;
